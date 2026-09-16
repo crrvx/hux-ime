@@ -20,6 +20,9 @@ fn decode_hex(text: &str) -> String {
     if text == "-" {
         return String::new();
     }
+    if text.len() % 2 != 0 || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        panic!("bad hex field: {text:?}");
+    }
     let bytes: Vec<u8> = (0..text.len())
         .step_by(2)
         .map(|i| u8::from_str_radix(&text[i..i + 2], 16).expect("hex digit"))

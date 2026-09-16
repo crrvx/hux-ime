@@ -240,6 +240,23 @@ mod tests {
     }
 
     #[test]
+    fn score_cache_matches_uncached_and_length_gate() {
+        let model = synthetic(&["甲乙", "甲乙丙"], 8192, 4);
+        let text = "甲乙甲甲乙丙";
+        let mut cache = HashMap::new();
+        // 缓存路径与无缓存路径必须逐位一致（重复子串触发缓存命中）。
+        assert_eq!(
+            model.score_with_cache(text, &mut cache).to_bits(),
+            model.score(text).to_bits()
+        );
+        assert!(cache.contains_key("甲乙"));
+        // 词长门：1 字与 5 字恒 false，位图查询与门控结果解耦
+        assert!(!model.contains("甲"));
+        assert!(!model.contains("甲乙丙丁戊"));
+        let _ = model.contains_bits("甲");
+    }
+
+    #[test]
     fn real_model_loads_when_present() {
         let path =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/tiger_sentence.lexical.bin");
