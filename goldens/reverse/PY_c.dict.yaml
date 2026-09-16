@@ -1,0 +1,31 @@
+---
+name: PY_c
+version: "0.1"
+sort: by_weight
+columns:
+  - text #字词
+  - code #编码
+  - weight #词频
+...
+中	zhong	1000
+重	zhong	800
+种	zhong	700
+钟	zhong	10
+周	zhou	900
+轴	zhou	5
+在	zai	50
+这	zhe	40
+真	zhen	30
+中国	zhong guo	600
+中心	zhong xin	500
+中欧	zhong ou	400
+中哦	zhong o	300
+中龘	zhong o	250
+兆欧	zhao ou	200
+找欧	zhao ou	200
+找哦	zhao o	100
+中古	zhong gu	25
+中华	zhong hua	20
+重工	zhong gong	15
+中兴	zhong xing	12
+垚	zhong	3
