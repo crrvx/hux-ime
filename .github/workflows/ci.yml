@@ -31,13 +31,21 @@ jobs:
           git -C external/tiger-sentense-rime remote add origin "$REFERENCE_REPO"
           git -C external/tiger-sentense-rime fetch --depth 1 origin "$REFERENCE_COMMIT"
           git -C external/tiger-sentense-rime checkout --detach FETCH_HEAD
-      - name: Regenerate fixture golden
+      - name: Regenerate fixture goldens
         run: |
           lua5.4 tools/gen_ngram_golden.lua \
             --reference external/tiger-sentense-rime \
             --model /tmp/ngram_fixture.bin \
             --out /tmp/ngram_fixture.tsv --mode fixture
-      - name: Compare with committed golden
+          lua5.4 tools/gen_lexicon_golden.lua \
+            --reference external/tiger-sentense-rime \
+            --data "$PWD/goldens/lexicon" --out /tmp/lexicon.tsv --mode present
+          lua5.4 tools/gen_lexicon_golden.lua \
+            --reference external/tiger-sentense-rime \
+            --data /tmp/no-such-dir --out /tmp/lexicon_missing.tsv --mode missing
+      - name: Compare with committed goldens
         run: |
           cmp goldens/ngram_fixture.bin /tmp/ngram_fixture.bin
           gunzip -c goldens/ngram_fixture.tsv.gz | cmp - /tmp/ngram_fixture.tsv
+          gunzip -c goldens/lexicon.tsv.gz | cmp - /tmp/lexicon.tsv
+          gunzip -c goldens/lexicon_missing.tsv.gz | cmp - /tmp/lexicon_missing.tsv
