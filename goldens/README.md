@@ -154,7 +154,8 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 
 - 参照实现：`crrvx/tiger-sentense-rime` @ `f3b3049819b513ba756bbe6c6b6872759c9dc2a9`
 - 键名表来源：librime `src/rime/key_table.cc`（sha256 `2f7c6a8b4f2aa474d700a87bd4bd1baa48a2655cd6ce4d2ba05b768f284d9d78`，librime 1.17.0 固定提交 `33e78140`）；
-  `key_table.rs` 由 `tools/gen_key_table.py` 生成，CI 以同提交重新生成并比对；`key.tsv.gz` 由系统 librime 1.17.0 探针（`tools/key_probe.cpp`）生成。
+  `key_table.rs` 由 `tools/gen_key_table.py` 生成，CI 以同提交重新生成并比对；`key.tsv.gz` 由系统 librime 1.17.0 探针（`tools/key_probe.cpp`）生成，
+  因探针依赖具体 librime 版本，**CI 不重生成该金样**（仅按 Rust 侧重放校验 + 键表生成比对）。
 - 参照 Lua 文件（生成时）：
 
 | 文件 | sha256 |
@@ -194,6 +195,6 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 | `learning.tsv.gz` | `fcf843527a6ab075a6158aeebfd6e3a67c3c8aa206779edf23d6f2c181aa6649` |
 | `decode_learning.tsv.gz` | `41a9894d233c32348e42164d4d29fc698c3037741c141ac0b58404094c9e9354` |
 | `decode_learning_model.tsv.gz` | `91e5fe60a515f1cdd11b815a5da68c7f1883ccc6bb80a9e37e45435cfe72f6e0` |
-| `key.tsv.gz` | `95b8ad78d2254cf2f82e919e044c824219004e6c4fe133ef4d683cd2e7e62f4d` |
+| `key.tsv.gz` | `e939a077cd0825f7b454a4af300ed50fb6a2f2609c71583525d44f2f8fb3fd33` |
 
 CI 以同一参照提交重生成全部 fixture 金样并与入库内容比对（见 `.github/workflows/ci.yml`）。
