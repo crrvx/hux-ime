@@ -81,5 +81,5 @@ lua tools/bench_ngram.lua --reference /path/to/tiger-sentense-rime \
 - 补齐 `LICENSE`（GPL-3.0）与 `README.md`；
 - CI（`.github/workflows/ci.yml`）：Rust fmt/clippy/差分 + 以固定参照提交重生成 fixture 金样比对（溯源校验）；
 - 金样来源与 sha256 记入 `goldens/README.md`（参照提交 `f3b30498`）；
-- `ngram.rs` 边界修复：TCSKNM01 legacy 明确报错、空 unigram 段返回错误而非 panic，并补单测；
+- `ngram.rs` 边界修复：非 TCSKNM02 模型明确报错、空 unigram 段返回错误而非 panic，并补单测；
 - 模型路径探测（`try_load`/`candidate_paths`）随 K3；`external/` 加入 `.gitignore`。

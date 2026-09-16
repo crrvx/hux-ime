@@ -42,9 +42,9 @@ docs/
 | `tiger_sentence.lua`（词库/解码/证据） | ~2600 | `lexicon.rs` ✅ + `decode.rs` ✅（冷路径 + 证据 + 学习接线） | K1 | 数据索引金样 + 解码/证据/学习快照；增量缓存与交互状态机待 K2 |
 | `tiger_sentence_learning.lua` | 435 | `learning.rs` ✅ | K1 | 23k 检查重放 + learning 金样 |
 | `tiger_sentence.lua`（processor/translator/filter/ascii/options） | ~1250 | `key.rs` + `session.rs` + `punct.rs` + `ascii.rs` + `config.rs` | K2 | 键序列金样 |
-| `tiger_sentence_ngram.lua`（TCSKNM01 legacy） | — | `ngram.rs` | K1 | 同上（快照） |
+| `tiger_sentence_ngram.lua`（模型读取） | 550 | `ngram.rs` | K0 | 逐位 logp/observed + cache_status |
 
-> `try_load`/`candidate_paths`（模型路径探测）随 K3 数据路径一并实现；TCSKNM01 legacy 随 K1。
+> `try_load`/`candidate_paths`（模型路径探测）随 K3 数据路径一并实现。
 
 ## 4. 数据与目录
 
