@@ -27,7 +27,7 @@ crates/
     src/lexicon.rs decode.rs learning.rs          # K1 ✅
     src/lexical.rs                                # K1.5（紧凑词先验）
     src/key.rs key_table.rs session.rs interaction.rs   # K2（key 事件/会话/交互）
-  tigerclaw-addon/             # K3：唯一依赖 fcitx5 的 crate
+  tigerclaw-addon/             # K3：C++ 薄壳（shell/）+ Rust FFI（src/）→ core
 data/                          # 随包数据源（词先验位图，CC BY 4.0）
 goldens/                       # 差分金样（fixture 入库；真实模型抽样本地）
 tools/                         # 金样生成/基准（Lua 参照侧、真 librime 探针）
@@ -62,6 +62,9 @@ docs/
 ## 5. fcitx5 集成要点（K3）
 
 - addon 注册（`Category=InputMethod`、`OnDemand`）+ 输入法条目 conf；`InputMethodEngine` 实现。
+- 构建/安装：`cmake -S crates/tigerclaw-addon -B build-addon -DCMAKE_INSTALL_PREFIX=/usr`
+  → `cmake --build` → `cmake --install`；产物 `/usr/lib/fcitx5/libtigerclaw.so` 与
+  `/usr/share/fcitx5/{addon,inputmethod}/tigerclaw.conf`（C++ 薄壳链接 Rust 静态库）。
 - 会话：每个 `InputContext` 一份 core 会话；`reset/activate/deactivate` 对齐。
 - UI 同步：按键后状态快照（preedit/候选/上屏）；preedit 光标做字节→字符换算。
 - 学习：提交点的通知器序列（选择/暂存/提交）已内置在核心提交路径

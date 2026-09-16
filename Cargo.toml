@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/tigerclaw-core"]
+members = ["crates/tigerclaw-core", "crates/tigerclaw-addon"]
 
 [workspace.package]
 version = "0.1.0"
