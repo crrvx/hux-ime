@@ -1,5 +1,6 @@
-//! 交互层（2b-1）：会话状态、锁与键辅助函数，对应参照
-//! `tiger_sentence.lua` 的状态段（`fresh_transient_state`…`ends_with_digit`）。
+//! 交互层（2b）：会话状态、锁、早提交、translator/filters 与学习暂存，对应参照
+//! `tiger_sentence.lua` 的状态段（`fresh_transient_state`…`ends_with_digit`）、
+//! 证据/追踪器、早提交、`translator`、filters 与 `learning_selection` 系列。
 //!
 //! 说明：
 //! - 参照的 `env` 瞬态状态在 Rust 由调用方持有 [`SentenceState`]（每会话一份）；
@@ -10,6 +11,7 @@
 
 use crate::decode::{DecodeLock, Decoder, Evaluated, Evidence};
 use crate::key::KeyEvent;
+use crate::learning::{self, DiffEvent, DiffItem, DiffPathNode, Event};
 use crate::lexicon::Lexicon;
 use crate::session::{Candidate, Context};
 use hashbrown::HashMap;
@@ -961,6 +963,7 @@ pub fn translate(
         return Ok(()); // 反查段由 reverse lookup 处理
     }
     let allow_duplicate_single = set_allow_duplicate_single(context);
+    decoder.set_allow_duplicate_single(allow_duplicate_single);
     let committed_text = state.committed_text.clone();
     let committed_raw = state.committed_raw.clone();
     let buffered = state.buffered_text.clone();
@@ -1114,6 +1117,198 @@ pub fn invalidate_edit_state(
         }
     }
     state.save(context);
+}
+
+// ---------------------------------------------------------------- 学习暂存
+
+/// 参照 `learning_selection` 的选中项：文本 + 路径末节点 raw 长度 + `learning.diff` 路径。
+#[derive(Clone, Debug)]
+pub struct Selected {
+    pub text: String,
+    pub raw_length: usize,
+    pub diff: DiffItem,
+}
+
+impl Selected {
+    /// 参照缓冲兜底 `{text=committed_text, path={raw_length=#committed_raw}}`。
+    /// 参照兜底节点缺 `text_length`（diff 会因比较 nil 报错并被 pcall 吞掉）；
+    /// 此处补成良构节点，行为契约为「缓冲空闲时以已确认前缀为选中项」。
+    pub fn buffered(committed_raw: &str, committed_text: &str) -> Self {
+        let raw_length = committed_raw.len();
+        let text_length = committed_text.len();
+        Self {
+            text: committed_text.to_string(),
+            raw_length,
+            diff: DiffItem {
+                text: committed_text.to_string(),
+                path: vec![DiffPathNode {
+                    raw_length,
+                    text_length,
+                }],
+            },
+        }
+    }
+}
+
+/// 参照 `learning_selection` 的三元返回（`selected`、`first`、`raw`）。
+#[derive(Debug, Default)]
+pub struct LearningSelection {
+    pub selected: Option<Selected>,
+    pub first: Option<Selected>,
+    pub raw: Vec<u8>,
+}
+
+/// 交互层学习暂存（对应参照 `env._tiger_learning` 的暂存字段；存储/索引归 K3）。
+#[derive(Clone, Debug, Default)]
+pub struct LiveLearning {
+    pub mode: String,
+    pub pending: Vec<DiffEvent>,
+    pub baseline: Option<Selected>,
+    pub submitted_raw: Option<String>,
+    pub hide_owned: bool,
+}
+
+/// 参照 `learning_selection`：按当前段选中项从可见候选中取学习目标。
+pub fn learning_selection(
+    decoder: &mut Decoder,
+    context: &Context,
+    state: &SentenceState,
+) -> anyhow::Result<LearningSelection> {
+    let live = live_input(context);
+    let mut raw = state.committed_raw.as_bytes().to_vec();
+    raw.extend_from_slice(&live);
+    let allow_duplicate_single = set_allow_duplicate_single(context);
+    decoder.set_allow_duplicate_single(allow_duplicate_single);
+    let target = context
+        .composition
+        .back()
+        .map(|segment| segment.selected_index)
+        .unwrap_or(0);
+    let lock = state.active_lock().map(|lock| DecodeLock {
+        raw: &lock.raw,
+        text: &lock.text,
+        boundaries: &lock.boundaries,
+    });
+    let raw_text = String::from_utf8_lossy(&raw).into_owned();
+    let decoded = decoder.decode_with_lock(&raw_text, false, &state.committed_text, lock)?;
+    let mut first: Option<Selected> = None;
+    let mut selected: Option<Selected> = None;
+    let mut visible = 0usize;
+    for item in &decoded.items {
+        if implicit_rank_allowed(
+            item,
+            &raw,
+            state.continuation_after_auto_commit,
+            allow_duplicate_single,
+        ) && item.text.starts_with(&state.committed_text)
+            && item.text.len() > state.committed_text.len()
+        {
+            let (raw_length, diff) = decoder.path_summary(item);
+            let candidate = Selected {
+                text: item.text.clone(),
+                raw_length,
+                diff,
+            };
+            if first.is_none() {
+                first = Some(candidate.clone());
+            }
+            if visible == target {
+                selected = Some(candidate);
+            }
+            visible += 1;
+        }
+    }
+    if selected.is_none() && live.is_empty() && !state.buffered_text.is_empty() {
+        selected = Some(Selected::buffered(
+            &state.committed_raw,
+            &state.committed_text,
+        ));
+    }
+    Ok(LearningSelection {
+        selected,
+        first,
+        raw,
+    })
+}
+
+/// 参照 `learning_stage`：把 `before -> selected` 的差异事件并入 `pending`。
+pub fn learning_stage(
+    live: &mut LiveLearning,
+    state: &SentenceState,
+    selected: Option<&Selected>,
+    raw: &[u8],
+    submitted_first: Option<&Selected>,
+    now: f64,
+) {
+    if live.mode.is_empty() {
+        return;
+    }
+    let Some(selected) = selected else {
+        return;
+    };
+    let baseline = if state.tab_pending {
+        live.baseline.as_ref()
+    } else {
+        submitted_first
+    };
+    if let Some(baseline) = baseline {
+        let lock_floor = state.active_lock().map(|lock| lock.raw.len()).unwrap_or(0);
+        let floor = state.committed_raw.len().max(lock_floor);
+        let events = learning::diff(
+            raw,
+            Some(&baseline.diff),
+            Some(&selected.diff),
+            floor,
+            &live.mode,
+            now,
+        );
+        for event in events {
+            if live.pending.len() < 256 {
+                live.pending.push(event);
+            }
+        }
+    }
+    live.baseline = None;
+}
+
+/// 参照 `learning_submit`：筛选 `pending`、**无条件消费**，返回待持久化事件。
+pub fn learning_submit(
+    live: &mut LiveLearning,
+    selected: Option<&Selected>,
+    actual: &str,
+    expected: &str,
+) -> Vec<Event> {
+    let mut accepted = Vec::new();
+    let mut remaining = Vec::new();
+    if let Some(selected) = selected {
+        if !actual.is_empty() && actual == expected && !live.mode.is_empty() {
+            for event in &live.pending {
+                if event.raw_end > selected.raw_length {
+                    remaining.push(event.clone());
+                } else if event.mode == live.mode
+                    && event.text_start >= selected.text.len().saturating_sub(expected.len())
+                    && selected
+                        .text
+                        .get(event.text_start..event.text_end)
+                        .is_some_and(|text| text == event.text.as_str())
+                {
+                    accepted.push(event.clone());
+                }
+            }
+        }
+    }
+    live.pending = remaining;
+    live.baseline = None;
+    accepted
+        .into_iter()
+        .map(|event| Event {
+            time: event.time,
+            mode: event.mode,
+            code: event.code,
+            text: event.text,
+            context: event.context,
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -1570,5 +1765,177 @@ mod tests {
         )
         .expect("translate");
         assert!(out.is_empty());
+    }
+
+    fn lexicon_fixture() -> Decoder {
+        let dir =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
+        let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
+        let supplement = crate::lexicon::Supplement::load_default(Some(&dir));
+        Decoder::new(lexicon, supplement, None)
+    }
+
+    #[test]
+    fn learning_selection_shapes() {
+        let mut decoder = lexicon_fixture();
+        let mut context = Context::new();
+        let state = SentenceState::fresh(1);
+        // 无输入 → 无选中项
+        let selection = learning_selection(&mut decoder, &context, &state).expect("selection");
+        assert!(selection.selected.is_none() && selection.first.is_none());
+        // 有实时输入 → selected == first（目标序号 0），raw = 已确认 + 实时
+        context.push_input(b"abab");
+        let selection = learning_selection(&mut decoder, &context, &state).expect("selection");
+        assert_eq!(selection.raw, b"abab");
+        let selected = selection.selected.clone().expect("selected");
+        assert_eq!(
+            selection.first.as_ref().map(|item| &item.text),
+            Some(&selected.text)
+        );
+        assert!(selected.text.starts_with('交'));
+        assert_eq!(selected.raw_length, 4);
+        assert!(selected.diff.path.len() >= 2);
+        // 缓冲空闲兜底：已确认前缀即选中项（无可见候选）
+        let mut buffered_state = SentenceState::fresh(1);
+        buffered_state.committed_raw = "ab".to_string();
+        buffered_state.committed_text = "交".to_string();
+        buffered_state.buffered_text = "交".to_string();
+        let context = Context::new();
+        let selection =
+            learning_selection(&mut decoder, &context, &buffered_state).expect("selection");
+        assert!(selection.first.is_none());
+        let selected = selection.selected.expect("buffered selected");
+        assert_eq!(selected.text, "交");
+        assert_eq!(selected.raw_length, 2);
+        assert_eq!(selected.diff.path.len(), 1);
+    }
+
+    // 交交/交疒 的手工路径（码表事实：ab → 交 rank1、疒 rank2）。
+    fn diff_item(text: &str) -> DiffItem {
+        DiffItem {
+            text: text.to_string(),
+            path: vec![
+                DiffPathNode {
+                    raw_length: 2,
+                    text_length: 3,
+                },
+                DiffPathNode {
+                    raw_length: 4,
+                    text_length: 6,
+                },
+            ],
+        }
+    }
+
+    fn selected_item(text: &str) -> Selected {
+        Selected {
+            text: text.to_string(),
+            raw_length: 4,
+            diff: diff_item(text),
+        }
+    }
+
+    #[test]
+    fn learning_stage_pends_and_submit_consumes() {
+        let mode = "sentence-v1|rules=|optimal=1500|dup=1";
+        let baseline = selected_item("交交");
+        let selected = selected_item("交疒");
+        let mut state = SentenceState::fresh(1);
+        state.committed_raw = "ab".to_string();
+        state.committed_text = "交".to_string();
+        let mut live = LiveLearning {
+            mode: mode.to_string(),
+            ..LiveLearning::default()
+        };
+        // 非 Tab 流程：baseline 取 submitted_first（首个可见候选）
+        learning_stage(
+            &mut live,
+            &state,
+            Some(&selected),
+            b"abab",
+            Some(&baseline),
+            100.0,
+        );
+        assert_eq!(live.pending.len(), 1);
+        assert_eq!(live.pending[0].text, "疒");
+        assert_eq!(live.pending[0].code, "ab");
+        assert_eq!(live.pending[0].time, 100.0);
+        assert_eq!(live.pending[0].raw_start, 2);
+        assert_eq!(live.pending[0].text_start, 3);
+        assert!(live.baseline.is_none());
+        // 提交匹配 → 接受事件并无条件清空 pending
+        let accepted = learning_submit(&mut live, Some(&selected), "交疒", "交疒");
+        assert_eq!(accepted.len(), 1);
+        assert_eq!(accepted[0].text, "疒");
+        assert_eq!(accepted[0].mode, mode);
+        assert!(live.pending.is_empty());
+        // 提交不匹配 → 事件被丢弃（消费语义），不会重复强化
+        learning_stage(
+            &mut live,
+            &state,
+            Some(&selected),
+            b"abab",
+            Some(&baseline),
+            200.0,
+        );
+        assert_eq!(live.pending.len(), 1);
+        let accepted = learning_submit(&mut live, Some(&selected), "交", "交疒");
+        assert!(accepted.is_empty());
+        assert!(live.pending.is_empty());
+    }
+
+    #[test]
+    fn learning_stage_keeps_tab_baseline_until_used() {
+        let mode = "m";
+        let baseline = selected_item("交交");
+        let selected = selected_item("交疒");
+        let mut state = SentenceState::fresh(1);
+        state.tab_pending = true;
+        let mut live = LiveLearning {
+            mode: mode.to_string(),
+            baseline: Some(baseline.clone()),
+            ..LiveLearning::default()
+        };
+        // Tab 流程使用 live.baseline（而非 submitted_first）
+        learning_stage(
+            &mut live,
+            &state,
+            Some(&selected),
+            b"abab",
+            Some(&selected),
+            0.0,
+        );
+        assert_eq!(live.pending.len(), 1);
+        assert_eq!(live.pending[0].text, "疒");
+        assert!(live.baseline.is_none());
+        // mode 为空 → 不暂存
+        let mut idle = LiveLearning::default();
+        learning_stage(
+            &mut idle,
+            &state,
+            Some(&selected),
+            b"abab",
+            Some(&baseline),
+            0.0,
+        );
+        assert!(idle.pending.is_empty());
+    }
+
+    #[test]
+    fn translate_applies_duplicate_single_option() {
+        let mut decoder = lexicon_fixture();
+        let mut context = Context::new();
+        let state = SentenceState::fresh(1);
+        context.set_option(OPTION_ALLOW_DUPLICATE_SINGLE, false);
+        let mut out = Vec::new();
+        translate(&mut decoder, &context, &state, b"abab", 0, 4, &mut out).expect("translate");
+        let texts: Vec<String> = out.iter().map(|candidate| candidate.text.clone()).collect();
+        assert!(!texts.is_empty());
+        assert!(!texts.iter().any(|text| text.contains('疒')), "{texts:?}");
+        context.set_option(OPTION_ALLOW_DUPLICATE_SINGLE, true);
+        let mut out = Vec::new();
+        translate(&mut decoder, &context, &state, b"abab", 0, 4, &mut out).expect("translate");
+        let texts: Vec<String> = out.iter().map(|candidate| candidate.text.clone()).collect();
+        assert!(texts.iter().any(|text| text.contains('疒')), "{texts:?}");
     }
 }

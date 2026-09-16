@@ -4,7 +4,9 @@
 //! 早提交证据、学习集成、锁播种（`decode_with_lock`）。
 //! 暂不含：增量/锁缓存（性能优化）、模型失败回退（guarded_decode）。
 
-use crate::learning::{LearningIndex, character_count, context as learning_context};
+use crate::learning::{
+    DiffItem, DiffPathNode, LearningIndex, character_count, context as learning_context,
+};
 use crate::lexicon::{CodeEntry, Lexicon, Supplement};
 use crate::ngram::MobileModel;
 use anyhow::Result;
@@ -244,6 +246,32 @@ impl Decoder {
     pub fn clear_learning(&mut self) {
         self.learning = None;
         self.learning_affected = false;
+    }
+
+    /// 参照 `item.path`：返回路径末节点 raw 长度与 `learning.diff` 所需路径
+    /// （`DiffItem.path[0]` 为最外层非根节点）。
+    pub fn path_summary(&self, item: &Evaluated) -> (usize, DiffItem) {
+        let raw_length = self.arena[item.path].raw_length;
+        let mut nodes = Vec::new();
+        let mut current = Some(item.path);
+        while let Some(index) = current {
+            let node = &self.arena[index];
+            if node.raw_length > 0 {
+                nodes.push(DiffPathNode {
+                    raw_length: node.raw_length,
+                    text_length: node.text_length,
+                });
+            }
+            current = node.previous;
+        }
+        nodes.reverse();
+        (
+            raw_length,
+            DiffItem {
+                text: item.text.clone(),
+                path: nodes,
+            },
+        )
     }
 
     /// 参照 `decode(raw_code, false, nil, nil)` 的冷路径。
@@ -1883,6 +1911,26 @@ mod tests {
                 .unwrap()
                 .items
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn path_summary_orders_nodes_outermost_first() {
+        let dir =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
+        let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
+        let supplement = Supplement::load_default(Some(&dir));
+        let mut decoder = Decoder::new(lexicon, supplement, None);
+        let output = decoder.decode_with("abab", false, "").expect("decode");
+        let item = output.items.first().expect("candidates");
+        let (raw_length, diff) = decoder.path_summary(item);
+        assert_eq!(raw_length, 4);
+        assert_eq!(diff.text, item.text);
+        assert!(!diff.path.is_empty());
+        assert!(
+            diff.path
+                .windows(2)
+                .all(|window| window[0].raw_length < window[1].raw_length)
         );
     }
 
