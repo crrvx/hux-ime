@@ -2392,7 +2392,7 @@ mod tests {
             }
         }
 
-        fn press_event(&mut self, key: &KeyEvent, repr: &str) -> ProcessorResult {
+        fn press_event(&mut self, key: &KeyEvent) -> ProcessorResult {
             let mut env = ProcessorEnv {
                 now: 0.0,
                 dot_armed: &mut self.dot_armed,
@@ -2400,7 +2400,6 @@ mod tests {
             };
             processor(
                 key,
-                repr,
                 &mut self.context,
                 &mut self.state,
                 &mut self.decoder,
@@ -2412,7 +2411,7 @@ mod tests {
 
         fn press(&mut self, repr: &str) -> ProcessorResult {
             let key = key_of(repr);
-            self.press_event(&key, repr)
+            self.press_event(&key)
         }
 
         fn push_segment(&mut self, input: &[u8], texts: &[&str]) {
@@ -2440,10 +2439,7 @@ mod tests {
             crate::key::keycode_by_name("a").expect("a"),
             crate::key::K_RELEASE_MASK,
         );
-        assert_eq!(
-            h.press_event(&release, "Release+a"),
-            ProcessorResult::Forward
-        );
+        assert_eq!(h.press_event(&release), ProcessorResult::Forward);
         // 空闲分号/引号交标点处理器
         assert_eq!(h.press("semicolon"), ProcessorResult::Forward);
         assert_eq!(h.press("apostrophe"), ProcessorResult::Forward);
@@ -2476,6 +2472,16 @@ mod tests {
         assert_eq!(h.press("Escape"), ProcessorResult::Consume);
         assert!(h.context.input().is_empty());
         assert!(h.state.committed_raw.is_empty());
+    }
+
+    #[test]
+    fn processor_inserts_at_caret() {
+        let mut h = Harness::new();
+        h.context.set_input(b"ab");
+        h.context.set_caret(1);
+        assert_eq!(h.press("c"), ProcessorResult::Consume);
+        assert_eq!(h.context.input(), b"acb");
+        assert_eq!(h.context.caret(), 2);
     }
 
     #[test]
