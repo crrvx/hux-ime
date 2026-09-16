@@ -16,11 +16,12 @@ mod options;
 use learning_store::LearningStore;
 use options::OptionsStore;
 
+use tigerclaw_core::ascii::{AsciiComposer, AsciiResult};
 use tigerclaw_core::decode::Decoder;
 use tigerclaw_core::host::{self, HostResult};
 use tigerclaw_core::interaction::{
     CompositionBuilder, LearningCommit, LiveLearning, ProcessorEnv, ProcessorResult, SentenceState,
-    buffered_text, confirm_selection, option_defaults, processor, reset_early_evidence,
+    ascii_mode_option_confirm, buffered_text, option_defaults, processor, reset_early_evidence,
     set_allow_duplicate_single, update_notifier,
 };
 use tigerclaw_core::key::{
@@ -121,6 +122,10 @@ pub struct Engine {
     context: Context,
     state: SentenceState,
     live: LiveLearning,
+    /// ascii_composer 等价物（链首：Shift/Caps 切换与 ascii 直通）。
+    ascii: AsciiComposer,
+    /// 单调时钟起点（ascii 敲击判定窗口）。
+    started: std::time::Instant,
     dot_armed: bool,
     min_retained: Option<i64>,
     /// 组合重建（提交或输入变化时重建，保留段状态含菜单高亮）。
@@ -221,6 +226,8 @@ impl Engine {
             context,
             state: SentenceState::fresh(1),
             live,
+            ascii: AsciiComposer::reference(),
+            started: std::time::Instant::now(),
             dot_armed: false,
             min_retained: None,
             builder: CompositionBuilder::default(),
@@ -239,32 +246,51 @@ impl Engine {
     fn key(&mut self, keysym: u32, states: u32, release: bool) -> bool {
         let key = KeyEvent::new(keysym as i32, core_modifiers(states, release));
         let now = wall_clock();
-        let result = {
-            let mut env = ProcessorEnv {
-                now,
-                dot_armed: &mut self.dot_armed,
-                min_retained: self.min_retained,
+        let mut consumed = false;
+        let mut skip_processors = false;
+        // 参照链首：ascii_composer（Accepted 吞键 / Rejected 交宿主并停止链 / Noop 继续）。
+        match self.ascii.process_key(
+            &key,
+            &mut self.context,
+            self.started.elapsed().as_secs_f64(),
+        ) {
+            AsciiResult::Accepted => {
+                consumed = true;
+                skip_processors = true;
+            }
+            AsciiResult::Rejected => {
+                skip_processors = true;
+            }
+            AsciiResult::Noop => {}
+        }
+        if !skip_processors {
+            let result = {
+                let mut env = ProcessorEnv {
+                    now,
+                    dot_armed: &mut self.dot_armed,
+                    min_retained: self.min_retained,
+                };
+                processor(
+                    &key,
+                    &mut self.context,
+                    &mut self.state,
+                    &mut self.decoder,
+                    &mut self.live,
+                    &mut env,
+                )
             };
-            processor(
-                &key,
-                &mut self.context,
-                &mut self.state,
-                &mut self.decoder,
-                &mut self.live,
-                &mut env,
-            )
-        };
-        let consumed = match result {
-            Ok(ProcessorResult::Consume) => true,
-            // 参照链：处理器未消费的键交宿主等价物（selector/navigator/express_editor 等）。
-            Ok(ProcessorResult::Forward) => {
-                host::process_key(&key, &mut self.context) == HostResult::Consumed
-            }
-            Err(error) => {
-                eprintln!("tigerclaw: processor error: {error}");
-                false
-            }
-        };
+            consumed = match result {
+                Ok(ProcessorResult::Consume) => true,
+                // 参照链：处理器未消费的键交宿主等价物（selector/navigator/express_editor 等）。
+                Ok(ProcessorResult::Forward) => {
+                    host::process_key(&key, &mut self.context) == HostResult::Consumed
+                }
+                Err(error) => {
+                    eprintln!("tigerclaw: processor error: {error}");
+                    false
+                }
+            };
+        }
         let mut commits = Vec::new();
         let mut invalidated = false;
         // 事件泵：选项事件可能触发 ascii_mode 确认（进而产生提交），循环至排空（有界）。
@@ -281,20 +307,16 @@ impl Engine {
                     }
                     Event::Option(name) => {
                         // 参照选项通知器：ascii_mode 打开且有缓冲时确认当前选中。
-                        if name == "ascii_mode"
-                            && self.context.get_option("ascii_mode")
-                            && !buffered_text(&self.context).is_empty()
-                        {
-                            confirm_selection(
-                                Some(&mut LearningCommit {
-                                    decoder: &mut self.decoder,
-                                    live: &mut self.live,
-                                    now,
-                                }),
-                                &mut self.context,
-                                &mut self.state,
-                            );
-                        }
+                        ascii_mode_option_confirm(
+                            &name,
+                            &mut self.context,
+                            &mut self.state,
+                            Some(&mut LearningCommit {
+                                decoder: &mut self.decoder,
+                                live: &mut self.live,
+                                now,
+                            }),
+                        );
                         self.observe_option(&name);
                     }
                     Event::Update => {}
@@ -325,6 +347,8 @@ impl Engine {
             eprintln!("tigerclaw: rebuild error: {error}");
         }
         update_notifier(&mut self.context, &mut self.state, &mut self.live);
+        // 参照 `AsciiComposer::OnContextUpdate`：临时 ascii 随组合结束退出。
+        self.ascii.on_context_update(&mut self.context);
         self.push_update();
         consumed
     }
@@ -338,6 +362,7 @@ impl Engine {
         self.live.submitted_raw = None;
         self.dot_armed = false;
         self.builder.reset();
+        self.ascii = AsciiComposer::reference();
         if let Some(options) = self.options.as_mut() {
             options.sync(&mut self.context);
         }
@@ -536,6 +561,14 @@ mod tests {
     static COMMITS: Mutex<Vec<String>> = Mutex::new(Vec::new());
     type UpdateSnapshot = (String, i32, Vec<String>, i32);
     static UPDATES: Mutex<Vec<UpdateSnapshot>> = Mutex::new(Vec::new());
+    /// 回调记录为进程级静态：使用它们的测试串行执行，避免并发串扰。
+    static TEST_SEQUENCE: Mutex<()> = Mutex::new(());
+
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        TEST_SEQUENCE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+    }
 
     unsafe extern "C" fn record_commit(_user: *mut c_void, text: *const c_char) {
         let text = unsafe { std::ffi::CStr::from_ptr(text) };
@@ -601,6 +634,7 @@ mod tests {
 
     #[test]
     fn engine_wires_learning_store() {
+        let _guard = serial();
         let dir = temp_user_dir("learning");
         let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, Some(dir.clone()));
         assert!(engine.live.store_ready, "用户目录可用时学习库应就绪");
@@ -619,6 +653,7 @@ mod tests {
 
     #[test]
     fn types_composition_and_commits_with_fixture() {
+        let _guard = serial();
         COMMITS.lock().unwrap().clear();
         UPDATES.lock().unwrap().clear();
         let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
@@ -639,6 +674,7 @@ mod tests {
 
     #[test]
     fn modifiers_and_release_pass_through() {
+        let _guard = serial();
         let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
         assert!(!engine.key(u32::from(b'a'), FCITX_CTRL, false)); // Ctrl+a 交宿主
         assert!(!engine.key(u32::from(b'a'), 0, true)); // release 交宿主
@@ -647,6 +683,7 @@ mod tests {
 
     #[test]
     fn idle_editing_keys_pass_through() {
+        let _guard = serial();
         let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
         // BackSpace/Delete/Left/Right/Up/Down/Home/End/Page_Up/Page_Down/Escape/Tab
         for keysym in [
@@ -662,6 +699,7 @@ mod tests {
 
     #[test]
     fn composing_editing_keys_update_panel_and_are_consumed() {
+        let _guard = serial();
         COMMITS.lock().unwrap().clear();
         UPDATES.lock().unwrap().clear();
         let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
@@ -704,7 +742,63 @@ mod tests {
     }
 
     #[test]
+    fn ascii_shift_and_caps_switch_direct_input() {
+        let _guard = serial();
+        COMMITS.lock().unwrap().clear();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        assert!(engine.key(u32::from(b'a'), 0, false));
+        assert!(engine.key(u32::from(b'b'), 0, false));
+        // Shift 轻击：按 commit_code 提交原始编码并切到 ascii（不消费）
+        assert!(!engine.key(0xffe1, 0, false), "Shift 按下交宿主");
+        assert!(!engine.key(0xffe1, 0, true), "Shift 抬起触发切换");
+        assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "ab");
+        // ascii 直通：字母不消费、无组合
+        assert!(!engine.key(u32::from(b'a'), 0, false), "ascii 下字母直通");
+        assert!(engine.context.input().is_empty());
+        // 再次轻击切回：字母回到组合
+        assert!(!engine.key(0xffe1, 0, false));
+        assert!(!engine.key(0xffe1, 0, true));
+        assert!(engine.key(u32::from(b'a'), 0, false), "切回后字母被消费");
+        assert_eq!(engine.context.input(), b"a");
+        // CapsLock 敲击：不切换、不清组合（fcitx5 适配：仅跟随系统 caps 状态）
+        engine.reset();
+        assert!(engine.key(u32::from(b'a'), 0, false));
+        assert!(!engine.key(0xffe5, 0, false), "Caps_Lock 交宿主");
+        assert_eq!(engine.context.input(), b"a", "敲击不改状态");
+        assert!(engine.key(u32::from(b'b'), 0, false), "仍为中文输入");
+        assert_eq!(engine.context.input(), b"ab");
+    }
+
+    #[test]
+    fn caps_state_follows_system_and_uppercase_passes_through() {
+        let _guard = serial();
+        COMMITS.lock().unwrap().clear();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        assert!(engine.key(u32::from(b'a'), 0, false));
+        assert!(engine.key(u32::from(b'b'), 0, false));
+        assert_eq!(engine.context.input(), b"ab");
+        // 系统 caps 打开（fcitx5：事件已带新状态）：ascii 跟随系统状态，组合清空
+        assert!(
+            !engine.key(0xffe5, FCITX_CAPS_LOCK, false),
+            "CapsLock 交宿主"
+        );
+        assert!(engine.context.input().is_empty(), "切换清空组合");
+        // 大写字母直通
+        assert!(!engine.key(0x41, FCITX_CAPS_LOCK, false), "大写字母直通");
+        // 关闭 caps：回到中文输入
+        assert!(!engine.key(0xffe5, 0, false));
+        assert!(
+            engine.key(u32::from(b'a'), 0, false),
+            "caps 关后恢复中文输入"
+        );
+        assert_eq!(engine.context.input(), b"a");
+    }
+
+    #[test]
     fn reset_clears_panel() {
+        let _guard = serial();
         UPDATES.lock().unwrap().clear();
         let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
         engine.key(u32::from(b'a'), 0, false);
@@ -717,6 +811,7 @@ mod tests {
 
     #[test]
     fn ffi_roundtrip() {
+        let _guard = serial();
         let engine = unsafe { tigerclaw_engine_new(std::ptr::null()) };
         assert!(!engine.is_null());
         let status = unsafe { tigerclaw_engine_status(engine) };

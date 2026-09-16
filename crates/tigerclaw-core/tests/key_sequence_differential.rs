@@ -17,11 +17,13 @@ use flate2::read::GzDecoder;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
+use tigerclaw_core::ascii::{AsciiComposer, AsciiResult};
 use tigerclaw_core::decode::Decoder;
 use tigerclaw_core::host::{HostResult, process_key as host_process_key};
 use tigerclaw_core::interaction::{
-    CompositionBuilder, LiveLearning, OPTION_EARLY_COMMIT, OPTION_EARLY_COMMIT_TO_PREEDIT,
-    ProcessorEnv, ProcessorResult, SentenceState, processor, update_notifier,
+    CompositionBuilder, LearningCommit, LiveLearning, OPTION_EARLY_COMMIT,
+    OPTION_EARLY_COMMIT_TO_PREEDIT, ProcessorEnv, ProcessorResult, SentenceState,
+    ascii_mode_option_confirm, processor, update_notifier,
 };
 use tigerclaw_core::key::KeyEvent;
 use tigerclaw_core::lexicon::{Lexicon, Supplement};
@@ -123,46 +125,83 @@ fn replay(case: &Case, data_dir: &Path, failures: &mut Vec<String>) {
         context.set_option(name, *value);
     }
     let mut builder = CompositionBuilder::default();
+    let mut ascii = AsciiComposer::reference();
     for (index, step) in case.steps.iter().enumerate() {
         let label = format!("{}[{}] {}", case.name, index, step.repr);
         let key = KeyEvent::from_repr(&step.repr).expect("key repr");
-        let mut env = ProcessorEnv {
-            now: 0.0,
-            dot_armed: &mut dot_armed,
-            min_retained: None,
-        };
-        let result = processor(
-            &key,
-            &mut context,
-            &mut state,
-            &mut decoder,
-            &mut live,
-            &mut env,
-        )
-        .expect("processor");
-        // 参照链：处理器未消费的键交宿主等价物（selector/navigator/express_editor 等）。
-        let consumed = match result {
-            ProcessorResult::Consume => true,
-            ProcessorResult::Forward => {
-                host_process_key(&key, &mut context) == HostResult::Consumed
+        let mut consumed = false;
+        let mut skip_processors = false;
+        // 参照链首：ascii_composer（Accepted 吞键 / Rejected 交宿主并停止链 / Noop 继续）。
+        match ascii.process_key(&key, &mut context, index as f64 * 0.01) {
+            AsciiResult::Accepted => {
+                consumed = true;
+                skip_processors = true;
             }
-        };
-        // 宿主提交链在 `confirm_selection` 内完成（对应 librime 引擎的同步反应）。
-        let events = context.drain_events();
-        let committed: String = events
-            .iter()
-            .filter_map(|event| match event {
-                Event::Commit(text) => Some(text.clone()),
-                _ => None,
-            })
-            .collect();
-        // 组合重建（参照 `ConcreteEngine::Compose`）：分段输入随光标；未变段保留菜单与高亮。
-        let commit_invalidated = events.iter().any(|event| matches!(event, Event::Commit(_)));
+            AsciiResult::Rejected => {
+                skip_processors = true;
+            }
+            AsciiResult::Noop => {}
+        }
+        if !skip_processors {
+            let mut env = ProcessorEnv {
+                now: 0.0,
+                dot_armed: &mut dot_armed,
+                min_retained: None,
+            };
+            let result = processor(
+                &key,
+                &mut context,
+                &mut state,
+                &mut decoder,
+                &mut live,
+                &mut env,
+            )
+            .expect("processor");
+            // 参照链：处理器未消费的键交宿主等价物（selector/navigator/express_editor 等）。
+            consumed = match result {
+                ProcessorResult::Consume => true,
+                ProcessorResult::Forward => {
+                    host_process_key(&key, &mut context) == HostResult::Consumed
+                }
+            };
+        }
+        // 事件泵：提交与选项事件（ascii_mode 确认可能再产生提交）。
+        let mut committed = String::new();
+        let mut commit_invalidated = false;
+        for _ in 0..4 {
+            let events = context.drain_events();
+            if events.is_empty() {
+                break;
+            }
+            for event in events {
+                match event {
+                    Event::Commit(text) => {
+                        commit_invalidated = true;
+                        committed.push_str(&text);
+                    }
+                    Event::Option(name) => {
+                        ascii_mode_option_confirm(
+                            &name,
+                            &mut context,
+                            &mut state,
+                            Some(&mut LearningCommit {
+                                decoder: &mut decoder,
+                                live: &mut live,
+                                now: 0.0,
+                            }),
+                        );
+                    }
+                    Event::Update => {}
+                }
+            }
+        }
         builder
             .rebuild(&mut decoder, &mut context, &state, commit_invalidated)
             .expect("rebuild");
         // 参照 update 通知器（暂存清理 / 缓冲隐藏）。
         update_notifier(&mut context, &mut state, &mut live);
+        // 参照 `AsciiComposer::OnContextUpdate`：临时 ascii 随组合结束退出。
+        ascii.on_context_update(&mut context);
         // 比对。
         let input = context.input().to_vec();
         if consumed != step.consumed {

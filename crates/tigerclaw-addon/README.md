@@ -58,7 +58,10 @@ ln -sf ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
 - K3e：学习库（LevelDB 落库 + 节流刷新 + `_hide_candidate` / `ascii_mode` 确认）；
 - K3f（⑥）：宿主编辑语义——core `host` 模块（librime `key_binder`/`selector`/`navigator`/
   `express_editor` 等价物）+ 组合重建随光标（`CompositionBuilder` 参照 `ConcreteEngine::Compose`）；
-  2c 键序列金样扩到 36 例/200 步（编辑/导航键、缓冲/锁定态）。
+  2c 键序列金样扩到 36 例/200 步（编辑/导航键、缓冲/锁定态）；
+- K3g（⑦a）：ascii_composer——core `ascii` 模块（Shift 轻击/Caps 切换 `ascii_mode`、
+  `commit_code`/`commit_text`/`clear` 样式、ascii 直通、`good_old_caps_lock`）；
+  金样扩到 42 例/237 步（CapsLock 为 fcitx5 适配：不按键切换，不入金样）。
 
 已知限制（后续增量）：每引擎单会话（切换/重置即清空）；候选为展示型（点击不提交）；
-标点/ascii_composer（⑦）、反查（⑧）、状态菜单与打包（⑨）待做。
+标点表（⑦b）、反查（⑧）、状态菜单与打包（⑨）待做。

@@ -1406,6 +1406,23 @@ fn translate_segments(
     Ok(())
 }
 
+/// 参照选项通知器（`live.option_connection`）：`ascii_mode` 打开且有缓冲时确认当前选中
+/// （随后由 `_auto_commit` 提交）。宿主在选项事件处调用。
+pub fn ascii_mode_option_confirm(
+    name: &str,
+    context: &mut Context,
+    state: &mut SentenceState,
+    learning: Option<&mut LearningCommit<'_>>,
+) {
+    if name != "ascii_mode"
+        || !context.get_option("ascii_mode")
+        || buffered_text(context).is_empty()
+    {
+        return;
+    }
+    confirm_selection(learning, context, state);
+}
+
 /// 参照 update 通知器（`live.update_connection`）：非组合清暂存；缓冲且实况为空时隐藏候选。
 /// 提交落库由宿主另行处理。
 pub fn update_notifier(context: &mut Context, state: &mut SentenceState, live: &mut LiveLearning) {

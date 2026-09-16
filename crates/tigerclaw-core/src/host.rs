@@ -415,7 +415,7 @@ fn editor(key_event: &KeyEvent, context: &mut Context) -> HostResult {
             back_to_previous_syllable(context);
             true
         }
-        (0xff0d | 0xff8d, 0) => {
+        (0xff0d, 0) => {
             context.commit();
             true
         }
