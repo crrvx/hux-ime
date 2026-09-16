@@ -10,6 +10,8 @@ use crate::learning::{
 use crate::lexical::{self, LexicalModel};
 use crate::lexicon::{CodeEntry, Lexicon, Supplement};
 use crate::ngram::MobileModel;
+use crate::punct::PunctTable;
+use crate::session::Candidate;
 use anyhow::Result;
 use hashbrown::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -236,6 +238,10 @@ pub struct Decoder {
     ranking_prior: RankingPriorParameters,
     lexical: Option<LexicalModel>,
     lexical_load_error: Option<String>,
+    /// 音查虎索引（懒加载；缺文件时为 `None`）。
+    pinyin: Option<crate::pinyin_lookup::PinyinIndex>,
+    pinyin_checked: bool,
+    pinyin_load_error: Option<String>,
 }
 
 /// 学习接线：索引 + 模式串（参照的 `learning_index`/`learning_mode`）。
@@ -273,7 +279,53 @@ impl Decoder {
             ranking_prior: RankingPriorParameters::default(),
             lexical,
             lexical_load_error,
+            pinyin: None,
+            pinyin_checked: false,
+            pinyin_load_error: None,
         }
+    }
+
+    /// 音查虎索引（首次访问时按数据目录懒加载）。
+    pub fn pinyin_index(&mut self) -> Option<&crate::pinyin_lookup::PinyinIndex> {
+        if !self.pinyin_checked {
+            self.pinyin_checked = true;
+            let (index, error) = crate::pinyin_lookup::load_first(self.lexicon.dirs());
+            self.pinyin = index;
+            self.pinyin_load_error = error;
+        }
+        self.pinyin.as_ref()
+    }
+
+    /// 音查虎索引载入错误（有文件但无效时记录）。
+    pub fn pinyin_load_error(&self) -> Option<&str> {
+        self.pinyin_load_error.as_deref()
+    }
+
+    /// 音查虎候选（含虎码注释过滤；上限 [`crate::pinyin_lookup::CANDIDATE_LIMIT`]）。
+    pub fn pinyin_candidates(
+        &mut self,
+        input: &[u8],
+        prefix: char,
+        start: usize,
+        end: usize,
+        punct: Option<&mut PunctTable>,
+        full_shape: bool,
+    ) -> Vec<Candidate> {
+        self.pinyin_index();
+        let Some(index) = self.pinyin.as_ref() else {
+            return Vec::new();
+        };
+        crate::pinyin_lookup::translate(
+            index,
+            &self.lexicon,
+            input,
+            prefix,
+            start,
+            end,
+            punct,
+            full_shape,
+            crate::pinyin_lookup::CANDIDATE_LIMIT,
+        )
     }
 
     pub fn lexicon(&self) -> &Lexicon {

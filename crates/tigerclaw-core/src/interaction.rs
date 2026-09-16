@@ -13,6 +13,8 @@ use crate::decode::{DecodeLock, Decoder, Evaluated, Evidence};
 use crate::key::KeyEvent;
 use crate::learning::{self, DiffEvent, DiffItem, DiffPathNode, Event};
 use crate::lexicon::Lexicon;
+use crate::pinyin_lookup;
+use crate::punct::PunctTable;
 use crate::session::{Candidate, Composition, Context, Segment};
 use hashbrown::HashMap;
 
@@ -27,6 +29,15 @@ pub const K_PROPOSAL_LEGACY: &str = "tiger_sentence_proposal";
 pub const K_STABLE_LEGACY: &str = "tiger_sentence_stable";
 pub const K_EVIDENCE_RAW_LEGACY: &str = "tiger_sentence_evidence_raw";
 pub const K_OPTIONS_ERROR: &str = "tiger_sentence_options_error";
+/// 音查虎前缀（内部属性：宿主按设置写入；空/缺省 = 音查虎关闭）。
+pub const K_PINYIN_LOOKUP_PREFIX: &str = "_pinyin_lookup_prefix";
+
+/// 音查虎前缀字符（宿主写入 [`K_PINYIN_LOOKUP_PREFIX`]；空/缺省 = 关闭）。
+pub fn pinyin_lookup_prefix(context: &Context) -> Option<char> {
+    context
+        .get_property(K_PINYIN_LOOKUP_PREFIX)
+        .and_then(|value| value.chars().next())
+}
 
 /// 选项名（对应参照 `allow_duplicate_single_option`）。
 pub const OPTION_ALLOW_DUPLICATE_SINGLE: &str = "tiger_sentence_allow_duplicate_single";
@@ -378,6 +389,20 @@ pub fn is_plain_char_key(key_event: &KeyEvent, repr: &str) -> Option<char> {
     None
 }
 
+/// 参照 `Recognizer::ProcessKeyEvent`：可被音查虎模式接受的字符（`ch > 0x20 && ch < 0x80`，
+/// 排除 Ctrl/Alt/Super；空格由 `use_space=false` 排除）。
+fn recognizer_char(key_event: &KeyEvent) -> Option<char> {
+    if key_event.ctrl() || key_event.alt() || key_event.super_modifier() {
+        return None;
+    }
+    let code = key_event.keycode;
+    if code > 0x20 && code < 0x7f {
+        char::from_u32(code as u32)
+    } else {
+        None
+    }
+}
+
 /// 参照 `reset_early_evidence`。
 pub fn reset_early_evidence(state: &mut SentenceState) {
     state.trackers.clear();
@@ -618,6 +643,13 @@ pub fn submit_early(
     }
 }
 
+/// 参照 `auto_commit_matches_visible_top`：置信度（不含末尾排序先验，如词先验/学习重排）
+/// 只允许提交与**显示的首选候选**一致的前缀；无显示候选（`None`）时不做该限制
+/// （保留不完整尾段合并证据的既有策略）。
+pub fn auto_commit_matches_visible_top(visible_top: Option<&str>, text: &str) -> bool {
+    visible_top.is_none_or(|top| top.starts_with(text))
+}
+
 /// 参照 `try_commit_mature_prefix`：证据成熟则提交选中前缀。
 pub fn try_commit_mature_prefix(
     learning: &mut LearningCommit<'_>,
@@ -625,6 +657,7 @@ pub fn try_commit_mature_prefix(
     state: &mut SentenceState,
     evidence_raw: &[u8],
     min_retained: usize,
+    visible_top: Option<&str>,
     dot_armed: &mut bool,
 ) -> bool {
     let retain = if min_retained > 0 {
@@ -645,6 +678,7 @@ pub fn try_commit_mature_prefix(
             && evidence_raw.len() - tracker.raw_length >= retain
             && tracker.text.len() > state.committed_text.len()
             && tracker.text.starts_with(&state.committed_text)
+            && auto_commit_matches_visible_top(visible_top, &tracker.text)
             && selected
                 .map(|current| tracker_better(tracker, current))
                 .unwrap_or(true)
@@ -745,6 +779,12 @@ pub fn try_early_commit(
         return Ok(false);
     }
     let evidence_raw = full_raw;
+    // 置信度有意不含末尾排序先验；它只能授权「与末尾排名后的显示首选一致」的前缀。
+    // nil（无显示候选）保留不完整尾段合并证据的既有策略。
+    let visible_top = decoded
+        .items
+        .first()
+        .map(|candidate| candidate.text.clone());
 
     if state.last_seen_raw == raw {
         return Ok(try_commit_mature_prefix(
@@ -753,6 +793,7 @@ pub fn try_early_commit(
             state,
             &evidence_raw,
             params.min_retained,
+            visible_top.as_deref(),
             dot_armed,
         ));
     }
@@ -765,11 +806,6 @@ pub fn try_early_commit(
     }
     state.last_seen_raw = raw;
 
-    let accepted_top = decoded
-        .items
-        .first()
-        .filter(|candidate| candidate.supplement_score > 0.0)
-        .map(|candidate| candidate.text.clone());
     let merged_incomplete_tail = decoded.evidence.merged_incomplete_tail;
     let mut qualifying: HashMap<String, &crate::decode::PrefixEvidence> = HashMap::new();
     for prefix in &decoded.evidence.prefixes {
@@ -779,10 +815,7 @@ pub fn try_early_commit(
             && prefix.raw_length > state.committed_raw.len()
             && prefix.text.len() > state.committed_text.len()
             && prefix.text.starts_with(&state.committed_text)
-            && accepted_top
-                .as_deref()
-                .map(|top| top.starts_with(&prefix.text))
-                .unwrap_or(true)
+            && auto_commit_matches_visible_top(visible_top.as_deref(), &prefix.text)
             && (merged_incomplete_tail
                 || decoded
                     .visible_prefixes
@@ -805,6 +838,7 @@ pub fn try_early_commit(
             state,
             &evidence_raw,
             params.min_retained,
+            visible_top.as_deref(),
             dot_armed,
         ));
     }
@@ -837,6 +871,7 @@ pub fn try_early_commit(
         state,
         &evidence_raw,
         params.min_retained,
+        visible_top.as_deref(),
         dot_armed,
     ))
 }
@@ -1048,8 +1083,8 @@ pub fn trim_segmented_after_raw_prefix(segmented: &str, raw_prefix_length: usize
     }
 }
 
-/// 反查注释（上游反查件；当前 pin 的 main 未含，K3 反查接线用）：单字显示全部编码（源序），词组逐字 `字:码组`。
-pub fn reverse_comment(lexicon: &Lexicon, text: &str) -> Option<String> {
+/// 码注释（上游音查虎件；当前 pin 的 main 未含，K3 音查虎接线用）：单字显示全部编码（源序），词组逐字 `字:码组`。
+pub fn code_comment(lexicon: &Lexicon, text: &str) -> Option<String> {
     if !lexicon.built {
         return None;
     }
@@ -1087,7 +1122,7 @@ pub fn translate(
     out: &mut Vec<Candidate>,
 ) -> anyhow::Result<()> {
     if input.first() == Some(&b'`') {
-        return Ok(()); // 反查段由 reverse lookup 处理（反查件不在当前 pin；K3 接线后启用）
+        return Ok(()); // 音查虎段（` 前缀）由 `pinyin_lookup` 模块处理，本翻译不产出候选
     }
     let allow_duplicate_single = set_allow_duplicate_single(context);
     decoder.set_allow_duplicate_single(allow_duplicate_single);
@@ -1206,6 +1241,7 @@ impl CompositionBuilder {
         context: &mut Context,
         state: &SentenceState,
         invalidated: bool,
+        punct: Option<&mut PunctTable>,
     ) -> anyhow::Result<bool> {
         let input = context.input().to_vec();
         let caret = context.caret().min(input.len());
@@ -1221,8 +1257,9 @@ impl CompositionBuilder {
             self.apply_reset(context, &input);
         }
         let seg_input = self.built_input.clone();
-        calculate_segmentation(&mut context.composition, &seg_input, caret);
-        translate_segments(decoder, context, state, &seg_input)?;
+        let prefix = pinyin_lookup_prefix(context);
+        calculate_segmentation(&mut context.composition, &seg_input, caret, prefix);
+        translate_segments(decoder, context, state, &seg_input, punct)?;
         Ok(true)
     }
 
@@ -1261,9 +1298,16 @@ fn common_prefix_length(left: &[u8], right: &[u8]) -> usize {
 }
 
 /// 参照 `ConcreteEngine::CalculateSegmentation`。
-fn calculate_segmentation(composition: &mut Composition, input: &[u8], caret: usize) {
+fn calculate_segmentation(
+    composition: &mut Composition,
+    input: &[u8],
+    caret: usize,
+    prefix: Option<char>,
+) {
     while !composition.has_finished_segmentation(input) {
         let start = composition.current_start_position();
+        // 参照 segmentors 顺序：matcher → abc_segmentor → punct_segmentor → fallback。
+        matcher(composition, input, prefix);
         abc_segmentor(composition, input);
         fallback_segmentor(composition, input);
         if start == composition.current_end_position() {
@@ -1285,6 +1329,39 @@ fn calculate_segmentation(composition: &mut Composition, input: &[u8], caret: us
     {
         composition.forward();
     }
+}
+
+/// 参照 `Matcher::Proceed`（`recognizer/patterns`）：活跃输入匹配
+/// `^<前缀>[a-z]*'?$` 时，由本段独占剩余输入（标签 [`pinyin_lookup::PINYIN_LOOKUP_TAG`]）。
+fn matcher(composition: &mut Composition, input: &[u8], prefix: Option<char>) {
+    let Some(prefix) = prefix else {
+        return;
+    };
+    let start = composition.confirmed_position();
+    let Some(active) = input.get(start..) else {
+        return;
+    };
+    if !pinyin_lookup::matches_pattern(active, prefix) {
+        return;
+    }
+    // 参照 `GetMatch`：命中段必须覆盖到输入末尾；起点为当前末尾或既有段起点。
+    if start != composition.current_end_position()
+        && !composition
+            .segments
+            .iter()
+            .any(|segment| segment.start == start)
+    {
+        return;
+    }
+    while composition.current_start_position() > start {
+        composition.segments.pop();
+    }
+    add_segment(
+        composition,
+        start,
+        input.len(),
+        &[pinyin_lookup::PINYIN_LOOKUP_TAG],
+    );
 }
 
 /// 参照 `AbcSegmentor::Proceed`：从当前位置取最长合法拼写段。
@@ -1374,7 +1451,10 @@ fn translate_segments(
     context: &mut Context,
     state: &SentenceState,
     input: &[u8],
+    mut punct: Option<&mut PunctTable>,
 ) -> anyhow::Result<()> {
+    let prefix = pinyin_lookup_prefix(context);
+    let full_shape = context.get_option("full_shape");
     for index in 0..context.composition.segments.len() {
         let segment = &context.composition.segments[index];
         if segment.translated || segment.selected {
@@ -1386,6 +1466,32 @@ fn translate_segments(
             segment.translated = true;
             segment.candidates.clear();
             segment.selected_index = 0;
+            continue;
+        }
+        if segment.has_tag(pinyin_lookup::PINYIN_LOOKUP_TAG) {
+            let slice = input[start..end].to_vec();
+            let candidates = match prefix {
+                Some(prefix) if pinyin_lookup::matches_pattern(&slice, prefix) => decoder
+                    .pinyin_candidates(
+                        &slice,
+                        prefix,
+                        start,
+                        end,
+                        punct.as_deref_mut(),
+                        full_shape,
+                    ),
+                _ => Vec::new(),
+            };
+            let segment = &mut context.composition.segments[index];
+            segment.translated = true;
+            segment.selected_index = 0;
+            segment.prompt = if prefix.is_some_and(|prefix| slice.first() == Some(&(prefix as u8)))
+            {
+                pinyin_lookup::PINYIN_LOOKUP_TIPS.to_string()
+            } else {
+                String::new()
+            };
+            segment.candidates = candidates;
             continue;
         }
         let mut candidates = Vec::new();
@@ -1435,13 +1541,13 @@ pub fn buffer_filter(candidates: &[Candidate], buffered: bool) -> Vec<Candidate>
         .collect()
 }
 
-/// 反查过滤器（同上；K3 反查接线用）：反查段候选写入虎码注释。
-pub fn reverse_comment_filter(candidates: &mut [Candidate], active: bool, lexicon: &Lexicon) {
+/// 码注释过滤器（同上；K3 音查虎接线用）：音查虎段候选写入虎码注释。
+pub fn code_comment_filter(candidates: &mut [Candidate], active: bool, lexicon: &Lexicon) {
     if !active {
         return;
     }
     for candidate in candidates {
-        if let Some(comment) = reverse_comment(lexicon, &candidate.text) {
+        if let Some(comment) = code_comment(lexicon, &candidate.text) {
             candidate.comment = comment;
         }
     }
@@ -1895,6 +2001,18 @@ pub fn processor(
 ) -> anyhow::Result<ProcessorResult> {
     if key_event.release() {
         return Ok(ProcessorResult::Forward);
+    }
+    // 参照处理器链 `recognizer`（位于 speller/标点之前）：音查虎段输入的按键在此被接受，
+    // 否则后续处理器会把它当普通字符/标点处理。
+    if let Some(prefix) = pinyin_lookup_prefix(context)
+        && let Some(ch) = recognizer_char(key_event)
+    {
+        let mut next = context.input().to_vec();
+        next.push(ch as u8);
+        if pinyin_lookup::matches_pattern(&next, prefix) {
+            context.push_input(&[ch as u8]);
+            return Ok(ProcessorResult::Consume);
+        }
     }
     let repr = key_event.repr();
     let repr = repr.as_str();
@@ -2680,21 +2798,30 @@ mod tests {
         assert_eq!(trim_segmented_after_raw_prefix("ab", 0), "ab");
     }
 
+    /// 参照上游 `test_tiger_sentence_incremental.lua` 新增断言：
+    /// 排名先验（词先验/学习重排）不得授权与显示首选不一致的自动提交前缀。
     #[test]
-    fn reverse_comment_formats() {
+    fn auto_commit_matches_visible_top_guard() {
+        assert!(!auto_commit_matches_visible_top(Some("鼎丁"), "甲乙"));
+        assert!(auto_commit_matches_visible_top(Some("鼎丁"), "鼎"));
+        assert!(auto_commit_matches_visible_top(None, "甲乙"));
+    }
+
+    #[test]
+    fn code_comment_formats() {
         let dir =
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
         let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
         // 来：codes.txt 源序 a, ah, ahb
         assert_eq!(
-            reverse_comment(&lexicon, "来").expect("来 has codes"),
+            code_comment(&lexicon, "来").expect("来 has codes"),
             " a / ah / ahb"
         );
-        let multi = reverse_comment(&lexicon, "来X").expect("multi");
+        let multi = code_comment(&lexicon, "来X").expect("multi");
         assert!(multi.starts_with(" 来:"), "{multi}");
         assert!(multi.contains(" X:?"), "{multi}");
-        assert!(reverse_comment(&lexicon, "X").is_none());
-        assert!(reverse_comment(&lexicon, "").is_none());
+        assert!(code_comment(&lexicon, "X").is_none());
+        assert!(code_comment(&lexicon, "").is_none());
     }
 
     #[test]
@@ -2755,7 +2882,7 @@ mod tests {
         let mut decoder = Decoder::new(lexicon, supplement, None);
         let context = Context::new();
         let state = SentenceState::fresh(1);
-        // 反查段（` 前缀）由 reverse lookup 处理，translator 不产出候选。
+        // 音查虎段（` 前缀）由 `pinyin_lookup` 模块处理，translator 不产出候选。
         let mut out = Vec::new();
         translate(&mut decoder, &context, &state, b"`ni", 0, 3, &mut out).expect("translate");
         assert!(out.is_empty());
@@ -2940,7 +3067,7 @@ mod tests {
         context.push_input(b"ab");
         assert!(
             builder
-                .rebuild(&mut decoder, &mut context, &state, false)
+                .rebuild(&mut decoder, &mut context, &state, false, None)
                 .expect("rebuild")
         );
         let segment = context.composition.back().expect("segment");
@@ -2959,14 +3086,14 @@ mod tests {
             .expect("segment")
             .selected_index = 1;
         builder
-            .rebuild(&mut decoder, &mut context, &state, false)
+            .rebuild(&mut decoder, &mut context, &state, false, None)
             .expect("rebuild");
         let segment = context.composition.back().expect("segment");
         assert!(segment.has_tag("marker"));
         assert_eq!(segment.selected_index, 1);
         // 提交失效：段重建（标记与高亮消失）
         builder
-            .rebuild(&mut decoder, &mut context, &state, true)
+            .rebuild(&mut decoder, &mut context, &state, true, None)
             .expect("rebuild");
         let segment = context.composition.back().expect("segment");
         assert!(!segment.has_tag("marker"));
@@ -2974,19 +3101,19 @@ mod tests {
         // 输入变化：重建（更长的段覆盖旧段）
         context.push_input(b"c");
         builder
-            .rebuild(&mut decoder, &mut context, &state, false)
+            .rebuild(&mut decoder, &mut context, &state, false, None)
             .expect("rebuild");
         assert_eq!(context.composition.back().expect("segment").end, 3);
         // 光标移入输入中间：组合只覆盖 caret 前缀（参照 Compose 语义）
         context.set_caret(1);
         builder
-            .rebuild(&mut decoder, &mut context, &state, false)
+            .rebuild(&mut decoder, &mut context, &state, false, None)
             .expect("rebuild");
         assert_eq!(context.composition.back().expect("segment").end, 1);
         // 光标移回末尾：重新覆盖完整输入
         context.set_caret(3);
         builder
-            .rebuild(&mut decoder, &mut context, &state, false)
+            .rebuild(&mut decoder, &mut context, &state, false, None)
             .expect("rebuild");
         assert_eq!(context.composition.back().expect("segment").end, 3);
     }
@@ -3157,6 +3284,7 @@ mod tests {
                 start: 0,
                 end: input.len(),
                 tags: Vec::new(),
+                prompt: String::new(),
                 selected_index: 0,
                 candidates,
                 selected: false,
@@ -3254,6 +3382,7 @@ mod tests {
             start: 0,
             end: 2,
             tags: Vec::new(),
+            prompt: String::new(),
             selected_index: 0,
             candidates: vec![Candidate::new("sentence", 0, 2, "甲", "")],
             selected: false,
@@ -3277,6 +3406,7 @@ mod tests {
             start: 0,
             end: 2,
             tags: Vec::new(),
+            prompt: String::new(),
             selected_index: 0,
             candidates: vec![Candidate::new("sentence_buffered", 0, 2, "c", "")],
             selected: false,

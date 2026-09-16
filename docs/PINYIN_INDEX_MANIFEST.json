@@ -1,0 +1,22 @@
+{
+  "counts": {
+    "code_groups": 600869,
+    "entries": 820817,
+    "spelling_keys": 449,
+    "syllables": 426
+  },
+  "format": "TCSRV01",
+  "generator": "tools/gen_pinyin_index.py",
+  "output": {
+    "bytes": 8054016,
+    "file": "data/tiger_sentence.pinyin.bin.gz",
+    "sha256": "18a0931a323ad58e1b13e610ec93183297118033d571ae303678613a217dad2a"
+  },
+  "source": {
+    "commit": "898579f833df53f1dec5639d56e685751a8a7f71",
+    "file": "PY_c.dict.yaml",
+    "repo": "tiger-sentense-rime",
+    "sha256": "f57fb9e9d1a2ca0e30370e5620c126b2c840ca0d4d371e2d86380c9227d3641a",
+    "sort": "by_weight"
+  }
+}

@@ -1,0 +1,26 @@
+# 音查虎键序列用例（⑧-1；tab 分隔：名称、选项、按键序列）。
+# 参照：tiger_sentence.schema.yaml 的 recognizer/reverse_lookup 模式与 PY_c 音查虎段。
+bare-prefix		`
+bare-prefix-commit		` space
+fullshape-prefix	full_shape=1	`
+abbrev-1		` z
+abbrev-2		` z h
+abbrev-3		` z h o
+exact-zhong		` z h o n g
+exact-zhou		` z h o u
+nav-zhong		` z h o n g Down
+nav-zhong-up		` z h o n g Down Down Up
+commit-zhong		` z h o n g space
+escape-zhong		` z h o n g Escape
+backspace-zhong		` z h o n g BackSpace BackSpace BackSpace BackSpace BackSpace
+abbrev-zhongg		` z h o n g g
+abbrev-zhonggu		` z h o n g g u
+abbrev-zhongguo		` z h o n g g u o
+commit-zho		` z h o space
+digit-zhong		` z h o n g 1
+mixed-after-letter		a ` z h
+upper-after-prefix		` Z
+nav-page-equal		` z = =
+nav-page-minus		` z = = -
+nav-page-keys		` z Page_Down Page_Down Page_Up
+nav-page-zho		` z h o = -

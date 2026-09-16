@@ -15,12 +15,18 @@
 #include <fcitx-utils/key.h>
 #include <fcitx-utils/log.h>
 
+#include <algorithm>
 #include <memory>
 #include <string>
 
 #include "tigerclaw_abi.h"
 
 namespace {
+
+/// 候选页大小（与 core `host::DEFAULT_PAGE_SIZE` 一致；参照 schema `menu/page_size: 5`）。
+/// 注意：`CommonCandidateList::setCursorIndex` 是**页内索引**（越界抛异常），
+/// 绝对索引必须用 `setGlobalCursorIndex` + `setPage`。
+constexpr int kCandidatePageSize = 5;
 
 /// 配置 schema：fcitx5-configtool 依据它自动生成设置页（fcitx://config/addon/tigerclaw）。
 FCITX_CONFIGURATION(
@@ -32,7 +38,11 @@ FCITX_CONFIGURATION(
     fcitx::Option<bool> asciiPunct{this, "AsciiPunct", "ASCII 标点直通（不做中文标点映射）", false};
     fcitx::Option<bool> tabLearning{this, "TabLearning", "Tab 选字写入学习库", true};
     fcitx::Option<int, fcitx::IntConstrain> highFreqLimit{
-        this, "HighFreqLimit", "高频字过滤上限（重启生效）", 1500, fcitx::IntConstrain(0, 20000)};);
+        this, "HighFreqLimit", "高频字过滤上限（重启生效）", 1500, fcitx::IntConstrain(0, 20000)};
+    fcitx::Option<fcitx::Key> pinyinLookupKey{this, "PinyinLookupKey", "音查虎：用拼音查虎码（点击录制按键）", fcitx::Key(FcitxKey_grave)};
+    fcitx::Option<fcitx::Key> characterLookupKey{this, "CharacterLookupKey", "字查音+虎：查光标处汉字的拼音与虎码（点击录制按键）", fcitx::Key(FcitxKey_grave, fcitx::KeyState::Shift)};
+    fcitx::Option<fcitx::Key> quickInputKey{this, "QuickInputKey", "快速输入（点击录制按键）", fcitx::Key(FcitxKey_semicolon)};
+    fcitx::Option<bool> panelPreedit{this, "PanelPreedit", "候选窗口显示预编辑文本（默认关闭；客户端内联预编辑仍随 fcitx5 全局设置）", false};);
 
 class TigerclawEngine : public fcitx::InputMethodEngine {
 public:
@@ -130,8 +140,12 @@ private:
             static_cast<size_t>(cursor) <= preeditString.size()) {
             preeditText.setCursor(cursor);
         }
-        context_->inputPanel().setPreedit(preeditText);
-        context_->inputPanel().setClientPreedit(preeditText);
+        // 候选窗口预编辑：可配置关闭（关闭后仅候选与注释）。
+        context_->inputPanel().setPreedit(config_.panelPreedit.value() ? preeditText
+                                                                      : fcitx::Text());
+        // 客户端内联预编辑：跟随 fcitx5 全局预编辑设置（`isPreeditEnabled`）。
+        context_->inputPanel().setClientPreedit(context_->isPreeditEnabled() ? preeditText
+                                                                            : fcitx::Text());
         context_->updatePreedit();
 
         auto candidateList = std::make_unique<fcitx::CommonCandidateList>();
@@ -144,8 +158,16 @@ private:
             candidateList->append<fcitx::DisplayOnlyCandidateWord>(
                 fcitx::Text(text), fcitx::Text(comment));
         }
+        // 翻页交由 fcitx5 面板（页大小与引擎一致）：绝对索引 → 全局光标 + 所在页。
+        candidateList->setPageSize(kCandidatePageSize);
         if (count > 0) {
-            candidateList->setCursorIndex(selected);
+            // 防御：越界不设光标索引。
+            const int index = std::min(std::max(selected, 0), count - 1);
+            candidateList->setGlobalCursorIndex(index);
+            const int page = index / candidateList->pageSize();
+            if (page < candidateList->totalPages()) {
+                candidateList->setPage(page);
+            }
         }
         context_->inputPanel().setCandidateList(std::move(candidateList));
         context_->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
@@ -164,6 +186,13 @@ private:
         options.ascii_punct = config_.asciiPunct.value() ? 1 : 0;
         options.tab_learning = config_.tabLearning.value() ? 1 : 0;
         options.high_freq_limit = config_.highFreqLimit.value();
+        const auto fillKey = [](int32_t *sym, int32_t *states, const fcitx::Key &key) {
+            *sym = static_cast<int32_t>(key.sym());
+            *states = static_cast<int32_t>(key.states().toInteger());
+        };
+        fillKey(&options.pinyin_lookup_sym, &options.pinyin_lookup_states, config_.pinyinLookupKey.value());
+        fillKey(&options.character_lookup_sym, &options.character_lookup_states, config_.characterLookupKey.value());
+        fillKey(&options.quick_input_sym, &options.quick_input_states, config_.quickInputKey.value());
         if (tigerclaw_engine_apply_settings(engine_, &options) == 0) {
             FCITX_WARN() << "tigerclaw: apply settings failed";
         }

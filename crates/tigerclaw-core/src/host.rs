@@ -96,14 +96,28 @@ fn punctuator(
 
 // ---------------------------------------------------------------- key_binder
 
-/// 参照 `KeyBinder::ProcessKeyEvent`：`when: has_menu` 且非 `ascii_mode`。
+/// 参照 `KeyBinder::ProcessKeyEvent`：schema 的四条绑定（Tab/Shift+Tab/minus/equal）；
+/// 条件为 `has_menu`（非 ascii_mode）与 `paging`（末段带 `paging` 标签，由 selector 翻页时置位）。
 fn key_binder(key_event: &KeyEvent, context: &mut Context) -> HostResult {
-    if context.get_option("ascii_mode") || !context.has_menu() {
+    if context.get_option("ascii_mode") {
         return HostResult::Forward;
     }
-    match key_event.repr().as_str() {
+    let repr = key_event.repr();
+    if repr.as_str() == "minus"
+        && context
+            .composition
+            .back()
+            .is_some_and(|segment| segment.has_tag("paging"))
+    {
+        return selector_action(SelectorAction::PreviousPage, context);
+    }
+    if !context.has_menu() {
+        return HostResult::Forward;
+    }
+    match repr.as_str() {
         "Tab" => selector_action(SelectorAction::NextCandidate, context),
         "Shift+Tab" => selector_action(SelectorAction::PreviousCandidate, context),
+        "equal" => selector_action(SelectorAction::NextPage, context),
         _ => HostResult::Forward,
     }
 }

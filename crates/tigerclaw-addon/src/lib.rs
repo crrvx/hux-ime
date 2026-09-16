@@ -21,8 +21,9 @@ use settings::Settings;
 use tigerclaw_core::decode::Decoder;
 use tigerclaw_core::host::{self, HostResult};
 use tigerclaw_core::interaction::{
-    CompositionBuilder, LiveLearning, ProcessorEnv, ProcessorResult, SentenceState, buffered_text,
-    processor, reset_early_evidence, set_allow_duplicate_single, update_notifier,
+    CompositionBuilder, K_PINYIN_LOOKUP_PREFIX, LiveLearning, ProcessorEnv, ProcessorResult,
+    SentenceState, buffered_text, processor, reset_early_evidence, set_allow_duplicate_single,
+    update_notifier,
 };
 use tigerclaw_core::key::{
     K_ALT_MASK, K_CONTROL_MASK, K_LOCK_MASK, K_RELEASE_MASK, K_SHIFT_MASK, K_SUPER_MASK, KeyEvent,
@@ -105,6 +106,22 @@ fn default_model_path(dirs: &[PathBuf]) -> Option<PathBuf> {
     candidate_paths(dirs, MODEL_PATH)
         .into_iter()
         .find(|path| path.is_file())
+}
+
+/// 音查虎前缀字符：可打印 ASCII 且无修饰键时启用（参照 `recognizer` 的 `ch > 0x20 && ch < 0x80`）。
+fn pinyin_lookup_prefix_char(key_repr: &str) -> Option<char> {
+    let event = KeyEvent::from_repr(key_repr)?;
+    let code = event.keycode;
+    if (0x20..0x7f).contains(&code)
+        && !event.shift()
+        && !event.ctrl()
+        && !event.alt()
+        && !event.super_modifier()
+    {
+        char::from_u32(code as u32)
+    } else {
+        None
+    }
 }
 
 /// 参照 `os.time()`：整秒墙钟（学习事件时间戳）。
@@ -229,7 +246,7 @@ impl Engine {
             store_ready: learning.store_ready(),
             ..LiveLearning::default()
         };
-        let engine = Self {
+        let mut engine = Self {
             host,
             decoder,
             context,
@@ -247,6 +264,7 @@ impl Engine {
             applied_learning: None,
             status: CString::new(notes.join("; ")).unwrap_or_default(),
         };
+        engine.sync_pinyin_lookup_prefix();
         engine.push_update();
         engine
     }
@@ -323,6 +341,7 @@ impl Engine {
             &mut self.context,
             &self.state,
             invalidated,
+            self.punct.as_mut(),
         ) {
             eprintln!("tigerclaw: rebuild error: {error}");
         }
@@ -362,7 +381,23 @@ impl Engine {
                 self.context.set_option(name, value);
             }
         }
+        self.sync_pinyin_lookup_prefix();
         self.refresh_learning_mode();
+    }
+
+    /// 音查虎前缀（`_pinyin_lookup_prefix`）：配置键为可打印 ASCII 且无修饰时启用，否则关闭音查虎。
+    fn sync_pinyin_lookup_prefix(&mut self) {
+        let value = pinyin_lookup_prefix_char(&self.settings.pinyin_lookup_key)
+            .map(|ch| ch.to_string())
+            .unwrap_or_default();
+        if self
+            .context
+            .get_property(K_PINYIN_LOOKUP_PREFIX)
+            .unwrap_or("")
+            != value
+        {
+            self.context.set_property(K_PINYIN_LOOKUP_PREFIX, &value);
+        }
     }
 
     /// 按当前规则/选项刷新学习 mode（变化时强制重设 decoder 学习）。
@@ -415,18 +450,45 @@ impl Engine {
         };
         let buffered = buffered_text(&self.context);
         let live = String::from_utf8_lossy(self.context.live_input()).into_owned();
-        let mut preedit = String::new();
-        preedit.push_str(&buffered);
-        if !buffered.is_empty() && !live.is_empty() {
-            preedit.push(' ');
-        }
-        preedit.push_str(&live);
-        let prefix_length = if buffered.is_empty() {
-            0
+        // 参照 librime `Composition::GetPreedit` + 参照 Lua 的候选 preedit：
+        // 高亮候选的 preedit（「按词分码」，含缓冲前缀与音查虎前缀）优先；
+        // 光标不在实况输入末尾时回退「缓冲 + 实况输入」，保证字节光标与字符串一致。
+        let highlighted = self
+            .context
+            .composition
+            .back()
+            .and_then(|segment| segment.selected_candidate())
+            .map(|candidate| candidate.preedit.clone())
+            .unwrap_or_default();
+        let caret_at_end = self.context.live_caret() >= self.context.live_input().len();
+        let (mut preedit, cursor) = if !highlighted.is_empty() && caret_at_end {
+            let cursor = highlighted.len();
+            (highlighted, cursor)
         } else {
-            buffered.len() + usize::from(!live.is_empty())
+            let mut text = String::new();
+            text.push_str(&buffered);
+            if !buffered.is_empty() && !live.is_empty() {
+                text.push(' ');
+            }
+            let prefix_length = if buffered.is_empty() {
+                0
+            } else {
+                buffered.len() + usize::from(!live.is_empty())
+            };
+            text.push_str(&live);
+            let cursor = (prefix_length + self.context.live_caret()).min(text.len());
+            (text, cursor)
         };
-        let cursor = (prefix_length + self.context.live_caret()).min(preedit.len());
+        // 参照 `Composition::GetPreedit`：段提示插在光标处（如音查虎段的「〔拼音〕」）。
+        let prompt = self
+            .context
+            .composition
+            .back()
+            .map(|segment| segment.prompt.clone())
+            .unwrap_or_default();
+        if !prompt.is_empty() {
+            preedit.insert_str(cursor.min(preedit.len()), &prompt);
+        }
         let (mut texts, mut comments, selected) = match self.context.composition.back() {
             Some(segment) => (
                 segment
@@ -535,6 +597,12 @@ pub struct TigerclawOptions {
     pub ascii_punct: i32,
     pub tab_learning: i32,
     pub high_freq_limit: i32,
+    pub pinyin_lookup_sym: i32,
+    pub pinyin_lookup_states: i32,
+    pub character_lookup_sym: i32,
+    pub character_lookup_states: i32,
+    pub quick_input_sym: i32,
+    pub quick_input_states: i32,
 }
 
 /// 应用外部配置（fcitx5 配置界面 → C++ 壳 → 本入口）。返回 1 = 已应用。
@@ -552,6 +620,13 @@ pub unsafe extern "C" fn tigerclaw_engine_apply_settings(
     let Some(options) = (unsafe { options.as_ref() }) else {
         return 0;
     };
+    // fcitx5 按键（keysym + 状态位）→ rime 键名；未设（sym=0）为空串。
+    let key_repr = |sym: i32, states: i32| -> String {
+        if sym == 0 {
+            return String::new();
+        }
+        KeyEvent::new(sym, core_modifiers(states as u32, false)).repr()
+    };
     engine.apply_settings(Settings {
         early_commit: options.early_commit != 0,
         early_commit_to_preedit: options.early_commit_to_preedit != 0,
@@ -560,6 +635,12 @@ pub unsafe extern "C" fn tigerclaw_engine_apply_settings(
         ascii_punct: options.ascii_punct != 0,
         tab_learning: options.tab_learning != 0,
         high_freq_limit: options.high_freq_limit.max(0) as usize,
+        pinyin_lookup_key: key_repr(options.pinyin_lookup_sym, options.pinyin_lookup_states),
+        character_lookup_key: key_repr(
+            options.character_lookup_sym,
+            options.character_lookup_states,
+        ),
+        quick_input_key: key_repr(options.quick_input_sym, options.quick_input_states),
     });
     1
 }
@@ -771,6 +852,7 @@ mod tests {
 
     #[test]
     fn punctuation_commits_via_table() {
+        let _guard = serial();
         COMMITS.lock().unwrap().clear();
         UPDATES.lock().unwrap().clear();
         let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
@@ -794,6 +876,7 @@ mod tests {
 
     #[test]
     fn uppercase_letter_commits_composition_first() {
+        let _guard = serial();
         // 用户报告：组合中收到大写字母时，应先上屏当前候选（而非把字母插到预编辑之前）。
         COMMITS.lock().unwrap().clear();
         UPDATES.lock().unwrap().clear();
@@ -841,6 +924,12 @@ mod tests {
             ascii_punct: 1,
             tab_learning: 0,
             high_freq_limit: 800,
+            pinyin_lookup_sym: 0x60,
+            pinyin_lookup_states: 0,
+            character_lookup_sym: 0x60,
+            character_lookup_states: 1,
+            quick_input_sym: 0x3b,
+            quick_input_states: 0,
         };
         let applied = unsafe { tigerclaw_engine_apply_settings(engine, &options) };
         assert_eq!(applied, 1);
@@ -853,6 +942,9 @@ mod tests {
             "tab_learning=0 → 学习 mode 为空"
         );
         assert_eq!(state.settings.high_freq_limit, 800);
+        assert_eq!(state.settings.pinyin_lookup_key, "grave");
+        assert_eq!(state.settings.character_lookup_key, "Shift+grave");
+        assert_eq!(state.settings.quick_input_key, "semicolon");
         unsafe { tigerclaw_engine_free(engine) };
     }
 
@@ -867,6 +959,61 @@ mod tests {
         assert!(preedit.is_empty());
         assert!(candidates.is_empty());
         assert!(engine.context.input().is_empty());
+    }
+
+    /// 音查虎（⑧-1）端到端：设置 → 前缀识别 → 候选/注释 → 预编辑提示 → 空格上屏。
+    #[test]
+    fn pinyin_lookup_end_to_end() {
+        let _guard = serial();
+        COMMITS.lock().unwrap().clear();
+        UPDATES.lock().unwrap().clear();
+        let dirs = vec![
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/pinyin_lookup"),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+        ];
+        let mut engine = Engine::new_with_dirs(host(), dirs, None, None);
+        assert!(engine.key(u32::from(b'`'), 0, false), "音查虎前缀应被消费");
+        for code in *b"zho" {
+            assert!(engine.key(u32::from(code), 0, false), "音查虎输入应被消费");
+        }
+        let (preedit, _, candidates, _) = last_update();
+        assert_eq!(preedit, "`zho〔拼音〕");
+        assert_eq!(
+            candidates,
+            vec!["中哦", "中龘", "中欧", "找哦", "兆欧", "找欧"]
+        );
+        assert!(engine.key(0x20, 0, false));
+        assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "中哦");
+        // 音查虎预编辑「按音节分码」：全拼音节之间插空格。
+        engine.reset();
+        for code in *b"`zhongguo" {
+            assert!(engine.key(u32::from(code), 0, false));
+        }
+        let (preedit, _, candidates, _) = last_update();
+        assert_eq!(candidates.first().map(String::as_str), Some("中国"));
+        assert_eq!(preedit, "`zhong guo〔拼音〕");
+    }
+
+    /// 预编辑「按词分码」：使用高亮候选的 preedit（`ab cd`），单字不分段（`ab`）。
+    #[test]
+    fn preedit_uses_segmented_codes() {
+        let _guard = serial();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        for code in *b"abcd" {
+            engine.key(u32::from(code), 0, false);
+        }
+        let (preedit, cursor, candidates, _) = last_update();
+        assert!(!candidates.is_empty(), "abcd 应有候选");
+        assert_eq!(preedit, "ab cd");
+        assert_eq!(cursor, 5);
+        engine.reset();
+        for code in *b"ab" {
+            engine.key(u32::from(code), 0, false);
+        }
+        let (preedit, cursor, _, _) = last_update();
+        assert_eq!(preedit, "ab");
+        assert_eq!(cursor, 2);
     }
 
     #[test]

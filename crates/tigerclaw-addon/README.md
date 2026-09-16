@@ -36,6 +36,26 @@ ln -sf ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
   ~/.local/share/fcitx5/tigerclaw/models/
 ```
 
+## 配置（fcitx5-configtool 生成的设置页）
+
+| 项 | 默认 | 说明 |
+|---|---|---|
+| PinyinLookupKey | `` ` `` | **音查虎**（用拼音查虎码）触发键（按键录入；已随 ⑧-1 接线）|
+| CharacterLookupKey | Shift+`` ` `` | **字查音+虎**（查光标处汉字的拼音与虎码）触发键（按键录入；行为随 ⑧-2）|
+| QuickInputKey | `;` | 快速输入触发键（按键录入；行为随 ⑨ 数据接线）|
+| EarlyCommit / EarlyCommitToPreedit / AllowDuplicateSingle | 开/关/开 | 早提交三项 |
+| FullShape / AsciiPunct | 关/关 | 全角标点 / ASCII 标点直通 |
+| TabLearning | 开 | Tab 选字写学习库 |
+| HighFreqLimit | 1500 | 高频字过滤上限（重启生效）|
+| PanelPreedit | 关 | 候选窗口显示预编辑文本（默认关；仅宿主显示项，不经引擎；客户端内联预编辑仍随全局）|
+
+未显式提供的项一律**跟随 fcitx5 全局设置**：候选列表方向不设布局提示（由全局
+「候选词排列方向」决定）、客户端内联预编辑跟随全局「预编辑」开关（`isPreeditEnabled()`）。
+
+预编辑串**按词/音节分码**：正常段用解码的 `segmented`（如输入 `shks` → 预编辑 `sh ks`，
+输入 `shk` → `shk`）；音查虎段按音节切分（`` `zhongguo `` → `` `zhong guo ``，缩写/未完成
+音节与后续合并，如 `` `zho `` → `` `zho ``）。
+
 ## 选项
 
 `~/.local/share/fcitx5/tigerclaw/tiger_sentence.options.yaml` 为主存储（YAML，未知键保留）；
@@ -66,8 +86,8 @@ ln -sf ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
 
 - K3i（配置，Rust 半）：`settings.rs` 配置模型（早提交三项/full_shape/ascii_punct/
   tab_learning/high_freq_limit；合并顺序 options.yaml > 设置 > 内建缺省）；
-  图形配置：C++ `TigerclawConfig` schema（7 项）+ `getConfig/setConfig`，
+  图形配置：C++ `TigerclawConfig` schema（11 项：引擎 10 + 宿主显示 1）+ `getConfig/setConfig`，
   fcitx5-configtool 自动生成设置页（`~/.config/fcitx5/conf/tigerclaw.conf`），经 ABI `tigerclaw_engine_apply_settings` 生效。
 
 已知限制（后续增量）：每引擎单会话（切换/重置即清空）；候选为展示型（点击不提交）；
-反查（⑧）、状态菜单与打包（⑨）待做。
+音查虎（⑧-1）已接线；字查音+虎（⑧-2）、状态菜单与打包（⑨）待做。

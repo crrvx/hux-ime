@@ -50,6 +50,8 @@ pub struct Segment {
     pub start: usize,
     pub end: usize,
     pub tags: Vec<String>,
+    /// 段提示（参照 `Segment::prompt`；如音查虎段的「〔拼音〕」）。
+    pub prompt: String,
     pub selected_index: usize,
     pub candidates: Vec<Candidate>,
     /// 是否已被确认（librime `Segment::status >= kSelected`）。
@@ -450,6 +452,7 @@ mod tests {
             start: 0,
             end: 2,
             tags: vec!["abc".to_string()],
+            prompt: String::new(),
             ..Segment::default()
         };
         for text in texts {
@@ -591,6 +594,7 @@ mod tests {
             candidates: vec![Candidate::new("sentence", 0, 2, "甲", "")],
             selected_index: 0,
             tags: Vec::new(),
+            prompt: String::new(),
             translated: true,
         });
         context.composition.segments.push(Segment {

@@ -23,8 +23,10 @@
 | `decode_learning.tsv.gz` | 解码接入学习（无模型） | 1987 行 |
 | `decode_learning_model.tsv.gz` | 解码接入学习（fixture 模型，抽样） | 358 行 |
 | `key.tsv.gz` | 键名/键事件金样（librime 探针）：`name`/`repr`/`parse`/`modifier` | 5132 行 |
-| `key_sequence.tsv.gz` | 键序列金样（真 librime 探针，2c）：逐步 `consumed`/输入/光标/提交/候选/高亮 | 55 例 / 236 步（含空码自动上屏、编辑/导航键、标点表、大写字母 DirectCommit；英文模式已移除） |
+| `key_sequence.tsv.gz` | 键序列金样（真 librime 探针，2c）：逐步 `consumed`/输入/光标/提交/候选/注释/高亮 | 55 例 / 236 步（含空码自动上屏、编辑/导航键、标点表、大写字母 DirectCommit；英文模式已移除） |
 | `key_sequence/` | 键序列夹具（合成码表 + `symbols.yaml`＝参照 pin 同文件；探针与 Rust 重放共用；发布默认见 `data/symbols.yaml`） | 2 文件 |
+| `pinyin_lookup.tsv.gz` | 音查虎金样（⑧-1，真 librime 探针，pin `898579f`）：逐步 `consumed`/输入/光标/提交/候选/注释/高亮 | 24 例 / 127 步（裸前缀标点候选、缩写/全拼剪枝、多音节词、翻页 `=`/`-`/Page 键、导航/退格/Escape/上屏） |
+| `pinyin_lookup/` | 音查虎夹具（小 `PY_c.dict.yaml` + 合成码表 + `symbols.yaml` + `gen_pinyin_index.py` 生成的 `tiger_sentence.pinyin.bin`；探针与 Rust 重放共用） | 4 文件 + 生成物 |
 | `lexical.tsv.gz` | 词先验金样（TCSLEX01 读取/Bloom/打分；真实位图 + 码表语料） | 753 行 |
 | `local/`（不入库） | 真实模型抽样金样（224 MB 模型） | 62,777 条 |
 
@@ -68,6 +70,11 @@ name <keyval> <name|->
 repr <keyval> <modifier> <repr>
 parse <repr> <ok|bad> <keycode> <modifier> <repr>
 modifier <index> <name|->
+
+# key_sequence / pinyin_lookup（真 librime 探针）
+case <case> <options>
+step <case> <index> <repr> <consumed 0/1> <input> <caret> <commit> <preedit>
+     <page> <highlight> <candidate_count> <candidates> <comments>
 ```
 
 ## 重新生成
@@ -133,7 +140,7 @@ lua tools/gen_decode_golden.lua --reference "$REF" \
 gzip -9 -n -c /tmp/decode_learning.tsv > goldens/decode_learning.tsv.gz
 gzip -9 -n -c /tmp/decode_learning_model.tsv > goldens/decode_learning_model.tsv.gz
 
-# learning（入库）
+# learning（入库；生成器对 corpora/chains/diffcases 按名排序迭代，输出与 Lua 进程哈希序无关）
 lua tools/gen_learning_golden.lua --reference "$REF" --out /tmp/learning.tsv
 gzip -9 -n -c /tmp/learning.tsv > goldens/learning.tsv.gz
 
@@ -144,6 +151,9 @@ bash tools/gen_key_golden.sh /path/to/librime
 bash tools/gen_key_sequence_golden.sh
 # 探索新用例时可用 CASES 指向临时用例文件（输出默认仍写入入库文件，建议显式给输出路径）：
 # CASES=/tmp/explore.txt bash tools/gen_key_sequence_golden.sh /tmp/explore.tsv.gz
+
+# pinyin_lookup（入库；同上；夹具索引由生成器顺带重建）
+bash tools/gen_pinyin_lookup_golden.sh
 
 # lexical（入库；需要参照的词先验模块与 data/ 位图；CI 已接入）
 lua tools/gen_lexical_golden.lua --reference "$REF" --model data/tiger_sentence.lexical.bin --out /tmp/lexical.tsv
@@ -168,20 +178,28 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 
 ## 来源与校验和
 
-- 参照实现：`crrvx/tiger-sentense-rime` @ `35a10b93c96af7b008fc9a05d01a8381018dc3d3`（main）
+- 参照实现（主干）：`crrvx/tiger-sentense-rime` @ `8b615235c17c858e1eca8f1a41fbc74e202f8bbe`（main；含自动上屏对齐修复）
+- 参照实现（音查虎）：`feat/reverse-lookup` @ `898579f833df53f1dec5639d56e685751a8a7f71` **与上述 main 本地合并**
+  （上游未合并该分支；生成器 `tools/gen_pinyin_lookup_golden.sh` 自建临时 worktree 合并，`PIN`/`BASE` 可覆盖）
 - 键名表来源：librime `src/rime/key_table.cc`（sha256 `2f7c6a8b4f2aa474d700a87bd4bd1baa48a2655cd6ce4d2ba05b768f284d9d78`，librime 1.17.0 固定提交 `33e78140`）；
   `key_table.rs` 由 `tools/gen_key_table.py` 生成，CI 以同提交重新生成并比对；`key.tsv.gz` 由系统 librime 1.17.0 探针（`tools/key_probe.cpp`）生成，
   因探针依赖具体 librime 版本，**CI 不重生成该金样**（仅按 Rust 侧重放校验 + 键表生成比对）。
 - 键序列金样：`key_sequence.tsv.gz` 由 `tools/rime_sequence_probe.cpp` 在隔离环境中驱动**真 librime + librime-lua** 与 pin 版 Lua 核心生成
   （探针头部记录参照提交、`tiger_sentence.lua` sha256 与 librime 版本）；同样**不在 CI 重生成**。数据夹具 `key_sequence/` 入库并与 Rust 重放共用。
-- 词先验金样：`lexical.tsv.gz` 由 `tools/gen_lexical_golden.lua` 以参照 main `35a10b9`（词先验模块随该提交进入 main）
+- 音查虎金样（⑧-1）：`pinyin_lookup.tsv.gz` 由同一探针在参照态「`feat/reverse-lookup` @ `898579f` + main @ `8b615235`（本地合并）」上生成
+  （探针头部记录该提交、`tiger_sentence.lua` 与 `PY_c.dict.yaml` 的 sha256）；夹具 `pinyin_lookup/` 入库并与
+  Rust 重放共用，其中 `tiger_sentence.pinyin.bin` 由 `tools/gen_pinyin_index.py` 生成（CI 重生成比对）。
+  真实 `PY_c` 索引（`data/tiger_sentence.pinyin.bin.gz`）的校验和与来源见
+  [`../docs/PINYIN_INDEX_MANIFEST.json`](../docs/PINYIN_INDEX_MANIFEST.json)，本地复验：
+  `python3 tools/gen_pinyin_index.py --source <ref>/PY_c.dict.yaml --out data/tiger_sentence.pinyin.bin.gz --check --manifest docs/PINYIN_INDEX_MANIFEST.json`。
+- 词先验金样：`lexical.tsv.gz` 由 `tools/gen_lexical_golden.lua` 以参照 main `8b615235`（词先验模块自 `35a10b9` 起提供）
   与入库位图 `data/tiger_sentence.lexical.bin` 生成（CC BY 4.0，见 `docs/LEXICAL_PRIOR_ATTRIBUTION.md`）；
   语料取自参照码表与确定性采样，重放不依赖外部词表与网络；**已在 CI 中再生成比对**。
 - 参照仓库文件（生成时；`lua/`、`tools/` 均为参照仓库路径）：
 
 | 文件 | sha256 |
 |---|---|
-| `lua/tiger_sentence.lua` | `fe11e07da98bd3223136a89e283d80e7c01b90c14c0ccba6cbcfd283927778b7` |
+| `lua/tiger_sentence.lua` | `dfcc687ea28d1174a99c37aaf1d3de7d0dc69332a8aaf4bfac3079506efa2047` |
 | `lua/tiger_sentence_learning.lua` | `335e530bb42b8fa2c432b900a0e5ff9d7509e74a8674d099456083088b36f85e` |
 | `lua/tiger_sentence_ngram.lua` | `a3d59e09fbff3b09b0ac79ef66b7560210b5503c2af38eb5615069d6465cb361` |
 | `lua/tiger_sentence_cache.lua` | `8ebd209588fb62d0bf888e752b95d8588ecbcdef2af40f8b009865fc3c41da7c` |
@@ -196,6 +214,10 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 | `tiger_sentence.full_code_whitelist.txt` | `05d257457898146262f7dbf264103c70a8cf2ee92d188b770ad13232b293f566` |
 | `tiger_sentence.supplement.txt` | `f229832bc92f89d87e4b1d29984aec53e627cedb23dda5074ad03cbcabdf0900` |
 | `key_sequence/symbols.yaml` | `9b45c4a2f179d42585d5cc1439bfbcb5a585520f0de3ce83232180990e5cc9b1` |
+| `pinyin_lookup/symbols.yaml`（与上同一文件） | `9b45c4a2f179d42585d5cc1439bfbcb5a585520f0de3ce83232180990e5cc9b1` |
+| `pinyin_lookup/PY_c.dict.yaml`（夹具） | `96e8b34adebf5ea478a1cbce2c9ee8f333c264690abfffadd2d31642a30360ee` |
+| `pinyin_lookup/tiger_sentence.codes.txt`（夹具） | `4e2b7596db232e12ad997613155e067354652288270b55852d3fd2f16ab18709` |
+| `pinyin_lookup/tiger_sentence.pinyin.bin`（生成物） | `29e16c6aa40654ca829197996584912efc9f76f61bcd9370c1341999b69f3e4d` |
 
 - `lexicon_variants/` 与 `lexicon_codes_only/` 为人工构造的解析边界数据（无上游来源）。
 
@@ -214,11 +236,12 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 | `decode_rank_first.tsv.gz` | `6df164942f6de48c48921118e32dff9297d4fdc381524baebeca6562a98c0ae0` |
 | `decode_evidence.tsv.gz` | `357e782cb2e1528e76e9e066fbc2c0dacaf7b77ea8b21f71659769cad4d938ec` |
 | `decode_evidence_model.tsv.gz` | `96289e3254228c9dec63806db2ab738da2d3cb11bd0adad2e0eb672210a3e766` |
-| `learning.tsv.gz` | `4595835175b21320eefa030d1827831e5afcfaa657aa3b177e0390e5f57a89d8` |
+| `learning.tsv.gz` | `d8eff6b6b67cf8803f9965e71d171ec9fb88f3e7e3bc61368c11e19ac70358cf` |
 | `decode_learning.tsv.gz` | `41a9894d233c32348e42164d4d29fc698c3037741c141ac0b58404094c9e9354` |
 | `decode_learning_model.tsv.gz` | `8a64e6e3d28b101a57075b03233e62c4b03e8c4a8d2a979399a91a00e2d8e806` |
 | `key.tsv.gz` | `e939a077cd0825f7b454a4af300ed50fb6a2f2609c71583525d44f2f8fb3fd33` |
-| `key_sequence.tsv.gz` | `e69bb78b91a3d5c2e3bafc1d326d68ae4e6fa99082725c17ff461fe3f5676551` |
+| `key_sequence.tsv.gz` | `84a9145076252454a1f0af30b55ce9cd9e721062df97336248ff1eff8790d6fc` |
+| `pinyin_lookup.tsv.gz` | `1dab89c503b00b00a278723ea890526ffb9b3deaa0efaa895fd3cf7ae19ebd85` |
 | `lexical.tsv.gz` | `5b559b2504e21c69b4f702678a96d2947abfe7d7c26adcd2b25c3d4de761e0c3` |
 
 CI 以同一参照提交重生成全部 fixture 金样并与入库内容比对（见 `.github/workflows/ci.yml`）。
