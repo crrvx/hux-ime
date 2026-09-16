@@ -1,6 +1,6 @@
-//! 交互层（2b）：会话状态、锁、早提交、translator/filters 与学习暂存，对应参照
-//! `tiger_sentence.lua` 的状态段（`fresh_transient_state`…`ends_with_digit`）、
-//! 证据/追踪器、早提交、`translator`、filters 与 `learning_selection` 系列。
+//! 交互层（2b）：会话状态、锁、早提交、translator/filters 与学习（暂存 + 提交通知器），
+//! 对应参照 `tiger_sentence.lua` 的状态段（`fresh_transient_state`…`ends_with_digit`）、
+//! 证据/追踪器、早提交、`translator`、filters 与 `learning_selection`/`learning_commit` 系列。
 //!
 //! 说明：
 //! - 参照的 `env` 瞬态状态在 Rust 由调用方持有 [`SentenceState`]（每会话一份）；
@@ -672,14 +672,13 @@ pub fn try_commit_mature_prefix(
     reset_early_evidence(state);
     state.save(context);
     if let Some(commit_text) = submit_early(context, state, &commit) {
-        let accepted = learning.commit_with_learning(
+        learning.commit_with_learning(
             context,
             state,
             &commit_text,
             &selected_text,
             selected_raw_length,
         );
-        learning.live.submitted.extend(accepted);
     }
     // 参照：自动上屏文本以数字结尾时重新武装待发小数点（缓冲分支亦然）。
     if ends_with_digit(&commit) {
@@ -958,14 +957,13 @@ pub fn try_empty_code_commit(
     // 参照顺序：submit_early → 数字结尾时重武装小数点 → save_sentence_state → restore
     // （缓冲分支在 submit_early 内部已保存一次，幂等）。
     if let Some(commit_text) = submit_early(context, state, &commit) {
-        let accepted = learning.commit_with_learning(
+        learning.commit_with_learning(
             context,
             state,
             &commit_text,
             &pending.candidate_text,
             pending.base_raw_length,
         );
-        learning.live.submitted.extend(accepted);
     }
     if ends_with_digit(&commit) {
         *dot_armed = true;
@@ -1020,8 +1018,7 @@ pub fn confirm_selection(
     if let Some(learning) = learning {
         let LearningCommit { decoder, live, now } = learning;
         let commit_text = context.get_commit_text();
-        let accepted = learning_commit(decoder, context, state, live, *now, &commit_text);
-        live.submitted.extend(accepted);
+        learning_commit(decoder, context, state, live, *now, &commit_text);
     }
     context.commit();
 }
@@ -1302,7 +1299,8 @@ pub struct LiveLearning {
     pub hide_owned: bool,
     /// 参照 `learned.store and learned.store.db`（K3 学习库就绪后置位）。
     pub store_ready: bool,
-    /// 核心内部提交（自动上屏等）接受的学习事件，等待宿主持久化（K3 排空后落库）。
+    /// 提交点接受的学习事件（`learning::Event`）：核心提交路径与宿主
+    /// [`learning_commit`] 调用均入此队列，等待宿主持久化（K3 排空后落库）。
     pub submitted: Vec<Event>,
 }
 
@@ -1461,8 +1459,11 @@ pub fn learning_submit(
 
 // ---------------------------------------------------------------- 选项同步
 
-/// 参照 commit 通知器（`prepare_learning` 注册）：选中/暂存/提交一并完成。
-/// `commit_text` 为该次提交文本；返回待持久化的学习事件。
+/// 参照 commit 通知器（`prepare_learning` 注册）：选中/暂存/提交一并完成，
+/// 接受的事件推入 [`LiveLearning::submitted`]（宿主持久化队列）。
+///
+/// 注意：核心提交路径（`confirm_selection`、自动上屏的 [`LearningCommit`]）已内置调用；
+/// 宿主只应在其**自发**的提交（如候选点击）时调用，否则同一 raw 会重复暂存。
 pub fn learning_commit(
     decoder: &mut Decoder,
     context: &Context,
@@ -1470,16 +1471,16 @@ pub fn learning_commit(
     live: &mut LiveLearning,
     now: f64,
     commit_text: &str,
-) -> Vec<Event> {
+) {
     if live.mode.is_empty() || !live.store_ready {
-        return Vec::new();
+        return;
     }
     let Ok(selection) = learning_selection(decoder, context, state) else {
-        return Vec::new();
+        return;
     };
     let raw_text = String::from_utf8_lossy(&selection.raw).into_owned();
     if raw_text.is_empty() || live.submitted_raw.as_deref() == Some(raw_text.as_str()) {
-        return Vec::new();
+        return;
     }
     live.submitted_raw = Some(raw_text);
     learning_stage(
@@ -1501,7 +1502,8 @@ pub fn learning_commit(
         }
         None => String::new(),
     };
-    learning_submit(live, selection.selected.as_ref(), commit_text, &expected)
+    let accepted = learning_submit(live, selection.selected.as_ref(), commit_text, &expected);
+    live.submitted.extend(accepted);
 }
 
 /// 提交点的学习提交参数：解码器 + 学习暂存 + 注入时间
@@ -1514,8 +1516,8 @@ pub struct LearningCommit<'a> {
 
 impl LearningCommit<'_> {
     /// 参照 `submit_early` 的非缓冲分支：提交文本，随后同步执行
-    /// ①提交通知器（`learning_commit`）与 ②按自动上屏选中项的学习提交；
-    /// 返回待宿主持久化的事件。
+    /// ①提交通知器（[`learning_commit`]）与 ②按自动上屏选中项的学习提交；
+    /// 接受的事件进入 [`LiveLearning::submitted`]。
     pub fn commit_with_learning(
         &mut self,
         context: &mut Context,
@@ -1523,9 +1525,9 @@ impl LearningCommit<'_> {
         commit_text: &str,
         selected_text: &str,
         selected_raw_length: usize,
-    ) -> Vec<Event> {
+    ) {
         context_commit(context, commit_text);
-        let mut accepted = learning_commit(
+        learning_commit(
             self.decoder,
             context,
             state,
@@ -1533,6 +1535,8 @@ impl LearningCommit<'_> {
             self.now,
             commit_text,
         );
+        // 参照：`{text=selected.text, path={raw_length=selected.raw_length}}`
+        // （该形态只用于提交筛选，不参与 diff）。
         let auto = Selected {
             text: selected_text.to_string(),
             raw_length: selected_raw_length,
@@ -1542,13 +1546,8 @@ impl LearningCommit<'_> {
             },
             buffered_fallback: false,
         };
-        accepted.extend(learning_submit(
-            self.live,
-            Some(&auto),
-            commit_text,
-            commit_text,
-        ));
-        accepted
+        let accepted = learning_submit(self.live, Some(&auto), commit_text, commit_text);
+        self.live.submitted.extend(accepted);
     }
 }
 
@@ -1839,7 +1838,7 @@ pub fn processor(
                     state.save(context);
                     if let Some(commit) = commit {
                         if let Some(text) = submit_early(context, state, &commit) {
-                            let accepted = LearningCommit {
+                            LearningCommit {
                                 decoder: &mut *decoder,
                                 live: &mut *live,
                                 now: env.now,
@@ -1851,7 +1850,6 @@ pub fn processor(
                                 &candidate.text,
                                 candidate.raw_length,
                             );
-                            live.submitted.extend(accepted);
                         }
                     }
                     let mut restored = full_before[state.committed_raw.len()..].to_vec();
@@ -2730,19 +2728,20 @@ mod tests {
         let mut context = Context::new();
         let state = SentenceState::fresh(1);
         let mut live = LiveLearning::default();
-        // 未就绪 / 无 mode：不产出、不记录
-        assert!(learning_commit(&mut decoder, &context, &state, &mut live, 0.0, "x").is_empty());
+        // 未就绪 / 无 mode：不记录
+        learning_commit(&mut decoder, &context, &state, &mut live, 0.0, "x");
+        assert!(live.submitted_raw.is_none());
         live.mode = "m".to_string();
         live.store_ready = true;
         // raw 为空：不记录
-        assert!(learning_commit(&mut decoder, &context, &state, &mut live, 0.0, "x").is_empty());
+        learning_commit(&mut decoder, &context, &state, &mut live, 0.0, "x");
         assert!(live.submitted_raw.is_none());
         // raw 非空：记录 submitted_raw；同 raw 再次调用被去重
         context.push_input(b"ab");
         learning_commit(&mut decoder, &context, &state, &mut live, 0.0, "x");
         assert_eq!(live.submitted_raw.as_deref(), Some("ab"));
         let pending_before = live.pending.len();
-        assert!(learning_commit(&mut decoder, &context, &state, &mut live, 0.0, "x").is_empty());
+        learning_commit(&mut decoder, &context, &state, &mut live, 0.0, "x");
         assert_eq!(live.pending.len(), pending_before);
     }
 
@@ -2767,20 +2766,16 @@ mod tests {
             }],
             ..LiveLearning::default()
         };
-        let accepted = LearningCommit {
+        LearningCommit {
             decoder: &mut decoder,
             live: &mut live,
             now: 0.0,
         }
         .commit_with_learning(&mut context, &mut state, "疒", "交疒", 2);
-        assert_eq!(accepted.len(), 1);
-        assert_eq!(accepted[0].text, "疒");
-        assert!(live.pending.is_empty());
-        // 自动上屏的提交文本与选中项（同步提交，供宿主持久化）
-        let queued: Vec<String> = accepted.iter().map(|event| event.text.clone()).collect();
-        live.submitted.extend(accepted);
-        assert_eq!(queued, vec!["疒".to_string()]);
+        // 接受的事件进入持久化队列；pending 被消费
         assert_eq!(live.submitted.len(), 1);
+        assert_eq!(live.submitted[0].text, "疒");
+        assert!(live.pending.is_empty());
     }
 
     #[test]
