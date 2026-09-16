@@ -3,8 +3,8 @@
 // 用法：rime_sequence_probe <user_dir> <shared_dir> <lua_plugin> <cases_file>
 // 输出：每步一行 TSV：
 //   step <case> <index> <repr> <consumed 0/1> <input> <caret> <commit> <preedit>
-//        <page> <highlight> <candidate_count> <candidates>
-// 文本字段为 UTF-8 字节十六进制，空串为 "-"，候选以 "," 分隔、空为 "-"。
+//        <page> <highlight> <candidate_count> <candidates> <comments>
+// 文本字段为 UTF-8 字节十六进制，空串为 "-"，候选/注释以 "," 分隔、空为 "-"。
 // repr 支持：单字符可打印键、键名（space/comma/period/.../BackSpace/Left/...）、
 // `<修饰>+<键名>`（Shift/Lock/Control/Alt/Super/Hyper/Meta/Release，如 Release+Shift_L）。
 // 与 tools/gen_key_sequence_golden.sh 配套；探针依赖系统 librime/librime-lua，
@@ -135,17 +135,25 @@ void snapshot(const std::string& name,
     const std::string preedit =
         context.composition.preedit ? context.composition.preedit : "";
     std::ostringstream candidates;
+    std::ostringstream comments;
     const int count = context.menu.num_candidates;
     for (int i = 0; i < count; ++i) {
-        if (i) candidates << ',';
+        if (i) {
+            candidates << ',';
+            comments << ',';
+        }
         candidates << hex(context.menu.candidates[i].text ? context.menu.candidates[i].text : "");
+        comments << hex(context.menu.candidates[i].comment ? context.menu.candidates[i].comment : "");
     }
-    if (count == 0) candidates << "-";
+    if (count == 0) {
+        candidates << "-";
+        comments << "-";
+    }
     std::cout << "step\t" << name << '\t' << index << '\t' << repr << '\t' << (consumed ? 1 : 0)
               << '\t' << hex(input()) << '\t' << api->get_caret_pos(session) << '\t'
               << hex(commit) << '\t' << hex(preedit) << '\t' << context.menu.page_no << '\t'
               << context.menu.highlighted_candidate_index << '\t' << count << '\t'
-              << candidates.str() << '\n';
+              << candidates.str() << '\t' << comments.str() << '\n';
     api->free_context(&context);
 }
 
@@ -162,6 +170,8 @@ void reset(const std::string& options) {
     std::string discarded;
     drain_commit(discarded);
     api->set_option(session, "ascii_mode", False);
+    api->set_option(session, "full_shape", False);
+    api->set_option(session, "ascii_punct", False);
     api->set_option(session, "tiger_sentence_early_commit", True);
     api->set_option(session, "tiger_sentence_early_commit_to_preedit", False);
     std::istringstream stream(options);

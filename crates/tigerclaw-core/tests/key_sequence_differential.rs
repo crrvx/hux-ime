@@ -1,14 +1,16 @@
 //! 键序列金样（2c）重放：真 librime 探针记录 vs Rust 会话逐步比对。
 //!
-//! 比对字段：`consumed`、输入、光标、提交、候选（按页：数量/文本/高亮）。
+//! 比对字段：`consumed`、输入、光标、提交、候选（按页：数量/文本/注释/高亮）。
 //! `preedit`（预编辑串）属 K3 宿主职责，金样保留但不比对。
 //! 处理器链：core `processor` 未消费（Forward）的键交 `host` 模块（librime
 //! `key_binder`/`selector`/`navigator`/`express_editor` 等价物）后比对 `consumed`；
 //! 组合重建用 core `CompositionBuilder`（参照 `ConcreteEngine::Compose`），
 //! 之后执行 update 通知器等价物（`interaction::update_notifier`）。
 //!
-//! 金样与数据：`goldens/key_sequence.tsv.gz`、`goldens/key_sequence/`（合成小码表）。
-//! 再生成：`tools/gen_key_sequence_golden.sh`（依赖系统 librime + librime-lua）。
+//! 金样与数据：`goldens/key_sequence.tsv.gz`、`goldens/key_sequence/`（合成小码表）；
+//! 反查（⑧-1）：`goldens/reverse.tsv.gz`、`goldens/reverse/`（小 PY_c + 反查索引夹具）。
+//! 再生成：`tools/gen_key_sequence_golden.sh`、`tools/gen_reverse_golden.sh`
+//! （依赖系统 librime + librime-lua）。
 
 mod common;
 
@@ -20,8 +22,9 @@ use std::path::{Path, PathBuf};
 use tigerclaw_core::decode::Decoder;
 use tigerclaw_core::host::{HostResult, process_key as host_process_key};
 use tigerclaw_core::interaction::{
-    CompositionBuilder, LiveLearning, OPTION_EARLY_COMMIT, OPTION_EARLY_COMMIT_TO_PREEDIT,
-    ProcessorEnv, ProcessorResult, SentenceState, processor, update_notifier,
+    CompositionBuilder, K_REVERSE_PREFIX, LiveLearning, OPTION_EARLY_COMMIT,
+    OPTION_EARLY_COMMIT_TO_PREEDIT, ProcessorEnv, ProcessorResult, SentenceState, processor,
+    update_notifier,
 };
 use tigerclaw_core::key::KeyEvent;
 use tigerclaw_core::lexicon::{Lexicon, Supplement};
@@ -37,6 +40,7 @@ struct Step {
     highlight: usize,
     count: usize,
     candidates: Vec<String>,
+    comments: Vec<String>,
 }
 
 struct Case {
@@ -45,8 +49,7 @@ struct Case {
     steps: Vec<Step>,
 }
 
-fn load_cases() -> Vec<Case> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/key_sequence.tsv.gz");
+fn load_cases(path: &Path) -> Vec<Case> {
     let file = std::fs::File::open(path).expect("open key_sequence golden");
     let mut cases: Vec<Case> = Vec::new();
     for line in BufReader::new(GzDecoder::new(file)).lines() {
@@ -78,13 +81,18 @@ fn load_cases() -> Vec<Case> {
                 });
             }
             "step" => {
-                assert_eq!(fields.len(), 13, "step fields: {line}");
+                assert_eq!(fields.len(), 14, "step fields: {line}");
                 let count: usize = fields[11].parse().expect("count");
                 // `-` 既表示「无候选」也表示「单候选且文本为空」，用计数区分。
                 let candidates = if count == 0 {
                     Vec::new()
                 } else {
                     fields[12].split(',').map(str::to_string).collect()
+                };
+                let comments = if count == 0 {
+                    Vec::new()
+                } else {
+                    fields[13].split(',').map(str::to_string).collect()
                 };
                 cases
                     .last_mut()
@@ -99,6 +107,7 @@ fn load_cases() -> Vec<Case> {
                         highlight: fields[10].parse().expect("highlight"),
                         count,
                         candidates,
+                        comments,
                     });
             }
             other => panic!("unknown golden record: {other}"),
@@ -107,7 +116,13 @@ fn load_cases() -> Vec<Case> {
     cases
 }
 
-fn replay(case: &Case, data_dir: &Path, failures: &mut Vec<String>) {
+fn replay(
+    case: &Case,
+    data_dir: &Path,
+    page_size: usize,
+    reverse_prefix: Option<char>,
+    failures: &mut Vec<String>,
+) {
     let dirs = [data_dir.to_path_buf()];
     let lexicon = Lexicon::load(&dirs, 0);
     let supplement = Supplement::load_default(Some(data_dir));
@@ -120,6 +135,9 @@ fn replay(case: &Case, data_dir: &Path, failures: &mut Vec<String>) {
     context.set_option("_auto_commit", true);
     context.set_option(OPTION_EARLY_COMMIT, true);
     context.set_option(OPTION_EARLY_COMMIT_TO_PREEDIT, false);
+    if let Some(prefix) = reverse_prefix {
+        context.set_property(K_REVERSE_PREFIX, &prefix.to_string());
+    }
     for (name, value) in &case.options {
         context.set_option(name, *value);
     }
@@ -214,8 +232,7 @@ fn replay(case: &Case, data_dir: &Path, failures: &mut Vec<String>) {
             ));
         }
         let segment = context.composition.back();
-        // 参照 `RimeGetContext`：按当前页上报候选与页内高亮（`menu/page_size: 5`）。
-        let page_size = tigerclaw_core::host::DEFAULT_PAGE_SIZE;
+        // 参照 `RimeGetContext`：按当前页上报候选与页内高亮（夹具 `menu/page_size`）。
         let highlight = segment
             .map(|segment| segment.selected_index % page_size)
             .unwrap_or(0);
@@ -238,6 +255,10 @@ fn replay(case: &Case, data_dir: &Path, failures: &mut Vec<String>) {
             .iter()
             .map(|candidate| hex(candidate.text.as_bytes()))
             .collect();
+        let comments: Vec<String> = page
+            .iter()
+            .map(|candidate| hex(candidate.comment.as_bytes()))
+            .collect();
         if highlight != step.highlight {
             failures.push(format!(
                 "{label}: highlight 期望 {} 实际 {highlight}",
@@ -256,23 +277,65 @@ fn replay(case: &Case, data_dir: &Path, failures: &mut Vec<String>) {
                 step.candidates
             ));
         }
+        if comments != step.comments {
+            failures.push(format!(
+                "{label}: comments 期望 {:?} 实际 {comments:?}",
+                step.comments
+            ));
+        }
     }
 }
 
 #[test]
 fn key_sequence_matches_reference() {
-    let cases = load_cases();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let cases = load_cases(&root.join("goldens/key_sequence.tsv.gz"));
     assert!(!cases.is_empty(), "empty key_sequence golden");
-    let data_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/key_sequence");
+    let data_dir = root.join("goldens/key_sequence");
     let mut failures = Vec::new();
     let mut steps = 0usize;
     for case in &cases {
         steps += case.steps.len();
-        replay(case, &data_dir, &mut failures);
+        replay(
+            case,
+            &data_dir,
+            tigerclaw_core::host::DEFAULT_PAGE_SIZE,
+            None,
+            &mut failures,
+        );
     }
     assert!(
         failures.is_empty(),
         "键序列不一致 {} 处（{} 例 / {} 步）：\n{}",
+        failures.len(),
+        cases.len(),
+        steps,
+        failures.join("\n")
+    );
+}
+
+/// 反查金样（⑧-1）：夹具页大小 5（与引擎一致，翻页用例覆盖后续页）；反查前缀 `` ` ``。
+#[test]
+fn reverse_sequence_matches_reference() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let cases = load_cases(&root.join("goldens/reverse.tsv.gz"));
+    assert!(!cases.is_empty(), "empty reverse golden");
+    let data_dir = root.join("goldens/reverse");
+    let mut failures = Vec::new();
+    let mut steps = 0usize;
+    for case in &cases {
+        steps += case.steps.len();
+        replay(
+            case,
+            &data_dir,
+            tigerclaw_core::host::DEFAULT_PAGE_SIZE,
+            Some('`'),
+            &mut failures,
+        );
+    }
+    assert!(
+        failures.is_empty(),
+        "反查不一致 {} 处（{} 例 / {} 步）：\n{}",
         failures.len(),
         cases.len(),
         steps,

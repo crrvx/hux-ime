@@ -23,8 +23,10 @@
 | `decode_learning.tsv.gz` | 解码接入学习（无模型） | 1987 行 |
 | `decode_learning_model.tsv.gz` | 解码接入学习（fixture 模型，抽样） | 358 行 |
 | `key.tsv.gz` | 键名/键事件金样（librime 探针）：`name`/`repr`/`parse`/`modifier` | 5132 行 |
-| `key_sequence.tsv.gz` | 键序列金样（真 librime 探针，2c）：逐步 `consumed`/输入/光标/提交/候选/高亮 | 55 例 / 236 步（含空码自动上屏、编辑/导航键、标点表、大写字母 DirectCommit；英文模式已移除） |
+| `key_sequence.tsv.gz` | 键序列金样（真 librime 探针，2c）：逐步 `consumed`/输入/光标/提交/候选/注释/高亮 | 55 例 / 236 步（含空码自动上屏、编辑/导航键、标点表、大写字母 DirectCommit；英文模式已移除） |
 | `key_sequence/` | 键序列夹具（合成码表 + `symbols.yaml`＝参照 pin 同文件；探针与 Rust 重放共用；发布默认见 `data/symbols.yaml`） | 2 文件 |
+| `reverse.tsv.gz` | 反查金样（⑧-1，真 librime 探针，pin `898579f`）：逐步 `consumed`/输入/光标/提交/候选/注释/高亮 | 20 例 / 107 步（裸前缀标点候选、缩写/全拼剪枝、多音节词、导航/退格/Escape/上屏） |
+| `reverse/` | 反查夹具（小 `PY_c.dict.yaml` + 合成码表 + `symbols.yaml` + `gen_reverse_index.py` 生成的 `tiger_sentence.reverse.bin`；探针与 Rust 重放共用） | 4 文件 + 生成物 |
 | `lexical.tsv.gz` | 词先验金样（TCSLEX01 读取/Bloom/打分；真实位图 + 码表语料） | 753 行 |
 | `local/`（不入库） | 真实模型抽样金样（224 MB 模型） | 62,777 条 |
 
@@ -68,6 +70,11 @@ name <keyval> <name|->
 repr <keyval> <modifier> <repr>
 parse <repr> <ok|bad> <keycode> <modifier> <repr>
 modifier <index> <name|->
+
+# key_sequence / reverse（真 librime 探针）
+case <case> <options>
+step <case> <index> <repr> <consumed 0/1> <input> <caret> <commit> <preedit>
+     <page> <highlight> <candidate_count> <candidates> <comments>
 ```
 
 ## 重新生成
@@ -145,6 +152,9 @@ bash tools/gen_key_sequence_golden.sh
 # 探索新用例时可用 CASES 指向临时用例文件（输出默认仍写入入库文件，建议显式给输出路径）：
 # CASES=/tmp/explore.txt bash tools/gen_key_sequence_golden.sh /tmp/explore.tsv.gz
 
+# reverse（入库；同上；夹具索引由生成器顺带重建）
+bash tools/gen_reverse_golden.sh
+
 # lexical（入库；需要参照的词先验模块与 data/ 位图；CI 已接入）
 lua tools/gen_lexical_golden.lua --reference "$REF" --model data/tiger_sentence.lexical.bin --out /tmp/lexical.tsv
 gzip -9 -n -c /tmp/lexical.tsv > goldens/lexical.tsv.gz
@@ -174,6 +184,12 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
   因探针依赖具体 librime 版本，**CI 不重生成该金样**（仅按 Rust 侧重放校验 + 键表生成比对）。
 - 键序列金样：`key_sequence.tsv.gz` 由 `tools/rime_sequence_probe.cpp` 在隔离环境中驱动**真 librime + librime-lua** 与 pin 版 Lua 核心生成
   （探针头部记录参照提交、`tiger_sentence.lua` sha256 与 librime 版本）；同样**不在 CI 重生成**。数据夹具 `key_sequence/` 入库并与 Rust 重放共用。
+- 反查金样（⑧-1）：`reverse.tsv.gz` 由同一探针在参照提交 `898579f`（含 `PY_c` 与反查接线）上生成
+  （探针头部记录该提交、`tiger_sentence.lua` 与 `PY_c.dict.yaml` 的 sha256）；夹具 `reverse/` 入库并与
+  Rust 重放共用，其中 `tiger_sentence.reverse.bin` 由 `tools/gen_reverse_index.py` 生成（CI 重生成比对）。
+  真实 `PY_c` 索引（`data/tiger_sentence.reverse.bin.gz`）的校验和与来源见
+  [`../docs/REVERSE_INDEX_MANIFEST.json`](../docs/REVERSE_INDEX_MANIFEST.json)，本地复验：
+  `python3 tools/gen_reverse_index.py --source <ref>/PY_c.dict.yaml --out data/tiger_sentence.reverse.bin.gz --check --manifest docs/REVERSE_INDEX_MANIFEST.json`。
 - 词先验金样：`lexical.tsv.gz` 由 `tools/gen_lexical_golden.lua` 以参照 main `35a10b9`（词先验模块随该提交进入 main）
   与入库位图 `data/tiger_sentence.lexical.bin` 生成（CC BY 4.0，见 `docs/LEXICAL_PRIOR_ATTRIBUTION.md`）；
   语料取自参照码表与确定性采样，重放不依赖外部词表与网络；**已在 CI 中再生成比对**。
@@ -196,6 +212,10 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 | `tiger_sentence.full_code_whitelist.txt` | `05d257457898146262f7dbf264103c70a8cf2ee92d188b770ad13232b293f566` |
 | `tiger_sentence.supplement.txt` | `f229832bc92f89d87e4b1d29984aec53e627cedb23dda5074ad03cbcabdf0900` |
 | `key_sequence/symbols.yaml` | `9b45c4a2f179d42585d5cc1439bfbcb5a585520f0de3ce83232180990e5cc9b1` |
+| `reverse/symbols.yaml`（与上同一文件） | `9b45c4a2f179d42585d5cc1439bfbcb5a585520f0de3ce83232180990e5cc9b1` |
+| `reverse/PY_c.dict.yaml`（夹具） | `96e8b34adebf5ea478a1cbce2c9ee8f333c264690abfffadd2d31642a30360ee` |
+| `reverse/tiger_sentence.codes.txt`（夹具） | `4e2b7596db232e12ad997613155e067354652288270b55852d3fd2f16ab18709` |
+| `reverse/tiger_sentence.reverse.bin`（生成物） | `29e16c6aa40654ca829197996584912efc9f76f61bcd9370c1341999b69f3e4d` |
 
 - `lexicon_variants/` 与 `lexicon_codes_only/` 为人工构造的解析边界数据（无上游来源）。
 
@@ -218,7 +238,8 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 | `decode_learning.tsv.gz` | `41a9894d233c32348e42164d4d29fc698c3037741c141ac0b58404094c9e9354` |
 | `decode_learning_model.tsv.gz` | `8a64e6e3d28b101a57075b03233e62c4b03e8c4a8d2a979399a91a00e2d8e806` |
 | `key.tsv.gz` | `e939a077cd0825f7b454a4af300ed50fb6a2f2609c71583525d44f2f8fb3fd33` |
-| `key_sequence.tsv.gz` | `e69bb78b91a3d5c2e3bafc1d326d68ae4e6fa99082725c17ff461fe3f5676551` |
+| `key_sequence.tsv.gz` | `7aab00446c0c3cc8e0256d0a67a868b6f84b5cc77f4ecb84d5f18c1cb2ca8dcb` |
+| `reverse.tsv.gz` | `c6abbe80bf5b603cff086c737f5ec0d58c6b7c912fe654a8fca2ba5ddda49bd7` |
 | `lexical.tsv.gz` | `5b559b2504e21c69b4f702678a96d2947abfe7d7c26adcd2b25c3d4de761e0c3` |
 
 CI 以同一参照提交重生成全部 fixture 金样并与入库内容比对（见 `.github/workflows/ci.yml`）。
