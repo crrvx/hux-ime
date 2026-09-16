@@ -7,7 +7,7 @@
 
 | 文件 | 用途 | 规模 |
 |---|---|---|
-| `ngram_fixture.bin` | ngram 确定性小模型（`tools/model_fixture.lua` 生成） | 17,480 B |
+| `ngram_fixture.bin` | ngram 确定性小模型（参照仓库 `tools/model_fixture.lua` 生成） | 17,480 B |
 | `ngram_fixture.tsv.gz` | ngram 金样：`logp`/`obs`/`status`/`cfg`/`trim` | 29,617 条 |
 | `lexicon/` | 码表数据夹具（codes / char_ranks / full_code_whitelist / supplement） | 4 文件 |
 | `lexicon.tsv.gz` | lexicon 金样：`status`/`lengths`/`probe`/`limit`/`supp` | 18,357 条 |
@@ -172,7 +172,7 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 - 词先验金样：`lexical.tsv.gz` 由 `tools/gen_lexical_golden.lua` 以参照 main `35a10b9`（词先验模块随该提交进入 main）
   与入库位图 `data/tiger_sentence.lexical.bin` 生成（CC BY 4.0，见 `docs/LEXICAL_PRIOR_ATTRIBUTION.md`）；
   语料取自参照码表与确定性采样，重放不依赖外部词表与网络。
-- 参照 Lua 文件（生成时）：
+- 参照仓库文件（生成时；`lua/`、`tools/` 均为参照仓库路径）：
 
 | 文件 | sha256 |
 |---|---|
@@ -203,9 +203,9 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 | `lexicon_missing.tsv.gz` | `f5b8256deeb41b4403ca26074deec659807c4313ffe5cf727987b78be15c7a26` |
 | `lexicon_variants.tsv.gz` | `05923b1433f00bf2e9fbb6270e6b28e1f4d1cca6a93507c74dc80b48fde69ef5` |
 | `lexicon_codes_only.tsv.gz` | `3cd72cca880754ecd3744a26ecc5b70d8b5575ab268654937326bb4925b3805e` |
-| `decode.tsv.gz` | `997a68e68077da7af63a155a01900e94fbb11b71cb9c064cd3c31eb55415c090` |
-| `decode_model.tsv.gz` | `a543ae32f83b88791b3dbb99f748da8e5add1d26590b096d561eecf532bbcfbb` |
-| `decode_rank_first.tsv.gz` | `ea08e0c2bcc6da841b2b52af189cde82dc4eb054c6dc6552d7167d99517c841e` |
+| `decode.tsv.gz` | `ea08e0c2bcc6da841b2b52af189cde82dc4eb054c6dc6552d7167d99517c841e` |
+| `decode_model.tsv.gz` | `997a68e68077da7af63a155a01900e94fbb11b71cb9c064cd3c31eb55415c090` |
+| `decode_rank_first.tsv.gz` | `a543ae32f83b88791b3dbb99f748da8e5add1d26590b096d561eecf532bbcfbb` |
 | `decode_evidence.tsv.gz` | `357e782cb2e1528e76e9e066fbc2c0dacaf7b77ea8b21f71659769cad4d938ec` |
 | `decode_evidence_model.tsv.gz` | `df4362cf72c5eb7b6a1323c01c97e4445571daf958a911c13a51b4504928fe04` |
 | `learning.tsv.gz` | `fcf843527a6ab075a6158aeebfd6e3a67c3c8aa206779edf23d6f2c181aa6649` |

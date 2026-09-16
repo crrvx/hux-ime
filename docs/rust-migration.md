@@ -22,12 +22,14 @@
 Cargo.toml                     # workspace
 crates/
   tigerclaw-core/              # 纯逻辑，无 fcitx5 依赖
-    src/cache.rs  ngram.rs     # K0 ✅
-    src/lexicon.rs decode.rs learning.rs    # K1
-    src/key.rs session.rs punct.rs ascii.rs config.rs   # K2
+    src/cache.rs  ngram.rs                        # K0 ✅
+    src/lexicon.rs decode.rs learning.rs          # K1 ✅
+    src/lexical.rs                                # K1.5（紧凑词先验）
+    src/key.rs key_table.rs session.rs interaction.rs   # K2（key 事件/会话/交互）
   tigerclaw-addon/             # K3：唯一依赖 fcitx5 的 crate
+data/                          # 随包数据源（词先验位图，CC BY 4.0）
 goldens/                       # 差分金样（fixture 入库；真实模型抽样本地）
-tools/                         # 金样生成/基准（Lua 参照侧）
+tools/                         # 金样生成/基准（Lua 参照侧、真 librime 探针）
 docs/
 ```
 
