@@ -7,6 +7,7 @@
 use crate::learning::{
     DiffItem, DiffPathNode, LearningIndex, character_count, context as learning_context,
 };
+use crate::lexical::LexicalModel;
 use crate::lexicon::{CodeEntry, Lexicon, Supplement};
 use crate::ngram::MobileModel;
 use anyhow::Result;
@@ -28,6 +29,32 @@ const AGGREGATE_DURING_EXPANSION_THRESHOLD: usize = 128;
 const EARLY_COMMIT_MINIMUM_SHARE: f64 = 0.995;
 const EARLY_COMMIT_CLOSED_BOUNDARY_SHARE: f64 = 0.99999;
 
+/// 排序先验参数（对应参照 `ranking_prior` 表；参照经
+/// `M.set_decoder_parameters_for_test` 调整这些值做消融）。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RankingPriorParameters {
+    /// 逐字主码奖励：`canonical_code_reward × 码长`（仅未显式选重的单字主码边）。
+    pub canonical_code_reward: f64,
+    /// 紧凑词先验权重（只重排 Top-`lexical_candidate_limit`）。
+    pub lexical_prior_weight: f64,
+    pub lexical_candidate_limit: usize,
+    /// 生僻字保护系数（`< 1.0` 时启用；4 码及以上单字边免罚）。
+    pub canonical_isolation_factor: f64,
+    pub canonical_isolation_min_code_length: usize,
+}
+
+impl Default for RankingPriorParameters {
+    fn default() -> Self {
+        Self {
+            canonical_code_reward: 2.0,
+            lexical_prior_weight: 0.1,
+            lexical_candidate_limit: 5,
+            canonical_isolation_factor: 0.0,
+            canonical_isolation_min_code_length: 4,
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Comparator {
     RankFirst,
@@ -38,6 +65,8 @@ enum Comparator {
 struct State {
     score: f64,
     mass_score: f64,
+    /// 码形证据分（只用于最终排序，不进入 mass/置信度；参照 `code_score`）。
+    code_score: f64,
     text: String,
     prev2: char,
     prev1: char,
@@ -75,6 +104,8 @@ pub struct Evaluated {
     pub text: String,
     pub score: f64,
     pub confidence_score: f64,
+    /// 码形证据分（参照 `item.code_score`；只参与排序比较）。
+    pub code_score: f64,
     pub max_rank: usize,
     pub supplement_score: f64,
     pub learning_score: f64,
@@ -194,6 +225,8 @@ pub struct Decoder {
     arena: Vec<State>,
     allow_duplicate_single: bool,
     learning_affected: bool,
+    ranking_prior: RankingPriorParameters,
+    lexical: Option<LexicalModel>,
 }
 
 /// 学习接线：索引 + 模式串（参照的 `learning_index`/`learning_mode`）。
@@ -219,6 +252,8 @@ impl Decoder {
             arena: Vec::new(),
             allow_duplicate_single: true,
             learning_affected: false,
+            ranking_prior: RankingPriorParameters::default(),
+            lexical: None,
         }
     }
 
@@ -246,6 +281,25 @@ impl Decoder {
     pub fn clear_learning(&mut self) {
         self.learning = None;
         self.learning_affected = false;
+    }
+
+    /// 参照 `M.decoder_parameters`（排序先验部分）。
+    pub fn ranking_prior_parameters(&self) -> RankingPriorParameters {
+        self.ranking_prior
+    }
+
+    /// 参照 `M.set_decoder_parameters_for_test`（排序先验部分）。
+    pub fn set_ranking_prior_parameters(&mut self, parameters: RankingPriorParameters) {
+        self.ranking_prior = parameters;
+    }
+
+    /// 参照 `lexicon_state.lexical_model`：紧凑词先验模型（缺省关闭）。
+    pub fn lexical_model(&self) -> Option<&LexicalModel> {
+        self.lexical.as_ref()
+    }
+
+    pub fn set_lexical_model(&mut self, model: Option<LexicalModel>) {
+        self.lexical = model;
     }
 
     /// 参照 `item.path`：返回路径末节点 raw 长度与 `learning.diff` 所需路径
@@ -400,6 +454,7 @@ impl Decoder {
             let state = State {
                 score: score + learned - seed_learning_score,
                 mass_score,
+                code_score: 0.0,
                 text,
                 prev2,
                 prev1,
@@ -442,6 +497,7 @@ impl Decoder {
         let root = State {
             score: 0.0,
             mass_score: 0.0,
+            code_score: 0.0,
             text: String::new(),
             prev2: BOS,
             prev1: BOS,
@@ -796,6 +852,7 @@ impl Decoder {
                         let state = State {
                             score: score + learned - item.learning_score,
                             mass_score,
+                            code_score: 0.0,
                             text_length: text.len(),
                             text,
                             prev2,
@@ -830,6 +887,7 @@ impl Decoder {
             text: state.text.clone(),
             score: state.score + ending_adjustment,
             confidence_score: state.mass_score + ending_adjustment,
+            code_score: state.code_score,
             max_rank: state.max_rank.max(1),
             supplement_score: state.supplement_score,
             learning_score: state.learning_score,
@@ -2050,6 +2108,47 @@ mod tests {
             true,
             Some(&lock)
         ));
+    }
+
+    #[test]
+    fn ranking_prior_parameters_defaults_and_setters() {
+        let dir =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
+        let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
+        let supplement = Supplement::load_default(Some(&dir));
+        let mut decoder = Decoder::new(lexicon, supplement, None);
+        assert_eq!(
+            decoder.ranking_prior_parameters(),
+            RankingPriorParameters::default()
+        );
+        assert_eq!(RankingPriorParameters::default().canonical_code_reward, 2.0);
+        assert_eq!(RankingPriorParameters::default().lexical_prior_weight, 0.1);
+        assert_eq!(RankingPriorParameters::default().lexical_candidate_limit, 5);
+        assert_eq!(
+            RankingPriorParameters::default().canonical_isolation_min_code_length,
+            4
+        );
+        decoder.set_ranking_prior_parameters(RankingPriorParameters {
+            canonical_code_reward: 1.0,
+            ..RankingPriorParameters::default()
+        });
+        assert_eq!(
+            decoder.ranking_prior_parameters().canonical_code_reward,
+            1.0
+        );
+        // 评分项尚未接线：码形分恒为 0，候选不受影响
+        let output = decoder.decode_with("ab", false, "").expect("decode");
+        assert!(!output.items.is_empty());
+        assert!(output.items.iter().all(|item| item.code_score == 0.0));
+        // 词先验模型挂载
+        assert!(decoder.lexical_model().is_none());
+        let model = crate::lexical::load(
+            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../data/tiger_sentence.lexical.bin"),
+        )
+        .expect("load lexical model");
+        decoder.set_lexical_model(Some(model));
+        assert!(decoder.lexical_model().is_some());
     }
 
     #[test]

@@ -2187,6 +2187,7 @@ mod tests {
             text: "甲乙".to_string(),
             score: 0.0,
             confidence_score: 0.0,
+            code_score: 0.0,
             max_rank: 2,
             supplement_score: 0.0,
             learning_score: 0.0,
