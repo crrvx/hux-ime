@@ -42,11 +42,11 @@ docs/
 |---|---:|---|---|---|
 | `tiger_sentence_cache.lua` | 40 | `cache.rs` | K0 ✅ | fixture 金样（缓存状态/淘汰序） |
 | `tiger_sentence_ngram.lua` | 550 | `ngram.rs` | K0 ✅ | 逐位 logp/observed + cache_status |
-| `tiger_sentence.lua`（词库/解码/证据） | ~2600 | `lexicon.rs` ✅ + `decode.rs` ✅（冷路径 + 证据 + 学习接线） | K1 | 数据索引金样 + 解码/证据/学习快照；增量缓存与交互状态机待 K2 |
+| `tiger_sentence.lua`（词库/解码/证据） | ~2600 | `lexicon.rs` ✅ + `decode.rs` ✅（冷路径 + 证据 + 学习接线） | K1 | 数据索引金样 + 解码/证据/学习快照；增量/锁缓存未移植（性能项） |
 | `tiger_sentence_learning.lua` | 435 | `learning.rs` ✅ | K1 | 23k 检查重放 + learning 金样 |
-| `tiger_sentence.lua`（processor/translator/filter/ascii/options） | ~1250 | `key.rs` ✅ + `session.rs`（运行时核心）| K2 | 键序列金样 |
+| `tiger_sentence_lexical.lua` | 152 | `lexical.rs` ✅（TCSLEX01） | K1.5 | 词先验金样（读取/Bloom/打分；真实位图） |
+| `tiger_sentence.lua`（processor/translator/filter/ascii/options） | ~1250 | `key.rs` ✅ + `session.rs` ✅ + `interaction.rs` ✅（会话运行时与交互层） | K2 | 键序列金样 |
 | librime `key_event`/`key_table`（宿主行为） | — | `key.rs` + `key_table.rs` ✅（由源码生成） | K2 | librime 探针金样 |
-| `tiger_sentence_ngram.lua`（模型读取） | 550 | `ngram.rs` | K0 | 逐位 logp/observed + cache_status |
 
 > `try_load`/`candidate_paths`（模型路径探测）随 K3 数据路径一并实现。
 
