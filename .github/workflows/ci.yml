@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       REFERENCE_REPO: https://github.com/crrvx/tiger-sentense-rime
-      REFERENCE_COMMIT: 35a10b93c96af7b008fc9a05d01a8381018dc3d3
+      REFERENCE_COMMIT: 8b615235c17c858e1eca8f1a41fbc74e202f8bbe
       LIBRIME_REPO: https://github.com/rime/librime
       LIBRIME_COMMIT: 33e78140250125871856cdc5b42ddc6a5fcd3cd4
     steps:
@@ -142,7 +142,7 @@ jobs:
         shell: bash
     env:
       REFERENCE_REPO: https://github.com/crrvx/tiger-sentense-rime
-      REFERENCE_COMMIT: 35a10b93c96af7b008fc9a05d01a8381018dc3d3
+      REFERENCE_COMMIT: 8b615235c17c858e1eca8f1a41fbc74e202f8bbe
     steps:
       - name: Install toolchain
         run: pacman -Sy --noconfirm git lua gzip

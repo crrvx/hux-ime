@@ -178,7 +178,7 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 
 ## 来源与校验和
 
-- 参照实现：`crrvx/tiger-sentense-rime` @ `35a10b93c96af7b008fc9a05d01a8381018dc3d3`（main）
+- 参照实现：`crrvx/tiger-sentense-rime` @ `8b615235c17c858e1eca8f1a41fbc74e202f8bbe`（main；含自动上屏对齐修复；反查金样另用 `898579f`，见下）
 - 键名表来源：librime `src/rime/key_table.cc`（sha256 `2f7c6a8b4f2aa474d700a87bd4bd1baa48a2655cd6ce4d2ba05b768f284d9d78`，librime 1.17.0 固定提交 `33e78140`）；
   `key_table.rs` 由 `tools/gen_key_table.py` 生成，CI 以同提交重新生成并比对；`key.tsv.gz` 由系统 librime 1.17.0 探针（`tools/key_probe.cpp`）生成，
   因探针依赖具体 librime 版本，**CI 不重生成该金样**（仅按 Rust 侧重放校验 + 键表生成比对）。
@@ -190,14 +190,14 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
   真实 `PY_c` 索引（`data/tiger_sentence.reverse.bin.gz`）的校验和与来源见
   [`../docs/REVERSE_INDEX_MANIFEST.json`](../docs/REVERSE_INDEX_MANIFEST.json)，本地复验：
   `python3 tools/gen_reverse_index.py --source <ref>/PY_c.dict.yaml --out data/tiger_sentence.reverse.bin.gz --check --manifest docs/REVERSE_INDEX_MANIFEST.json`。
-- 词先验金样：`lexical.tsv.gz` 由 `tools/gen_lexical_golden.lua` 以参照 main `35a10b9`（词先验模块随该提交进入 main）
+- 词先验金样：`lexical.tsv.gz` 由 `tools/gen_lexical_golden.lua` 以参照 main `8b615235`（词先验模块自 `35a10b9` 起提供）
   与入库位图 `data/tiger_sentence.lexical.bin` 生成（CC BY 4.0，见 `docs/LEXICAL_PRIOR_ATTRIBUTION.md`）；
   语料取自参照码表与确定性采样，重放不依赖外部词表与网络；**已在 CI 中再生成比对**。
 - 参照仓库文件（生成时；`lua/`、`tools/` 均为参照仓库路径）：
 
 | 文件 | sha256 |
 |---|---|
-| `lua/tiger_sentence.lua` | `fe11e07da98bd3223136a89e283d80e7c01b90c14c0ccba6cbcfd283927778b7` |
+| `lua/tiger_sentence.lua` | `dfcc687ea28d1174a99c37aaf1d3de7d0dc69332a8aaf4bfac3079506efa2047` |
 | `lua/tiger_sentence_learning.lua` | `335e530bb42b8fa2c432b900a0e5ff9d7509e74a8674d099456083088b36f85e` |
 | `lua/tiger_sentence_ngram.lua` | `a3d59e09fbff3b09b0ac79ef66b7560210b5503c2af38eb5615069d6465cb361` |
 | `lua/tiger_sentence_cache.lua` | `8ebd209588fb62d0bf888e752b95d8588ecbcdef2af40f8b009865fc3c41da7c` |
@@ -238,7 +238,7 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 | `decode_learning.tsv.gz` | `41a9894d233c32348e42164d4d29fc698c3037741c141ac0b58404094c9e9354` |
 | `decode_learning_model.tsv.gz` | `8a64e6e3d28b101a57075b03233e62c4b03e8c4a8d2a979399a91a00e2d8e806` |
 | `key.tsv.gz` | `e939a077cd0825f7b454a4af300ed50fb6a2f2609c71583525d44f2f8fb3fd33` |
-| `key_sequence.tsv.gz` | `7aab00446c0c3cc8e0256d0a67a868b6f84b5cc77f4ecb84d5f18c1cb2ca8dcb` |
+| `key_sequence.tsv.gz` | `84a9145076252454a1f0af30b55ce9cd9e721062df97336248ff1eff8790d6fc` |
 | `reverse.tsv.gz` | `9e2437a282e2dd2530e1dcdc5ac6a9d103b5113fdd4cfa44634f5fb2ff3d244f` |
 | `lexical.tsv.gz` | `5b559b2504e21c69b4f702678a96d2947abfe7d7c26adcd2b25c3d4de761e0c3` |
 

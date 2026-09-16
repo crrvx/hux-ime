@@ -3,7 +3,7 @@
 #
 # 用法：tools/gen_key_sequence_golden.sh [输出文件]
 #   REF  参照仓库路径（默认与仓库同级的 ../tiger-sentense-rime）
-#   PIN  参照固定提交（默认 35a10b93c96af7b008fc9a05d01a8381018dc3d3，与入库金样一致；见 goldens/README.md）
+#   PIN  参照固定提交（默认 8b615235c17c858e1eca8f1a41fbc74e202f8bbe，与入库金样一致；见 goldens/README.md）
 #   CASES 用例文件（默认 tools/key_sequence_cases.txt；可指向临时用例做探索）
 #
 # 依赖：git、g++、python3、系统 librime（rime_api.h + librime-lua.so）。
@@ -12,7 +12,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REF="${REF:-$(cd "$ROOT/.." && pwd)/tiger-sentense-rime}"
-PIN="${PIN:-35a10b93c96af7b008fc9a05d01a8381018dc3d3}"
+PIN="${PIN:-8b615235c17c858e1eca8f1a41fbc74e202f8bbe}"
 OUT="${1:-$ROOT/goldens/key_sequence.tsv.gz}"
 CASES="${CASES:-$ROOT/tools/key_sequence_cases.txt}"
 
