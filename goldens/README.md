@@ -22,6 +22,7 @@
 | `learning.tsv.gz` | 学习金样：`hash`/`score`/`prefix`/`confirmed`/`reward`/`diff`/日志编码 | 10,164 条 |
 | `decode_learning.tsv.gz` | 解码接入学习（无模型） | 1,987 条 |
 | `decode_learning_model.tsv.gz` | 解码接入学习（fixture 模型，抽样） | 358 条 |
+| `key.tsv.gz` | 键名/键事件金样（librime 探针）：`name`/`repr`/`parse`/`modifier` | 5,113 条 |
 | `local/`（不入库） | 真实模型抽样金样（224 MB 模型） | 62,777 条 |
 
 ## transcript 格式（TSV，`#` 注释，`-` 表示空串，字符串为 UTF-8 字节十六进制）
@@ -58,6 +59,12 @@ hash <hex text> <value>
 corpus / event / index / confirmed / codes / score / prefix / trim
 chain / node / reward / diffcase / diffpath / diff / diffevent
 journalrecords / journalrecord / journalevents / journalevent
+
+# key（librime 探针）
+name <keyval> <name|->
+repr <keyval> <modifier> <repr>
+parse <repr> <ok|bad> <keycode> <modifier> <repr>
+modifier <index> <name|->
 ```
 
 ## 重新生成
@@ -122,6 +129,9 @@ gzip -9 -n -c /tmp/decode_learning_model.tsv > goldens/decode_learning_model.tsv
 # learning（入库）
 lua tools/gen_learning_golden.lua --reference "$REF" --out /tmp/learning.tsv
 gzip -9 -n -c /tmp/learning.tsv > goldens/learning.tsv.gz
+
+# key（入库；需要 librime 源码头文件与系统 librime）
+bash tools/gen_key_golden.sh /path/to/librime
 ```
 
 ## 校验
@@ -143,6 +153,8 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 ## 来源与校验和
 
 - 参照实现：`crrvx/tiger-sentense-rime` @ `f3b3049819b513ba756bbe6c6b6872759c9dc2a9`
+- 键名表来源：librime `src/rime/key_table.cc`（sha256 `2f7c6a8b4f2aa474d700a87bd4bd1baa48a2655cd6ce4d2ba05b768f284d9d78`，librime 1.17.0 固定提交 `33e78140`）；
+  `key_table.rs` 由 `tools/gen_key_table.py` 生成，CI 以同提交重新生成并比对；`key.tsv.gz` 由系统 librime 1.17.0 探针（`tools/key_probe.cpp`）生成。
 - 参照 Lua 文件（生成时）：
 
 | 文件 | sha256 |
@@ -182,5 +194,6 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 | `learning.tsv.gz` | `fcf843527a6ab075a6158aeebfd6e3a67c3c8aa206779edf23d6f2c181aa6649` |
 | `decode_learning.tsv.gz` | `41a9894d233c32348e42164d4d29fc698c3037741c141ac0b58404094c9e9354` |
 | `decode_learning_model.tsv.gz` | `91e5fe60a515f1cdd11b815a5da68c7f1883ccc6bb80a9e37e45435cfe72f6e0` |
+| `key.tsv.gz` | `95b8ad78d2254cf2f82e919e044c824219004e6c4fe133ef4d683cd2e7e62f4d` |
 
 CI 以同一参照提交重生成全部 fixture 金样并与入库内容比对（见 `.github/workflows/ci.yml`）。

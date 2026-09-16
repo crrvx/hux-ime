@@ -10,7 +10,7 @@
 |---|---|---|
 | **K0** ✅ | spike：`cache` + `ngram` 移植 + 差分工具链 + 陷阱审计 | fixture 29,617 条、真实模型 62,777 条逐位一致（见 [`spike-report.md`](spike-report.md)） |
 | **K1** ✅ | 计算核：lexicon、decode/beam、early-evidence、learning（见 [`spike-report.md`](spike-report.md) 与金样） | 快照差分全绿 |
-| **K2**（当前） | 交互引擎：buffer/caret、menu、键位 `repr`、标点、ascii_composer、Tab 锁/提前上屏、选项 | 键序列金样一致 |
+| **K2**（进行中） | 交互引擎：buffer/caret、menu、键位 `repr` ✅（`key.rs` + 键表生成/金样）、标点、ascii_composer、Tab 锁/提前上屏、选项 | 键序列金样一致 |
 | **K3** | fcitx5 addon：注册、候选/预编辑/上屏、状态菜单、配置、数据路径、LevelDb | 真机可用 |
 | **K4** | 验收与打包 | 真机清单 + 性能/内存 |
 
@@ -41,7 +41,8 @@ docs/
 | `tiger_sentence_ngram.lua` | 550 | `ngram.rs` | K0 ✅ | 逐位 logp/observed + cache_status |
 | `tiger_sentence.lua`（词库/解码/证据） | ~2600 | `lexicon.rs` ✅ + `decode.rs` ✅（冷路径 + 证据 + 学习接线） | K1 | 数据索引金样 + 解码/证据/学习快照；增量缓存与交互状态机待 K2 |
 | `tiger_sentence_learning.lua` | 435 | `learning.rs` ✅ | K1 | 23k 检查重放 + learning 金样 |
-| `tiger_sentence.lua`（processor/translator/filter/ascii/options） | ~1250 | `key.rs` + `session.rs` + `punct.rs` + `ascii.rs` + `config.rs` | K2 | 键序列金样 |
+| `tiger_sentence.lua`（processor/translator/filter/ascii/options） | ~1250 | `key.rs` ✅ + `session.rs` + `punct.rs` + `ascii.rs` + `config.rs` | K2 | 键序列金样 |
+| librime `key_event`/`key_table`（宿主行为） | — | `key.rs` + `key_table.rs` ✅（由源码生成） | K2 | librime 探针金样 |
 | `tiger_sentence_ngram.lua`（模型读取） | 550 | `ngram.rs` | K0 | 逐位 logp/observed + cache_status |
 
 > `try_load`/`candidate_paths`（模型路径探测）随 K3 数据路径一并实现。
