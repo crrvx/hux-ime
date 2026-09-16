@@ -1,0 +1,18 @@
+[package]
+name = "tigerclaw-addon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "虎整句 fcitx5 addon：C ABI 与宿主适配（K3）"
+
+[lib]
+# 静态库：由 C++ 薄壳（shell/tigerclaw.cpp）链入 addon .so。
+crate-type = ["staticlib"]
+
+[dependencies]
+anyhow.workspace = true
+hashbrown.workspace = true
+rusty-leveldb = "4.0.1"
+tigerclaw-core = { path = "../tigerclaw-core" }
+yaml-rust2.workspace = true

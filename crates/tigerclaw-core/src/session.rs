@@ -12,7 +12,7 @@
 //! - `last_commit` 保留最近一次组合提交文本，供诊断；参照的 `get_commit_text()`
 //!   为即时计算（任何时刻可读），跨实现一律以 [`Event::Commit`] 携带的文本为准。
 //! - 属性写入不产生事件（参照未使用 `property_update_notifier`）。
-//! - 管线（分段/翻译/过滤）由 [`Pipeline`] 注入；交互层（processor/translator/filters）
+//! - 组合重建（分段/翻译/过滤）由交互层 [`crate::interaction::CompositionBuilder`] 负责，
 //!   见 `interaction` 模块。
 
 use hashbrown::HashMap;
@@ -54,6 +54,9 @@ pub struct Segment {
     pub candidates: Vec<Candidate>,
     /// 是否已被确认（librime `Segment::status >= kSelected`）。
     pub selected: bool,
+    /// 是否已建立菜单（librime `Segment::status >= kGuess`；`menu` 非空）。
+    /// 已翻译的段在重分段时保留菜单与高亮。
+    pub translated: bool,
 }
 
 impl Segment {
@@ -70,7 +73,6 @@ impl Segment {
         self.candidates.len().min(count)
     }
 }
-
 /// 组合（对应 librime `Composition`）。
 #[derive(Clone, Debug, Default)]
 pub struct Composition {
@@ -107,6 +109,49 @@ impl Composition {
         self.segments.last_mut()
     }
 
+    /// 参照 `Segmentation::GetCurrentStartPosition`。
+    pub fn current_start_position(&self) -> usize {
+        self.segments
+            .last()
+            .map(|segment| segment.start)
+            .unwrap_or(0)
+    }
+
+    /// 参照 `Segmentation::GetCurrentEndPosition`。
+    pub fn current_end_position(&self) -> usize {
+        self.segments.last().map(|segment| segment.end).unwrap_or(0)
+    }
+
+    /// 参照 `Segmentation::HasFinishedSegmentation`。
+    pub fn has_finished_segmentation(&self, input: &[u8]) -> bool {
+        self.current_end_position() >= input.len()
+    }
+
+    /// 参照 `Segmentation::Trim`：移除末尾空段。
+    pub fn trim(&mut self) -> bool {
+        if self
+            .segments
+            .last()
+            .map(|segment| segment.start == segment.end)
+            .unwrap_or(false)
+        {
+            self.segments.pop();
+            return true;
+        }
+        false
+    }
+
+    /// 参照 `Segmentation::GetConfirmedPosition`：最后一个已选段的末尾。
+    pub fn confirmed_position(&self) -> usize {
+        let mut confirmed = 0usize;
+        for segment in &self.segments {
+            if segment.selected {
+                confirmed = segment.end;
+            }
+        }
+        confirmed
+    }
+
     /// 参照 `Composition::GetCommitText`：有选中候选的段取候选文本（不论段状态），
     /// 否则取原始输入切片（`phony` 段跳过）；末尾追加未被段覆盖的输入。
     pub fn commit_text(&self, input: &[u8]) -> String {
@@ -140,11 +185,6 @@ pub enum Event {
     Option(String),
 }
 
-/// 管线注入点：根据当前输入重建组合（分段 → 翻译 → 过滤）。
-pub trait Pipeline {
-    fn build(&mut self, input: &[u8], composition: &mut Composition);
-}
-
 /// 上下文（librime `Context` 的常用子集）。
 pub struct Context {
     input: Vec<u8>,
@@ -153,9 +193,7 @@ pub struct Context {
     options: HashMap<String, bool>,
     properties: HashMap<String, String>,
     last_commit: String,
-    events: VecDeque<(u64, Event)>,
-    /// 事件序号（[`Context`] 与 [`Session`] 的效果队列共用同一序号空间）。
-    sequence: u64,
+    events: VecDeque<Event>,
 }
 
 impl Default for Context {
@@ -174,24 +212,7 @@ impl Context {
             properties: HashMap::new(),
             last_commit: String::new(),
             events: VecDeque::new(),
-            sequence: 0,
         }
-    }
-
-    /// 事件入队（带序号；与 [`Session`] 的效果队列共用序号空间）。
-    fn push_event(&mut self, event: Event) {
-        self.sequence += 1;
-        self.events.push_back((self.sequence, event));
-    }
-
-    /// 取下一个事件序号（供 [`Session`] 的效果队列使用）。
-    fn next_sequence(&mut self) -> u64 {
-        self.sequence += 1;
-        self.sequence
-    }
-
-    fn drain_events_stamped(&mut self) -> Vec<(u64, Event)> {
-        self.events.drain(..).collect()
     }
 
     // ------------------------------------------------------------ 基本信息
@@ -253,7 +274,7 @@ impl Context {
     /// 参照 `Engine::CommitText`：不经过组合的直接提交（事件供前端上屏）。
     pub fn direct_commit(&mut self, text: &str) {
         self.last_commit = text.to_string();
-        self.push_event(Event::Commit(text.to_string()));
+        self.events.push_back(Event::Commit(text.to_string()));
     }
 
     // ------------------------------------------------------------ 选项/属性
@@ -270,7 +291,7 @@ impl Context {
     /// 参照 `Context::set_option`：无条件触发选项通知（librime 语义）。
     pub fn set_option(&mut self, name: &str, value: bool) {
         self.options.insert(name.to_string(), value);
-        self.push_event(Event::Option(name.to_string()));
+        self.events.push_back(Event::Option(name.to_string()));
     }
 
     pub fn get_property(&self, key: &str) -> Option<&str> {
@@ -297,7 +318,7 @@ impl Context {
         let at = self.caret.min(self.input.len());
         self.input.splice(at..at, text.iter().copied());
         self.caret = at + text.len();
-        self.push_event(Event::Update);
+        self.events.push_back(Event::Update);
     }
 
     /// 参照 `Context::PopInput`：删除 caret 前 n 字节；越界不改动并返回 false。
@@ -308,7 +329,7 @@ impl Context {
         let start = self.caret - count;
         self.input.drain(start..self.caret);
         self.caret = start;
-        self.push_event(Event::Update);
+        self.events.push_back(Event::Update);
         true
     }
 
@@ -321,7 +342,7 @@ impl Context {
             return false;
         }
         self.input.drain(self.caret..end);
-        self.push_event(Event::Update);
+        self.events.push_back(Event::Update);
         true
     }
 
@@ -330,14 +351,14 @@ impl Context {
         self.input.clear();
         self.input.extend_from_slice(value);
         self.caret = self.input.len();
-        self.push_event(Event::Update);
+        self.events.push_back(Event::Update);
     }
 
     pub fn clear(&mut self) {
         self.input.clear();
         self.caret = 0;
         self.composition = Composition::default();
-        self.push_event(Event::Update);
+        self.events.push_back(Event::Update);
     }
 
     // ------------------------------------------------------------ 菜单操作
@@ -351,7 +372,7 @@ impl Context {
             let changed = segment.selected_index != 0;
             segment.selected_index = 0;
             if changed {
-                self.push_event(Event::Update);
+                self.events.push_back(Event::Update);
             }
             return changed;
         }
@@ -361,7 +382,7 @@ impl Context {
             return false;
         }
         segment.selected_index = new_index;
-        self.push_event(Event::Update);
+        self.events.push_back(Event::Update);
         true
     }
 
@@ -381,7 +402,7 @@ impl Context {
         }
         let text = self.composition.commit_text(&self.input);
         self.last_commit = text.clone();
-        self.push_event(Event::Commit(text));
+        self.events.push_back(Event::Commit(text));
         self.clear();
         true
     }
@@ -402,7 +423,7 @@ impl Context {
         }
         if reverted {
             self.composition.forward();
-            self.push_event(Event::Update);
+            self.events.push_back(Event::Update);
         }
         reverted
     }
@@ -410,72 +431,11 @@ impl Context {
     // ------------------------------------------------------------ 事件
 
     pub fn drain_events(&mut self) -> Vec<Event> {
-        self.events.drain(..).map(|(_, event)| event).collect()
+        self.events.drain(..).collect()
     }
 
     pub fn has_events(&self) -> bool {
         !self.events.is_empty()
-    }
-}
-
-/// 会话：上下文 + 管线，负责在编辑后重建组合并产生 UI 效果。
-pub struct Session {
-    pub context: Context,
-    pipeline: Option<Box<dyn Pipeline>>,
-    /// 直接提交（`engine:commit_text`）产生的 UI 效果（`(序号, 事件)`）。
-    effects: Vec<(u64, Event)>,
-}
-
-impl Default for Session {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Session {
-    pub fn new() -> Self {
-        Self {
-            context: Context::new(),
-            pipeline: None,
-            effects: Vec::new(),
-        }
-    }
-
-    pub fn set_pipeline(&mut self, pipeline: Box<dyn Pipeline>) {
-        self.pipeline = Some(pipeline);
-    }
-
-    /// 重建组合（分段 → 翻译 → 过滤），随后把 context 事件并入效果队列。
-    /// 仅丢弃重复的 Update；Commit/Option 等语义事件保留。
-    pub fn refresh(&mut self) {
-        if let Some(pipeline) = self.pipeline.as_mut() {
-            let input = self.context.input().to_vec();
-            let mut composition = Composition::default();
-            pipeline.build(&input, &mut composition);
-            self.context.composition = composition;
-            for (sequence, event) in self.context.drain_events_stamped() {
-                if !matches!(event, Event::Update) {
-                    self.effects.push((sequence, event));
-                }
-            }
-            let sequence = self.context.next_sequence();
-            self.effects.push((sequence, Event::Update));
-        }
-    }
-
-    /// 参照 `Engine::CommitText`：不经过组合的直接上屏。
-    pub fn commit_text(&mut self, text: &str) {
-        let sequence = self.context.next_sequence();
-        self.effects
-            .push((sequence, Event::Commit(text.to_string())));
-    }
-
-    /// 取走自上次调用以来累积的 UI 效果（按发生顺序归并两个队列）。
-    pub fn take_effects(&mut self) -> Vec<Event> {
-        let mut events = std::mem::take(&mut self.effects);
-        events.extend(self.context.drain_events_stamped());
-        events.sort_by_key(|(sequence, _)| *sequence);
-        events.into_iter().map(|(_, event)| event).collect()
     }
 }
 
@@ -563,20 +523,6 @@ mod tests {
     }
 
     #[test]
-    fn take_effects_keeps_chronological_order() {
-        let mut session = Session::new();
-        session.commit_text("x");
-        session.context.set_option("t", true);
-        assert_eq!(
-            session.take_effects(),
-            vec![
-                Event::Commit("x".to_string()),
-                Event::Option("t".to_string())
-            ]
-        );
-    }
-
-    #[test]
     fn edits_follow_byte_caret_semantics() {
         let mut context = Context::new();
         context.push_input(b"ab");
@@ -645,6 +591,7 @@ mod tests {
             candidates: vec![Candidate::new("sentence", 0, 2, "甲", "")],
             selected_index: 0,
             tags: Vec::new(),
+            translated: true,
         });
         context.composition.segments.push(Segment {
             start: 2,
@@ -692,36 +639,5 @@ mod tests {
         assert!(context.refresh_non_confirmed_composition());
         assert_eq!(context.composition.segments.len(), 2);
         assert!(context.composition.segments[0].selected);
-    }
-
-    #[test]
-    fn session_refresh_preserves_semantic_events() {
-        struct OneSegment;
-        impl Pipeline for OneSegment {
-            fn build(&mut self, input: &[u8], composition: &mut Composition) {
-                if input.is_empty() {
-                    return;
-                }
-                composition.segments.push(Segment {
-                    start: 0,
-                    end: input.len(),
-                    ..Segment::default()
-                });
-            }
-        }
-        let mut session = Session::new();
-        session.set_pipeline(Box::new(OneSegment));
-        session.context.set_input(b"ab");
-        session.refresh(); // 先由管线建立组合
-        assert!(session.context.is_composing());
-        assert!(session.context.commit());
-        session.refresh(); // 语义事件（Commit）应保留
-        let effects = session.take_effects();
-        assert!(
-            effects
-                .iter()
-                .any(|event| matches!(event, Event::Commit(text) if text == "ab"))
-        );
-        assert!(session.context.composition.empty());
     }
 }

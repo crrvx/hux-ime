@@ -19,6 +19,34 @@ const RANKS_FILE: &str = "tiger_sentence.char_ranks.txt";
 const WHITELIST_FILE: &str = "tiger_sentence.full_code_whitelist.txt";
 pub const SUPPLEMENT_FILE: &str = "tiger_sentence.supplement.txt";
 
+/// 词先验位图文件名（参考 `tiger_sentence.lexical.bin`）。
+pub const LEXICAL_FILE: &str = "tiger_sentence.lexical.bin";
+/// 语言模型相对路径（参考 `models/sentence-ngram-mobile.bin`）。
+pub const MODEL_PATH: &str = "models/sentence-ngram-mobile.bin";
+
+/// 参照 `data_directories()`：用户数据目录（`XDG_DATA_HOME` 或 `~/.local/share`）
+/// → 共享目录（`/usr/share/fcitx5/tigerclaw`）。
+pub fn data_directories() -> Vec<PathBuf> {
+    data_directories_from(
+        std::env::var_os("XDG_DATA_HOME").map(PathBuf::from),
+        std::env::var_os("HOME").map(PathBuf::from),
+    )
+}
+
+fn data_directories_from(xdg_data_home: Option<PathBuf>, home: Option<PathBuf>) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(data_home) = xdg_data_home.or_else(|| home.map(|home| home.join(".local/share"))) {
+        dirs.push(data_home.join("fcitx5/tigerclaw"));
+    }
+    dirs.push(PathBuf::from("/usr/share/fcitx5/tigerclaw"));
+    dirs
+}
+
+/// 依次在各数据目录下探测相对路径（是否存在交由调用方的加载器处理）。
+pub fn candidate_paths(dirs: &[PathBuf], relative: &str) -> Vec<PathBuf> {
+    dirs.iter().map(|dir| dir.join(relative)).collect()
+}
+
 // ---------------------------------------------------------------- 文本工具
 
 /// Lua 模式类 `%s` 的 ASCII 空白集合（含垂直制表符，Rust `trim()` 不含）。
@@ -710,6 +738,22 @@ fn first_two_tokens_relaxed(line: &str) -> Option<(&str, &str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn data_directories_follow_xdg_rules() {
+        let dirs =
+            data_directories_from(Some(PathBuf::from("/xdg")), Some(PathBuf::from("/home/u")));
+        assert_eq!(dirs[0], PathBuf::from("/xdg/fcitx5/tigerclaw"));
+        assert_eq!(dirs[1], PathBuf::from("/usr/share/fcitx5/tigerclaw"));
+        let dirs = data_directories_from(None, Some(PathBuf::from("/home/u")));
+        assert_eq!(
+            dirs[0],
+            PathBuf::from("/home/u/.local/share/fcitx5/tigerclaw")
+        );
+        let paths = candidate_paths(&dirs, LEXICAL_FILE);
+        assert_eq!(paths[0], dirs[0].join(LEXICAL_FILE));
+        assert_eq!(paths.len(), dirs.len());
+    }
 
     #[test]
     fn parses_codes_with_dedup_and_lowercasing() {

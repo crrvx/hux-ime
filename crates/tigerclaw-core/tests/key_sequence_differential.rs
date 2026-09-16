@@ -1,8 +1,11 @@
 //! 键序列金样（2c）重放：真 librime 探针记录 vs Rust 会话逐步比对。
 //!
-//! 比对字段：`consumed`、输入、光标、提交、候选（数量/文本/高亮）。
-//! `preedit`（预编辑串）属 K3 宿主职责，金样保留但不比对；宿主前向（Forward）
-//! 步骤的宿主行为同理（本矩阵覆盖的都是 Lua 组件消费的步骤）。
+//! 比对字段：`consumed`、输入、光标、提交、候选（按页：数量/文本/高亮）。
+//! `preedit`（预编辑串）属 K3 宿主职责，金样保留但不比对。
+//! 处理器链：core `processor` 未消费（Forward）的键交 `host` 模块（librime
+//! `key_binder`/`selector`/`navigator`/`express_editor` 等价物）后比对 `consumed`；
+//! 组合重建用 core `CompositionBuilder`（参照 `ConcreteEngine::Compose`），
+//! 之后执行 update 通知器等价物（`interaction::update_notifier`）。
 //!
 //! 金样与数据：`goldens/key_sequence.tsv.gz`、`goldens/key_sequence/`（合成小码表）。
 //! 再生成：`tools/gen_key_sequence_golden.sh`（依赖系统 librime + librime-lua）。
@@ -14,14 +17,18 @@ use flate2::read::GzDecoder;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
+use tigerclaw_core::ascii::{AsciiComposer, AsciiResult};
 use tigerclaw_core::decode::Decoder;
+use tigerclaw_core::host::{HostResult, process_key as host_process_key};
 use tigerclaw_core::interaction::{
-    LiveLearning, OPTION_EARLY_COMMIT, OPTION_EARLY_COMMIT_TO_PREEDIT, ProcessorEnv,
-    ProcessorResult, SentenceState, processor, translate,
+    CompositionBuilder, LearningCommit, LiveLearning, OPTION_EARLY_COMMIT,
+    OPTION_EARLY_COMMIT_TO_PREEDIT, ProcessorEnv, ProcessorResult, SentenceState,
+    ascii_mode_option_confirm, processor, update_notifier,
 };
 use tigerclaw_core::key::KeyEvent;
 use tigerclaw_core::lexicon::{Lexicon, Supplement};
-use tigerclaw_core::session::{Composition, Context, Event, Segment};
+use tigerclaw_core::punct::PunctTable;
+use tigerclaw_core::session::{Context, Event};
 
 struct Step {
     repr: String,
@@ -74,7 +81,9 @@ fn load_cases() -> Vec<Case> {
             }
             "step" => {
                 assert_eq!(fields.len(), 13, "step fields: {line}");
-                let candidates = if fields[12] == "-" {
+                let count: usize = fields[11].parse().expect("count");
+                // `-` 既表示「无候选」也表示「单候选且文本为空」，用计数区分。
+                let candidates = if count == 0 {
                     Vec::new()
                 } else {
                     fields[12].split(',').map(str::to_string).collect()
@@ -90,7 +99,7 @@ fn load_cases() -> Vec<Case> {
                         caret: fields[6].parse().expect("caret"),
                         commit: fields[7].to_string(),
                         highlight: fields[10].parse().expect("highlight"),
-                        count: fields[11].parse().expect("count"),
+                        count,
                         candidates,
                     });
             }
@@ -116,66 +125,92 @@ fn replay(case: &Case, data_dir: &Path, failures: &mut Vec<String>) {
     for (name, value) in &case.options {
         context.set_option(name, *value);
     }
-    let mut built_input: Vec<u8> = Vec::new();
+    let mut builder = CompositionBuilder::default();
+    let mut ascii = AsciiComposer::reference();
+    let (punct_table, punct_error) = PunctTable::load_first(&[data_dir.join("symbols.yaml")]);
+    assert!(
+        punct_table.is_some(),
+        "缺少标点表 symbols.yaml：{punct_error:?}"
+    );
+    let mut punct = punct_table;
     for (index, step) in case.steps.iter().enumerate() {
         let label = format!("{}[{}] {}", case.name, index, step.repr);
         let key = KeyEvent::from_repr(&step.repr).expect("key repr");
-        let mut env = ProcessorEnv {
-            now: 0.0,
-            dot_armed: &mut dot_armed,
-            min_retained: None,
-        };
-        let result = processor(
-            &key,
-            &mut context,
-            &mut state,
-            &mut decoder,
-            &mut live,
-            &mut env,
-        )
-        .expect("processor");
-        // 宿主提交链在 `confirm_selection` 内完成（对应 librime 引擎的同步反应）。
-        let events = context.drain_events();
-        let committed: String = events
-            .iter()
-            .filter_map(|event| match event {
-                Event::Commit(text) => Some(text.clone()),
-                _ => None,
-            })
-            .collect();
-        // 组合重建（translator）：提交会使翻译失效（参照引擎在提交后的 clear+push
-        // 触发重建，已确认前缀由 translator 按 `committed_text` 过滤）；其余情况
-        // 输入未变则保留原组合（含菜单高亮），与 Rime 引擎在翻译未失效时保留段状态一致。
-        let commit_invalidated = events.iter().any(|event| matches!(event, Event::Commit(_)));
-        let input = context.input().to_vec();
-        if commit_invalidated || input != built_input {
-            let mut composition = Composition::default();
-            if !input.is_empty() {
-                let mut candidates = Vec::new();
-                translate(
-                    &mut decoder,
-                    &context,
-                    &state,
-                    &input,
-                    0,
-                    input.len(),
-                    &mut candidates,
-                )
-                .expect("translate");
-                composition.segments.push(Segment {
-                    start: 0,
-                    end: input.len(),
-                    tags: Vec::new(),
-                    selected_index: 0,
-                    candidates,
-                    selected: false,
-                });
+        let mut consumed = false;
+        let mut skip_processors = false;
+        // 参照链首：ascii_composer（Accepted 吞键 / Rejected 交宿主并停止链 / Noop 继续）。
+        match ascii.process_key(&key, &mut context, index as f64 * 0.01) {
+            AsciiResult::Accepted => {
+                consumed = true;
+                skip_processors = true;
             }
-            context.composition = composition;
-            built_input = input.clone();
+            AsciiResult::Rejected => {
+                skip_processors = true;
+            }
+            AsciiResult::Noop => {}
         }
+        if !skip_processors {
+            let mut env = ProcessorEnv {
+                now: 0.0,
+                dot_armed: &mut dot_armed,
+                min_retained: None,
+            };
+            let result = processor(
+                &key,
+                &mut context,
+                &mut state,
+                &mut decoder,
+                &mut live,
+                &mut env,
+            )
+            .expect("processor");
+            // 参照链：处理器未消费的键交宿主等价物（selector/navigator/express_editor 等）。
+            consumed = match result {
+                ProcessorResult::Consume => true,
+                ProcessorResult::Forward => {
+                    host_process_key(&key, &mut context, punct.as_mut()) == HostResult::Consumed
+                }
+            };
+        }
+        // 事件泵：提交与选项事件（ascii_mode 确认可能再产生提交）。
+        let mut committed = String::new();
+        let mut commit_invalidated = false;
+        for _ in 0..4 {
+            let events = context.drain_events();
+            if events.is_empty() {
+                break;
+            }
+            for event in events {
+                match event {
+                    Event::Commit(text) => {
+                        commit_invalidated = true;
+                        committed.push_str(&text);
+                    }
+                    Event::Option(name) => {
+                        ascii_mode_option_confirm(
+                            &name,
+                            &mut context,
+                            &mut state,
+                            Some(&mut LearningCommit {
+                                decoder: &mut decoder,
+                                live: &mut live,
+                                now: 0.0,
+                            }),
+                        );
+                    }
+                    Event::Update => {}
+                }
+            }
+        }
+        builder
+            .rebuild(&mut decoder, &mut context, &state, commit_invalidated)
+            .expect("rebuild");
+        // 参照 update 通知器（暂存清理 / 缓冲隐藏）。
+        update_notifier(&mut context, &mut state, &mut live);
+        // 参照 `AsciiComposer::OnContextUpdate`：临时 ascii 随组合结束退出。
+        ascii.on_context_update(&mut context);
         // 比对。
-        let consumed = matches!(result, ProcessorResult::Consume);
+        let input = context.input().to_vec();
         if consumed != step.consumed {
             failures.push(format!(
                 "{label}: consumed 期望 {} 实际 {}",
@@ -204,17 +239,30 @@ fn replay(case: &Case, data_dir: &Path, failures: &mut Vec<String>) {
             ));
         }
         let segment = context.composition.back();
-        let highlight = segment.map(|segment| segment.selected_index).unwrap_or(0);
-        let count = segment.map(|segment| segment.candidates.len()).unwrap_or(0);
-        let candidates: Vec<String> = segment
-            .map(|segment| {
-                segment
-                    .candidates
-                    .iter()
-                    .map(|candidate| hex(candidate.text.as_bytes()))
-                    .collect()
-            })
-            .unwrap_or_default();
+        // 参照 `RimeGetContext`：按当前页上报候选与页内高亮（`menu/page_size: 5`）。
+        let page_size = tigerclaw_core::host::DEFAULT_PAGE_SIZE;
+        let highlight = segment
+            .map(|segment| segment.selected_index % page_size)
+            .unwrap_or(0);
+        // 参照在 `_hide_candidate` 下把菜单候选数置 0（高亮照常上报）。
+        let hidden = context.get_option("_hide_candidate");
+        let page: Vec<&tigerclaw_core::session::Candidate> = match segment {
+            Some(segment) if !hidden => {
+                let start = (segment.selected_index / page_size) * page_size;
+                let end = (start + page_size).min(segment.candidates.len());
+                if start < end {
+                    segment.candidates[start..end].iter().collect()
+                } else {
+                    Vec::new()
+                }
+            }
+            _ => Vec::new(),
+        };
+        let count = page.len();
+        let candidates: Vec<String> = page
+            .iter()
+            .map(|candidate| hex(candidate.text.as_bytes()))
+            .collect();
         if highlight != step.highlight {
             failures.push(format!(
                 "{label}: highlight 期望 {} 实际 {highlight}",

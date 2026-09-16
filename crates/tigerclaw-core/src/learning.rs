@@ -104,6 +104,7 @@ pub struct DiffEvent {
 }
 
 /// 学习索引：`build` 形态（全量重放）或运行时形态（分区 + 物化缓存）。
+#[derive(Clone)]
 pub struct LearningIndex {
     pub codes: Vec<String>,
     pub now: f64,

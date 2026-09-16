@@ -12,6 +12,7 @@ use hashbrown::HashMap;
 use std::hash::Hash;
 
 /// `M.new` + `M.put`：key→value 的 FIFO 记忆化。
+#[derive(Clone)]
 pub struct Fifo<K, V> {
     values: HashMap<K, V>,
     /// 槽位 i（0 基）保存写入槽位 i+1 的 key；`len()` 即 Lua 的 `#keys`。

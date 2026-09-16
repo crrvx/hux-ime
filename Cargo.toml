@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/tigerclaw-core"]
+members = ["crates/tigerclaw-core", "crates/tigerclaw-addon"]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,6 +12,7 @@ rust-version = "1.85"
 anyhow = "1"
 hashbrown = "0.15"
 memmap2 = "0.9"
+yaml-rust2 = "0.13.0"
 
 [profile.release]
 lto = "thin"
