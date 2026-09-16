@@ -853,7 +853,7 @@ mod tests {
         // 取自参照实现（也是线上学习库名后缀的来源）。
         assert_eq!(hash(""), "811c9dc500001505");
         assert_eq!(hash("tiger_sentence"), "f2d1c028532c0d94");
-        assert_eq!(hash("虎整句"), "d81047ce8c7a3a3c");
+        assert_eq!(hash("虎句"), "2b025b23302e3acd");
     }
 
     #[test]

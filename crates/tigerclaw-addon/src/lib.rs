@@ -1,4 +1,4 @@
-//! 虎整句 fcitx5 addon 的 Rust 侧（K3）：C ABI、数据加载与会话装配。
+//! 虎爪（虎句方案）fcitx5 addon 的 Rust 侧（K3）：C ABI、数据加载与会话装配。
 //!
 //! 分工：`shell/tigerclaw.cpp` 只做 fcitx5 接口适配（按键 → 本层；提交/preedit/候选 ← 本层回调），
 //! 逻辑在 Rust（本层 → `tigerclaw-core`）。组合重建照 2c 重放桩同构规则：
@@ -12,25 +12,24 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 mod learning_store;
 mod options;
+mod settings;
 
 use learning_store::LearningStore;
 use options::OptionsStore;
+use settings::Settings;
 
-use tigerclaw_core::ascii::{AsciiComposer, AsciiResult};
 use tigerclaw_core::decode::Decoder;
 use tigerclaw_core::host::{self, HostResult};
 use tigerclaw_core::interaction::{
-    CompositionBuilder, LearningCommit, LiveLearning, ProcessorEnv, ProcessorResult, SentenceState,
-    ascii_mode_option_confirm, buffered_text, option_defaults, processor, reset_early_evidence,
-    set_allow_duplicate_single, update_notifier,
+    CompositionBuilder, LiveLearning, ProcessorEnv, ProcessorResult, SentenceState, buffered_text,
+    processor, reset_early_evidence, set_allow_duplicate_single, update_notifier,
 };
 use tigerclaw_core::key::{
     K_ALT_MASK, K_CONTROL_MASK, K_LOCK_MASK, K_RELEASE_MASK, K_SHIFT_MASK, K_SUPER_MASK, KeyEvent,
 };
 use tigerclaw_core::lexical;
 use tigerclaw_core::lexicon::{
-    DEFAULT_HIGH_FREQ_LIMIT, LEXICAL_FILE, Lexicon, MODEL_PATH, Supplement, candidate_paths,
-    data_directories,
+    LEXICAL_FILE, Lexicon, MODEL_PATH, Supplement, candidate_paths, data_directories,
 };
 use tigerclaw_core::ngram::MobileModel;
 use tigerclaw_core::punct::PunctTable;
@@ -123,16 +122,14 @@ pub struct Engine {
     context: Context,
     state: SentenceState,
     live: LiveLearning,
-    /// ascii_composer 等价物（链首：Shift/Caps 切换与 ascii 直通）。
-    ascii: AsciiComposer,
-    /// 单调时钟起点（ascii 敲击判定窗口）。
-    started: std::time::Instant,
     dot_armed: bool,
     min_retained: Option<i64>,
     /// 组合重建（提交或输入变化时重建，保留段状态含菜单高亮）。
     builder: CompositionBuilder,
     /// 选项存储（用户目录不可用时为 `None`，此时仅用内建缺省）。
     options: Option<OptionsStore>,
+    /// 外部配置（fcitx5 配置界面 / 测试；默认 = 内建缺省）。
+    settings: Settings,
     /// 标点表（`symbols.yaml`；缺失时标点交宿主）。
     punct: Option<PunctTable>,
     /// 学习库（用户目录不可用时为禁用占位）。
@@ -169,7 +166,8 @@ impl Engine {
                 .collect::<Vec<_>>()
                 .join(":")
         )];
-        let lexicon = Lexicon::load(&dirs, DEFAULT_HIGH_FREQ_LIMIT);
+        let settings = Settings::default();
+        let lexicon = Lexicon::load(&dirs, settings.high_freq_limit);
         notes.push(format!("lexicon: {}", lexicon.data_status().canonical()));
         let learning_rules = lexicon.learning_rules.clone();
         let supplement = Supplement::load_default(dirs.first().map(PathBuf::as_path));
@@ -198,12 +196,14 @@ impl Engine {
         context.set_option("_auto_commit", true);
         // 选项：有存储则同步（参照 `M.options.sync`，同步写入由核心抑制观察）；
         // 无存储时直接用内建缺省。
-        let mut options = options_dir.as_deref().map(OptionsStore::load);
+        let mut options = options_dir
+            .as_deref()
+            .map(|dir| OptionsStore::load_with_defaults(dir, settings.store_defaults()));
         if let Some(options) = options.as_mut() {
             options.sync(&mut context);
         } else {
-            for (name, value) in option_defaults() {
-                context.set_option(&name, value);
+            for (name, value) in settings.option_defaults() {
+                context.set_option(name, value);
             }
         }
         // 学习库：`<user dir>/tiger_sentence_learning_<hash>.userdb/`（用户目录不可用则禁用）。
@@ -220,9 +220,9 @@ impl Engine {
         } else {
             notes.push(format!("learning: {}", learning.name));
         }
-        let learning_mode = format!(
-            "sentence-v1|rules={learning_rules}|optimal={DEFAULT_HIGH_FREQ_LIMIT}|dup={}",
-            u8::from(set_allow_duplicate_single(&context))
+        let learning_mode = settings.learning_mode(
+            &learning_rules,
+            u8::from(set_allow_duplicate_single(&context)),
         );
         let live = LiveLearning {
             mode: learning_mode.clone(),
@@ -235,12 +235,11 @@ impl Engine {
             context,
             state: SentenceState::fresh(1),
             live,
-            ascii: AsciiComposer::reference(),
-            started: std::time::Instant::now(),
             dot_armed: false,
             min_retained: None,
             builder: CompositionBuilder::default(),
             options,
+            settings,
             punct,
             learning,
             learning_rules,
@@ -256,55 +255,36 @@ impl Engine {
     fn key(&mut self, keysym: u32, states: u32, release: bool) -> bool {
         let key = KeyEvent::new(keysym as i32, core_modifiers(states, release));
         let now = wall_clock();
-        let mut consumed = false;
-        let mut skip_processors = false;
-        // 参照链首：ascii_composer（Accepted 吞键 / Rejected 交宿主并停止链 / Noop 继续）。
-        match self.ascii.process_key(
-            &key,
-            &mut self.context,
-            self.started.elapsed().as_secs_f64(),
-        ) {
-            AsciiResult::Accepted => {
-                consumed = true;
-                skip_processors = true;
-            }
-            AsciiResult::Rejected => {
-                skip_processors = true;
-            }
-            AsciiResult::Noop => {}
-        }
-        if !skip_processors {
-            let result = {
-                let mut env = ProcessorEnv {
-                    now,
-                    dot_armed: &mut self.dot_armed,
-                    min_retained: self.min_retained,
-                };
-                processor(
-                    &key,
-                    &mut self.context,
-                    &mut self.state,
-                    &mut self.decoder,
-                    &mut self.live,
-                    &mut env,
-                )
+        let result = {
+            let mut env = ProcessorEnv {
+                now,
+                dot_armed: &mut self.dot_armed,
+                min_retained: self.min_retained,
             };
-            consumed = match result {
-                Ok(ProcessorResult::Consume) => true,
-                // 参照链：处理器未消费的键交宿主等价物（selector/navigator/express_editor 等）。
-                Ok(ProcessorResult::Forward) => {
-                    host::process_key(&key, &mut self.context, self.punct.as_mut())
-                        == HostResult::Consumed
-                }
-                Err(error) => {
-                    eprintln!("tigerclaw: processor error: {error}");
-                    false
-                }
-            };
-        }
+            processor(
+                &key,
+                &mut self.context,
+                &mut self.state,
+                &mut self.decoder,
+                &mut self.live,
+                &mut env,
+            )
+        };
+        let consumed = match result {
+            Ok(ProcessorResult::Consume) => true,
+            // 参照链：处理器未消费的键交宿主等价物（selector/navigator/express_editor 等）。
+            Ok(ProcessorResult::Forward) => {
+                host::process_key(&key, &mut self.context, self.punct.as_mut())
+                    == HostResult::Consumed
+            }
+            Err(error) => {
+                eprintln!("tigerclaw: processor error: {error}");
+                false
+            }
+        };
         let mut commits = Vec::new();
         let mut invalidated = false;
-        // 事件泵：选项事件可能触发 ascii_mode 确认（进而产生提交），循环至排空（有界）。
+        // 事件泵：选项事件可能触发确认（进而产生提交），循环至排空（有界）。
         for _ in 0..4 {
             let events = self.context.drain_events();
             if events.is_empty() {
@@ -317,17 +297,6 @@ impl Engine {
                         commits.push(text);
                     }
                     Event::Option(name) => {
-                        // 参照选项通知器：ascii_mode 打开且有缓冲时确认当前选中。
-                        ascii_mode_option_confirm(
-                            &name,
-                            &mut self.context,
-                            &mut self.state,
-                            Some(&mut LearningCommit {
-                                decoder: &mut self.decoder,
-                                live: &mut self.live,
-                                now,
-                            }),
-                        );
                         self.observe_option(&name);
                     }
                     Event::Update => {}
@@ -358,8 +327,6 @@ impl Engine {
             eprintln!("tigerclaw: rebuild error: {error}");
         }
         update_notifier(&mut self.context, &mut self.state, &mut self.live);
-        // 参照 `AsciiComposer::OnContextUpdate`：临时 ascii 随组合结束退出。
-        self.ascii.on_context_update(&mut self.context);
         self.push_update();
         consumed
     }
@@ -373,7 +340,6 @@ impl Engine {
         self.live.submitted_raw = None;
         self.dot_armed = false;
         self.builder.reset();
-        self.ascii = AsciiComposer::reference();
         if let Some(options) = self.options.as_mut() {
             options.sync(&mut self.context);
         }
@@ -387,12 +353,23 @@ impl Engine {
         }
     }
 
+    /// 应用外部配置（fcitx5 配置界面 / 测试）：选项类即时生效；`high_freq_limit` 需重启。
+    pub fn apply_settings(&mut self, settings: Settings) {
+        self.settings = settings;
+        let defaults = self.settings.option_defaults();
+        for (name, value) in defaults {
+            if self.context.get_option(name) != value {
+                self.context.set_option(name, value);
+            }
+        }
+        self.refresh_learning_mode();
+    }
+
     /// 按当前规则/选项刷新学习 mode（变化时强制重设 decoder 学习）。
     fn refresh_learning_mode(&mut self) {
-        let mode = format!(
-            "sentence-v1|rules={}|optimal={DEFAULT_HIGH_FREQ_LIMIT}|dup={}",
-            self.learning_rules,
-            u8::from(set_allow_duplicate_single(&self.context))
+        let mode = self.settings.learning_mode(
+            &self.learning_rules,
+            u8::from(set_allow_duplicate_single(&self.context)),
         );
         if mode != self.learning_mode {
             self.learning_mode = mode.clone();
@@ -545,6 +522,46 @@ pub unsafe extern "C" fn tigerclaw_engine_status(engine: *const Engine) -> *cons
         Some(engine) => engine.status.as_ptr(),
         None => std::ptr::null(),
     }
+}
+
+/// 外部配置（C ABI 布局；与 `shell/tigerclaw_abi.h` 一致）。
+#[derive(Clone, Copy, Debug, Default)]
+#[repr(C)]
+pub struct TigerclawOptions {
+    pub early_commit: i32,
+    pub early_commit_to_preedit: i32,
+    pub allow_duplicate_single: i32,
+    pub full_shape: i32,
+    pub ascii_punct: i32,
+    pub tab_learning: i32,
+    pub high_freq_limit: i32,
+}
+
+/// 应用外部配置（fcitx5 配置界面 → C++ 壳 → 本入口）。返回 1 = 已应用。
+///
+/// # Safety
+/// `engine` 须有效；`options` 须为空或指向有效 `TigerclawOptions`。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tigerclaw_engine_apply_settings(
+    engine: *mut Engine,
+    options: *const TigerclawOptions,
+) -> i32 {
+    let Some(engine) = (unsafe { engine.as_mut() }) else {
+        return 0;
+    };
+    let Some(options) = (unsafe { options.as_ref() }) else {
+        return 0;
+    };
+    engine.apply_settings(Settings {
+        early_commit: options.early_commit != 0,
+        early_commit_to_preedit: options.early_commit_to_preedit != 0,
+        allow_duplicate_single: options.allow_duplicate_single != 0,
+        full_shape: options.full_shape != 0,
+        ascii_punct: options.ascii_punct != 0,
+        tab_learning: options.tab_learning != 0,
+        high_freq_limit: options.high_freq_limit.max(0) as usize,
+    });
+    1
 }
 
 /// 处理一次按键：返回 1 = 已消费。
@@ -753,61 +770,6 @@ mod tests {
     }
 
     #[test]
-    fn ascii_shift_and_caps_switch_direct_input() {
-        let _guard = serial();
-        COMMITS.lock().unwrap().clear();
-        UPDATES.lock().unwrap().clear();
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
-        assert!(engine.key(u32::from(b'a'), 0, false));
-        assert!(engine.key(u32::from(b'b'), 0, false));
-        // Shift 轻击：按 commit_code 提交原始编码并切到 ascii（不消费）
-        assert!(!engine.key(0xffe1, 0, false), "Shift 按下交宿主");
-        assert!(!engine.key(0xffe1, 0, true), "Shift 抬起触发切换");
-        assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "ab");
-        // ascii 直通：字母不消费、无组合
-        assert!(!engine.key(u32::from(b'a'), 0, false), "ascii 下字母直通");
-        assert!(engine.context.input().is_empty());
-        // 再次轻击切回：字母回到组合
-        assert!(!engine.key(0xffe1, 0, false));
-        assert!(!engine.key(0xffe1, 0, true));
-        assert!(engine.key(u32::from(b'a'), 0, false), "切回后字母被消费");
-        assert_eq!(engine.context.input(), b"a");
-        // CapsLock 敲击：不切换、不清组合（fcitx5 适配：仅跟随系统 caps 状态）
-        engine.reset();
-        assert!(engine.key(u32::from(b'a'), 0, false));
-        assert!(!engine.key(0xffe5, 0, false), "Caps_Lock 交宿主");
-        assert_eq!(engine.context.input(), b"a", "敲击不改状态");
-        assert!(engine.key(u32::from(b'b'), 0, false), "仍为中文输入");
-        assert_eq!(engine.context.input(), b"ab");
-    }
-
-    #[test]
-    fn caps_state_follows_system_and_uppercase_passes_through() {
-        let _guard = serial();
-        COMMITS.lock().unwrap().clear();
-        UPDATES.lock().unwrap().clear();
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
-        assert!(engine.key(u32::from(b'a'), 0, false));
-        assert!(engine.key(u32::from(b'b'), 0, false));
-        assert_eq!(engine.context.input(), b"ab");
-        // 系统 caps 打开（fcitx5：事件已带新状态）：ascii 跟随系统状态，组合清空
-        assert!(
-            !engine.key(0xffe5, FCITX_CAPS_LOCK, false),
-            "CapsLock 交宿主"
-        );
-        assert!(engine.context.input().is_empty(), "切换清空组合");
-        // 大写字母直通
-        assert!(!engine.key(0x41, FCITX_CAPS_LOCK, false), "大写字母直通");
-        // 关闭 caps：回到中文输入
-        assert!(!engine.key(0xffe5, 0, false));
-        assert!(
-            engine.key(u32::from(b'a'), 0, false),
-            "caps 关后恢复中文输入"
-        );
-        assert_eq!(engine.context.input(), b"a");
-    }
-
-    #[test]
     fn punctuation_commits_via_table() {
         COMMITS.lock().unwrap().clear();
         UPDATES.lock().unwrap().clear();
@@ -844,6 +806,54 @@ mod tests {
         );
         assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "甲");
         assert!(engine.context.input().is_empty(), "组合已提交并清空");
+    }
+
+    #[test]
+    fn apply_settings_switches_options_and_learning() {
+        let _guard = serial();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let settings = Settings {
+            full_shape: true,
+            ascii_punct: true,
+            tab_learning: false,
+            high_freq_limit: 100,
+            ..Default::default()
+        };
+        engine.apply_settings(settings);
+        assert!(engine.context.get_option("full_shape"));
+        assert!(engine.context.get_option("ascii_punct"));
+        assert!(
+            engine.live.mode.is_empty(),
+            "关闭 Tab 学习 → 学习 mode 为空"
+        );
+    }
+
+    #[test]
+    fn ffi_apply_settings_roundtrip() {
+        let _guard = serial();
+        let engine = unsafe { tigerclaw_engine_new(std::ptr::null()) };
+        assert!(!engine.is_null());
+        let options = TigerclawOptions {
+            early_commit: 0,
+            early_commit_to_preedit: 1,
+            allow_duplicate_single: 1,
+            full_shape: 1,
+            ascii_punct: 1,
+            tab_learning: 0,
+            high_freq_limit: 800,
+        };
+        let applied = unsafe { tigerclaw_engine_apply_settings(engine, &options) };
+        assert_eq!(applied, 1);
+        let state = unsafe { &mut *engine };
+        assert!(!state.settings.early_commit);
+        assert!(state.context.get_option("full_shape"));
+        assert!(state.context.get_option("ascii_punct"));
+        assert!(
+            state.live.mode.is_empty(),
+            "tab_learning=0 → 学习 mode 为空"
+        );
+        assert_eq!(state.settings.high_freq_limit, 800);
+        unsafe { tigerclaw_engine_free(engine) };
     }
 
     #[test]

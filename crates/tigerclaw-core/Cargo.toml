@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "虎整句核心逻辑（Rust 直迁；差分验证）"
+description = "虎句方案核心逻辑（虎爪 Tigerclaw；Rust 直迁、差分验证）"
 
 [dependencies]
 anyhow.workspace = true

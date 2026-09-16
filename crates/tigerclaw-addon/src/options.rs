@@ -5,7 +5,9 @@
 use hashbrown::HashMap;
 use std::path::{Path, PathBuf};
 
-use tigerclaw_core::interaction::{Options, option_defaults, set_property_if_changed};
+#[cfg(test)]
+use tigerclaw_core::interaction::option_defaults;
+use tigerclaw_core::interaction::{Options, set_property_if_changed};
 use tigerclaw_core::session::Context;
 use yaml_rust2::{Yaml, YamlEmitter, YamlLoader};
 
@@ -51,7 +53,15 @@ fn read_options(value: &Yaml, values: &mut HashMap<String, bool>, fill_missing_o
 
 impl OptionsStore {
     /// 参照 `open_store`：读取主文件与 legacy 回退；解析失败即视为空文档。
+    /// 测试用便捷入口（生产路径由 addon 传入 `Settings` 缺省）。
+    #[cfg(test)]
     pub fn load(user_dir: &Path) -> Self {
+        Self::load_with_defaults(user_dir, option_defaults())
+    }
+
+    /// 同 [`OptionsStore::load`]，但以给定缺省回退缺失项
+    /// （addon `Settings` 经此成为存储层缺省，合并顺序仍为 `options.yaml` > 设置 > 内建）。
+    pub fn load_with_defaults(user_dir: &Path, defaults: HashMap<String, bool>) -> Self {
         let path = user_dir.join(OPTIONS_FILE);
         let mut document = match std::fs::read_to_string(&path) {
             Ok(text) => YamlLoader::load_from_str(&text)
@@ -81,7 +91,7 @@ impl OptionsStore {
             );
             read_options(&wrapper, &mut values, true);
         }
-        let mut options = Options::new(option_defaults());
+        let mut options = Options::new(defaults);
         options.values = values;
         Self {
             path,
@@ -213,6 +223,20 @@ mod tests {
         let mut context = Context::new();
         store.sync(&mut context);
         assert!(!context.get_option("tiger_sentence_allow_duplicate_single"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn provided_defaults_fill_missing_keys() {
+        let dir = temp_dir("defaults");
+        let defaults = HashMap::from([("tiger_sentence_early_commit".to_string(), false)]);
+        let mut store = OptionsStore::load_with_defaults(&dir, defaults);
+        let mut context = tigerclaw_core::session::Context::new();
+        store.sync(&mut context);
+        assert!(
+            !context.get_option("tiger_sentence_early_commit"),
+            "缺失键应回退到传入缺省"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 

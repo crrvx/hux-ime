@@ -1,6 +1,6 @@
 # tigerclaw-fcitx5
 
-虎整句输入方案：fcitx5 原生 Rust 实现（Rust 直迁进行中：K0–K1.5 ✅、K2 核心 ✅、K3 addon 进行中）。
+虎爪（Tigerclaw）：虎句输入方案的 fcitx5 原生 Rust 实现（Rust 直迁进行中：K0–K1.5 ✅、K2 核心 ✅、K3 addon 进行中）。
 
 | 文档 | 内容 |
 |---|---|

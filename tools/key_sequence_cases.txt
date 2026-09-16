@@ -43,13 +43,6 @@ tab_lock_left		a b Tab c Left Right
 tab_lock_backspace		a b Tab c BackSpace BackSpace
 tab_lock_delete		a b Tab c Left Delete
 tab_lock_up_down		a b Tab c Up Down Page_Down
-# K3 ⑦：ascii_composer（Shift 轻击与 ascii 直通；CapsLock 不按键切换——fcitx5 适配：仅跟随系统 caps 状态，故不入金样）
-ascii_shift_tap_letters		a b Shift_L Release+Shift_L a b
-ascii_shift_press_only		a b Shift_L a
-ascii_shift_tap_twice		a b Shift_L Release+Shift_L Shift_L Release+Shift_L a
-ascii_idle_shift		a b space Shift_L Release+Shift_L a
-ascii_buffered_shift	tiger_sentence_early_commit_to_preedit=1	a b Tab c Shift_L Release+Shift_L
-ascii_buffered_shift_tail	tiger_sentence_early_commit_to_preedit=1	a b Tab c Shift_L Release+Shift_L a b
 # K3 ⑦b：标点表（symbols.yaml half/full shape、pair 交替）
 punct_idle_period	full_shape=0	period
 punct_idle_comma	full_shape=0	comma

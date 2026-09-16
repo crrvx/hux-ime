@@ -1,4 +1,7 @@
-// 虎整句 fcitx5 addon 的 C++ 薄壳：只做 fcitx5 接口适配，逻辑在 Rust（libtigerclaw_addon）。
+// 虎爪（虎句方案）fcitx5 addon 的 C++ 薄壳：只做 fcitx5 接口适配，逻辑在 Rust（libtigerclaw_addon）。
+#include <fcitx-config/configuration.h>
+#include <fcitx-config/option.h>
+#include <fcitx-config/iniparser.h>
 #include <fcitx/addonfactory.h>
 #include <fcitx/addoninstance.h>
 #include <fcitx/candidatelist.h>
@@ -19,9 +22,22 @@
 
 namespace {
 
+/// 配置 schema：fcitx5-configtool 依据它自动生成设置页（fcitx://config/addon/tigerclaw）。
+FCITX_CONFIGURATION(
+    TigerclawConfig,
+    fcitx::Option<bool> earlyCommit{this, "EarlyCommit", "提前上屏（组合中证据成熟即上屏）", true};
+    fcitx::Option<bool> earlyCommitToPreedit{this, "EarlyCommitToPreedit", "提前上屏至预编辑（缓冲，不直接提交）", false};
+    fcitx::Option<bool> allowDuplicateSingle{this, "AllowDuplicateSingle", "单字重码参与组句", true};
+    fcitx::Option<bool> fullShape{this, "FullShape", "全角标点", false};
+    fcitx::Option<bool> asciiPunct{this, "AsciiPunct", "ASCII 标点直通（不做中文标点映射）", false};
+    fcitx::Option<bool> tabLearning{this, "TabLearning", "Tab 选字写入学习库", true};
+    fcitx::Option<int, fcitx::IntConstrain> highFreqLimit{
+        this, "HighFreqLimit", "高频字过滤上限（重启生效）", 1500, fcitx::IntConstrain(0, 20000)};);
+
 class TigerclawEngine : public fcitx::InputMethodEngine {
 public:
     TigerclawEngine() {
+        fcitx::readAsIni(config_, "conf/tigerclaw.conf");
         tigerclaw_host host = {};
         host.user = this;
         host.commit = &TigerclawEngine::commitCallback;
@@ -30,8 +46,18 @@ public:
         if (const char *status = tigerclaw_engine_status(engine_)) {
             FCITX_INFO() << "tigerclaw: " << status;
         }
+        applyConfig();
     }
     ~TigerclawEngine() override { tigerclaw_engine_free(engine_); }
+
+    /// 配置 schema（fcitx5-configtool 生成设置页；保存到 ~/.config/fcitx5/conf/tigerclaw.conf）。
+    const fcitx::Configuration *getConfig() const override { return &config_; }
+
+    /// 用户在配置工具中保存后：落盘由框架负责，这里应用到引擎（即时生效项）。
+    void setConfig(const fcitx::RawConfig &raw) override {
+        config_.load(raw, true);
+        applyConfig();
+    }
 
     void keyEvent(const fcitx::InputMethodEntry &entry,
                   fcitx::KeyEvent &keyEvent) override {
@@ -125,6 +151,25 @@ private:
         context_->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
     }
 
+    /// 把 schema 值经 C ABI 推给 Rust 侧（`Settings::apply_settings`）。
+    void applyConfig() {
+        if (engine_ == nullptr) {
+            return;
+        }
+        tigerclaw_options options = {};
+        options.early_commit = config_.earlyCommit.value() ? 1 : 0;
+        options.early_commit_to_preedit = config_.earlyCommitToPreedit.value() ? 1 : 0;
+        options.allow_duplicate_single = config_.allowDuplicateSingle.value() ? 1 : 0;
+        options.full_shape = config_.fullShape.value() ? 1 : 0;
+        options.ascii_punct = config_.asciiPunct.value() ? 1 : 0;
+        options.tab_learning = config_.tabLearning.value() ? 1 : 0;
+        options.high_freq_limit = config_.highFreqLimit.value();
+        if (tigerclaw_engine_apply_settings(engine_, &options) == 0) {
+            FCITX_WARN() << "tigerclaw: apply settings failed";
+        }
+    }
+
+    TigerclawConfig config_;
     tigerclaw_engine *engine_;
     fcitx::InputContext *context_ = nullptr;
 };

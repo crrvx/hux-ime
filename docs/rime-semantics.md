@@ -103,7 +103,7 @@ Rust 侧对应 `host` 模块（⑥ 已实现 key_binder/selector/navigator/expre
 
 | 组件 | 行为 |
 |---|---|
-| `ascii_composer` | 链首：Shift 轻击（按下后 500ms 内抬起）切换 `ascii_mode`；样式 `commit_code`（提交原始编码）/`commit_text`（确认选中）/`clear`（清组合）等，缓冲态下 `commit_code`/`inline_ascii` 归一为 `commit_text`；`good_old_caps_lock: true` 时 Caps 事件放行交系统切换；ascii 空闲按键直通（`kRejected`）。**fcitx5 适配**：**不处理 CapsLock 敲击**（只放行交系统），改为跟随**系统 caps 状态**（每个按键事件观察，状态变化即同步 `ascii_mode`）；大写字母（caps 位已置）一律直通 |
+| `ascii_composer` | 参照链首组件；**本项目不实现英文模式**（按设计取舍）：英文输入交由 fcitx5 切换输入法；Shift/CapsLock 不切换模式，大写字母照常直通（见 `express_editor` 的 `char_handler`）|
 | `key_binder` | `Tab`→Down、`Shift+Tab`→Up（`when: has_menu` 且非 ascii_mode）；`paging` 条件由段上的 `paging` 标签决定 |
 | `punctuator` | 单个可打印 ASCII 键（无 Ctrl/Alt/Super；`ascii_punct` 关闭；`use_space=false` 时组合中空格除外）查表（`punctuator/<half|full>_shape`，`import_preset: symbols`）：标量/`{commit}` 直提交、`{pair}` 按键交替；组合中提交「组合文本 + 标点」并清空；`digit_separators: ""` 不做数字分隔符 |
 | `selector` | 仅当末段有菜单（`status >= kGuess` 且非 `raw` 标签）；Horizontal\|Stacked：Up/Down 移候选（不环绕）、Page_Up/Down 翻页（`menu/page_size: 5`，`page_down_cycle` 缺省 false）、Home/End 回高亮 0（高亮为 0 时交 navigator）；末页号上报为 `selected_index / page_size`、页内高亮 `% page_size` |
