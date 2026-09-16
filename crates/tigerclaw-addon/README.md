@@ -55,8 +55,10 @@ ln -sf ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
   （提交或输入变化时重建）、提交 / preedit（字节光标）/ 候选与高亮、
   `activate/deactivate/reset` 生命周期、`_auto_commit`；
 - K3d：选项持久化（`options.yaml` + legacy 回退 + 错误属性）；
-- K3e：学习库（LevelDB 落库 + 节流刷新 + `_hide_candidate` / `ascii_mode` 确认）。
+- K3e：学习库（LevelDB 落库 + 节流刷新 + `_hide_candidate` / `ascii_mode` 确认）；
+- K3f（⑥）：宿主编辑语义——core `host` 模块（librime `key_binder`/`selector`/`navigator`/
+  `express_editor` 等价物）+ 组合重建随光标（`CompositionBuilder` 参照 `ConcreteEngine::Compose`）；
+  2c 键序列金样扩到 36 例/200 步（编辑/导航键、缓冲/锁定态）。
 
 已知限制（后续增量）：每引擎单会话（切换/重置即清空）；候选为展示型（点击不提交）；
-组合中的编辑/导航键（←→/↑↓/Page、退格、Home/End 等）参照交宿主链，宿主等价物见 K3 ⑥；
-数据/选项/学习/反查与打包见 K3 其余项。
+标点/ascii_composer（⑦）、反查（⑧）、状态菜单与打包（⑨）待做。

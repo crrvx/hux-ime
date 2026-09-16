@@ -17,10 +17,11 @@ use learning_store::LearningStore;
 use options::OptionsStore;
 
 use tigerclaw_core::decode::Decoder;
+use tigerclaw_core::host::{self, HostResult};
 use tigerclaw_core::interaction::{
     CompositionBuilder, LearningCommit, LiveLearning, ProcessorEnv, ProcessorResult, SentenceState,
     buffered_text, confirm_selection, option_defaults, processor, reset_early_evidence,
-    set_allow_duplicate_single,
+    set_allow_duplicate_single, update_notifier,
 };
 use tigerclaw_core::key::{
     K_ALT_MASK, K_CONTROL_MASK, K_LOCK_MASK, K_RELEASE_MASK, K_SHIFT_MASK, K_SUPER_MASK, KeyEvent,
@@ -254,7 +255,11 @@ impl Engine {
             )
         };
         let consumed = match result {
-            Ok(result) => matches!(result, ProcessorResult::Consume),
+            Ok(ProcessorResult::Consume) => true,
+            // 参照链：处理器未消费的键交宿主等价物（selector/navigator/express_editor 等）。
+            Ok(ProcessorResult::Forward) => {
+                host::process_key(&key, &mut self.context) == HostResult::Consumed
+            }
             Err(error) => {
                 eprintln!("tigerclaw: processor error: {error}");
                 false
@@ -309,22 +314,8 @@ impl Engine {
             self.learning.refresh_scores(now);
         }
         self.apply_learning();
-        // 参照 update 通知器：非组合清暂存；缓冲且实况输入为空时隐藏候选。
-        if !self.context.is_composing() {
-            self.live.pending.clear();
-            self.live.baseline = None;
-            self.live.submitted_raw = None;
-            if !buffered_text(&self.context).is_empty() {
-                self.state.reset(&mut self.context, false);
-            }
-        }
-        let hide = !buffered_text(&self.context).is_empty() && self.context.live_input().is_empty();
-        if hide || self.live.hide_owned {
-            self.live.hide_owned = hide;
-            if self.context.get_option("_hide_candidate") != hide {
-                self.context.set_option("_hide_candidate", hide);
-            }
-        }
+        // 组合重建（参照 `ConcreteEngine::Compose`，先于通知器）与 update 通知器
+        // （非组合清暂存；缓冲且实况输入为空时隐藏候选）。
         if let Err(error) = self.builder.rebuild(
             &mut self.decoder,
             &mut self.context,
@@ -333,6 +324,7 @@ impl Engine {
         ) {
             eprintln!("tigerclaw: rebuild error: {error}");
         }
+        update_notifier(&mut self.context, &mut self.state, &mut self.live);
         self.push_update();
         consumed
     }
@@ -602,6 +594,11 @@ mod tests {
         dir
     }
 
+    /// 最近一次 UI 快照（preedit、字节光标、候选、高亮）。
+    fn last_update() -> UpdateSnapshot {
+        UPDATES.lock().unwrap().last().cloned().expect("update")
+    }
+
     #[test]
     fn engine_wires_learning_store() {
         let dir = temp_user_dir("learning");
@@ -661,6 +658,49 @@ mod tests {
                 "keysym {keysym:#x} 空闲时应交宿主"
             );
         }
+    }
+
+    #[test]
+    fn composing_editing_keys_update_panel_and_are_consumed() {
+        COMMITS.lock().unwrap().clear();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        assert!(engine.key(u32::from(b'a'), 0, false));
+        assert!(engine.key(u32::from(b'b'), 0, false));
+        let (preedit, cursor, candidates, _) = last_update();
+        assert_eq!(preedit, "ab");
+        assert_eq!(cursor, 2);
+        assert_eq!(candidates, vec!["甲".to_string(), "乙".to_string()]);
+        // ←：光标左移；组合按 caret 前缀重建（候选清空）
+        assert!(engine.key(0xff51, 0, false), "组合中 Left 应被消费");
+        let (preedit, cursor, candidates, _) = last_update();
+        assert_eq!(preedit, "ab");
+        assert_eq!(cursor, 1);
+        assert!(candidates.is_empty(), "光标在输入中间时无候选");
+        // →：回到末尾，候选恢复
+        assert!(engine.key(0xff53, 0, false));
+        let (_, cursor, candidates, _) = last_update();
+        assert_eq!(cursor, 2);
+        assert_eq!(candidates, vec!["甲".to_string(), "乙".to_string()]);
+        // ↓：高亮下移；↑ 到首项
+        assert!(engine.key(0xff54, 0, false));
+        let (_, _, _, selected) = last_update();
+        assert_eq!(selected, 1);
+        assert!(engine.key(0xff52, 0, false));
+        let (_, _, _, selected) = last_update();
+        assert_eq!(selected, 0);
+        // 退格：删除输入
+        assert!(engine.key(0xff08, 0, false));
+        let (preedit, cursor, candidates, _) = last_update();
+        assert_eq!(preedit, "a");
+        assert_eq!(cursor, 1);
+        assert!(candidates.is_empty());
+        // 再退格清空组合；此后交宿主
+        assert!(engine.key(0xff08, 0, false));
+        let (preedit, _, candidates, _) = last_update();
+        assert!(preedit.is_empty());
+        assert!(candidates.is_empty());
+        assert!(!engine.key(0xff08, 0, false), "空闲 BackSpace 交宿主");
     }
 
     #[test]

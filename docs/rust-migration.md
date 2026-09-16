@@ -11,8 +11,8 @@
 | **K0** ✅ | spike：`cache` + `ngram` 移植 + 差分工具链 + 陷阱审计 | fixture 29,617 条、真实模型 62,777 条逐位一致（见 [`spike-report.md`](spike-report.md)） |
 | **K1** ✅ | 计算核：lexicon、decode/beam、early-evidence、learning（见 [`spike-report.md`](spike-report.md) 与金样） | 快照差分全绿 |
 | **K1.5** ✅ | 上游追平：紧凑排序先验（码形证据 / 4 码生僻字保护 / Top-5 词先验）+ 锁播种修复语义；pin 前移至上游 main `35a10b9`，金样全量重生成 | 模型版金样逐位一致（含词先验重排） |
-| **K2**（进行中） | 交互引擎：buffer/caret、menu、键位 `repr` ✅（`key.rs` + 键表生成/金样）、键序列金样 ✅（2c 探针 11 例/38 步，含空码自动上屏）、处理器/翻译器/过滤器/学习暂存与提交通知器/早提交 ✅；余：宿主集成（K3） | 键序列金样一致 |
-| **K3** | fcitx5 addon：注册、候选/预编辑/上屏、状态菜单、配置、数据路径、LevelDb | 真机可用 |
+| **K2** ✅ | 交互引擎：buffer/caret、menu、键位 `repr` ✅（`key.rs` + 键表生成/金样）、键序列金样 ✅（2c 探针 36 例/200 步，含空码自动上屏与编辑/导航键）、处理器/翻译器/过滤器/学习暂存与提交通知器/早提交 ✅；宿主等价物见 K3 ⑥ | 键序列金样一致 |
+| **K3**（进行中） | fcitx5 addon：注册、候选/预编辑/上屏、数据路径、选项、学习库 ✅；宿主编辑语义 ✅（⑥）；ascii/标点、反查、打包、状态菜单待做 | 真机可用 |
 | **K4** | 验收与打包 | 真机清单 + 性能/内存 |
 
 移植纪律：计算部分机械翻译（逐位保真）；交互部分按行为契约自由设计。每个模块迁完即接线，差分常绿。
@@ -66,7 +66,13 @@ docs/
   → `cmake --build` → `cmake --install`；产物 `/usr/lib/fcitx5/libtigerclaw.so` 与
   `/usr/share/fcitx5/{addon,inputmethod}/tigerclaw.conf`（C++ 薄壳链接 Rust 静态库）。
 - 会话：每引擎单会话（`activate/deactivate/reset` 清空）；组合重建由
-  `interaction::CompositionBuilder` 负责（提交或输入变化时重建，否则保留菜单高亮）。
+  `interaction::CompositionBuilder` 负责（参照 `ConcreteEngine::Compose`：分段输入随光标
+  —— `input[..caret]`，caret 处无已确认段且不在末尾时翻译到 caret 后一段；按新旧输入公共
+  前缀增量保留段，未变的段保留菜单与高亮；提交后旧段不复用）。
+- 宿主处理器链：core `host::process_key` 在 `processor` 返回 `Forward` 后执行 librime
+  原生组件等价物（`key_binder` → `selector` → `navigator` → `express_editor`；`speller`/
+  `punctuator` 见 ⑦）：菜单导航/翻页、字节光标移动（Home/End、Ctrl/Shift+Left/Right）、
+  退格/删除；`Consumed` 时宿主吞键，`Forward` 时交基础应用（空闲编辑键）。
 - UI 同步：按键后状态快照（preedit/候选/上屏）；preedit 光标为字节偏移
   （fcitx `Text::setCursor` 即字节制）。
 - 数据：core `lexicon::data_directories()`（用户 → 共享）与 `candidate_paths()` 探测；

@@ -1184,15 +1184,22 @@ pub fn translate(
     Ok(())
 }
 
-/// 组合重建器：维护「提交（翻译失效）或输入变化时重建，否则保留段状态
-/// （含菜单高亮）」规则（与 2c 重放桩等价），供宿主在每次按键后调用。
+/// 分段常量（参照 schema `speller/alphabet|initials|delimiter`；`finals` 未设置）。
+const SEGMENTATION_ALPHABET: &str = "zyxwvutsrqponmlkjihgfedcba;';0123456789~";
+const SEGMENTATION_INITIALS: &str = "abcdefghijklmnopqrstuvwxyz~";
+const SEGMENTATION_DELIMITER: &str = " ";
+
+/// 组合重建器：参照 `ConcreteEngine::Compose`（分段输入随光标；增量重置保留未变段的
+/// 菜单与高亮），供宿主在每次按键后调用。
 #[derive(Clone, Debug, Default)]
 pub struct CompositionBuilder {
+    /// 当前分段输入（参照 `Segmentation::input_`）。
     built_input: Vec<u8>,
 }
 
 impl CompositionBuilder {
-    /// 若需要则重建组合；返回是否发生重建。
+    /// 重建组合：执行重置（按公共前缀丢弃段）→ 分段（abc/raw）→ 翻译未翻译段。
+    /// `invalidated` 表示本次按键发生过提交（提交会重建翻译，旧段不复用）。
     pub fn rebuild(
         &mut self,
         decoder: &mut Decoder,
@@ -1201,38 +1208,221 @@ impl CompositionBuilder {
         invalidated: bool,
     ) -> anyhow::Result<bool> {
         let input = context.input().to_vec();
-        if !invalidated && input == self.built_input {
-            return Ok(false);
+        let caret = context.caret().min(input.len());
+        if invalidated {
+            // 提交重建了翻译（参照：提交后 `Compose` 以新输入重新分段，旧段不再复用）。
+            context.composition.segments.clear();
         }
-        let mut composition = Composition::default();
-        if !input.is_empty() {
-            let mut candidates = Vec::new();
-            translate(
-                decoder,
-                context,
-                state,
-                &input,
-                0,
-                input.len(),
-                &mut candidates,
-            )?;
-            composition.segments.push(Segment {
-                start: 0,
-                end: input.len(),
-                tags: Vec::new(),
-                selected_index: 0,
-                candidates,
-                selected: false,
-            });
+        // 参照 Compose：常态分段输入为 caret 之前的前缀。
+        let caret_input = input[..caret].to_vec();
+        self.apply_reset(context, &caret_input);
+        // `caret < input.len() && caret == 已确认位置`：翻译到 caret 之后一段（完整输入）。
+        if caret < input.len() && context.composition.confirmed_position() == caret {
+            self.apply_reset(context, &input);
         }
-        context.composition = composition;
-        self.built_input = input;
+        let seg_input = self.built_input.clone();
+        calculate_segmentation(&mut context.composition, &seg_input, caret);
+        translate_segments(decoder, context, state, &seg_input)?;
         Ok(true)
+    }
+
+    /// 参照 `Segmentation::Reset`：按新旧输入的公共前缀丢弃段，必要时追加空尾段。
+    fn apply_reset(&mut self, context: &mut Context, new_input: &[u8]) {
+        let diff_pos = common_prefix_length(&self.built_input, new_input);
+        let mut disposed = false;
+        while context
+            .composition
+            .segments
+            .last()
+            .map(|segment| segment.end > diff_pos)
+            .unwrap_or(false)
+        {
+            context.composition.segments.pop();
+            disposed = true;
+        }
+        if disposed {
+            context.composition.forward();
+        }
+        self.built_input = new_input.to_vec();
     }
 
     /// 清空记录（会话重置；下次调用必重建）。
     pub fn reset(&mut self) {
         self.built_input.clear();
+    }
+}
+
+/// 公共前缀字节长度。
+fn common_prefix_length(left: &[u8], right: &[u8]) -> usize {
+    left.iter()
+        .zip(right.iter())
+        .take_while(|(a, b)| a == b)
+        .count()
+}
+
+/// 参照 `ConcreteEngine::CalculateSegmentation`。
+fn calculate_segmentation(composition: &mut Composition, input: &[u8], caret: usize) {
+    while !composition.has_finished_segmentation(input) {
+        let start = composition.current_start_position();
+        abc_segmentor(composition, input);
+        fallback_segmentor(composition, input);
+        if start == composition.current_end_position() {
+            break; // 无进展
+        }
+        if start >= caret {
+            break; // 只允许 caret 之后一段
+        }
+        if !composition.has_finished_segmentation(input) {
+            composition.forward();
+        }
+    }
+    // 只在已确认组合末尾追加空段。
+    composition.trim();
+    if composition
+        .back()
+        .map(|segment| segment.selected)
+        .unwrap_or(false)
+    {
+        composition.forward();
+    }
+}
+
+/// 参照 `AbcSegmentor::Proceed`：从当前位置取最长合法拼写段。
+fn abc_segmentor(composition: &mut Composition, input: &[u8]) {
+    let start = composition.current_start_position();
+    let mut end = start;
+    let mut expecting_an_initial = true;
+    while end < input.len() {
+        let byte = input[end] as char;
+        let is_letter = SEGMENTATION_ALPHABET.contains(byte);
+        let is_delimiter = end != 0 && SEGMENTATION_DELIMITER.contains(byte);
+        if !is_letter && !is_delimiter {
+            break;
+        }
+        let is_initial = SEGMENTATION_INITIALS.contains(byte);
+        let is_final = false; // schema 未设置 `speller/finals`
+        if expecting_an_initial && !is_initial && !is_delimiter {
+            break;
+        }
+        expecting_an_initial = is_final || is_delimiter;
+        end += 1;
+    }
+    if start < end {
+        add_segment(composition, start, end, &["abc"]);
+    }
+}
+
+/// 参照 `FallbackSegmentor::Proceed`：无可拼写时生成（或延长）raw 段。
+fn fallback_segmentor(composition: &mut Composition, input: &[u8]) {
+    if composition.current_end_position() != composition.current_start_position() {
+        return; // 本轮已有段
+    }
+    let k = composition.current_start_position();
+    if k == input.len() {
+        return;
+    }
+    composition.trim();
+    if let Some(last) = composition.back_mut()
+        && last.has_tag("raw")
+    {
+        last.end = k + 1;
+        last.candidates.clear();
+        last.selected_index = 0;
+        last.translated = false;
+        return;
+    }
+    composition.forward();
+    add_segment(composition, k, k + 1, &["raw"]);
+}
+
+/// 参照 `Segmentation::AddSegment`：同起点段按长度取胜/覆盖/合并标签。
+fn add_segment(composition: &mut Composition, start: usize, end: usize, tags: &[&str]) {
+    if start != composition.current_start_position() {
+        return;
+    }
+    if composition.segments.is_empty() {
+        composition.segments.push(Segment {
+            start,
+            end,
+            tags: tags.iter().map(|tag| tag.to_string()).collect(),
+            ..Segment::default()
+        });
+        return;
+    }
+    let last = composition.segments.last_mut().expect("segment");
+    if last.end > end {
+        // 保留较长的旧段
+    } else if last.end < end {
+        *last = Segment {
+            start,
+            end,
+            tags: tags.iter().map(|tag| tag.to_string()).collect(),
+            ..Segment::default()
+        };
+    } else {
+        for tag in tags {
+            if !last.has_tag(tag) {
+                last.tags.push(tag.to_string());
+            }
+        }
+    }
+}
+
+/// 参照 `ConcreteEngine::TranslateSegments`：仅翻译未建立菜单的段。
+fn translate_segments(
+    decoder: &mut Decoder,
+    context: &mut Context,
+    state: &SentenceState,
+    input: &[u8],
+) -> anyhow::Result<()> {
+    for index in 0..context.composition.segments.len() {
+        let segment = &context.composition.segments[index];
+        if segment.translated || segment.selected {
+            continue;
+        }
+        let (start, end) = (segment.start.min(input.len()), segment.end.min(input.len()));
+        if start >= end {
+            let segment = &mut context.composition.segments[index];
+            segment.translated = true;
+            segment.candidates.clear();
+            segment.selected_index = 0;
+            continue;
+        }
+        let mut candidates = Vec::new();
+        translate(
+            decoder,
+            context,
+            state,
+            &input[start..end],
+            start,
+            end,
+            &mut candidates,
+        )?;
+        let segment = &mut context.composition.segments[index];
+        segment.translated = true;
+        segment.selected_index = 0;
+        segment.candidates = candidates;
+    }
+    Ok(())
+}
+
+/// 参照 update 通知器（`live.update_connection`）：非组合清暂存；缓冲且实况为空时隐藏候选。
+/// 提交落库由宿主另行处理。
+pub fn update_notifier(context: &mut Context, state: &mut SentenceState, live: &mut LiveLearning) {
+    if !context.is_composing() {
+        live.pending.clear();
+        live.baseline = None;
+        live.submitted_raw = None;
+        if !buffered_text(context).is_empty() {
+            state.reset(context, false);
+        }
+    }
+    let hide = !buffered_text(context).is_empty() && context.live_input().is_empty();
+    if hide || live.hide_owned {
+        live.hide_owned = hide;
+        if context.get_option("_hide_candidate") != hide {
+            context.set_option("_hide_candidate", hide);
+        }
     }
 }
 
@@ -2775,7 +2965,7 @@ mod tests {
     }
 
     #[test]
-    fn composition_builder_rebuilds_only_when_needed() {
+    fn composition_builder_preserves_segments_and_tracks_caret() {
         let mut decoder = lexicon_fixture();
         let mut context = Context::new();
         let state = SentenceState::fresh(1);
@@ -2787,46 +2977,51 @@ mod tests {
                 .rebuild(&mut decoder, &mut context, &state, false)
                 .expect("rebuild")
         );
-        assert!(context.composition.back().is_some());
-        // 输入未变且未失效：保留段状态（标记仍在）
+        let segment = context.composition.back().expect("segment");
+        assert_eq!(segment.end, 2);
+        assert!(segment.translated);
+        // 输入未变：段与菜单保留（标记仍在、高亮不重置）
         context
             .composition
             .back_mut()
             .expect("segment")
             .tags
             .push("marker".to_string());
-        assert!(
-            !builder
-                .rebuild(&mut decoder, &mut context, &state, false)
-                .expect("rebuild")
-        );
-        assert!(
-            context
-                .composition
-                .back()
-                .expect("segment")
-                .has_tag("marker")
-        );
-        // 提交失效：重建（标记消失）
-        assert!(
-            builder
-                .rebuild(&mut decoder, &mut context, &state, true)
-                .expect("rebuild")
-        );
-        assert!(
-            !context
-                .composition
-                .back()
-                .expect("segment")
-                .has_tag("marker")
-        );
-        // 输入变化：重建
+        context
+            .composition
+            .back_mut()
+            .expect("segment")
+            .selected_index = 1;
+        builder
+            .rebuild(&mut decoder, &mut context, &state, false)
+            .expect("rebuild");
+        let segment = context.composition.back().expect("segment");
+        assert!(segment.has_tag("marker"));
+        assert_eq!(segment.selected_index, 1);
+        // 提交失效：段重建（标记与高亮消失）
+        builder
+            .rebuild(&mut decoder, &mut context, &state, true)
+            .expect("rebuild");
+        let segment = context.composition.back().expect("segment");
+        assert!(!segment.has_tag("marker"));
+        assert_eq!(segment.selected_index, 0);
+        // 输入变化：重建（更长的段覆盖旧段）
         context.push_input(b"c");
-        assert!(
-            builder
-                .rebuild(&mut decoder, &mut context, &state, false)
-                .expect("rebuild")
-        );
+        builder
+            .rebuild(&mut decoder, &mut context, &state, false)
+            .expect("rebuild");
+        assert_eq!(context.composition.back().expect("segment").end, 3);
+        // 光标移入输入中间：组合只覆盖 caret 前缀（参照 Compose 语义）
+        context.set_caret(1);
+        builder
+            .rebuild(&mut decoder, &mut context, &state, false)
+            .expect("rebuild");
+        assert_eq!(context.composition.back().expect("segment").end, 1);
+        // 光标移回末尾：重新覆盖完整输入
+        context.set_caret(3);
+        builder
+            .rebuild(&mut decoder, &mut context, &state, false)
+            .expect("rebuild");
         assert_eq!(context.composition.back().expect("segment").end, 3);
     }
 
@@ -2999,6 +3194,7 @@ mod tests {
                 selected_index: 0,
                 candidates,
                 selected: false,
+                translated: true,
             });
         }
     }
@@ -3109,6 +3305,7 @@ mod tests {
             selected_index: 0,
             candidates: vec![Candidate::new("sentence", 0, 2, "甲", "")],
             selected: false,
+            translated: true,
         });
         // `_auto_commit` 关闭：只标记选中，不提交（对应 librime 的 Forward 分支）
         confirm_selection(None, &mut context, &mut SentenceState::fresh(1));
@@ -3131,6 +3328,7 @@ mod tests {
             selected_index: 0,
             candidates: vec![Candidate::new("sentence_buffered", 0, 2, "c", "")],
             selected: false,
+            translated: true,
         });
         confirm_selection(None, &mut context, &mut SentenceState::fresh(1));
         assert_eq!(context.last_commit_text(), "乙c");

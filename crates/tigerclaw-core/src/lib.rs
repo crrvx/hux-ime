@@ -6,6 +6,7 @@
 
 pub mod cache;
 pub mod decode;
+pub mod host;
 pub mod interaction;
 pub mod key;
 pub mod key_table;

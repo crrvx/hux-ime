@@ -3,7 +3,7 @@
 # 重置固定：clear_composition、ascii_mode=false、tiger_sentence_early_commit=1、
 # tiger_sentence_early_commit_to_preedit=0；其余选项由第二列覆盖。
 # 说明：金样如实记录每步的 consumed（宿主链是否消费）；重放侧按 Consume/Forward 比对，
-# 前向步骤的宿主行为（标点、光标、未锁退格等）属 K3 宿主职责，金样保留供 K3 使用。
+# 前向步骤的宿主行为（标点、光标、未锁退格等）由 K3 宿主等价物（core host）执行后比对。
 idle_digit_period		5 period
 letters_candidates		a b
 rank_selector		a b semicolon
@@ -15,3 +15,31 @@ tab_confirm_buffer	tiger_sentence_early_commit_to_preedit=1	a b Tab c d
 tab_buffer_space	tiger_sentence_early_commit_to_preedit=1	a b Tab c space
 tab_buffer_return	tiger_sentence_early_commit_to_preedit=1	a b Tab c Return
 empty_code_commit		z z
+# K3 ⑥：组合中编辑/导航键（librime selector/navigator/express_editor 等价物）
+nav_left_right		a b Left Right Left Left Right Right
+nav_home_end		a b Home End Home End
+nav_backspace		a b BackSpace BackSpace BackSpace
+nav_backspace_mid		a b Left Left BackSpace
+nav_delete		a b Home Delete Delete Delete
+nav_up_down		a b Up Up Down Down Down Down
+nav_page		a b Page_Up Page_Down Page_Down Page_Up
+nav_page_big		j a Down Page_Down Page_Down Page_Up Home End
+nav_menu_home_end		a b Down End Home End
+nav_no_menu		x x Left Right Up Down Home End Page_Up Page_Down BackSpace Delete
+nav_tab_binder		a b Tab Tab Tab Tab
+nav_idle_keys		Left Right Up Down Home End BackSpace Delete Page_Up Page_Down
+nav_up_mid_caret		a b Left Up Down
+nav_home_mid		a b Home a b
+nav_mid_caret_type		a b Left Left c Delete
+# K3 ⑥：缓冲态（early_commit_to_preedit=1）
+tab_buffer_left	tiger_sentence_early_commit_to_preedit=1	a b Tab c Left Left
+tab_buffer_home_end	tiger_sentence_early_commit_to_preedit=1	a b Tab c Home End
+tab_buffer_up	tiger_sentence_early_commit_to_preedit=1	a b Tab c Up Down
+tab_buffer_backspace	tiger_sentence_early_commit_to_preedit=1	a b Tab c BackSpace
+tab_buffer_backspace2	tiger_sentence_early_commit_to_preedit=1	a b Tab c BackSpace BackSpace BackSpace
+tab_buffer_delete	tiger_sentence_early_commit_to_preedit=1	a b Tab c Delete
+# K3 ⑥：锁定态（早提交后）
+tab_lock_left		a b Tab c Left Right
+tab_lock_backspace		a b Tab c BackSpace BackSpace
+tab_lock_delete		a b Tab c Left Delete
+tab_lock_up_down		a b Tab c Up Down Page_Down

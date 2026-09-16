@@ -54,6 +54,9 @@ pub struct Segment {
     pub candidates: Vec<Candidate>,
     /// 是否已被确认（librime `Segment::status >= kSelected`）。
     pub selected: bool,
+    /// 是否已建立菜单（librime `Segment::status >= kGuess`；`menu` 非空）。
+    /// 已翻译的段在重分段时保留菜单与高亮。
+    pub translated: bool,
 }
 
 impl Segment {
@@ -70,7 +73,6 @@ impl Segment {
         self.candidates.len().min(count)
     }
 }
-
 /// 组合（对应 librime `Composition`）。
 #[derive(Clone, Debug, Default)]
 pub struct Composition {
@@ -105,6 +107,49 @@ impl Composition {
 
     pub fn back_mut(&mut self) -> Option<&mut Segment> {
         self.segments.last_mut()
+    }
+
+    /// 参照 `Segmentation::GetCurrentStartPosition`。
+    pub fn current_start_position(&self) -> usize {
+        self.segments
+            .last()
+            .map(|segment| segment.start)
+            .unwrap_or(0)
+    }
+
+    /// 参照 `Segmentation::GetCurrentEndPosition`。
+    pub fn current_end_position(&self) -> usize {
+        self.segments.last().map(|segment| segment.end).unwrap_or(0)
+    }
+
+    /// 参照 `Segmentation::HasFinishedSegmentation`。
+    pub fn has_finished_segmentation(&self, input: &[u8]) -> bool {
+        self.current_end_position() >= input.len()
+    }
+
+    /// 参照 `Segmentation::Trim`：移除末尾空段。
+    pub fn trim(&mut self) -> bool {
+        if self
+            .segments
+            .last()
+            .map(|segment| segment.start == segment.end)
+            .unwrap_or(false)
+        {
+            self.segments.pop();
+            return true;
+        }
+        false
+    }
+
+    /// 参照 `Segmentation::GetConfirmedPosition`：最后一个已选段的末尾。
+    pub fn confirmed_position(&self) -> usize {
+        let mut confirmed = 0usize;
+        for segment in &self.segments {
+            if segment.selected {
+                confirmed = segment.end;
+            }
+        }
+        confirmed
     }
 
     /// 参照 `Composition::GetCommitText`：有选中候选的段取候选文本（不论段状态），
@@ -546,6 +591,7 @@ mod tests {
             candidates: vec![Candidate::new("sentence", 0, 2, "甲", "")],
             selected_index: 0,
             tags: Vec::new(),
+            translated: true,
         });
         context.composition.segments.push(Segment {
             start: 2,
