@@ -65,8 +65,12 @@ docs/
 - 构建/安装：`cmake -S crates/tigerclaw-addon -B build-addon -DCMAKE_INSTALL_PREFIX=/usr`
   → `cmake --build` → `cmake --install`；产物 `/usr/lib/fcitx5/libtigerclaw.so` 与
   `/usr/share/fcitx5/{addon,inputmethod}/tigerclaw.conf`（C++ 薄壳链接 Rust 静态库）。
-- 会话：每个 `InputContext` 一份 core 会话；`reset/activate/deactivate` 对齐。
-- UI 同步：按键后状态快照（preedit/候选/上屏）；preedit 光标做字节→字符换算。
+- 会话：每引擎单会话（`activate/deactivate/reset` 清空）；组合重建由
+  `interaction::CompositionBuilder` 负责（提交或输入变化时重建，否则保留菜单高亮）。
+- UI 同步：按键后状态快照（preedit/候选/上屏）；preedit 光标为字节偏移
+  （fcitx `Text::setCursor` 即字节制）。
+- 数据：core `lexicon::data_directories()`（用户 → 共享）与 `candidate_paths()` 探测；
+  addon 加载码表/位图/模型（开发可用 `TIGERCLAW_DATA_DIRS`/`TIGERCLAW_MODEL` 覆盖）。
 - 学习：提交点的通知器序列（选择/暂存/提交）已内置在核心提交路径
   （`confirm_selection`、自动上屏的 `LearningCommit`）；宿主只需排空
   `LiveLearning::submitted` 落库，并在 `store_ready` 置位后生效；宿主自发的提交

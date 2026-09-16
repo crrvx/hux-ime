@@ -13,7 +13,7 @@ use crate::decode::{DecodeLock, Decoder, Evaluated, Evidence};
 use crate::key::KeyEvent;
 use crate::learning::{self, DiffEvent, DiffItem, DiffPathNode, Event};
 use crate::lexicon::Lexicon;
-use crate::session::{Candidate, Context};
+use crate::session::{Candidate, Composition, Context, Segment};
 use hashbrown::HashMap;
 
 /// 属性键（对应参照 `state_keys` 与 `M.options` 中的属性名）。
@@ -1182,6 +1182,58 @@ pub fn translate(
         out.push(candidate);
     }
     Ok(())
+}
+
+/// 组合重建器：维护「提交（翻译失效）或输入变化时重建，否则保留段状态
+/// （含菜单高亮）」规则（与 2c 重放桩等价），供宿主在每次按键后调用。
+#[derive(Clone, Debug, Default)]
+pub struct CompositionBuilder {
+    built_input: Vec<u8>,
+}
+
+impl CompositionBuilder {
+    /// 若需要则重建组合；返回是否发生重建。
+    pub fn rebuild(
+        &mut self,
+        decoder: &mut Decoder,
+        context: &mut Context,
+        state: &SentenceState,
+        invalidated: bool,
+    ) -> anyhow::Result<bool> {
+        let input = context.input().to_vec();
+        if !invalidated && input == self.built_input {
+            return Ok(false);
+        }
+        let mut composition = Composition::default();
+        if !input.is_empty() {
+            let mut candidates = Vec::new();
+            translate(
+                decoder,
+                context,
+                state,
+                &input,
+                0,
+                input.len(),
+                &mut candidates,
+            )?;
+            composition.segments.push(Segment {
+                start: 0,
+                end: input.len(),
+                tags: Vec::new(),
+                selected_index: 0,
+                candidates,
+                selected: false,
+            });
+        }
+        context.composition = composition;
+        self.built_input = input;
+        Ok(true)
+    }
+
+    /// 清空记录（会话重置；下次调用必重建）。
+    pub fn reset(&mut self) {
+        self.built_input.clear();
+    }
 }
 
 /// 参照 `buffer_filter`：缓冲态只保留 `sentence_buffered` 候选。
@@ -2720,6 +2772,62 @@ mod tests {
         let accepted = learning_submit(&mut live, Some(&fallback), "交", "交");
         assert!(accepted.is_empty());
         assert!(live.baseline.is_some());
+    }
+
+    #[test]
+    fn composition_builder_rebuilds_only_when_needed() {
+        let mut decoder = lexicon_fixture();
+        let mut context = Context::new();
+        let state = SentenceState::fresh(1);
+        let mut builder = CompositionBuilder::default();
+        // 首次：建立组合（段存在即可，候选数取决于夹具表）
+        context.push_input(b"ab");
+        assert!(
+            builder
+                .rebuild(&mut decoder, &mut context, &state, false)
+                .expect("rebuild")
+        );
+        assert!(context.composition.back().is_some());
+        // 输入未变且未失效：保留段状态（标记仍在）
+        context
+            .composition
+            .back_mut()
+            .expect("segment")
+            .tags
+            .push("marker".to_string());
+        assert!(
+            !builder
+                .rebuild(&mut decoder, &mut context, &state, false)
+                .expect("rebuild")
+        );
+        assert!(
+            context
+                .composition
+                .back()
+                .expect("segment")
+                .has_tag("marker")
+        );
+        // 提交失效：重建（标记消失）
+        assert!(
+            builder
+                .rebuild(&mut decoder, &mut context, &state, true)
+                .expect("rebuild")
+        );
+        assert!(
+            !context
+                .composition
+                .back()
+                .expect("segment")
+                .has_tag("marker")
+        );
+        // 输入变化：重建
+        context.push_input(b"c");
+        assert!(
+            builder
+                .rebuild(&mut decoder, &mut context, &state, false)
+                .expect("rebuild")
+        );
+        assert_eq!(context.composition.back().expect("segment").end, 3);
     }
 
     #[test]

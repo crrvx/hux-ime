@@ -12,16 +12,18 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tigerclaw_core::decode::Decoder;
 use tigerclaw_core::interaction::{
-    LiveLearning, ProcessorEnv, ProcessorResult, SentenceState, buffered_text, option_defaults,
-    processor, translate,
+    CompositionBuilder, LiveLearning, ProcessorEnv, ProcessorResult, SentenceState, buffered_text,
+    option_defaults, processor,
 };
 use tigerclaw_core::key::{
     K_ALT_MASK, K_CONTROL_MASK, K_LOCK_MASK, K_RELEASE_MASK, K_SHIFT_MASK, K_SUPER_MASK, KeyEvent,
 };
 use tigerclaw_core::lexical;
-use tigerclaw_core::lexicon::{Lexicon, Supplement};
+use tigerclaw_core::lexicon::{
+    LEXICAL_FILE, Lexicon, MODEL_PATH, Supplement, candidate_paths, data_directories,
+};
 use tigerclaw_core::ngram::MobileModel;
-use tigerclaw_core::session::{Composition, Context, Event, Segment};
+use tigerclaw_core::session::{Context, Event};
 
 // fcitx5 `KeyState` 位（`fcitx-utils/keysym.h`）。
 const FCITX_SHIFT: u32 = 1 << 0;
@@ -86,20 +88,12 @@ pub fn data_dirs() -> Vec<PathBuf> {
             return dirs;
         }
     }
-    let mut dirs = Vec::new();
-    if let Some(data_home) = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
-    {
-        dirs.push(data_home.join("fcitx5/tigerclaw"));
-    }
-    dirs.push(PathBuf::from("/usr/share/fcitx5/tigerclaw"));
-    dirs
+    data_directories()
 }
 
 fn default_model_path(dirs: &[PathBuf]) -> Option<PathBuf> {
-    dirs.iter()
-        .map(|dir| dir.join("models/sentence-ngram-mobile.bin"))
+    candidate_paths(dirs, MODEL_PATH)
+        .into_iter()
         .find(|path| path.is_file())
 }
 
@@ -119,8 +113,8 @@ pub struct Engine {
     live: LiveLearning,
     dot_armed: bool,
     min_retained: Option<i64>,
-    /// 上次重建组合时的输入（未变化且翻译未失效时保留段状态，含菜单高亮）。
-    built_input: Vec<u8>,
+    /// 组合重建（提交或输入变化时重建，保留段状态含菜单高亮）。
+    builder: CompositionBuilder,
     status: CString,
 }
 
@@ -156,10 +150,7 @@ impl Engine {
             }
         });
         let mut decoder = Decoder::new(lexicon, supplement, model);
-        let lexical_paths: Vec<PathBuf> = dirs
-            .iter()
-            .map(|dir| dir.join("tiger_sentence.lexical.bin"))
-            .collect();
+        let lexical_paths = candidate_paths(&dirs, LEXICAL_FILE);
         let (lexical_model, lexical_error) = lexical::load_first(&lexical_paths);
         decoder.set_lexical_model(lexical_model);
         if let Some(error) = lexical_error {
@@ -179,7 +170,7 @@ impl Engine {
             live: LiveLearning::default(),
             dot_armed: false,
             min_retained: None,
-            built_input: Vec::new(),
+            builder: CompositionBuilder::default(),
             status: CString::new(notes.join("; ")).unwrap_or_default(),
         };
         engine.push_update();
@@ -220,42 +211,16 @@ impl Engine {
         for text in commits {
             self.host_commit(&text);
         }
-        self.rebuild_composition(invalidated);
+        if let Err(error) = self.builder.rebuild(
+            &mut self.decoder,
+            &mut self.context,
+            &self.state,
+            invalidated,
+        ) {
+            eprintln!("tigerclaw: rebuild error: {error}");
+        }
         self.push_update();
         consumed
-    }
-
-    /// 组合重建（分段 → 翻译 → 过滤）：照 2c 重放桩规则（提交或输入变化时重建）。
-    fn rebuild_composition(&mut self, invalidated: bool) {
-        let input = self.context.input().to_vec();
-        if !invalidated && input == self.built_input {
-            return;
-        }
-        let mut composition = Composition::default();
-        if !input.is_empty() {
-            let mut candidates = Vec::new();
-            match translate(
-                &mut self.decoder,
-                &self.context,
-                &self.state,
-                &input,
-                0,
-                input.len(),
-                &mut candidates,
-            ) {
-                Ok(()) => composition.segments.push(Segment {
-                    start: 0,
-                    end: input.len(),
-                    tags: Vec::new(),
-                    selected_index: 0,
-                    candidates,
-                    selected: false,
-                }),
-                Err(error) => eprintln!("tigerclaw: translate error: {error}"),
-            }
-        }
-        self.context.composition = composition;
-        self.built_input = input;
     }
 
     /// 重置会话（`activate`/`deactivate`/`reset`）。
@@ -266,7 +231,7 @@ impl Engine {
         self.live.baseline = None;
         self.live.submitted_raw = None;
         self.dot_armed = false;
-        self.built_input.clear();
+        self.builder.reset();
         self.push_update();
     }
 
@@ -507,8 +472,8 @@ mod tests {
         let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None);
         // BackSpace/Delete/Left/Right/Up/Down/Home/End/Page_Up/Page_Down/Escape/Tab
         for keysym in [
-            0xff08, 0xffff, 0xff51, 0xff53, 0xff52, 0xff54, 0xff50, 0xff57, 0xff55, 0xff56,
-            0xff1b, 0xff09,
+            0xff08, 0xffff, 0xff51, 0xff53, 0xff52, 0xff54, 0xff50, 0xff57, 0xff55, 0xff56, 0xff1b,
+            0xff09,
         ] {
             assert!(
                 !engine.key(keysym, 0, false),

@@ -43,4 +43,5 @@ ln -sf ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
   `activate/deactivate/reset` 生命周期、`_auto_commit` 与核心选项缺省。
 
 已知限制（后续增量）：每引擎单会话（切换/重置即清空）；候选为展示型（点击不提交）；
+组合中的编辑/导航键（←→/↑↓/Page、退格、Home/End 等）参照交宿主链，宿主等价物见 K3 ⑥；
 数据/选项/学习/反查与打包见 K3 其余项。
