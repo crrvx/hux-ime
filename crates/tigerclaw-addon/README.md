@@ -60,11 +60,9 @@ ln -sf ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
 - K3f（⑥）：宿主编辑语义——core `host` 模块（librime `key_binder`/`selector`/`navigator`/
   `express_editor` 等价物）+ 组合重建随光标（`CompositionBuilder` 参照 `ConcreteEngine::Compose`）；
   2c 键序列金样扩到 36 例/200 步（编辑/导航键、缓冲/锁定态）；
-- K3g（⑦a）：ascii_composer——core `ascii` 模块（Shift 轻击/Caps 切换 `ascii_mode`、
-  `commit_code`/`commit_text`/`clear` 样式、ascii 直通、`good_old_caps_lock`）；
-  金样扩到 42 例/237 步（CapsLock 为 fcitx5 适配：不按键切换，不入金样）；
+- K3g（⑦a，**已移除**）：曾实现 ascii_composer 等价物（Shift 轻击/跟随系统 caps 的英文模式）——按设计取舍移除，英文输入交由 fcitx5 切换输入法。
 - K3h（⑦b）：标点表（`symbols.yaml` half/full shape、`{commit}`/标量/`{pair}` 交替）；
-  金样扩到 59 例/269 步；随后修正 editor `char_handler`（组合中大写字母先提交组合，金样 61 例/273 步）。
+  金样扩到 59 例/269 步；随后修正 editor `char_handler`（61/273）；移除英文模式后 **55 例/236 步（当前）**。
 
 - K3i（配置，Rust 半）：`settings.rs` 配置模型（早提交三项/full_shape/ascii_punct/
   tab_learning/high_freq_limit；合并顺序 options.yaml > 设置 > 内建缺省）；

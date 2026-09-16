@@ -4,7 +4,6 @@
 //! 字符串/偏移语义与参照一致：UTF-8 字节串、字节偏移。
 //! 见 `docs/rust-migration.md` 与 `docs/rime-semantics.md`。
 
-pub mod ascii;
 pub mod cache;
 pub mod decode;
 pub mod host;

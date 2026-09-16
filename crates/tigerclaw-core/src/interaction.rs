@@ -1406,23 +1406,6 @@ fn translate_segments(
     Ok(())
 }
 
-/// 参照选项通知器（`live.option_connection`）：`ascii_mode` 打开且有缓冲时确认当前选中
-/// （随后由 `_auto_commit` 提交）。宿主在选项事件处调用。
-pub fn ascii_mode_option_confirm(
-    name: &str,
-    context: &mut Context,
-    state: &mut SentenceState,
-    learning: Option<&mut LearningCommit<'_>>,
-) {
-    if name != "ascii_mode"
-        || !context.get_option("ascii_mode")
-        || buffered_text(context).is_empty()
-    {
-        return;
-    }
-    confirm_selection(learning, context, state);
-}
-
 /// 参照 update 通知器（`live.update_connection`）：非组合清暂存；缓冲且实况为空时隐藏候选。
 /// 提交落库由宿主另行处理。
 pub fn update_notifier(context: &mut Context, state: &mut SentenceState, live: &mut LiveLearning) {
@@ -1880,40 +1863,6 @@ impl Options {
 }
 
 // ---------------------------------------------------------------- ascii 策略
-
-/// 参照 `ascii_component` 私有 schema 覆盖的按键名。
-pub const ASCII_SWITCH_KEYS: [&str; 10] = [
-    "Shift_L",
-    "Shift_R",
-    "Control_L",
-    "Control_R",
-    "Alt_L",
-    "Alt_R",
-    "Super_L",
-    "Super_R",
-    "Caps_Lock",
-    "Eisu_toggle",
-];
-
-/// 参照 `ascii_component`：缓冲态下把 `commit_code`/`inline_ascii` 归一为
-/// `commit_text`，未配置样式按 `noop`（原生 ascii_composer 由 K3 宿主提供）。
-pub fn ascii_switch_styles(source: &HashMap<String, String>) -> HashMap<String, String> {
-    ASCII_SWITCH_KEYS
-        .iter()
-        .map(|name| {
-            let style = source
-                .get(*name)
-                .cloned()
-                .unwrap_or_else(|| "noop".to_string());
-            let style = if style == "commit_code" || style == "inline_ascii" {
-                "commit_text".to_string()
-            } else {
-                style
-            };
-            (name.to_string(), style)
-        })
-        .collect()
-}
 
 // ---------------------------------------------------------------- 处理器
 
@@ -3295,20 +3244,6 @@ mod tests {
         context.set_option("tiger_sentence_early_commit", true);
         options.sync(&mut context);
         assert!(!context.get_option("tiger_sentence_early_commit"));
-    }
-
-    #[test]
-    fn ascii_switch_styles_normalize_buffered_exits() {
-        let mut source = HashMap::new();
-        source.insert("Shift_L".to_string(), "commit_code".to_string());
-        source.insert("Shift_R".to_string(), "inline_ascii".to_string());
-        source.insert("Control_L".to_string(), "noop".to_string());
-        let styles = ascii_switch_styles(&source);
-        assert_eq!(styles["Shift_L"], "commit_text");
-        assert_eq!(styles["Shift_R"], "commit_text");
-        assert_eq!(styles["Control_L"], "noop");
-        assert_eq!(styles["Caps_Lock"], "noop");
-        assert_eq!(styles.len(), ASCII_SWITCH_KEYS.len());
     }
 
     #[test]
