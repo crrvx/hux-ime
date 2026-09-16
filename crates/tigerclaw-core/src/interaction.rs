@@ -321,9 +321,9 @@ pub fn cycle_candidate_highlight(context: &mut Context, step: i64) -> bool {
     segment.selected_index == target
 }
 
-/// 参照 `set_allow_duplicate_single`：读取选项（缺省 true）。
+/// 参照 `set_allow_duplicate_single`：读取选项（缺省 true，仅显式关闭时为 false）。
 pub fn set_allow_duplicate_single(context: &Context) -> bool {
-    context.get_option(OPTION_ALLOW_DUPLICATE_SINGLE)
+    context.get_option_or(OPTION_ALLOW_DUPLICATE_SINGLE, true)
 }
 
 /// 参照 `is_modifier_repr`：独立的修饰键事件（不消耗小数点待发状态）。
@@ -510,15 +510,22 @@ fn strong_empty_code_candidate(
     total > 0.0 && candidate_mass / total >= EARLY_COMMIT_STRONG_SHARE
 }
 
-/// 参照 `capture_empty_code_candidate`（无锁路径；锁支持见模块文档）。
+/// 参照 `capture_empty_code_candidate`。
 pub fn capture_empty_code_candidate(
     decoder: &mut Decoder,
     full_before: &[u8],
     committed_text: &str,
     allow_duplicate_single: bool,
+    lock: Option<&Lock>,
 ) -> anyhow::Result<Option<EmptyCodePending>> {
     let raw = String::from_utf8_lossy(full_before).into_owned();
-    let decoded = decoder.decode_with(&raw, false, committed_text)?;
+    decoder.set_allow_duplicate_single(allow_duplicate_single);
+    let lock = lock.map(|lock| DecodeLock {
+        raw: &lock.raw,
+        text: &lock.text,
+        boundaries: &lock.boundaries,
+    });
+    let decoded = decoder.decode_with_lock(&raw, false, committed_text, lock)?;
     if decoded.items.is_empty() || decoded.learning_affected {
         return Ok(None);
     }
@@ -693,7 +700,13 @@ pub fn try_early_commit(
         return Ok(false);
     }
     let raw = String::from_utf8_lossy(&full_raw).into_owned();
-    let decoded = decoder.decode_with(&raw, true, &state.committed_text)?;
+    decoder.set_allow_duplicate_single(params.allow_duplicate_single);
+    let lock = state.active_lock().map(|lock| DecodeLock {
+        raw: &lock.raw,
+        text: &lock.text,
+        boundaries: &lock.boundaries,
+    });
+    let decoded = decoder.decode_with_lock(&raw, true, &state.committed_text, lock)?;
     if params.generation != state.model_generation {
         state.synchronize_model_state(params.generation);
         return Ok(false);
@@ -816,6 +829,7 @@ pub fn try_empty_code_commit(
             full_before,
             &state.committed_text,
             params.allow_duplicate_single,
+            state.active_lock(),
         )?,
     };
     let mut full_raw = state.committed_raw.as_bytes().to_vec();
@@ -1495,6 +1509,9 @@ mod tests {
     #[test]
     fn duplicate_single_option_reads_context() {
         let mut context = Context::new();
+        // 参照 `set_allow_duplicate_single`：缺省 true，仅显式关闭为 false。
+        assert!(set_allow_duplicate_single(&context));
+        context.set_option(OPTION_ALLOW_DUPLICATE_SINGLE, false);
         assert!(!set_allow_duplicate_single(&context));
         context.set_option(OPTION_ALLOW_DUPLICATE_SINGLE, true);
         assert!(set_allow_duplicate_single(&context));

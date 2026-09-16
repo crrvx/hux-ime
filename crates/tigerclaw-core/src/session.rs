@@ -214,6 +214,11 @@ impl Context {
         self.options.get(name).copied().unwrap_or(false)
     }
 
+    /// 带缺省的选项读取（参照对缺省值有特殊约定的选项使用）。
+    pub fn get_option_or(&self, name: &str, default: bool) -> bool {
+        self.options.get(name).copied().unwrap_or(default)
+    }
+
     /// 参照 `Context::set_option`：无条件触发选项通知（librime 语义）。
     pub fn set_option(&mut self, name: &str, value: bool) {
         self.options.insert(name.to_string(), value);
