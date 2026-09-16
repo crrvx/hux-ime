@@ -1,0 +1,16 @@
+# 键序列用例矩阵（2c 金样）。
+# 格式：<名称>\t<重置选项（逗号分隔，可空）>\t<按键 repr 序列（空格分隔）>
+# 重置固定：clear_composition、ascii_mode=false、tiger_sentence_early_commit=1、
+# tiger_sentence_early_commit_to_preedit=0；其余选项由第二列覆盖。
+# 说明：金样如实记录每步的 consumed（宿主链是否消费）；重放侧按 Consume/Forward 比对，
+# 前向步骤的宿主行为（标点、光标、未锁退格等）属 K3 宿主职责，金样保留供 K3 使用。
+idle_digit_period		5 period
+letters_candidates		a b
+rank_selector		a b semicolon
+tab_lock		a b Tab c d
+space_commit		a b space
+return_commit		a b Return
+escape_clear		a b Escape
+tab_confirm_buffer	tiger_sentence_early_commit_to_preedit=1	a b Tab c d
+tab_buffer_space	tiger_sentence_early_commit_to_preedit=1	a b Tab c space
+tab_buffer_return	tiger_sentence_early_commit_to_preedit=1	a b Tab c Return

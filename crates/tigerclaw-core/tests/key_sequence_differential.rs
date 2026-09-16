@@ -1,0 +1,264 @@
+//! 键序列金样（2c）重放：真 librime 探针记录 vs Rust 会话逐步比对。
+//!
+//! 比对字段：`consumed`、输入、光标、提交、候选（数量/文本/高亮）。
+//! `preedit`（预编辑串）属 K3 宿主职责，金样保留但不比对；宿主前向（Forward）
+//! 步骤的宿主行为同理（本矩阵覆盖的都是 Lua 组件消费的步骤）。
+//!
+//! 金样与数据：`goldens/key_sequence.tsv.gz`、`goldens/key_sequence/`（合成小码表）。
+//! 再生成：`tools/gen_key_sequence_golden.sh`（依赖系统 librime + librime-lua）。
+
+use flate2::read::GzDecoder;
+use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
+
+use tigerclaw_core::decode::Decoder;
+use tigerclaw_core::interaction::{
+    LiveLearning, OPTION_EARLY_COMMIT, OPTION_EARLY_COMMIT_TO_PREEDIT, ProcessorEnv,
+    ProcessorResult, SentenceState, processor, translate,
+};
+use tigerclaw_core::key::KeyEvent;
+use tigerclaw_core::lexicon::{Lexicon, Supplement};
+use tigerclaw_core::session::{Composition, Context, Event, Segment};
+
+struct Step {
+    repr: String,
+    consumed: bool,
+    input: String,
+    caret: usize,
+    commit: String,
+    highlight: usize,
+    count: usize,
+    candidates: Vec<String>,
+}
+
+struct Case {
+    name: String,
+    options: Vec<(String, bool)>,
+    steps: Vec<Step>,
+}
+
+fn hex(text: &[u8]) -> String {
+    if text.is_empty() {
+        return "-".to_string();
+    }
+    let mut out = String::with_capacity(text.len() * 2);
+    for byte in text {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
+}
+
+fn load_cases() -> Vec<Case> {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/key_sequence.tsv.gz");
+    let file = std::fs::File::open(path).expect("open key_sequence golden");
+    let mut cases: Vec<Case> = Vec::new();
+    for line in BufReader::new(GzDecoder::new(file)).lines() {
+        let line = line.expect("golden line");
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let fields: Vec<&str> = line.split('\t').collect();
+        match fields[0] {
+            "case" => {
+                let options = fields
+                    .get(2)
+                    .filter(|value| !value.is_empty())
+                    .map(|value| {
+                        value
+                            .split(',')
+                            .map(|item| {
+                                let (name, value) =
+                                    item.split_once('=').expect("option assignment");
+                                (name.to_string(), value == "1")
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                cases.push(Case {
+                    name: fields[1].to_string(),
+                    options,
+                    steps: Vec::new(),
+                });
+            }
+            "step" => {
+                assert_eq!(fields.len(), 13, "step fields: {line}");
+                let candidates = if fields[12] == "-" {
+                    Vec::new()
+                } else {
+                    fields[12].split(',').map(str::to_string).collect()
+                };
+                cases
+                    .last_mut()
+                    .expect("case record before step")
+                    .steps
+                    .push(Step {
+                        repr: fields[3].to_string(),
+                        consumed: fields[4] == "1",
+                        input: fields[5].to_string(),
+                        caret: fields[6].parse().expect("caret"),
+                        commit: fields[7].to_string(),
+                        highlight: fields[10].parse().expect("highlight"),
+                        count: fields[11].parse().expect("count"),
+                        candidates,
+                    });
+            }
+            other => panic!("unknown golden record: {other}"),
+        }
+    }
+    cases
+}
+
+fn replay(case: &Case, data_dir: &Path, failures: &mut Vec<String>) {
+    let dirs = [data_dir.to_path_buf()];
+    let lexicon = Lexicon::load(&dirs, 0);
+    let supplement = Supplement::load_default(Some(data_dir));
+    let mut decoder = Decoder::new(lexicon, supplement, None);
+    let mut context = Context::new();
+    let mut state = SentenceState::fresh(1);
+    let mut live = LiveLearning::default();
+    let mut dot_armed = false;
+    context.set_option("ascii_mode", false);
+    context.set_option("_auto_commit", true);
+    context.set_option(OPTION_EARLY_COMMIT, true);
+    context.set_option(OPTION_EARLY_COMMIT_TO_PREEDIT, false);
+    for (name, value) in &case.options {
+        context.set_option(name, *value);
+    }
+    let mut built_input: Vec<u8> = Vec::new();
+    for (index, step) in case.steps.iter().enumerate() {
+        let label = format!("{}[{}] {}", case.name, index, step.repr);
+        let key = KeyEvent::from_repr(&step.repr).expect("key repr");
+        let mut env = ProcessorEnv {
+            now: 0.0,
+            dot_armed: &mut dot_armed,
+            min_retained: None,
+        };
+        let result = processor(
+            &key,
+            &mut context,
+            &mut state,
+            &mut decoder,
+            &mut live,
+            &mut env,
+        )
+        .expect("processor");
+        // 宿主提交链在 `confirm_selection` 内完成（对应 librime 引擎的同步反应）。
+        let committed: String = context
+            .drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                Event::Commit(text) => Some(text),
+                _ => None,
+            })
+            .collect();
+        // 组合重建（translator）：输入未变则保留原组合（含菜单高亮），
+        // 与 Rime 引擎在翻译未失效时保留段状态一致。
+        let input = context.input().to_vec();
+        if input != built_input {
+            let mut composition = Composition::default();
+            if !input.is_empty() {
+                let mut candidates = Vec::new();
+                translate(
+                    &mut decoder,
+                    &context,
+                    &state,
+                    &input,
+                    0,
+                    input.len(),
+                    &mut candidates,
+                )
+                .expect("translate");
+                composition.segments.push(Segment {
+                    start: 0,
+                    end: input.len(),
+                    tags: Vec::new(),
+                    selected_index: 0,
+                    candidates,
+                    selected: false,
+                });
+            }
+            context.composition = composition;
+            built_input = input.clone();
+        }
+        // 比对。
+        let consumed = matches!(result, ProcessorResult::Consume);
+        if consumed != step.consumed {
+            failures.push(format!(
+                "{label}: consumed 期望 {} 实际 {}",
+                step.consumed, consumed
+            ));
+        }
+        if hex(&input) != step.input {
+            failures.push(format!(
+                "{label}: input 期望 {} 实际 {}",
+                step.input,
+                hex(&input)
+            ));
+        }
+        if context.caret() != step.caret {
+            failures.push(format!(
+                "{label}: caret 期望 {} 实际 {}",
+                step.caret,
+                context.caret()
+            ));
+        }
+        if hex(committed.as_bytes()) != step.commit {
+            failures.push(format!(
+                "{label}: commit 期望 {} 实际 {}",
+                step.commit,
+                hex(committed.as_bytes())
+            ));
+        }
+        let segment = context.composition.back();
+        let highlight = segment.map(|segment| segment.selected_index).unwrap_or(0);
+        let count = segment.map(|segment| segment.candidates.len()).unwrap_or(0);
+        let candidates: Vec<String> = segment
+            .map(|segment| {
+                segment
+                    .candidates
+                    .iter()
+                    .map(|candidate| hex(candidate.text.as_bytes()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if highlight != step.highlight {
+            failures.push(format!(
+                "{label}: highlight 期望 {} 实际 {highlight}",
+                step.highlight
+            ));
+        }
+        if count != step.count {
+            failures.push(format!(
+                "{label}: candidate count 期望 {} 实际 {count}",
+                step.count
+            ));
+        }
+        if candidates != step.candidates {
+            failures.push(format!(
+                "{label}: candidates 期望 {:?} 实际 {candidates:?}",
+                step.candidates
+            ));
+        }
+    }
+}
+
+#[test]
+fn key_sequence_matches_reference() {
+    let cases = load_cases();
+    assert!(!cases.is_empty(), "empty key_sequence golden");
+    let data_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/key_sequence");
+    let mut failures = Vec::new();
+    let mut steps = 0usize;
+    for case in &cases {
+        steps += case.steps.len();
+        replay(case, &data_dir, &mut failures);
+    }
+    assert!(
+        failures.is_empty(),
+        "键序列不一致 {} 处（{} 例 / {} 步）：\n{}",
+        failures.len(),
+        cases.len(),
+        steps,
+        failures.join("\n")
+    );
+}

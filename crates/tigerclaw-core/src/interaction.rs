@@ -913,6 +913,46 @@ pub fn try_empty_code_commit(
     Ok(true)
 }
 
+/// 参照 commit 通知器（优先级 -100）：缓冲提交前把缓冲前缀并入选中候选文本。
+/// 对应 `prepare_learning` 里注册的 `buffer_commit_connection`（宿主在提交前调用）。
+pub fn apply_buffered_commit(context: &mut Context) {
+    let prefix = buffered_text(context);
+    if prefix.is_empty() {
+        return;
+    }
+    let Some(segment) = context.composition.back_mut() else {
+        return;
+    };
+    let Some(candidate) = segment.candidates.get_mut(segment.selected_index) else {
+        return;
+    };
+    if candidate.kind == "sentence_buffered" {
+        candidate.text = format!("{prefix}{}", candidate.text);
+        candidate.kind = "sentence_buffered_commit".to_string();
+    }
+}
+
+/// 参照 librime 引擎对 `ConfirmCurrentSelection` 的**同步**反应：
+/// 末段覆盖整段输入且 `_auto_commit` 开启时，先合并缓冲前缀再立即提交
+/// （librime：确认 → 选择通知 → 引擎 `OnSelect` → 自动提交 → 提交通知器 → `Clear`）。
+/// 宿主（K3）需在会话初始化时置 `_auto_commit`（对应 librime `express_editor`
+/// 的默认 true），否则确认段会保持未提交。
+pub fn confirm_selection(context: &mut Context) {
+    if !context.confirm_current_selection() {
+        return;
+    }
+    let covered = context
+        .composition
+        .back()
+        .map(|segment| segment.end == context.input().len())
+        .unwrap_or(false);
+    if !covered || !context.get_option("_auto_commit") {
+        return;
+    }
+    apply_buffered_commit(context);
+    context.commit();
+}
+
 /// 参照 `trim_segmented_after_raw_prefix`：去掉前 `raw_prefix_length` 个原始字符
 /// 对应的片段（片段为 ASCII，按字节计数即可）。
 pub fn trim_segmented_after_raw_prefix(segmented: &str, raw_prefix_length: usize) -> String {
@@ -1658,7 +1698,7 @@ pub fn processor(
         && !key_event.alt()
         && !key_event.super_modifier()
     {
-        context.confirm_current_selection();
+        confirm_selection(context);
         return Ok(ProcessorResult::Forward);
     }
     if repr == "Return" || repr == "KP_Enter" {
@@ -1820,7 +1860,7 @@ pub fn processor(
                 None,
                 env.now,
             );
-            context.confirm_current_selection();
+            confirm_selection(context);
         }
         live.pending.clear();
         live.baseline = None;
@@ -2613,6 +2653,44 @@ mod tests {
         assert_eq!(styles["Control_L"], "noop");
         assert_eq!(styles["Caps_Lock"], "noop");
         assert_eq!(styles.len(), ASCII_SWITCH_KEYS.len());
+    }
+
+    #[test]
+    fn confirm_selection_commits_and_merges_buffer() {
+        let mut context = Context::new();
+        context.set_input(b"ab");
+        context.composition.segments.push(Segment {
+            start: 0,
+            end: 2,
+            tags: Vec::new(),
+            selected_index: 0,
+            candidates: vec![Candidate::new("sentence", 0, 2, "甲", "")],
+            selected: false,
+        });
+        // `_auto_commit` 关闭：只标记选中，不提交（对应 librime 的 Forward 分支）
+        confirm_selection(&mut context);
+        assert!(context.composition.back().unwrap().selected);
+        assert_eq!(context.input(), b"ab");
+        // 打开后：确认即提交
+        context.set_option("_auto_commit", true);
+        confirm_selection(&mut context);
+        assert_eq!(context.get_commit_text(), "甲");
+        assert!(context.input().is_empty());
+        // 缓冲候选：提交前并入缓冲前缀
+        let mut context = Context::new();
+        context.set_option("_auto_commit", true);
+        set_property_if_changed(&mut context, K_BUFFERED, "乙");
+        context.set_input(b"~c");
+        context.composition.segments.push(Segment {
+            start: 0,
+            end: 2,
+            tags: Vec::new(),
+            selected_index: 0,
+            candidates: vec![Candidate::new("sentence_buffered", 0, 2, "c", "")],
+            selected: false,
+        });
+        confirm_selection(&mut context);
+        assert_eq!(context.get_commit_text(), "乙c");
     }
 
     #[test]

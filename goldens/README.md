@@ -23,6 +23,8 @@
 | `decode_learning.tsv.gz` | 解码接入学习（无模型） | 1,987 条 |
 | `decode_learning_model.tsv.gz` | 解码接入学习（fixture 模型，抽样） | 358 条 |
 | `key.tsv.gz` | 键名/键事件金样（librime 探针）：`name`/`repr`/`parse`/`modifier` | 5,113 条 |
+| `key_sequence.tsv.gz` | 键序列金样（真 librime 探针，2c）：逐步 `consumed`/输入/光标/提交/候选/高亮 | 10 例 / 36 步 |
+| `key_sequence/` | 键序列夹具码表（探针与 Rust 重放共用） | 1 文件 |
 | `local/`（不入库） | 真实模型抽样金样（224 MB 模型） | 62,777 条 |
 
 ## transcript 格式（TSV，`#` 注释，`-` 表示空串，字符串为 UTF-8 字节十六进制）
@@ -132,6 +134,9 @@ gzip -9 -n -c /tmp/learning.tsv > goldens/learning.tsv.gz
 
 # key（入库；需要 librime 源码头文件与系统 librime）
 bash tools/gen_key_golden.sh /path/to/librime
+
+# key_sequence（入库；需要系统 librime + librime-lua，构建 pin 版隔离环境）
+bash tools/gen_key_sequence_golden.sh
 ```
 
 ## 校验
@@ -156,6 +161,8 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 - 键名表来源：librime `src/rime/key_table.cc`（sha256 `2f7c6a8b4f2aa474d700a87bd4bd1baa48a2655cd6ce4d2ba05b768f284d9d78`，librime 1.17.0 固定提交 `33e78140`）；
   `key_table.rs` 由 `tools/gen_key_table.py` 生成，CI 以同提交重新生成并比对；`key.tsv.gz` 由系统 librime 1.17.0 探针（`tools/key_probe.cpp`）生成，
   因探针依赖具体 librime 版本，**CI 不重生成该金样**（仅按 Rust 侧重放校验 + 键表生成比对）。
+- 键序列金样：`key_sequence.tsv.gz` 由 `tools/rime_sequence_probe.cpp` 在隔离环境中驱动**真 librime + librime-lua** 与 pin 版 Lua 核心生成
+  （探针头部记录参照提交、`tiger_sentence.lua` sha256 与 librime 版本）；同样**不在 CI 重生成**。数据夹具 `key_sequence/` 入库并与 Rust 重放共用。
 - 参照 Lua 文件（生成时）：
 
 | 文件 | sha256 |
@@ -196,5 +203,7 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 | `decode_learning.tsv.gz` | `41a9894d233c32348e42164d4d29fc698c3037741c141ac0b58404094c9e9354` |
 | `decode_learning_model.tsv.gz` | `91e5fe60a515f1cdd11b815a5da68c7f1883ccc6bb80a9e37e45435cfe72f6e0` |
 | `key.tsv.gz` | `e939a077cd0825f7b454a4af300ed50fb6a2f2609c71583525d44f2f8fb3fd33` |
+| `key_sequence.tsv.gz` | `2051872c13a63e209c64c177e3b647c6fd0dabeb788ced46b0af701e36fdb7d9` |
 
 CI 以同一参照提交重生成全部 fixture 金样并与入库内容比对（见 `.github/workflows/ci.yml`）。
+`key.tsv.gz` 与 `key_sequence.tsv.gz` 依赖具体 librime/librime-lua 版本，**CI 不重生成**。
