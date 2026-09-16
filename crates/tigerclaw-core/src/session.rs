@@ -50,7 +50,7 @@ pub struct Segment {
     pub start: usize,
     pub end: usize,
     pub tags: Vec<String>,
-    /// 段提示（参照 `Segment::prompt`；如反查段的「〔拼音〕」）。
+    /// 段提示（参照 `Segment::prompt`；如音查虎段的「〔拼音〕」）。
     pub prompt: String,
     pub selected_index: usize,
     pub candidates: Vec<Candidate>,

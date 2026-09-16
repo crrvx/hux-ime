@@ -1,5 +1,5 @@
-# 反查键序列用例（⑧-1；tab 分隔：名称、选项、按键序列）。
-# 参照：tiger_sentence.schema.yaml 的 recognizer/reverse_lookup 模式与 PY_c 反查段。
+# 音查虎键序列用例（⑧-1；tab 分隔：名称、选项、按键序列）。
+# 参照：tiger_sentence.schema.yaml 的 recognizer/reverse_lookup 模式与 PY_c 音查虎段。
 bare-prefix		`
 bare-prefix-commit		` space
 fullshape-prefix	full_shape=1	`

@@ -26,7 +26,7 @@
 | `Candidate.comment` / `.quality` / `.preedit` | 写 | 注释、排序质量、预编辑 |
 | `Candidate.start` / `._end` | 读 | 构造参数，段内字节范围 |
 | `Segment.start` / `._end` / `.selected_index` | 读 | `selected_index` 为当前高亮 |
-| `Segment:has_tag(name)` | 调用 | 反查过滤器判 `"reverse_lookup"` |
+| `Segment:has_tag(name)` | 调用 | 码注释过滤器判 `"reverse_lookup"` |
 | `Composition:empty()` / `:back()` | 调用 | 无段 / 末段 |
 
 ## 3. Context

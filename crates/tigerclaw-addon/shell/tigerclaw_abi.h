@@ -65,8 +65,8 @@ typedef struct tigerclaw_options {
   int32_t ascii_punct;
   int32_t tab_learning;
   int32_t high_freq_limit;
-  int32_t reverse_pinyin_sym, reverse_pinyin_states;
-  int32_t reverse_hanzi_sym, reverse_hanzi_states;
+  int32_t pinyin_lookup_sym, pinyin_lookup_states;
+  int32_t character_lookup_sym, character_lookup_states;
   int32_t quick_input_sym, quick_input_states;
 } tigerclaw_options;
 

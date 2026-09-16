@@ -8,8 +8,8 @@
 //! 之后执行 update 通知器等价物（`interaction::update_notifier`）。
 //!
 //! 金样与数据：`goldens/key_sequence.tsv.gz`、`goldens/key_sequence/`（合成小码表）；
-//! 反查（⑧-1）：`goldens/reverse.tsv.gz`、`goldens/reverse/`（小 PY_c + 反查索引夹具）。
-//! 再生成：`tools/gen_key_sequence_golden.sh`、`tools/gen_reverse_golden.sh`
+//! 音查虎（⑧-1）：`goldens/pinyin_lookup.tsv.gz`、`goldens/pinyin_lookup/`（小 PY_c + 音查虎索引夹具）。
+//! 再生成：`tools/gen_key_sequence_golden.sh`、`tools/gen_pinyin_lookup_golden.sh`
 //! （依赖系统 librime + librime-lua）。
 
 mod common;
@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use tigerclaw_core::decode::Decoder;
 use tigerclaw_core::host::{HostResult, process_key as host_process_key};
 use tigerclaw_core::interaction::{
-    CompositionBuilder, K_REVERSE_PREFIX, LiveLearning, OPTION_EARLY_COMMIT,
+    CompositionBuilder, K_PINYIN_LOOKUP_PREFIX, LiveLearning, OPTION_EARLY_COMMIT,
     OPTION_EARLY_COMMIT_TO_PREEDIT, ProcessorEnv, ProcessorResult, SentenceState, processor,
     update_notifier,
 };
@@ -120,7 +120,7 @@ fn replay(
     case: &Case,
     data_dir: &Path,
     page_size: usize,
-    reverse_prefix: Option<char>,
+    pinyin_lookup_prefix: Option<char>,
     failures: &mut Vec<String>,
 ) {
     let dirs = [data_dir.to_path_buf()];
@@ -135,8 +135,8 @@ fn replay(
     context.set_option("_auto_commit", true);
     context.set_option(OPTION_EARLY_COMMIT, true);
     context.set_option(OPTION_EARLY_COMMIT_TO_PREEDIT, false);
-    if let Some(prefix) = reverse_prefix {
-        context.set_property(K_REVERSE_PREFIX, &prefix.to_string());
+    if let Some(prefix) = pinyin_lookup_prefix {
+        context.set_property(K_PINYIN_LOOKUP_PREFIX, &prefix.to_string());
     }
     for (name, value) in &case.options {
         context.set_option(name, *value);
@@ -314,13 +314,13 @@ fn key_sequence_matches_reference() {
     );
 }
 
-/// 反查金样（⑧-1）：夹具页大小 5（与引擎一致，翻页用例覆盖后续页）；反查前缀 `` ` ``。
+/// 音查虎金样（⑧-1）：夹具页大小 5（与引擎一致，翻页用例覆盖后续页）；音查虎前缀 `` ` ``。
 #[test]
-fn reverse_sequence_matches_reference() {
+fn pinyin_lookup_matches_reference() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let cases = load_cases(&root.join("goldens/reverse.tsv.gz"));
-    assert!(!cases.is_empty(), "empty reverse golden");
-    let data_dir = root.join("goldens/reverse");
+    let cases = load_cases(&root.join("goldens/pinyin_lookup.tsv.gz"));
+    assert!(!cases.is_empty(), "empty pinyin lookup golden");
+    let data_dir = root.join("goldens/pinyin_lookup");
     let mut failures = Vec::new();
     let mut steps = 0usize;
     for case in &cases {
@@ -335,7 +335,7 @@ fn reverse_sequence_matches_reference() {
     }
     assert!(
         failures.is_empty(),
-        "反查不一致 {} 处（{} 例 / {} 步）：\n{}",
+        "音查虎不一致 {} 处（{} 例 / {} 步）：\n{}",
         failures.len(),
         cases.len(),
         steps,

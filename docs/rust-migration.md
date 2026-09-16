@@ -12,7 +12,7 @@
 | **K1** ✅ | 计算核：lexicon、decode/beam、early-evidence、learning（见 [`spike-report.md`](spike-report.md) 与金样） | 快照差分全绿 |
 | **K1.5** ✅ | 上游追平：紧凑排序先验（码形证据 / 4 码生僻字保护 / Top-5 词先验）+ 锁播种修复语义；pin 前移至上游 main `35a10b9`，金样全量重生成 | 模型版金样逐位一致（含词先验重排） |
 | **K2** ✅ | 交互引擎：buffer/caret、menu、键位 `repr` ✅（`key.rs` + 键表生成/金样）、键序列金样 ✅（2c 探针 55 例/236 步，含空码自动上屏、编辑/导航键、标点表、大写字母）、处理器/翻译器/过滤器/学习暂存与提交通知器/早提交 ✅；宿主等价物见 K3 ⑥ | 键序列金样一致 |
-| **K3**（进行中） | fcitx5 addon：注册、候选/预编辑/上屏、数据路径、选项、学习库 ✅；宿主编辑语义 ✅（⑥）；英文模式**不实现**（⑦a 已移除：英文输入交 fcitx5 切换输入法）；标点表 ✅（⑦b）；拼音反查 ✅（⑧-1：TCSRV01 索引 + 反查翻译/接线/金样）；金样参照 pin 升至 `8b615235`（自动上屏对齐修复已迁移；learning 生成器确定性修复）；汉字查码（⑧-2）、打包（⑨）、状态菜单待做 | 真机可用 |
+| **K3**（进行中） | fcitx5 addon：注册、候选/预编辑/上屏、数据路径、选项、学习库 ✅；宿主编辑语义 ✅（⑥）；英文模式**不实现**（⑦a 已移除：英文输入交 fcitx5 切换输入法）；标点表 ✅（⑦b）；音查虎 ✅（⑧-1：TCSRV01 索引 + 音查虎翻译/接线/金样）；金样参照 pin 升至 `8b615235`（自动上屏对齐修复已迁移；learning 生成器确定性修复）；汉字查码（⑧-2）、打包（⑨）、状态菜单待做 | 真机可用 |
 | **K4** | 验收与打包 | 真机清单 + 性能/内存 |
 
 移植纪律：计算部分机械翻译（逐位保真）；交互部分按行为契约自由设计。每个模块迁完即接线，差分常绿。
@@ -79,14 +79,14 @@ docs/
   `express_editor` 的 `char_handler` 直通（组合先上屏）。
 - UI 同步：按键后状态快照（preedit/候选/上屏）；preedit 光标为字节偏移
   （fcitx `Text::setCursor` 即字节制）。preedit 取**高亮候选的 preedit**（正常段「按词分码」
-  = 解码 `segmented`，如 `sh ks`；反查段「按音节分码」= 全拼段后插空格，如 `` `zhong guo ``），
+  = 解码 `segmented`，如 `sh ks`；音查虎段「按音节分码」= 全拼段后插空格，如 `` `zhong guo ``），
   光标不在实况输入末尾时回退为「缓冲 + 原始输入」。
 - 数据：core `lexicon::data_directories()`（用户 → 共享）与 `candidate_paths()` 探测；
-  addon 加载码表/位图/模型/反查索引（开发可用 `TIGERCLAW_DATA_DIRS`/`TIGERCLAW_MODEL` 覆盖）。
-- 反查（⑧-1）：`data/tiger_sentence.reverse.bin.gz`（TCSRV01，`tools/gen_reverse_index.py` 自参照
-  `PY_c.dict.yaml` 生成；`docs/REVERSE_INDEX_MANIFEST.json` 登记来源与校验和）；语义（拼写缩写/剪枝/
-  补全/排序/上限 20）与接线（recognizer/matcher/翻译路由/段提示）见 `docs/reverse-lookup.md`；
-  金样 `goldens/reverse.tsv.gz`（真 librime 探针）+ Rust 重放。
+  addon 加载码表/位图/模型/音查虎索引（开发可用 `TIGERCLAW_DATA_DIRS`/`TIGERCLAW_MODEL` 覆盖）。
+- 音查虎（⑧-1）：`data/tiger_sentence.pinyin.bin.gz`（TCSRV01，`tools/gen_pinyin_index.py` 自参照
+  `PY_c.dict.yaml` 生成；`docs/PINYIN_INDEX_MANIFEST.json` 登记来源与校验和）；语义（拼写缩写/剪枝/
+  补全/排序/上限 20）与接线（recognizer/matcher/翻译路由/段提示）见 `docs/rust-migration.md`；
+  金样 `goldens/pinyin_lookup.tsv.gz`（真 librime 探针）+ Rust 重放。
 - 学习：提交点的通知器序列（选择/暂存/提交）已内置在核心提交路径
   （`confirm_selection`、自动上屏的 `LearningCommit`）；宿主只需排空
   `LiveLearning::submitted` 落库，并在 `store_ready` 置位后生效；宿主自发的提交
@@ -114,4 +114,4 @@ docs/
 | `pairs` 遍历序 / `table.sort` 非全序 | K1 纪律：显式排序 + 全序 tie-breaker（见 spike 报告 §3） |
 | 交互语义偏差 | 键序列金样 + 真机清单 |
 | 真实模型未入库 | fixture 全量入库 + 真实模型本地/定期差分 |
-| 反查词典转换质量 | R2 转换器 + rime 侧金样对照（K3） |
+| 音查虎词典转换质量 | R2 转换器 + rime 侧金样对照（K3） |

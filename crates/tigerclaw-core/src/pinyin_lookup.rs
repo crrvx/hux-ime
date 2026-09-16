@@ -1,7 +1,7 @@
-//! 反查（⑧-1）：`tiger_sentence.reverse.bin[.gz]`（TCSRV01）读取与反查翻译。
+//! 音查虎（⑧-1）：`tiger_sentence.pinyin.bin[.gz]`（TCSRV01）读取与音查虎翻译。
 //!
-//! 语义对齐 librime 1.17.0 的词典反查（`reverse_lookup_translator` + `ReverseLookupFilter`，
-//! 见 `docs/reverse-lookup.md`）：
+//! 语义对齐 librime 1.17.0 的词典音查虎（`reverse_lookup_translator` + `ReverseLookupFilter`，
+//! 见 `docs/rust-migration.md`）：
 //! - 输入（去掉前缀后）按**拼写表**分段：音节本体 + 缩写（PY_c.schema.yaml 的两条
 //!   `abbrev` 规则），缩写可信度罚 `log(0.5)`；
 //! - 输入尾部无法由拼写键消耗时，对剩余部分做**补全**（拼写表子树展开；本体拼写再罚
@@ -9,11 +9,11 @@
 //! - 分段路径的音节序列必须与词条的码**完全一致**；
 //! - 候选次序 = 「可信度 + ln(权重)」降序（权重序取自组内稳定排序），上限
 //!   [`CANDIDATE_LIMIT`]（与主候选一致）；
-//! - 注释（虎码）由 [`reverse_comment_filter`] 追加以复用现有反查注释格式。
+//! - 注释（虎码）由 [`code_comment_filter`] 追加以复用现有码注释格式。
 //!
-//! `reverse_comment`/`reverse_comment_filter` 定义于 `interaction`（K2 预留），此处沿用。
+//! `code_comment`/`code_comment_filter` 定义于 `interaction`（K2 预留），此处沿用。
 
-use crate::interaction::reverse_comment_filter;
+use crate::interaction::code_comment_filter;
 use crate::lexicon::Lexicon;
 use crate::punct::PunctTable;
 use crate::session::Candidate;
@@ -21,14 +21,14 @@ use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 
 /// 索引文件名（发布为 `.gz`；fixture 常用未压缩）。
-pub const REVERSE_FILE: &str = "tiger_sentence.reverse.bin";
-pub const REVERSE_FILE_GZ: &str = "tiger_sentence.reverse.bin.gz";
-/// 反查候选上限（与主候选一致；⑧ 裁决）。
+pub const PINYIN_FILE: &str = "tiger_sentence.pinyin.bin";
+pub const PINYIN_FILE_GZ: &str = "tiger_sentence.pinyin.bin.gz";
+/// 音查虎候选上限（与主候选一致；⑧ 裁决）。
 pub const CANDIDATE_LIMIT: usize = 20;
-/// 反查段标签（参照 schema 的 `reverse_lookup`）。
-pub const REVERSE_TAG: &str = "reverse_lookup";
-/// 反查段提示（参照 schema `reverse_lookup/tips`）。
-pub const REVERSE_TIPS: &str = "〔拼音〕";
+/// 音查虎段标签（参照 schema 的 `reverse_lookup`）。
+pub const PINYIN_LOOKUP_TAG: &str = "reverse_lookup";
+/// 音查虎段提示（参照 schema `reverse_lookup/tips`）。
+pub const PINYIN_LOOKUP_TIPS: &str = "〔拼音〕";
 
 const MAGIC: &[u8; 8] = b"TCSRV01\n";
 /// 拼写类型（同 librime `SpellingType` 序：normal < fuzzy < abbreviation < completion）。
@@ -63,8 +63,8 @@ struct Entry {
     len: u16,
 }
 
-/// 反查索引（TCSRV01）。
-pub struct ReverseIndex {
+/// 拼音索引（TCSRV01；音查虎用）。
+pub struct PinyinIndex {
     syllables: Vec<String>,
     /// 拼写键（字节序）：键 → [(音节 id, 类型)]。
     spellings: Vec<SpellingEntry>,
@@ -74,7 +74,7 @@ pub struct ReverseIndex {
     entries: Vec<Entry>,
 }
 
-impl ReverseIndex {
+impl PinyinIndex {
     /// 载入索引（`gzip` 由魔数识别）。
     pub fn load(path: &Path) -> Result<Self> {
         let raw = std::fs::read(path).with_context(|| format!("读取 {}", path.display()))?;
@@ -199,13 +199,13 @@ impl ReverseIndex {
 }
 
 /// 载入目录序列中首个存在的索引（用户目录 → 共享目录；`.gz` 与未压缩皆可）。
-pub fn load_first(dirs: &[PathBuf]) -> (Option<ReverseIndex>, Option<String>) {
+pub fn load_first(dirs: &[PathBuf]) -> (Option<PinyinIndex>, Option<String>) {
     let mut errors = Vec::new();
     for dir in dirs {
-        for name in [REVERSE_FILE, REVERSE_FILE_GZ] {
+        for name in [PINYIN_FILE, PINYIN_FILE_GZ] {
             let path = dir.join(name);
             if path.is_file() {
-                match ReverseIndex::load(&path) {
+                match PinyinIndex::load(&path) {
                     Ok(index) => return (Some(index), None),
                     Err(error) => errors.push(format!("{error:#}")),
                 }
@@ -219,10 +219,10 @@ pub fn load_first(dirs: &[PathBuf]) -> (Option<ReverseIndex>, Option<String>) {
     }
 }
 
-/// 反查翻译（参照 `ReverseLookupTranslator::Query`）：`input` 为段输入（含前缀）。
+/// 音查虎翻译（参照 `ReverseLookupTranslator::Query`）：`input` 为段输入（含前缀）。
 #[allow(clippy::too_many_arguments)]
 pub fn translate(
-    index: &ReverseIndex,
+    index: &PinyinIndex,
     lexicon: &Lexicon,
     input: &[u8],
     prefix: char,
@@ -238,7 +238,7 @@ pub fn translate(
     } else {
         input
     };
-    // 前缀单独成段：`punct` 段与反查段同区间，参照里由标点翻译器给出候选。
+    // 前缀单独成段：`punct` 段与音查虎段同区间，参照里由标点翻译器给出候选。
     if code.is_empty() {
         return punct_candidate(punct, prefix, full_shape, start, end)
             .into_iter()
@@ -252,7 +252,7 @@ pub fn translate(
         return Vec::new();
     };
     // 参照 `BuildSyllableGraph` 的剪枝：最远顶点的最优拼写类型决定「缩写/补全」是否被弃
-    // （全拼可达时缩写一律弃用，见 docs/reverse-lookup.md）。
+    // （全拼可达时缩写一律弃用，见 docs/rust-migration.md）。
     let last_type = types[farthest].unwrap_or(KIND_NORMAL).max(KIND_FUZZY);
     prune(&mut edges, &types, farthest, last_type);
     if farthest < len && !complete(index, &mut edges, code, farthest) {
@@ -263,7 +263,7 @@ pub fn translate(
     let chunks = collect_chunks(index, &edges, code, len);
     let code_prefix = String::from_utf8_lossy(&input[..prefix.len_utf8()]).into_owned();
     let mut candidates = emit(index, &chunks, &code_prefix, start, end, limit);
-    reverse_comment_filter(&mut candidates, true, lexicon);
+    code_comment_filter(&mut candidates, true, lexicon);
     candidates
 }
 
@@ -277,7 +277,7 @@ struct Edge {
 }
 
 /// 建立拼写边（按音节 id、终点排序；与参照 `Transpose` 的索引序一致）。
-fn build_edges(index: &ReverseIndex, code: &[u8]) -> Vec<Vec<Edge>> {
+fn build_edges(index: &PinyinIndex, code: &[u8]) -> Vec<Vec<Edge>> {
     let len = code.len();
     let mut edges: Vec<Vec<Edge>> = (0..=len).map(|_| Vec::new()).collect();
     for position in 0..len {
@@ -348,7 +348,7 @@ fn prune(edges: &mut [Vec<Edge>], types: &[Option<u8>], farthest: usize, last_ty
 
 /// 尾部补全（参照 `BuildSyllableGraph` 的 completion 段）：`tail` 对应拼写键子树；
 /// 本体拼写按补全罚、缩写保持自身罚。补全后不重跑剪枝。
-fn complete(index: &ReverseIndex, edges: &mut [Vec<Edge>], code: &[u8], farthest: usize) -> bool {
+fn complete(index: &PinyinIndex, edges: &mut [Vec<Edge>], code: &[u8], farthest: usize) -> bool {
     let len = code.len();
     let tail = &code[farthest..];
     let mut added = false;
@@ -387,19 +387,14 @@ struct Chunk {
     count: u32,
     cursor: u32,
     penalty: f64,
-    /// 预编辑（按音节切分；不含反查前缀）。
+    /// 预编辑（按音节切分；不含音查虎前缀）。
     preedit: String,
 }
 
 /// 广度优先收集「码恰好等于路径音节序列」的词条块（参照 `Table::Query` 的推入序）。
 /// `code` 用于生成「按音节分码」的预编辑：上一段为全拼（正常拼写）时在下一个音节前插空格，
 /// 缩写/补全段与后续合并（如 `` `zhongguo `` → `` `zhong guo ``、`` `zho `` → `` `zho ``）。
-fn collect_chunks(
-    index: &ReverseIndex,
-    edges: &[Vec<Edge>],
-    code: &[u8],
-    len: usize,
-) -> Vec<Chunk> {
+fn collect_chunks(index: &PinyinIndex, edges: &[Vec<Edge>], code: &[u8], len: usize) -> Vec<Chunk> {
     let mut chunks = Vec::new();
     let mut queue = std::collections::VecDeque::new();
     queue.push_back((
@@ -440,7 +435,7 @@ fn collect_chunks(
 
 /// 按「可信度 + ln(权重)」降序逐条产出（并列取块序在前者；参照 `DictEntryIterator::Sort`）。
 fn emit(
-    index: &ReverseIndex,
+    index: &PinyinIndex,
     chunks: &[Chunk],
     code_prefix: &str,
     start: usize,
@@ -543,7 +538,7 @@ fn punct_shape_comment(punct: &str) -> String {
     }
 }
 
-/// 反查输入模式：`<前缀>[a-z]*'?`（参照 schema `recognizer/patterns/reverse_lookup`）。
+/// 音查虎输入模式：`<前缀>[a-z]*'?`（参照 schema `recognizer/patterns/reverse_lookup`）。
 pub fn matches_pattern(input: &[u8], prefix: char) -> bool {
     let prefix = prefix as u8;
     let Some(rest) = input.strip_prefix(&[prefix][..]) else {
@@ -601,10 +596,10 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    fn fixture_index() -> ReverseIndex {
+    fn fixture_index() -> PinyinIndex {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../goldens/reverse/tiger_sentence.reverse.bin");
-        ReverseIndex::load(&path).expect("fixture index")
+            .join("../../goldens/pinyin_lookup/tiger_sentence.pinyin.bin");
+        PinyinIndex::load(&path).expect("fixture index")
     }
 
     #[test]

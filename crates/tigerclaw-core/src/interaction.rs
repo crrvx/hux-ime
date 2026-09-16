@@ -13,8 +13,8 @@ use crate::decode::{DecodeLock, Decoder, Evaluated, Evidence};
 use crate::key::KeyEvent;
 use crate::learning::{self, DiffEvent, DiffItem, DiffPathNode, Event};
 use crate::lexicon::Lexicon;
+use crate::pinyin_lookup;
 use crate::punct::PunctTable;
-use crate::reverse;
 use crate::session::{Candidate, Composition, Context, Segment};
 use hashbrown::HashMap;
 
@@ -29,13 +29,13 @@ pub const K_PROPOSAL_LEGACY: &str = "tiger_sentence_proposal";
 pub const K_STABLE_LEGACY: &str = "tiger_sentence_stable";
 pub const K_EVIDENCE_RAW_LEGACY: &str = "tiger_sentence_evidence_raw";
 pub const K_OPTIONS_ERROR: &str = "tiger_sentence_options_error";
-/// 反查前缀（内部属性：宿主按设置写入；空/缺省 = 反查关闭）。
-pub const K_REVERSE_PREFIX: &str = "_reverse_prefix";
+/// 音查虎前缀（内部属性：宿主按设置写入；空/缺省 = 音查虎关闭）。
+pub const K_PINYIN_LOOKUP_PREFIX: &str = "_pinyin_lookup_prefix";
 
-/// 反查前缀字符（宿主写入 [`K_REVERSE_PREFIX`]；空/缺省 = 关闭）。
-pub fn reverse_prefix(context: &Context) -> Option<char> {
+/// 音查虎前缀字符（宿主写入 [`K_PINYIN_LOOKUP_PREFIX`]；空/缺省 = 关闭）。
+pub fn pinyin_lookup_prefix(context: &Context) -> Option<char> {
     context
-        .get_property(K_REVERSE_PREFIX)
+        .get_property(K_PINYIN_LOOKUP_PREFIX)
         .and_then(|value| value.chars().next())
 }
 
@@ -389,7 +389,7 @@ pub fn is_plain_char_key(key_event: &KeyEvent, repr: &str) -> Option<char> {
     None
 }
 
-/// 参照 `Recognizer::ProcessKeyEvent`：可被反查模式接受的字符（`ch > 0x20 && ch < 0x80`，
+/// 参照 `Recognizer::ProcessKeyEvent`：可被音查虎模式接受的字符（`ch > 0x20 && ch < 0x80`，
 /// 排除 Ctrl/Alt/Super；空格由 `use_space=false` 排除）。
 fn recognizer_char(key_event: &KeyEvent) -> Option<char> {
     if key_event.ctrl() || key_event.alt() || key_event.super_modifier() {
@@ -1083,8 +1083,8 @@ pub fn trim_segmented_after_raw_prefix(segmented: &str, raw_prefix_length: usize
     }
 }
 
-/// 反查注释（上游反查件；当前 pin 的 main 未含，K3 反查接线用）：单字显示全部编码（源序），词组逐字 `字:码组`。
-pub fn reverse_comment(lexicon: &Lexicon, text: &str) -> Option<String> {
+/// 码注释（上游音查虎件；当前 pin 的 main 未含，K3 音查虎接线用）：单字显示全部编码（源序），词组逐字 `字:码组`。
+pub fn code_comment(lexicon: &Lexicon, text: &str) -> Option<String> {
     if !lexicon.built {
         return None;
     }
@@ -1122,7 +1122,7 @@ pub fn translate(
     out: &mut Vec<Candidate>,
 ) -> anyhow::Result<()> {
     if input.first() == Some(&b'`') {
-        return Ok(()); // 反查段由 reverse lookup 处理（反查件不在当前 pin；K3 接线后启用）
+        return Ok(()); // 音查虎段（` 前缀）由 `pinyin_lookup` 模块处理，本翻译不产出候选
     }
     let allow_duplicate_single = set_allow_duplicate_single(context);
     decoder.set_allow_duplicate_single(allow_duplicate_single);
@@ -1257,7 +1257,7 @@ impl CompositionBuilder {
             self.apply_reset(context, &input);
         }
         let seg_input = self.built_input.clone();
-        let prefix = reverse_prefix(context);
+        let prefix = pinyin_lookup_prefix(context);
         calculate_segmentation(&mut context.composition, &seg_input, caret, prefix);
         translate_segments(decoder, context, state, &seg_input, punct)?;
         Ok(true)
@@ -1332,7 +1332,7 @@ fn calculate_segmentation(
 }
 
 /// 参照 `Matcher::Proceed`（`recognizer/patterns`）：活跃输入匹配
-/// `^<前缀>[a-z]*'?$` 时，由本段独占剩余输入（标签 [`reverse::REVERSE_TAG`]）。
+/// `^<前缀>[a-z]*'?$` 时，由本段独占剩余输入（标签 [`pinyin_lookup::PINYIN_LOOKUP_TAG`]）。
 fn matcher(composition: &mut Composition, input: &[u8], prefix: Option<char>) {
     let Some(prefix) = prefix else {
         return;
@@ -1341,7 +1341,7 @@ fn matcher(composition: &mut Composition, input: &[u8], prefix: Option<char>) {
     let Some(active) = input.get(start..) else {
         return;
     };
-    if !reverse::matches_pattern(active, prefix) {
+    if !pinyin_lookup::matches_pattern(active, prefix) {
         return;
     }
     // 参照 `GetMatch`：命中段必须覆盖到输入末尾；起点为当前末尾或既有段起点。
@@ -1356,7 +1356,12 @@ fn matcher(composition: &mut Composition, input: &[u8], prefix: Option<char>) {
     while composition.current_start_position() > start {
         composition.segments.pop();
     }
-    add_segment(composition, start, input.len(), &[reverse::REVERSE_TAG]);
+    add_segment(
+        composition,
+        start,
+        input.len(),
+        &[pinyin_lookup::PINYIN_LOOKUP_TAG],
+    );
 }
 
 /// 参照 `AbcSegmentor::Proceed`：从当前位置取最长合法拼写段。
@@ -1448,7 +1453,7 @@ fn translate_segments(
     input: &[u8],
     mut punct: Option<&mut PunctTable>,
 ) -> anyhow::Result<()> {
-    let prefix = reverse_prefix(context);
+    let prefix = pinyin_lookup_prefix(context);
     let full_shape = context.get_option("full_shape");
     for index in 0..context.composition.segments.len() {
         let segment = &context.composition.segments[index];
@@ -1463,11 +1468,11 @@ fn translate_segments(
             segment.selected_index = 0;
             continue;
         }
-        if segment.has_tag(reverse::REVERSE_TAG) {
+        if segment.has_tag(pinyin_lookup::PINYIN_LOOKUP_TAG) {
             let slice = input[start..end].to_vec();
             let candidates = match prefix {
-                Some(prefix) if reverse::matches_pattern(&slice, prefix) => decoder
-                    .reverse_candidates(
+                Some(prefix) if pinyin_lookup::matches_pattern(&slice, prefix) => decoder
+                    .pinyin_candidates(
                         &slice,
                         prefix,
                         start,
@@ -1482,7 +1487,7 @@ fn translate_segments(
             segment.selected_index = 0;
             segment.prompt = if prefix.is_some_and(|prefix| slice.first() == Some(&(prefix as u8)))
             {
-                reverse::REVERSE_TIPS.to_string()
+                pinyin_lookup::PINYIN_LOOKUP_TIPS.to_string()
             } else {
                 String::new()
             };
@@ -1536,13 +1541,13 @@ pub fn buffer_filter(candidates: &[Candidate], buffered: bool) -> Vec<Candidate>
         .collect()
 }
 
-/// 反查过滤器（同上；K3 反查接线用）：反查段候选写入虎码注释。
-pub fn reverse_comment_filter(candidates: &mut [Candidate], active: bool, lexicon: &Lexicon) {
+/// 码注释过滤器（同上；K3 音查虎接线用）：音查虎段候选写入虎码注释。
+pub fn code_comment_filter(candidates: &mut [Candidate], active: bool, lexicon: &Lexicon) {
     if !active {
         return;
     }
     for candidate in candidates {
-        if let Some(comment) = reverse_comment(lexicon, &candidate.text) {
+        if let Some(comment) = code_comment(lexicon, &candidate.text) {
             candidate.comment = comment;
         }
     }
@@ -1997,14 +2002,14 @@ pub fn processor(
     if key_event.release() {
         return Ok(ProcessorResult::Forward);
     }
-    // 参照处理器链 `recognizer`（位于 speller/标点之前）：反查段输入的按键在此被接受，
+    // 参照处理器链 `recognizer`（位于 speller/标点之前）：音查虎段输入的按键在此被接受，
     // 否则后续处理器会把它当普通字符/标点处理。
-    if let Some(prefix) = reverse_prefix(context)
+    if let Some(prefix) = pinyin_lookup_prefix(context)
         && let Some(ch) = recognizer_char(key_event)
     {
         let mut next = context.input().to_vec();
         next.push(ch as u8);
-        if reverse::matches_pattern(&next, prefix) {
+        if pinyin_lookup::matches_pattern(&next, prefix) {
             context.push_input(&[ch as u8]);
             return Ok(ProcessorResult::Consume);
         }
@@ -2803,20 +2808,20 @@ mod tests {
     }
 
     #[test]
-    fn reverse_comment_formats() {
+    fn code_comment_formats() {
         let dir =
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
         let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
         // 来：codes.txt 源序 a, ah, ahb
         assert_eq!(
-            reverse_comment(&lexicon, "来").expect("来 has codes"),
+            code_comment(&lexicon, "来").expect("来 has codes"),
             " a / ah / ahb"
         );
-        let multi = reverse_comment(&lexicon, "来X").expect("multi");
+        let multi = code_comment(&lexicon, "来X").expect("multi");
         assert!(multi.starts_with(" 来:"), "{multi}");
         assert!(multi.contains(" X:?"), "{multi}");
-        assert!(reverse_comment(&lexicon, "X").is_none());
-        assert!(reverse_comment(&lexicon, "").is_none());
+        assert!(code_comment(&lexicon, "X").is_none());
+        assert!(code_comment(&lexicon, "").is_none());
     }
 
     #[test]
@@ -2877,7 +2882,7 @@ mod tests {
         let mut decoder = Decoder::new(lexicon, supplement, None);
         let context = Context::new();
         let state = SentenceState::fresh(1);
-        // 反查段（` 前缀）由 reverse lookup 处理，translator 不产出候选。
+        // 音查虎段（` 前缀）由 `pinyin_lookup` 模块处理，translator 不产出候选。
         let mut out = Vec::new();
         translate(&mut decoder, &context, &state, b"`ni", 0, 3, &mut out).expect("translate");
         assert!(out.is_empty());

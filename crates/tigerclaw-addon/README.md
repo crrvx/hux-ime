@@ -40,8 +40,8 @@ ln -sf ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
 
 | 项 | 默认 | 说明 |
 |---|---|---|
-| ReversePinyinKey | `` ` `` | **音查虎**（用拼音查虎码）触发键（按键录入；已随 ⑧-1 接线）|
-| ReverseHanziKey | Shift+`` ` `` | **字查音+虎**（查光标处汉字的拼音与虎码）触发键（按键录入；行为随 ⑧-2）|
+| PinyinLookupKey | `` ` `` | **音查虎**（用拼音查虎码）触发键（按键录入；已随 ⑧-1 接线）|
+| CharacterLookupKey | Shift+`` ` `` | **字查音+虎**（查光标处汉字的拼音与虎码）触发键（按键录入；行为随 ⑧-2）|
 | QuickInputKey | `;` | 快速输入触发键（按键录入；行为随 ⑨ 数据接线）|
 | EarlyCommit / EarlyCommitToPreedit / AllowDuplicateSingle | 开/关/开 | 早提交三项 |
 | FullShape / AsciiPunct | 关/关 | 全角标点 / ASCII 标点直通 |
@@ -53,7 +53,7 @@ ln -sf ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
 「候选词排列方向」决定）、客户端内联预编辑跟随全局「预编辑」开关（`isPreeditEnabled()`）。
 
 预编辑串**按词/音节分码**：正常段用解码的 `segmented`（如输入 `shks` → 预编辑 `sh ks`，
-输入 `shk` → `shk`）；反查段按音节切分（`` `zhongguo `` → `` `zhong guo ``，缩写/未完成
+输入 `shk` → `shk`）；音查虎段按音节切分（`` `zhongguo `` → `` `zhong guo ``，缩写/未完成
 音节与后续合并，如 `` `zho `` → `` `zho ``）。
 
 ## 选项

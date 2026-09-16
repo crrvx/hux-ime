@@ -18,14 +18,14 @@ jobs:
       - name: Verify lexical prior data (provenance)
         run: |
           echo "8dbc884b6cb719d07e4cef153c8048db19a11f8224f75a4ed87853e688a27393  data/tiger_sentence.lexical.bin" | sha256sum -c -
-      - name: Verify reverse index data (provenance)
+      - name: Verify pinyin index data (provenance)
         run: |
-          echo "18a0931a323ad58e1b13e610ec93183297118033d571ae303678613a217dad2a  data/tiger_sentence.reverse.bin.gz" | sha256sum -c -
-      - name: Verify reverse index fixture (regenerate)
+          echo "18a0931a323ad58e1b13e610ec93183297118033d571ae303678613a217dad2a  data/tiger_sentence.pinyin.bin.gz" | sha256sum -c -
+      - name: Verify pinyin index fixture (regenerate)
         run: |
-          python3 tools/gen_reverse_index.py \
-            --source goldens/reverse/PY_c.dict.yaml --out /tmp/reverse.bin
-          cmp /tmp/reverse.bin goldens/reverse/tiger_sentence.reverse.bin
+          python3 tools/gen_pinyin_index.py \
+            --source goldens/pinyin_lookup/PY_c.dict.yaml --out /tmp/pinyin.bin
+          cmp /tmp/pinyin.bin goldens/pinyin_lookup/tiger_sentence.pinyin.bin
 
   # 一般金样校验：使用 runner 系统提供的 Lua（Ubuntu 当前可用的最新 lua 包）。
   golden:

@@ -21,7 +21,7 @@ use settings::Settings;
 use tigerclaw_core::decode::Decoder;
 use tigerclaw_core::host::{self, HostResult};
 use tigerclaw_core::interaction::{
-    CompositionBuilder, K_REVERSE_PREFIX, LiveLearning, ProcessorEnv, ProcessorResult,
+    CompositionBuilder, K_PINYIN_LOOKUP_PREFIX, LiveLearning, ProcessorEnv, ProcessorResult,
     SentenceState, buffered_text, processor, reset_early_evidence, set_allow_duplicate_single,
     update_notifier,
 };
@@ -108,8 +108,8 @@ fn default_model_path(dirs: &[PathBuf]) -> Option<PathBuf> {
         .find(|path| path.is_file())
 }
 
-/// 反查前缀字符：可打印 ASCII 且无修饰键时启用（参照 `recognizer` 的 `ch > 0x20 && ch < 0x80`）。
-fn reverse_prefix_char(key_repr: &str) -> Option<char> {
+/// 音查虎前缀字符：可打印 ASCII 且无修饰键时启用（参照 `recognizer` 的 `ch > 0x20 && ch < 0x80`）。
+fn pinyin_lookup_prefix_char(key_repr: &str) -> Option<char> {
     let event = KeyEvent::from_repr(key_repr)?;
     let code = event.keycode;
     if (0x20..0x7f).contains(&code)
@@ -264,7 +264,7 @@ impl Engine {
             applied_learning: None,
             status: CString::new(notes.join("; ")).unwrap_or_default(),
         };
-        engine.sync_reverse_prefix();
+        engine.sync_pinyin_lookup_prefix();
         engine.push_update();
         engine
     }
@@ -381,17 +381,22 @@ impl Engine {
                 self.context.set_option(name, value);
             }
         }
-        self.sync_reverse_prefix();
+        self.sync_pinyin_lookup_prefix();
         self.refresh_learning_mode();
     }
 
-    /// 反查前缀（`_reverse_prefix`）：配置键为可打印 ASCII 且无修饰时启用，否则关闭反查。
-    fn sync_reverse_prefix(&mut self) {
-        let value = reverse_prefix_char(&self.settings.reverse_pinyin_key)
+    /// 音查虎前缀（`_pinyin_lookup_prefix`）：配置键为可打印 ASCII 且无修饰时启用，否则关闭音查虎。
+    fn sync_pinyin_lookup_prefix(&mut self) {
+        let value = pinyin_lookup_prefix_char(&self.settings.pinyin_lookup_key)
             .map(|ch| ch.to_string())
             .unwrap_or_default();
-        if self.context.get_property(K_REVERSE_PREFIX).unwrap_or("") != value {
-            self.context.set_property(K_REVERSE_PREFIX, &value);
+        if self
+            .context
+            .get_property(K_PINYIN_LOOKUP_PREFIX)
+            .unwrap_or("")
+            != value
+        {
+            self.context.set_property(K_PINYIN_LOOKUP_PREFIX, &value);
         }
     }
 
@@ -446,7 +451,7 @@ impl Engine {
         let buffered = buffered_text(&self.context);
         let live = String::from_utf8_lossy(self.context.live_input()).into_owned();
         // 参照 librime `Composition::GetPreedit` + 参照 Lua 的候选 preedit：
-        // 高亮候选的 preedit（「按词分码」，含缓冲前缀与反查前缀）优先；
+        // 高亮候选的 preedit（「按词分码」，含缓冲前缀与音查虎前缀）优先；
         // 光标不在实况输入末尾时回退「缓冲 + 实况输入」，保证字节光标与字符串一致。
         let highlighted = self
             .context
@@ -474,7 +479,7 @@ impl Engine {
             let cursor = (prefix_length + self.context.live_caret()).min(text.len());
             (text, cursor)
         };
-        // 参照 `Composition::GetPreedit`：段提示插在光标处（如反查段的「〔拼音〕」）。
+        // 参照 `Composition::GetPreedit`：段提示插在光标处（如音查虎段的「〔拼音〕」）。
         let prompt = self
             .context
             .composition
@@ -592,10 +597,10 @@ pub struct TigerclawOptions {
     pub ascii_punct: i32,
     pub tab_learning: i32,
     pub high_freq_limit: i32,
-    pub reverse_pinyin_sym: i32,
-    pub reverse_pinyin_states: i32,
-    pub reverse_hanzi_sym: i32,
-    pub reverse_hanzi_states: i32,
+    pub pinyin_lookup_sym: i32,
+    pub pinyin_lookup_states: i32,
+    pub character_lookup_sym: i32,
+    pub character_lookup_states: i32,
     pub quick_input_sym: i32,
     pub quick_input_states: i32,
 }
@@ -630,8 +635,11 @@ pub unsafe extern "C" fn tigerclaw_engine_apply_settings(
         ascii_punct: options.ascii_punct != 0,
         tab_learning: options.tab_learning != 0,
         high_freq_limit: options.high_freq_limit.max(0) as usize,
-        reverse_pinyin_key: key_repr(options.reverse_pinyin_sym, options.reverse_pinyin_states),
-        reverse_hanzi_key: key_repr(options.reverse_hanzi_sym, options.reverse_hanzi_states),
+        pinyin_lookup_key: key_repr(options.pinyin_lookup_sym, options.pinyin_lookup_states),
+        character_lookup_key: key_repr(
+            options.character_lookup_sym,
+            options.character_lookup_states,
+        ),
         quick_input_key: key_repr(options.quick_input_sym, options.quick_input_states),
     });
     1
@@ -916,10 +924,10 @@ mod tests {
             ascii_punct: 1,
             tab_learning: 0,
             high_freq_limit: 800,
-            reverse_pinyin_sym: 0x60,
-            reverse_pinyin_states: 0,
-            reverse_hanzi_sym: 0x60,
-            reverse_hanzi_states: 1,
+            pinyin_lookup_sym: 0x60,
+            pinyin_lookup_states: 0,
+            character_lookup_sym: 0x60,
+            character_lookup_states: 1,
             quick_input_sym: 0x3b,
             quick_input_states: 0,
         };
@@ -934,8 +942,8 @@ mod tests {
             "tab_learning=0 → 学习 mode 为空"
         );
         assert_eq!(state.settings.high_freq_limit, 800);
-        assert_eq!(state.settings.reverse_pinyin_key, "grave");
-        assert_eq!(state.settings.reverse_hanzi_key, "Shift+grave");
+        assert_eq!(state.settings.pinyin_lookup_key, "grave");
+        assert_eq!(state.settings.character_lookup_key, "Shift+grave");
         assert_eq!(state.settings.quick_input_key, "semicolon");
         unsafe { tigerclaw_engine_free(engine) };
     }
@@ -953,20 +961,20 @@ mod tests {
         assert!(engine.context.input().is_empty());
     }
 
-    /// 反查（⑧-1）端到端：设置 → 前缀识别 → 候选/注释 → 预编辑提示 → 空格上屏。
+    /// 音查虎（⑧-1）端到端：设置 → 前缀识别 → 候选/注释 → 预编辑提示 → 空格上屏。
     #[test]
-    fn reverse_lookup_end_to_end() {
+    fn pinyin_lookup_end_to_end() {
         let _guard = serial();
         COMMITS.lock().unwrap().clear();
         UPDATES.lock().unwrap().clear();
         let dirs = vec![
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/reverse"),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/pinyin_lookup"),
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data"),
         ];
         let mut engine = Engine::new_with_dirs(host(), dirs, None, None);
-        assert!(engine.key(u32::from(b'`'), 0, false), "反查前缀应被消费");
+        assert!(engine.key(u32::from(b'`'), 0, false), "音查虎前缀应被消费");
         for code in *b"zho" {
-            assert!(engine.key(u32::from(code), 0, false), "反查输入应被消费");
+            assert!(engine.key(u32::from(code), 0, false), "音查虎输入应被消费");
         }
         let (preedit, _, candidates, _) = last_update();
         assert_eq!(preedit, "`zho〔拼音〕");
@@ -976,7 +984,7 @@ mod tests {
         );
         assert!(engine.key(0x20, 0, false));
         assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "中哦");
-        // 反查预编辑「按音节分码」：全拼音节之间插空格。
+        // 音查虎预编辑「按音节分码」：全拼音节之间插空格。
         engine.reset();
         for code in *b"`zhongguo" {
             assert!(engine.key(u32::from(code), 0, false));

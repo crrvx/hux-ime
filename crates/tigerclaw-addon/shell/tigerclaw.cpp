@@ -39,8 +39,8 @@ FCITX_CONFIGURATION(
     fcitx::Option<bool> tabLearning{this, "TabLearning", "Tab 选字写入学习库", true};
     fcitx::Option<int, fcitx::IntConstrain> highFreqLimit{
         this, "HighFreqLimit", "高频字过滤上限（重启生效）", 1500, fcitx::IntConstrain(0, 20000)};
-    fcitx::Option<fcitx::Key> reversePinyinKey{this, "ReversePinyinKey", "音查虎：用拼音查虎码（点击录制按键）", fcitx::Key(FcitxKey_grave)};
-    fcitx::Option<fcitx::Key> reverseHanziKey{this, "ReverseHanziKey", "字查音+虎：查光标处汉字的拼音与虎码（点击录制按键）", fcitx::Key(FcitxKey_grave, fcitx::KeyState::Shift)};
+    fcitx::Option<fcitx::Key> pinyinLookupKey{this, "PinyinLookupKey", "音查虎：用拼音查虎码（点击录制按键）", fcitx::Key(FcitxKey_grave)};
+    fcitx::Option<fcitx::Key> characterLookupKey{this, "CharacterLookupKey", "字查音+虎：查光标处汉字的拼音与虎码（点击录制按键）", fcitx::Key(FcitxKey_grave, fcitx::KeyState::Shift)};
     fcitx::Option<fcitx::Key> quickInputKey{this, "QuickInputKey", "快速输入（点击录制按键）", fcitx::Key(FcitxKey_semicolon)};
     fcitx::Option<bool> panelPreedit{this, "PanelPreedit", "候选窗口显示预编辑文本（默认关闭；客户端内联预编辑仍随 fcitx5 全局设置）", false};);
 
@@ -190,8 +190,8 @@ private:
             *sym = static_cast<int32_t>(key.sym());
             *states = static_cast<int32_t>(key.states().toInteger());
         };
-        fillKey(&options.reverse_pinyin_sym, &options.reverse_pinyin_states, config_.reversePinyinKey.value());
-        fillKey(&options.reverse_hanzi_sym, &options.reverse_hanzi_states, config_.reverseHanziKey.value());
+        fillKey(&options.pinyin_lookup_sym, &options.pinyin_lookup_states, config_.pinyinLookupKey.value());
+        fillKey(&options.character_lookup_sym, &options.character_lookup_states, config_.characterLookupKey.value());
         fillKey(&options.quick_input_sym, &options.quick_input_states, config_.quickInputKey.value());
         if (tigerclaw_engine_apply_settings(engine_, &options) == 0) {
             FCITX_WARN() << "tigerclaw: apply settings failed";

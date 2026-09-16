@@ -28,8 +28,8 @@ pub struct Settings {
     /// 高频字过滤上限（参照 `tiger_sentence/high_freq_limit`；创建词库时生效）。
     pub high_freq_limit: usize,
     /// 音查虎（拼音查虎码）/ 字查音+虎（查光标处汉字的音与虎码）触发键（rime 键名）。
-    pub reverse_pinyin_key: String,
-    pub reverse_hanzi_key: String,
+    pub pinyin_lookup_key: String,
+    pub character_lookup_key: String,
     /// 快速输入触发键（rime 键名；行为随 ⑨ 数据接线）。
     pub quick_input_key: String,
 }
@@ -44,8 +44,8 @@ impl Default for Settings {
             ascii_punct: false,
             tab_learning: true,
             high_freq_limit: DEFAULT_HIGH_FREQ_LIMIT,
-            reverse_pinyin_key: "grave".to_string(),
-            reverse_hanzi_key: "Shift+grave".to_string(),
+            pinyin_lookup_key: "grave".to_string(),
+            character_lookup_key: "Shift+grave".to_string(),
             quick_input_key: "semicolon".to_string(),
         }
     }
