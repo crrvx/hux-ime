@@ -856,6 +856,14 @@ pub fn try_empty_code_commit(
         None,
         false,
         params.allow_duplicate_single,
+        state
+            .active_lock()
+            .map(|lock| DecodeLock {
+                raw: &lock.raw,
+                text: &lock.text,
+                boundaries: &lock.boundaries,
+            })
+            .as_ref(),
     ) {
         state.empty_code_pending = None;
         return Ok(false);
@@ -887,6 +895,14 @@ pub fn try_empty_code_commit(
             Some(&pending.candidate_text),
             true,
             params.allow_duplicate_single,
+            state
+                .active_lock()
+                .map(|lock| DecodeLock {
+                    raw: &lock.raw,
+                    text: &lock.text,
+                    boundaries: &lock.boundaries,
+                })
+                .as_ref(),
         )
     {
         state.empty_code_pending = None;

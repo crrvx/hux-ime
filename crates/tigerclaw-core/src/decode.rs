@@ -1517,7 +1517,7 @@ fn has_selection_suffix_bytes(raw: &[u8]) -> bool {
 }
 
 /// 参照 `has_complete_candidate(raw_code, required_text_prefix, excluded_text,
-/// group_eligible_only, locked)`；locked 分支待锁支持增量补齐（此处按无锁）。
+/// group_eligible_only, locked)`。
 pub fn has_complete_candidate(
     lexicon: &Lexicon,
     raw_code: &str,
@@ -1525,13 +1525,14 @@ pub fn has_complete_candidate(
     excluded_text: Option<&str>,
     group_eligible_only: bool,
     allow_duplicate_single: bool,
+    lock: Option<&DecodeLock<'_>>,
 ) -> bool {
     let raw = normalize(raw_code);
     if raw.is_empty() || !has_letter(&raw) {
         return false;
     }
     let required = required_text_prefix;
-    if required.is_empty() && excluded_text.is_none() && !group_eligible_only {
+    if required.is_empty() && excluded_text.is_none() && !group_eligible_only && lock.is_none() {
         let mut reachable = vec![false; raw.len() + 1];
         reachable[0] = true;
         for position in 0..raw.len() {
@@ -1571,8 +1572,35 @@ pub fn has_complete_candidate(
     let first_ranks_only = group_eligible_only && !has_selection_suffix_bytes(&raw);
     let stride = excluded_text.map(|text| text.len() + 2).unwrap_or(1);
     let mut states: Vec<HashSet<usize>> = (0..=raw.len()).map(|_| HashSet::new()).collect();
-    states[0].insert(0);
-    for position in 0..raw.len() {
+    let mut start = 0usize;
+    let mut matched = 0usize;
+    let mut excluded = 0usize;
+    if let Some(lock) = lock {
+        // 参照：锁前缀必须同时匹配输入与已确认文本，扫描自锁末端开始。
+        let prefix = normalize(lock.raw);
+        matched = required.len().min(lock.text.len());
+        if !raw.starts_with(&prefix)
+            || required.as_bytes().get(..matched) != lock.text.as_bytes().get(..matched)
+        {
+            return false;
+        }
+        start = prefix.len();
+        if let Some(excluded_text) = excluded_text {
+            excluded = if excluded_text.as_bytes().starts_with(lock.text.as_bytes()) {
+                lock.text.len()
+            } else {
+                excluded_text.len() + 1
+            };
+        }
+        if start == raw.len() {
+            return matched == required.len()
+                && excluded_text
+                    .map(|text| excluded != text.len())
+                    .unwrap_or(true);
+        }
+    }
+    states[start].insert(matched * stride + excluded);
+    for position in start..raw.len() {
         if states[position].is_empty() {
             continue;
         }
@@ -1932,6 +1960,96 @@ mod tests {
                 .windows(2)
                 .all(|window| window[0].raw_length < window[1].raw_length)
         );
+    }
+
+    #[test]
+    fn has_complete_candidate_honors_lock() {
+        let dir =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
+        let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
+        // 无锁：abab 完整（ab → 交/疒），带必需前缀亦完整
+        assert!(has_complete_candidate(
+            &lexicon, "abab", "", None, false, true, None
+        ));
+        assert!(has_complete_candidate(
+            &lexicon, "abab", "交", None, false, true, None
+        ));
+        // 锁 "ab"→交：扫描自锁末端开始
+        let lock = DecodeLock {
+            raw: "ab",
+            text: "交",
+            boundaries: "2,3;",
+        };
+        assert!(has_complete_candidate(
+            &lexicon,
+            "abab",
+            "",
+            None,
+            false,
+            true,
+            Some(&lock)
+        ));
+        assert!(has_complete_candidate(
+            &lexicon,
+            "abab",
+            "交",
+            None,
+            false,
+            true,
+            Some(&lock)
+        ));
+        assert!(has_complete_candidate(
+            &lexicon,
+            "ab",
+            "交",
+            None,
+            false,
+            true,
+            Some(&lock)
+        ));
+        // 锁前缀与输入不符 / 与已确认文本不符 → false
+        let foreign = DecodeLock {
+            raw: "cd",
+            text: "交",
+            boundaries: "2,3;",
+        };
+        assert!(!has_complete_candidate(
+            &lexicon,
+            "abab",
+            "",
+            None,
+            false,
+            true,
+            Some(&foreign)
+        ));
+        assert!(!has_complete_candidate(
+            &lexicon,
+            "abab",
+            "疒",
+            None,
+            false,
+            true,
+            Some(&lock)
+        ));
+        // excluded 与锁文本一致：「交」不算新完成，「交交」可以
+        assert!(!has_complete_candidate(
+            &lexicon,
+            "ab",
+            "交",
+            Some("交"),
+            false,
+            true,
+            Some(&lock)
+        ));
+        assert!(has_complete_candidate(
+            &lexicon,
+            "abab",
+            "交",
+            Some("交"),
+            false,
+            true,
+            Some(&lock)
+        ));
     }
 
     #[test]
