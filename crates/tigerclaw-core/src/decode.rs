@@ -78,12 +78,20 @@ pub struct Evaluated {
     pub edge_count: usize,
     pub path: usize,
     pub segmented: String,
+    /// 路径末段的 previous 节点信息（供交互层判定隐式选重）。
+    pub previous_raw_length: usize,
+    pub previous_text: Option<String>,
 }
 
 #[derive(Debug)]
 pub struct DecodeOutput {
     pub items: Vec<Evaluated>,
+    /// 全量已评分候选（未截断的 beam 输出，对应参照 `_confidence_candidates`）。
+    pub confidence_candidates: Vec<Evaluated>,
     pub evidence: Evidence,
+    /// 可见顶层候选路径上的全部 (raw_length, text) 前缀（对应参照
+    /// `prefix_belongs_to_visible` 的 membership 判定）。
+    pub visible_prefixes: HashSet<(usize, String)>,
     pub learning_affected: bool,
     pub completed_truncated: bool,
 }
@@ -232,7 +240,9 @@ impl Decoder {
         if raw.is_empty() || !has_letter(&raw) {
             return Ok(DecodeOutput {
                 items: Vec::new(),
+                confidence_candidates: Vec::new(),
                 evidence: Evidence::default_for(false),
+                visible_prefixes: HashSet::new(),
                 learning_affected: false,
                 completed_truncated: false,
             });
@@ -639,6 +649,7 @@ impl Decoder {
         let ending_adjustment = self.logp(self.arena[index].prev2, self.arena[index].prev1, EOS)?
             - self.path_isolation_penalty(index)?;
         let state = &self.arena[index];
+        let previous = state.previous;
         Ok(Evaluated {
             text: state.text.clone(),
             score: state.score + ending_adjustment,
@@ -649,6 +660,8 @@ impl Decoder {
             edge_count: state.edge_count,
             path: index,
             segmented: String::new(),
+            previous_raw_length: previous.map(|i| self.arena[i].raw_length).unwrap_or(0),
+            previous_text: previous.map(|i| self.arena[i].text.clone()),
         })
     }
 
@@ -755,9 +768,23 @@ impl Decoder {
                 required_text_prefix,
             )?;
         }
+        // 可见顶层候选路径上的全部前缀（参照 `prefix_belongs_to_visible`）。
+        let mut visible_prefixes: HashSet<(usize, String)> = HashSet::new();
+        for item in &items {
+            let mut current = Some(item.path);
+            while let Some(index) = current {
+                let text = self.arena[index].text.clone();
+                if item.text.starts_with(&text) {
+                    visible_prefixes.insert((self.arena[index].raw_length, text));
+                }
+                current = self.arena[index].previous;
+            }
+        }
         Ok(DecodeOutput {
             items,
+            confidence_candidates: all,
             evidence,
+            visible_prefixes,
             learning_affected: self.learning_affected,
             completed_truncated,
         })
@@ -1254,6 +1281,149 @@ fn parse_selector(raw: &[u8], code_end: usize) -> (u64, usize) {
         _ => {}
     }
     (0, code_end)
+}
+
+/// 参照 `advance_required_prefix`（字节比较）。
+fn advance_required_prefix(required: &str, matched: usize, candidate: &str) -> Option<usize> {
+    if matched >= required.len() {
+        return Some(matched);
+    }
+    let required_bytes = required.as_bytes();
+    let candidate_bytes = candidate.as_bytes();
+    let compare = candidate_bytes.len().min(required.len() - matched);
+    if compare == 0 || required_bytes[matched..matched + compare] != candidate_bytes[..compare] {
+        return None;
+    }
+    Some(required.len().min(matched + candidate_bytes.len()))
+}
+
+fn has_selection_suffix_bytes(raw: &[u8]) -> bool {
+    raw.iter()
+        .any(|byte| *byte == b';' || *byte == b'\'' || byte.is_ascii_digit())
+}
+
+/// 参照 `has_complete_candidate(raw_code, required_text_prefix, excluded_text,
+/// group_eligible_only, locked)`；locked 分支待锁支持增量补齐（此处按无锁）。
+pub fn has_complete_candidate(
+    lexicon: &Lexicon,
+    raw_code: &str,
+    required_text_prefix: &str,
+    excluded_text: Option<&str>,
+    group_eligible_only: bool,
+    allow_duplicate_single: bool,
+) -> bool {
+    let raw = normalize(raw_code);
+    if raw.is_empty() || !has_letter(&raw) {
+        return false;
+    }
+    let required = required_text_prefix;
+    if required.is_empty() && excluded_text.is_none() && !group_eligible_only {
+        let mut reachable = vec![false; raw.len() + 1];
+        reachable[0] = true;
+        for position in 0..raw.len() {
+            if !reachable[position] {
+                continue;
+            }
+            for &code_length in &lexicon.lengths {
+                if position + code_length > raw.len() {
+                    break;
+                }
+                let Ok(code) = std::str::from_utf8(&raw[position..position + code_length]) else {
+                    continue;
+                };
+                let Some(candidates) = lexicon.codes.get(code) else {
+                    continue;
+                };
+                let (selected_rank, consumed_end) = parse_selector(&raw, position + code_length);
+                let whole_input_edge = position == 0 && consumed_end == raw.len();
+                if raw.len() > 1 && consumed_end - position < 2 {
+                    continue;
+                }
+                if !eligible_candidates(
+                    candidates,
+                    selected_rank,
+                    whole_input_edge,
+                    allow_duplicate_single,
+                )
+                .is_empty()
+                {
+                    reachable[consumed_end] = true;
+                }
+            }
+        }
+        return reachable[raw.len()];
+    }
+
+    let first_ranks_only = group_eligible_only && !has_selection_suffix_bytes(&raw);
+    let stride = excluded_text.map(|text| text.len() + 2).unwrap_or(1);
+    let mut states: Vec<HashSet<usize>> = (0..=raw.len()).map(|_| HashSet::new()).collect();
+    states[0].insert(0);
+    for position in 0..raw.len() {
+        if states[position].is_empty() {
+            continue;
+        }
+        let packed_states: Vec<usize> = states[position].iter().copied().collect();
+        for &code_length in &lexicon.lengths {
+            let code_end = position + code_length;
+            if code_end > raw.len() {
+                break;
+            }
+            let Ok(code) = std::str::from_utf8(&raw[position..code_end]) else {
+                continue;
+            };
+            let Some(candidates) = lexicon.codes.get(code) else {
+                continue;
+            };
+            let (selected_rank, consumed_end) = parse_selector(&raw, code_end);
+            let whole_input_edge = position == 0 && consumed_end == raw.len();
+            if raw.len() > 1 && consumed_end - position < 2 {
+                continue;
+            }
+            let selected = eligible_candidates(
+                candidates,
+                selected_rank,
+                whole_input_edge,
+                allow_duplicate_single,
+            );
+            for &packed in &packed_states {
+                let matched_length = packed / stride;
+                for candidate in &selected {
+                    let Some(next_matched) =
+                        advance_required_prefix(required, matched_length, &candidate.text)
+                    else {
+                        continue;
+                    };
+                    if first_ranks_only
+                        && candidate.rank != 1
+                        && !(allow_duplicate_single && candidate.text.chars().count() == 1)
+                    {
+                        continue;
+                    }
+                    let mut next_excluded = packed % stride;
+                    if let Some(excluded) = excluded_text
+                        && next_excluded <= excluded.len()
+                    {
+                        let tail = &excluded.as_bytes()[next_excluded..];
+                        if tail.starts_with(candidate.text.as_bytes()) {
+                            next_excluded += candidate.text.len();
+                        } else {
+                            next_excluded = excluded.len() + 1;
+                        }
+                    }
+                    if consumed_end == raw.len()
+                        && next_matched == required.len()
+                        && excluded_text
+                            .map(|text| next_excluded != text.len())
+                            .unwrap_or(true)
+                    {
+                        return true;
+                    }
+                    states[consumed_end].insert(next_matched * stride + next_excluded);
+                }
+            }
+        }
+    }
+    false
 }
 
 /// 参照 `eligible_candidates`。

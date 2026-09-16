@@ -8,8 +8,10 @@
 //! - `read_locks` 采用严格整数解析：非法帧一律返回空表（参照的 `tonumber`
 //!   对空白/浮点更宽容，但属性数据只由本实现写出，实际不会出现该差异）。
 
+use crate::decode::{Decoder, Evaluated, Evidence};
 use crate::key::KeyEvent;
 use crate::session::Context;
+use hashbrown::HashMap;
 
 /// 属性键（对应参照 `state_keys`）。
 pub const K_BUFFERED: &str = "tiger_sentence_buffered_text";
@@ -27,6 +29,40 @@ pub const K_OPTIONS_ERROR: &str = "tiger_sentence_options_error";
 pub const OPTION_ALLOW_DUPLICATE_SINGLE: &str = "tiger_sentence_allow_duplicate_single";
 /// 候选上限（参照 `candidate_limit`）。
 pub const CANDIDATE_LIMIT: usize = 20;
+/// tracker 键分隔符（参照 `state_separator`）。
+const STATE_SEPARATOR: &str = "\u{1f}";
+const EARLY_COMMIT_MINIMUM_SHARE: f64 = 0.995;
+const EARLY_COMMIT_STRONG_SHARE: f64 = 0.99999;
+const EARLY_COMMIT_REQUIRED_EVIDENCE: usize = 3;
+const EARLY_COMMIT_REQUIRED_STRONG: usize = 2;
+const EARLY_COMMIT_MAXIMUM_NEUTRAL_GAP: usize = 3;
+const EARLY_COMMIT_RETAINED_RAW_LENGTH: usize = 3;
+/// 提前上屏到预编辑的选项（参照同名字符串）。
+pub const OPTION_EARLY_COMMIT_TO_PREEDIT: &str = "tiger_sentence_early_commit_to_preedit";
+/// 提前上屏总开关。
+pub const OPTION_EARLY_COMMIT: &str = "tiger_sentence_early_commit";
+
+/// 证据追踪器（对应参照 tracker 表）。
+#[derive(Clone, Debug)]
+pub struct Tracker {
+    pub text: String,
+    pub text_char_count: usize,
+    pub raw_length: usize,
+    pub evidence_count: usize,
+    pub strong_count: usize,
+    pub gap_count: usize,
+    pub last_share: f64,
+}
+
+/// 空码自动上屏的待定候选（对应参照 `empty_code_pending`）。
+#[derive(Clone, Debug)]
+pub struct EmptyCodePending {
+    pub candidate_text: String,
+    pub requires_uniqueness_check: bool,
+    pub committed_text: String,
+    pub base_raw_length: usize,
+    pub last_segment_start: usize,
+}
 
 /// 已确认锁定段（对应参照 lock 表 `{raw, text, boundaries}`）。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -43,6 +79,8 @@ pub struct SentenceState {
     pub committed_raw: String,
     pub buffered_text: String,
     pub locks: Vec<Lock>,
+    pub trackers: HashMap<String, Tracker>,
+    pub empty_code_pending: Option<EmptyCodePending>,
     pub last_seen_raw: String,
     pub last_auto_commit_raw_length: usize,
     pub suspended: bool,
@@ -61,6 +99,8 @@ impl SentenceState {
             committed_raw: String::new(),
             buffered_text: String::new(),
             locks: Vec::new(),
+            trackers: HashMap::new(),
+            empty_code_pending: None,
             last_seen_raw: String::new(),
             last_auto_commit_raw_length: 0,
             suspended: false,
@@ -81,7 +121,9 @@ impl SentenceState {
             return false;
         }
         self.model_generation = generation;
+        self.trackers.clear();
         self.last_seen_raw.clear();
+        self.empty_code_pending = None;
         true
     }
 
@@ -326,7 +368,530 @@ pub fn is_plain_char_key(key_event: &KeyEvent, repr: &str) -> Option<char> {
     None
 }
 
-/// 参照 `ends_with_digit`：半角与全角数字都会触发小数点跟进。
+/// 参照 `reset_early_evidence`。
+pub fn reset_early_evidence(state: &mut SentenceState) {
+    state.trackers.clear();
+    state.last_seen_raw.clear();
+}
+
+/// 参照 `has_selection_suffix`：显式选重后缀（分号/引号/数字）。
+pub fn has_selection_suffix(raw: &[u8]) -> bool {
+    raw.iter()
+        .any(|byte| *byte == b';' || *byte == b'\'' || byte.is_ascii_digit())
+}
+
+/// 参照 `common_text_prefix`：逐字符公共前缀。
+pub fn common_text_prefix(left: &str, right: &str) -> String {
+    let mut out = String::new();
+    for (a, b) in left.chars().zip(right.chars()) {
+        if a != b {
+            break;
+        }
+        out.push(a);
+    }
+    out
+}
+
+/// 参照 `prefix_extends`：互为字节前缀。
+fn prefix_extends(left: &str, right: &str) -> bool {
+    left.starts_with(right) || right.starts_with(left)
+}
+
+/// 参照 `prefix_contradicted`。
+fn prefix_contradicted(tracker: &Tracker, evidence: &Evidence) -> bool {
+    if evidence.prefixes.is_empty() {
+        return false;
+    }
+    let own = evidence.find(&tracker.text, tracker.raw_length);
+    let self_share = own.map(|prefix| prefix.share).unwrap_or(0.0);
+    for prefix in &evidence.prefixes {
+        if !prefix.text.is_empty()
+            && prefix.text != tracker.text
+            && !prefix_extends(&prefix.text, &tracker.text)
+        {
+            let shared = common_text_prefix(&prefix.text, &tracker.text);
+            if !shared.is_empty()
+                && shared.len() < tracker.text.len()
+                && (own.is_none() || prefix.share > self_share)
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// 参照 `retain_trackers_without_counting`。
+fn retain_trackers_without_counting(
+    trackers: &HashMap<String, Tracker>,
+    evidence: &Evidence,
+) -> HashMap<String, Tracker> {
+    let mut next = HashMap::new();
+    for (key, tracker) in trackers {
+        let Some(current) = evidence.find(&tracker.text, tracker.raw_length) else {
+            continue;
+        };
+        if prefix_contradicted(tracker, evidence) {
+            continue;
+        }
+        let mut tracker = tracker.clone();
+        tracker.gap_count += 1;
+        if tracker.gap_count <= EARLY_COMMIT_MAXIMUM_NEUTRAL_GAP {
+            tracker.last_share = current.share;
+            next.insert(key.clone(), tracker);
+        }
+    }
+    next
+}
+
+/// 参照 `tracker_better`。
+fn tracker_better(left: &Tracker, right: &Tracker) -> bool {
+    if left.text_char_count != right.text_char_count {
+        return left.text_char_count > right.text_char_count;
+    }
+    if left.last_share != right.last_share {
+        return left.last_share > right.last_share;
+    }
+    left.raw_length < right.raw_length
+}
+
+/// 参照 `implicit_rank_allowed`：空码提交后的续接只放宽到合法隐式路径。
+pub fn implicit_rank_allowed(
+    candidate: &Evaluated,
+    raw: &[u8],
+    continuation_after_auto_commit: bool,
+    allow_duplicate_single: bool,
+) -> bool {
+    if !continuation_after_auto_commit {
+        return true;
+    }
+    let previous_nonempty = candidate
+        .previous_text
+        .as_deref()
+        .map(|text| !text.is_empty())
+        .unwrap_or(false);
+    has_selection_suffix(raw)
+        || candidate.max_rank <= 1
+        || (allow_duplicate_single && previous_nonempty)
+}
+
+/// 参照 `strong_empty_code_candidate`：未截断池中的强置信候选。
+fn strong_empty_code_candidate(
+    eligible: &[&Evaluated],
+    candidate_index: usize,
+    visible_top: Option<&str>,
+    pool_truncated: bool,
+) -> bool {
+    if pool_truncated {
+        return false;
+    }
+    let Some(top) = visible_top else {
+        return false;
+    };
+    if eligible[candidate_index].text != top {
+        return false;
+    }
+    let max_score = eligible
+        .iter()
+        .map(|candidate| candidate.confidence_score)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let mut total = 0.0;
+    let mut candidate_mass = 0.0;
+    for (index, candidate) in eligible.iter().enumerate() {
+        let mass = (candidate.confidence_score - max_score).exp();
+        total += mass;
+        if index == candidate_index {
+            candidate_mass += mass;
+        }
+    }
+    total > 0.0 && candidate_mass / total >= EARLY_COMMIT_STRONG_SHARE
+}
+
+/// 参照 `capture_empty_code_candidate`（无锁路径；锁支持见模块文档）。
+pub fn capture_empty_code_candidate(
+    decoder: &mut Decoder,
+    full_before: &[u8],
+    committed_text: &str,
+    allow_duplicate_single: bool,
+) -> anyhow::Result<Option<EmptyCodePending>> {
+    let raw = String::from_utf8_lossy(full_before).into_owned();
+    let decoded = decoder.decode_with(&raw, false, "")?;
+    if decoded.items.is_empty() || decoded.learning_affected {
+        return Ok(None);
+    }
+    let visible_top = decoded
+        .items
+        .first()
+        .map(|candidate| candidate.text.clone());
+    let restrict = !has_selection_suffix(full_before);
+    let is_eligible = |candidate: &Evaluated| {
+        let previous_nonempty = candidate
+            .previous_text
+            .as_deref()
+            .map(|text| !text.is_empty())
+            .unwrap_or(false);
+        !restrict
+            || candidate.max_rank <= 1
+            || (allow_duplicate_single
+                && (previous_nonempty || candidate.text.chars().count() == 1))
+    };
+    let Some(first_index) = decoded.items.iter().position(is_eligible) else {
+        return Ok(None);
+    };
+    let eligible: Vec<&Evaluated> = decoded
+        .confidence_candidates
+        .iter()
+        .filter(|candidate| is_eligible(candidate))
+        .collect();
+    let candidate_index = decoded
+        .confidence_candidates
+        .iter()
+        .take_while(|candidate| !std::ptr::eq(*candidate, &decoded.items[first_index]))
+        .filter(|candidate| is_eligible(candidate))
+        .count();
+    let first = &decoded.items[first_index];
+    if first.text.is_empty()
+        || !first.text.starts_with(committed_text)
+        || first.text.len() <= committed_text.len()
+    {
+        return Ok(None);
+    }
+    let pool_truncated = decoded.evidence.confidence_truncated;
+    if eligible.len() > 1
+        && !strong_empty_code_candidate(
+            &eligible,
+            candidate_index,
+            visible_top.as_deref(),
+            pool_truncated,
+        )
+    {
+        return Ok(None);
+    }
+    Ok(Some(EmptyCodePending {
+        candidate_text: first.text.clone(),
+        requires_uniqueness_check: eligible.len() == 1,
+        committed_text: committed_text.to_string(),
+        base_raw_length: full_before.len(),
+        last_segment_start: first.previous_raw_length,
+    }))
+}
+
+/// 参照 `submit_early`：缓冲分支写回缓冲与单锁；否则返回待上屏文本。
+pub fn submit_early(
+    context: &mut Context,
+    state: &mut SentenceState,
+    commit: &str,
+) -> Option<String> {
+    if context.get_option(OPTION_EARLY_COMMIT_TO_PREEDIT) || !state.buffered_text.is_empty() {
+        state.buffered_text.push_str(commit);
+        state.locks = vec![Lock {
+            raw: state.committed_raw.clone(),
+            text: state.committed_text.clone(),
+            boundaries: format!(
+                "{},{};",
+                state.committed_raw.len(),
+                state.committed_text.len()
+            ),
+        }];
+        state.save(context);
+        None
+    } else {
+        Some(commit.to_string())
+    }
+}
+
+/// 参照 `try_commit_mature_prefix`：证据成熟则提交选中前缀。
+pub fn try_commit_mature_prefix(
+    context: &mut Context,
+    state: &mut SentenceState,
+    evidence_raw: &[u8],
+    min_retained: usize,
+) -> bool {
+    let retain = if min_retained > 0 {
+        EARLY_COMMIT_RETAINED_RAW_LENGTH.max(min_retained)
+    } else {
+        EARLY_COMMIT_RETAINED_RAW_LENGTH
+    };
+    let mut selected: Option<&Tracker> = None;
+    for tracker in state.trackers.values() {
+        if (tracker.evidence_count >= EARLY_COMMIT_REQUIRED_EVIDENCE
+            || tracker.strong_count >= EARLY_COMMIT_REQUIRED_STRONG)
+            && tracker.raw_length > state.committed_raw.len()
+            && tracker.raw_length <= evidence_raw.len()
+            && evidence_raw.len() - tracker.raw_length >= retain
+            && tracker.text.len() > state.committed_text.len()
+            && tracker.text.starts_with(&state.committed_text)
+            && selected
+                .map(|current| tracker_better(tracker, current))
+                .unwrap_or(true)
+        {
+            selected = Some(tracker);
+        }
+    }
+    let Some(selected) = selected else {
+        return false;
+    };
+    if evidence_raw.len() - state.last_auto_commit_raw_length < EARLY_COMMIT_RETAINED_RAW_LENGTH {
+        return false;
+    }
+    let commit = selected.text[state.committed_text.len()..].to_string();
+    if commit.is_empty() {
+        return false;
+    }
+    let selected_text = selected.text.clone();
+    let selected_raw_length = selected.raw_length;
+    state.committed_text = selected_text;
+    state.committed_raw =
+        String::from_utf8_lossy(&evidence_raw[..selected_raw_length]).into_owned();
+    state.last_auto_commit_raw_length = selected_raw_length;
+    state.continuation_after_auto_commit = false;
+    reset_early_evidence(state);
+    state.save(context);
+    if let Some(commit_text) = submit_early(context, state, &commit) {
+        context_commit(context, &commit_text);
+    }
+    restore_composition_input(context, &evidence_raw[selected_raw_length..]);
+    true
+}
+
+/// 提交文本到上下文（组合外直接提交；供 `submit_early` 的非缓冲分支使用）。
+fn context_commit(context: &mut Context, text: &str) {
+    context.direct_commit(text);
+}
+
+/// 提前上屏的共用参数（避免 `too_many_arguments`）。
+#[derive(Clone, Copy, Debug)]
+pub struct EarlyCommitParams {
+    pub allow_duplicate_single: bool,
+    pub generation: u64,
+    pub min_retained: usize,
+}
+
+/// 参照 `try_early_commit`：证据驱动的前缀提前上屏。
+pub fn try_early_commit(
+    decoder: &mut Decoder,
+    context: &mut Context,
+    state: &mut SentenceState,
+    params: EarlyCommitParams,
+) -> anyhow::Result<bool> {
+    let live_raw = live_input(context);
+    if input_caret(context) != live_raw.len()
+        || !context.get_option(OPTION_EARLY_COMMIT)
+        || state.suspended
+    {
+        reset_early_evidence(state);
+        return Ok(false);
+    }
+    let mut full_raw = state.committed_raw.as_bytes().to_vec();
+    full_raw.extend_from_slice(&live_raw);
+    if full_raw.len() <= 4 {
+        reset_early_evidence(state);
+        return Ok(false);
+    }
+    let raw = String::from_utf8_lossy(&full_raw).into_owned();
+    let decoded = decoder.decode_with(&raw, true, "")?;
+    if params.generation != state.model_generation {
+        state.synchronize_model_state(params.generation);
+        return Ok(false);
+    }
+    if decoded.learning_affected || decoded.evidence.confidence_truncated {
+        reset_early_evidence(state);
+        return Ok(false);
+    }
+    let evidence_raw = full_raw;
+
+    if state.last_seen_raw == raw {
+        return Ok(try_commit_mature_prefix(
+            context,
+            state,
+            &evidence_raw,
+            params.min_retained,
+        ));
+    }
+
+    let extends_previous_generation = state.last_seen_raw.is_empty()
+        || (evidence_raw.len() == state.last_seen_raw.len() + 1
+            && raw.starts_with(&state.last_seen_raw));
+    if !extends_previous_generation {
+        state.trackers.clear();
+    }
+    state.last_seen_raw = raw;
+
+    let accepted_top = decoded
+        .items
+        .first()
+        .filter(|candidate| candidate.supplement_score > 0.0)
+        .map(|candidate| candidate.text.clone());
+    let merged_incomplete_tail = decoded.evidence.merged_incomplete_tail;
+    let mut qualifying: HashMap<String, &crate::decode::PrefixEvidence> = HashMap::new();
+    for prefix in &decoded.evidence.prefixes {
+        if !prefix.text.is_empty()
+            && prefix.boundary_closed
+            && prefix.share >= EARLY_COMMIT_MINIMUM_SHARE
+            && prefix.raw_length > state.committed_raw.len()
+            && prefix.text.len() > state.committed_text.len()
+            && prefix.text.starts_with(&state.committed_text)
+            && accepted_top
+                .as_deref()
+                .map(|top| top.starts_with(&prefix.text))
+                .unwrap_or(true)
+            && (merged_incomplete_tail
+                || decoded
+                    .visible_prefixes
+                    .contains(&(prefix.raw_length, prefix.text.clone())))
+        {
+            qualifying.insert(
+                format!("{}{}{}", prefix.text, STATE_SEPARATOR, prefix.raw_length),
+                prefix,
+            );
+        }
+    }
+
+    let retain_without_counting = qualifying.is_empty()
+        && (decoded.evidence.neutral_low_confidence || merged_incomplete_tail);
+    if retain_without_counting {
+        state.trackers = retain_trackers_without_counting(&state.trackers, &decoded.evidence);
+        return Ok(try_commit_mature_prefix(
+            context,
+            state,
+            &evidence_raw,
+            params.min_retained,
+        ));
+    }
+
+    let mut next_trackers: HashMap<String, Tracker> = HashMap::new();
+    for (key, prefix) in qualifying {
+        let mut tracker = state.trackers.get(&key).cloned().unwrap_or(Tracker {
+            text: prefix.text.clone(),
+            text_char_count: prefix.text_char_count,
+            raw_length: prefix.raw_length,
+            evidence_count: 0,
+            strong_count: 0,
+            gap_count: 0,
+            last_share: 0.0,
+        });
+        tracker.evidence_count = EARLY_COMMIT_REQUIRED_EVIDENCE.min(tracker.evidence_count + 1);
+        tracker.strong_count = if prefix.share >= EARLY_COMMIT_STRONG_SHARE {
+            EARLY_COMMIT_REQUIRED_STRONG.min(tracker.strong_count + 1)
+        } else {
+            0
+        };
+        tracker.gap_count = 0;
+        tracker.last_share = prefix.share;
+        next_trackers.insert(key, tracker);
+    }
+    state.trackers = next_trackers;
+    Ok(try_commit_mature_prefix(
+        context,
+        state,
+        &evidence_raw,
+        params.min_retained,
+    ))
+}
+
+/// 参照 `try_empty_code_commit`：空码（整句唯一候选）自动上屏。
+pub fn try_empty_code_commit(
+    decoder: &mut Decoder,
+    context: &mut Context,
+    state: &mut SentenceState,
+    full_before: &[u8],
+    appended_letter: &[u8],
+    params: EarlyCommitParams,
+) -> anyhow::Result<bool> {
+    if !context.get_option(OPTION_EARLY_COMMIT) || state.suspended {
+        state.empty_code_pending = None;
+        return Ok(false);
+    }
+    if state.synchronize_model_state(params.generation) {
+        return Ok(false);
+    }
+    let pending = match state.empty_code_pending.clone() {
+        Some(pending) => Some(pending),
+        None => capture_empty_code_candidate(
+            decoder,
+            full_before,
+            &state.committed_text,
+            params.allow_duplicate_single,
+        )?,
+    };
+    let mut full_raw = state.committed_raw.as_bytes().to_vec();
+    full_raw.extend_from_slice(&live_input(context));
+    let mut expected = full_before.to_vec();
+    expected.extend_from_slice(appended_letter);
+    if full_raw != expected || input_caret(context) != live_input(context).len() {
+        state.empty_code_pending = None;
+        return Ok(false);
+    }
+    state.empty_code_pending = pending.clone();
+
+    let Some(pending) = pending else {
+        return Ok(false);
+    };
+    let raw = String::from_utf8_lossy(&full_raw).into_owned();
+    if crate::decode::has_complete_candidate(
+        decoder.lexicon(),
+        &raw,
+        &state.committed_text,
+        None,
+        false,
+        params.allow_duplicate_single,
+    ) {
+        state.empty_code_pending = None;
+        return Ok(false);
+    }
+    if pending.committed_text != state.committed_text
+        || pending.base_raw_length == 0
+        || pending.base_raw_length >= full_raw.len()
+        || pending.last_segment_start >= full_raw.len()
+    {
+        state.empty_code_pending = None;
+        return Ok(false);
+    }
+    let extended_last_segment =
+        String::from_utf8_lossy(&full_raw[pending.last_segment_start..]).into_owned();
+    if decoder
+        .lexicon()
+        .proper_code_prefixes
+        .contains(&extended_last_segment)
+    {
+        return Ok(false);
+    }
+    if params.min_retained > 0 && full_raw.len() - pending.base_raw_length < params.min_retained {
+        return Ok(false);
+    }
+    if pending.requires_uniqueness_check
+        && crate::decode::has_complete_candidate(
+            decoder.lexicon(),
+            &String::from_utf8_lossy(&full_raw[..pending.base_raw_length]),
+            &pending.committed_text,
+            Some(&pending.candidate_text),
+            true,
+            params.allow_duplicate_single,
+        )
+    {
+        state.empty_code_pending = None;
+        return Ok(false);
+    }
+    let commit = pending.candidate_text[pending.committed_text.len()..].to_string();
+    let retained_raw = full_raw[pending.base_raw_length..].to_vec();
+    state.committed_text = pending.candidate_text.clone();
+    state.committed_raw =
+        String::from_utf8_lossy(&full_raw[..pending.base_raw_length]).into_owned();
+    state.last_auto_commit_raw_length = pending.base_raw_length;
+    state.trackers.clear();
+    state.last_seen_raw.clear();
+    state.suspended = false;
+    state.empty_code_pending = None;
+    state.continuation_after_auto_commit = true;
+    state.save(context);
+    if let Some(commit_text) = submit_early(context, state, &commit) {
+        context_commit(context, &commit_text);
+    }
+    restore_composition_input(context, &retained_raw);
+    Ok(true)
+}
+
+/// 参照 `ends_with_digit`。
 pub fn ends_with_digit(text: &str) -> bool {
     let Some(last) = text.chars().last() else {
         return false;
@@ -350,7 +915,9 @@ pub fn invalidate_edit_state(
     full_length: usize,
 ) {
     state.tab_pending = false;
+    state.trackers.clear();
     state.last_seen_raw.clear();
+    state.empty_code_pending = None;
     // 编辑已锁定但未提交的范围会让该锁及后续锁失效；删除到其边界同样解锁；
     // 已提交到应用的文本对应的锁绝不丢弃。
     while let Some(lock) = state.locks.last() {
@@ -552,6 +1119,144 @@ mod tests {
         assert!(!set_allow_duplicate_single(&context));
         context.set_option(OPTION_ALLOW_DUPLICATE_SINGLE, true);
         assert!(set_allow_duplicate_single(&context));
+    }
+
+    #[test]
+    fn early_commit_helpers() {
+        // has_selection_suffix
+        assert!(has_selection_suffix(b"ab1"));
+        assert!(has_selection_suffix(b"ab;"));
+        assert!(has_selection_suffix(b"ab'"));
+        assert!(!has_selection_suffix(b"abc"));
+        // common_text_prefix
+        assert_eq!(common_text_prefix("甲乙丙", "甲乙丁"), "甲乙");
+        assert_eq!(common_text_prefix("甲", "乙"), "");
+        // tracker_better：字符数优先，其次份额，最后短边界
+        let base = Tracker {
+            text: "甲".to_string(),
+            text_char_count: 1,
+            raw_length: 2,
+            evidence_count: 0,
+            strong_count: 0,
+            gap_count: 0,
+            last_share: 0.9,
+        };
+        let mut longer = base.clone();
+        longer.text = "甲乙".to_string();
+        longer.text_char_count = 2;
+        assert!(tracker_better(&longer, &base));
+        let mut higher_share = base.clone();
+        higher_share.last_share = 0.99;
+        assert!(tracker_better(&higher_share, &base));
+        let mut shorter_boundary = base.clone();
+        shorter_boundary.raw_length = 1;
+        assert!(tracker_better(&shorter_boundary, &base));
+    }
+
+    #[test]
+    fn prefix_evidence_retention_and_contradiction() {
+        use crate::decode::{Evidence, PrefixEvidence};
+        let prefix = |text: &str, raw: usize, share: f64| PrefixEvidence {
+            text: text.to_string(),
+            raw_length: raw,
+            share,
+            boundary_share: share,
+            boundary_closed: share >= 0.99999,
+            text_char_count: text.chars().count(),
+        };
+        let evidence = Evidence {
+            prefixes: vec![prefix("甲", 2, 0.5), prefix("甲乙", 2, 0.3)],
+            by_boundary: [(
+                2usize,
+                [("甲".to_string(), 0), ("甲乙".to_string(), 1)]
+                    .into_iter()
+                    .collect(),
+            )]
+            .into_iter()
+            .collect(),
+            proposal: String::new(),
+            proposal_share: 0.0,
+            raw_lengths: Default::default(),
+            neutral_incomplete_tail: false,
+            merged_incomplete_tail: false,
+            neutral_low_confidence: false,
+            confidence_truncated: false,
+        };
+        // "甲乙" 与同名 tracker 不矛盾；含更高份额的异名共享词干前缀则矛盾。
+        let tracker = Tracker {
+            text: "甲乙".to_string(),
+            text_char_count: 2,
+            raw_length: 2,
+            evidence_count: 1,
+            strong_count: 0,
+            gap_count: 0,
+            last_share: 0.3,
+        };
+        assert!(!prefix_contradicted(&tracker, &evidence));
+        let other = Tracker {
+            text: "甲丙".to_string(),
+            text_char_count: 2,
+            raw_length: 2,
+            evidence_count: 1,
+            strong_count: 0,
+            gap_count: 0,
+            last_share: 0.2,
+        };
+        assert!(prefix_contradicted(&other, &evidence));
+        // retain：缺失或矛盾时丢弃，保留时 gap+1 且最多 3 次
+        let mut trackers = HashMap::new();
+        trackers.insert("keep".to_string(), other.clone());
+        trackers.insert(
+            "gone".to_string(),
+            Tracker {
+                text: "不存在".to_string(),
+                ..other.clone()
+            },
+        );
+        let retained = retain_trackers_without_counting(&trackers, &evidence);
+        assert!(retained.is_empty());
+        let mut stable = tracker.clone();
+        stable.gap_count = 3;
+        stable.last_share = 0.3;
+        let mut map = HashMap::new();
+        map.insert("stable".to_string(), stable.clone());
+        let retained = retain_trackers_without_counting(&map, &evidence);
+        assert!(retained.is_empty(), "gap_count 超过上限应丢弃");
+    }
+
+    #[test]
+    fn implicit_rank_and_submit_early() {
+        let candidate = Evaluated {
+            text: "甲乙".to_string(),
+            score: 0.0,
+            confidence_score: 0.0,
+            max_rank: 2,
+            supplement_score: 0.0,
+            learning_score: 0.0,
+            edge_count: 1,
+            path: 0,
+            segmented: String::new(),
+            previous_raw_length: 2,
+            previous_text: Some("甲".to_string()),
+        };
+        assert!(implicit_rank_allowed(&candidate, b"ab", false, true));
+        assert!(!implicit_rank_allowed(&candidate, b"ab", true, false));
+        assert!(implicit_rank_allowed(&candidate, b"ab", true, true));
+        assert!(implicit_rank_allowed(&candidate, b"ab1", true, false));
+
+        let mut context = Context::new();
+        let mut state = SentenceState::fresh(1);
+        state.committed_raw = "ab".to_string();
+        state.committed_text = "甲".to_string();
+        assert_eq!(
+            submit_early(&mut context, &mut state, "乙"),
+            Some("乙".to_string())
+        );
+        context.set_option(OPTION_EARLY_COMMIT_TO_PREEDIT, true);
+        assert_eq!(submit_early(&mut context, &mut state, "丙"), None);
+        assert_eq!(state.buffered_text, "丙");
+        assert_eq!(state.locks.len(), 1);
+        assert_eq!(state.locks[0].raw, "ab");
     }
 
     #[test]

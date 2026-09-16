@@ -202,6 +202,12 @@ impl Context {
         &self.last_commit
     }
 
+    /// 参照 `Engine::CommitText`：不经过组合的直接提交（事件供前端上屏）。
+    pub fn direct_commit(&mut self, text: &str) {
+        self.last_commit = text.to_string();
+        self.events.push_back(Event::Commit(text.to_string()));
+    }
+
     // ------------------------------------------------------------ 选项/属性
 
     pub fn get_option(&self, name: &str) -> bool {
