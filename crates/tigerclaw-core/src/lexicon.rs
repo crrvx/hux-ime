@@ -530,6 +530,7 @@ impl Supplement {
 
     pub fn load_file(path: &Path) -> Self {
         let display = path.to_string_lossy().into_owned();
+        // 与 `Lexicon::read_data_file` 一致：非法 UTF-8 视作空数据并记错误（有意偏离）。
         let content = match std::fs::read_to_string(path) {
             Ok(content) => content,
             Err(error) => return Self::empty(Some(display), Some(error.to_string())),

@@ -76,8 +76,7 @@ struct State {
     supplement_score: f64,
     previous: Option<usize>,
     edge_chars: Vec<char>,
-    /// 字节长度；当前增量未读取，供学习/证据增量使用。
-    #[allow(dead_code)]
+    /// 累计文本字节长度（学习奖励与路径摘要使用）。
     text_length: usize,
     raw_length: usize,
     edge_count: usize,
@@ -118,6 +117,7 @@ pub struct Evaluated {
     pub supplement_score: f64,
     pub learning_score: f64,
     pub edge_count: usize,
+    /// 本次解码 arena 的路径下标；仅对产生它的那次 `decode*` 返回值有效。
     pub path: usize,
     pub segmented: String,
     /// 路径末段的 previous 节点信息（供交互层判定隐式选重）。
@@ -328,6 +328,7 @@ impl Decoder {
 
     /// 参照 `item.path`：返回路径末节点 raw 长度与 `learning.diff` 所需路径
     /// （`DiffItem.path[0]` 为最外层非根节点）。
+    /// 仅对最近一次 `decode*` 返回的项有效（arena 每次解码重建）。
     pub fn path_summary(&self, item: &Evaluated) -> (usize, DiffItem) {
         let raw_length = self.arena[item.path].raw_length;
         let mut nodes = Vec::new();
@@ -484,7 +485,9 @@ impl Decoder {
         };
         let protect_primary_rare = self.ranking_prior.canonical_isolation_factor < 1.0;
         for (raw_length, text_length) in parse_boundaries(lock.boundaries) {
-            let edge_text = lock.text.get(seed_text_length..text_length).unwrap_or("");
+            // 参照 `sub` 会把越界端点截到串尾；先夹取再按字节取。
+            let text_end = text_length.min(lock.text.len());
+            let edge_text = lock.text.get(seed_text_length..text_end).unwrap_or("");
             let seed = &self.arena[seed_index];
             let seed_score = seed.score;
             let seed_raw_length = seed.raw_length;
@@ -1164,6 +1167,12 @@ impl Decoder {
         });
         order.truncate(CANDIDATE_LIMIT);
         let mut items: Vec<Evaluated> = order.iter().map(|&index| all[index].clone()).collect();
+        // 参照中 Top-K 与 `_confidence_candidates` 共享同一批表：展示字段（segmented）
+        // 需同步回写，保持两个视图一致。
+        for (position, item) in items.iter_mut().enumerate() {
+            item.segmented = segmented_from_path(raw, &self.arena, item.path);
+            all[order[position]].segmented = item.segmented.clone();
+        }
         // 词先验：只重排展示 Top-N（不改 mass/置信度，也不改变候选集合）。
         if items.len() > 1
             && let Some(model) = &self.lexical
@@ -1172,11 +1181,13 @@ impl Decoder {
         {
             let mut cache = HashMap::new();
             let limit = self.ranking_prior.lexical_candidate_limit.min(items.len());
-            for item in items.iter_mut().take(limit) {
+            for (position, item) in items.iter_mut().take(limit).enumerate() {
                 let lexical_score = model.score_with_cache(&item.text, &mut cache)
                     * self.ranking_prior.lexical_prior_weight;
                 item.lexical_score = lexical_score;
                 item.score += lexical_score;
+                all[order[position]].lexical_score = item.lexical_score;
+                all[order[position]].score = item.score;
             }
             items.sort_by(|left, right| {
                 if Decoder::state_better(comparator, left, right) {
@@ -1185,9 +1196,6 @@ impl Decoder {
                     std::cmp::Ordering::Greater
                 }
             });
-        }
-        for item in &mut items {
-            item.segmented = segmented_from_path(raw, &self.arena, item.path);
         }
         let mut evidence = Evidence::default_for(completed_truncated);
         if include_early_commit && !self.learning_affected {
@@ -1676,7 +1684,7 @@ fn has_letter(raw: &[u8]) -> bool {
     raw.iter().any(|byte| byte.is_ascii_alphabetic())
 }
 
-/// 参照 `locked.boundaries:gmatch("(%d+),(%d+);")`。
+/// 参照 `locked.boundaries:gmatch("(%d+),(%d+);")`（失败起点逐一右移重试）。
 fn parse_boundaries(value: &str) -> Vec<(usize, usize)> {
     let bytes = value.as_bytes();
     let mut result = Vec::new();
@@ -1686,26 +1694,21 @@ fn parse_boundaries(value: &str) -> Vec<(usize, usize)> {
         while index < bytes.len() && bytes[index].is_ascii_digit() {
             index += 1;
         }
-        if index == first_start {
-            index += 1;
+        if index == first_start || bytes.get(index) != Some(&b',') {
+            index = first_start + 1;
             continue;
         }
         let first = &value[first_start..index];
-        if bytes.get(index) != Some(&b',') {
-            continue;
-        }
         index += 1;
         let second_start = index;
         while index < bytes.len() && bytes[index].is_ascii_digit() {
             index += 1;
         }
-        if index == second_start {
+        if index == second_start || bytes.get(index) != Some(&b';') {
+            index = first_start + 1;
             continue;
         }
         let second = &value[second_start..index];
-        if bytes.get(index) != Some(&b';') {
-            continue;
-        }
         index += 1;
         if let (Ok(raw_length), Ok(text_length)) = (first.parse(), second.parse()) {
             result.push((raw_length, text_length));
@@ -2337,7 +2340,7 @@ mod tests {
             decoder.ranking_prior_parameters().canonical_code_reward,
             1.0
         );
-        // 评分项尚未接线：码形分恒为 0，候选不受影响
+        // 无模型时码形证据不累计，故恒为 0
         let output = decoder.decode_with("ab", false, "").expect("decode");
         assert!(!output.items.is_empty());
         assert!(output.items.iter().all(|item| item.code_score == 0.0));
@@ -2393,5 +2396,8 @@ mod tests {
         assert_eq!(parse_boundaries("2,;"), Vec::<(usize, usize)>::new());
         assert_eq!(parse_boundaries("2,3"), Vec::<(usize, usize)>::new());
         assert_eq!(parse_boundaries("x2,3;"), vec![(2, 3)]);
+        // gmatch 语义：失败起点右移重试
+        assert_eq!(parse_boundaries("12,34,56;"), vec![(34, 56)]);
+        assert_eq!(parse_boundaries("1,2,3;"), vec![(2, 3)]);
     }
 }

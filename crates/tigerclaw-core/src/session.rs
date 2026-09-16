@@ -10,10 +10,10 @@
 //! - 事件（update/commit/option）入队；调用方在每个操作后 `drain_events()`，
 //!   与参照的同步 notifier 在可观测行为上等价。
 //! - `last_commit` 保留最近一次组合提交文本，供诊断；参照的 `get_commit_text()`
-//!   仅在 commit 通知内有效，跨实现一律以 [`Event::Commit`] 携带的文本为准。
+//!   为即时计算（任何时刻可读），跨实现一律以 [`Event::Commit`] 携带的文本为准。
 //! - 属性写入不产生事件（参照未使用 `property_update_notifier`）。
-//! - 管线（分段/翻译/过滤）由 [`Pipeline`] 注入；本增量提供模型与编辑语义，
-//!   交互层（processor/translator/filters）在后续增量接入。
+//! - 管线（分段/翻译/过滤）由 [`Pipeline`] 注入；交互层（processor/translator/filters）
+//!   见 `interaction` 模块。
 
 use hashbrown::HashMap;
 use std::collections::VecDeque;

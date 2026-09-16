@@ -4,47 +4,19 @@
 //! 真实位图 `data/tiger_sentence.lexical.bin`；语料取自参照码表（正例）与确定性
 //! 采样（负例），全量记录查询与结果，故重放不依赖任何外部词表。
 
-use flate2::read::GzDecoder;
-use std::fs::File;
-use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+mod common;
+
+use common::{decode_hex, open_golden, parse_bits, repo_path};
+use std::io::BufRead;
 use tigerclaw_core::lexical;
-
-fn repo_path(relative: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join(relative)
-}
-
-fn decode_hex(text: &str) -> String {
-    if text == "-" {
-        return String::new();
-    }
-    if text.len() % 2 != 0 || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        panic!("bad hex field: {text:?}");
-    }
-    let bytes: Vec<u8> = (0..text.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&text[i..i + 2], 16).expect("hex digit"))
-        .collect();
-    String::from_utf8(bytes).expect("valid UTF-8")
-}
-
-fn parse_bits(text: &str) -> u64 {
-    let digits = text.strip_prefix("0x").expect("0x prefix");
-    let hi = u64::from_str_radix(&digits[..8], 16).expect("hex digit");
-    let lo = u64::from_str_radix(&digits[8..], 16).expect("hex digit");
-    hi << 32 | lo
-}
 
 #[test]
 fn lexical_transcript_is_bit_exact() {
     let model = lexical::load(&repo_path("data/tiger_sentence.lexical.bin"))
         .expect("load real lexical model");
-    let file = File::open(repo_path("goldens/lexical.tsv.gz")).expect("open lexical golden");
     let mut records = 0usize;
     let mut positives = 0usize;
-    for line in BufReader::new(GzDecoder::new(file)).lines() {
+    for line in open_golden("goldens/lexical.tsv.gz").lines() {
         let line = line.expect("read golden line");
         if line.is_empty() || line.starts_with('#') {
             continue;

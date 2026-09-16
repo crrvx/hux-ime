@@ -84,10 +84,11 @@ pub fn load(path: &Path) -> Result<LexicalModel, String> {
 pub fn load_first(paths: &[PathBuf]) -> (Option<LexicalModel>, Option<String>) {
     let mut first_error: Option<String> = None;
     for path in paths {
-        if !path.is_file() {
+        // 参照：打不开的路径静默跳过；打开后解析失败才记首个错误。
+        let Ok(data) = std::fs::read(path) else {
             continue;
-        }
-        match load(path) {
+        };
+        match parse(data, path.to_path_buf()) {
             Ok(model) => return (Some(model), None),
             Err(error) => {
                 if first_error.is_none() {

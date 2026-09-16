@@ -14,3 +14,4 @@ escape_clear		a b Escape
 tab_confirm_buffer	tiger_sentence_early_commit_to_preedit=1	a b Tab c d
 tab_buffer_space	tiger_sentence_early_commit_to_preedit=1	a b Tab c space
 tab_buffer_return	tiger_sentence_early_commit_to_preedit=1	a b Tab c Return
+empty_code_commit		z z
