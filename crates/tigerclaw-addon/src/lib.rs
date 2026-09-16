@@ -797,6 +797,22 @@ mod tests {
     }
 
     #[test]
+    fn uppercase_letter_commits_composition_first() {
+        // 用户报告：组合中收到大写字母时，应先上屏当前候选（而非把字母插到预编辑之前）。
+        COMMITS.lock().unwrap().clear();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        assert!(engine.key(u32::from(b'a'), 0, false));
+        assert!(engine.key(u32::from(b'b'), 0, false));
+        assert!(
+            !engine.key(0x41, FCITX_SHIFT, false),
+            "大写字母应交宿主（不消费）"
+        );
+        assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "甲");
+        assert!(engine.context.input().is_empty(), "组合已提交并清空");
+    }
+
+    #[test]
     fn reset_clears_panel() {
         let _guard = serial();
         UPDATES.lock().unwrap().clear();

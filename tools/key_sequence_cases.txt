@@ -50,3 +50,6 @@ ascii_shift_tap_twice		a b Shift_L Release+Shift_L Shift_L Release+Shift_L a
 ascii_idle_shift		a b space Shift_L Release+Shift_L a
 ascii_buffered_shift	tiger_sentence_early_commit_to_preedit=1	a b Tab c Shift_L Release+Shift_L
 ascii_buffered_shift_tail	tiger_sentence_early_commit_to_preedit=1	a b Tab c Shift_L Release+Shift_L a b
+# K3 ⑦b：大写字母（editor char_handler：DirectCommit 先提交组合再交宿主）
+upper_composing		a b A
+upper_idle		A

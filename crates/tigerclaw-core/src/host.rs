@@ -391,10 +391,12 @@ fn go_to_end(context: &mut Context) {
 
 // ---------------------------------------------------------------- express_editor
 
-/// 参照 `ExpressEditor`（`_auto_commit = true` 变体）的 keymap 子集。
+/// 参照 `ExpressEditor`（`_auto_commit = true` 变体）的 keymap 子集 + `char_handler`。
 ///
 /// Return/space/Escape 在组合中已被 core `processor` 消费，此处为完整的兜底实现；
-/// 宿主的 `editor/char_handler`（可打印字符直接提交）见 ⑦。
+/// 可打印字符按 `char_handler`（ExpressEditor = `DirectCommit`）处理：
+/// **先提交当前组合**（保证上屏顺序），按键交宿主。
+/// 学习链：参照经 commit 通知器记录；本实现该提交未接学习（宿主自发提交见 K4 清理项）。
 fn editor(key_event: &KeyEvent, context: &mut Context) -> HostResult {
     if !context.is_composing() {
         return HostResult::Forward;
@@ -431,10 +433,19 @@ fn editor(key_event: &KeyEvent, context: &mut Context) -> HostResult {
         _ => false,
     };
     if consumed {
-        HostResult::Consumed
-    } else {
-        HostResult::Forward
+        return HostResult::Consumed;
     }
+    // 参照 `Editor::ProcessKeyEvent` 的 char_handler（ExpressEditor = `DirectCommit`）：
+    // 可打印字符（>0x20 且 <0x7f，无 Ctrl/Alt/Super）先提交组合，再交宿主。
+    if !key_event.ctrl()
+        && !key_event.alt()
+        && !key_event.super_modifier()
+        && key_event.keycode > 0x20
+        && key_event.keycode < 0x7f
+    {
+        context.commit();
+    }
+    HostResult::Forward
 }
 
 /// 参照 `Context::ConfirmCurrentSelection`。
@@ -626,6 +637,20 @@ mod tests {
         assert_eq!(context.caret(), 1);
         assert_eq!(press(&mut context, "Home"), HostResult::Consumed);
         assert_eq!(context.caret(), 0);
+    }
+
+    #[test]
+    fn editor_char_handler_commits_before_passing_through() {
+        // 组合中收到大写字母：先提交组合（保证上屏顺序），按键交宿主。
+        let mut context = context_with_menu(&["甲", "乙"], 0);
+        let upper = KeyEvent::from_repr("A").expect("key");
+        assert_eq!(process_key(&upper, &mut context), HostResult::Forward);
+        assert_eq!(context.last_commit_text(), "甲");
+        assert!(context.input().is_empty());
+        // 空闲：不提交也不消费
+        let mut context = Context::new();
+        assert_eq!(process_key(&upper, &mut context), HostResult::Forward);
+        assert_eq!(context.last_commit_text(), "");
     }
 
     #[test]

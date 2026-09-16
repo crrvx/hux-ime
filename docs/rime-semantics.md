@@ -107,7 +107,7 @@ speller/punctuator 见 ⑦）。关键事实（pin `33e78140` + schema）：
 | `key_binder` | `Tab`→Down、`Shift+Tab`→Up（`when: has_menu` 且非 ascii_mode）；`paging` 条件由段上的 `paging` 标签决定 |
 | `selector` | 仅当末段有菜单（`status >= kGuess` 且非 `raw` 标签）；Horizontal\|Stacked：Up/Down 移候选（不环绕）、Page_Up/Down 翻页（`menu/page_size: 5`，`page_down_cycle` 缺省 false）、Home/End 回高亮 0（高亮为 0 时交 navigator）；末页号上报为 `selected_index / page_size`、页内高亮 `% page_size` |
 | `navigator` | 组合中：Left/Right 移动字节光标（多段时按 spans 跨段跳）；Ctrl(+Shift)+Left/Right 按音节跳（单段即首/尾）；Home/End 到组合起点/输入末尾；`_vertical` 时改用上/下键；`FallbackOptions::All`：Shift 依次按 Ctrl、忽略 Shift 重试 |
-| `express_editor` | `_auto_commit=true`：space → 确认/提交、BackSpace → 撤销上次编辑（`PopInput`）、Delete → 删光标处、Return → 提交原始输入、Escape → 取消组合；可打印字符直接提交（char_handler，⑦） |
+| `express_editor` | `_auto_commit=true`：space → 确认/提交、BackSpace → 撤销上次编辑（`PopInput`）、Delete → 删光标处、Return → 提交原始输入、Escape → 取消组合；可打印字符按 `char_handler`（ExpressEditor = `DirectCommit`）：先提交当前组合再交宿主（保证上屏顺序） |
 | 引擎分段 | `Compose`：`input[..caret]` 分段（caret 处无已确认段且不在末尾时翻译到 caret 后一段）；`Segmentation::Reset` 按新旧输入公共前缀增量保留段 → 未变的段保留菜单与高亮；提交后翻译失效（旧段不复用） |
 
 ## 9. LevelDb

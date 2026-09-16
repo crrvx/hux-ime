@@ -23,7 +23,7 @@
 | `decode_learning.tsv.gz` | 解码接入学习（无模型） | 1987 行 |
 | `decode_learning_model.tsv.gz` | 解码接入学习（fixture 模型，抽样） | 358 行 |
 | `key.tsv.gz` | 键名/键事件金样（librime 探针）：`name`/`repr`/`parse`/`modifier` | 5132 行 |
-| `key_sequence.tsv.gz` | 键序列金样（真 librime 探针，2c）：逐步 `consumed`/输入/光标/提交/候选/高亮 | 42 例 / 237 步（含空码自动上屏、编辑/导航键、ascii Shift 切换） |
+| `key_sequence.tsv.gz` | 键序列金样（真 librime 探针，2c）：逐步 `consumed`/输入/光标/提交/候选/高亮 | 44 例 / 241 步（含空码自动上屏、编辑/导航键、ascii Shift 切换、大写字母 DirectCommit） |
 | `key_sequence/` | 键序列夹具码表（探针与 Rust 重放共用） | 1 文件 |
 | `lexical.tsv.gz` | 词先验金样（TCSLEX01 读取/Bloom/打分；真实位图 + 码表语料） | 753 行 |
 | `local/`（不入库） | 真实模型抽样金样（224 MB 模型） | 62,777 条 |
@@ -217,7 +217,7 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 | `decode_learning.tsv.gz` | `41a9894d233c32348e42164d4d29fc698c3037741c141ac0b58404094c9e9354` |
 | `decode_learning_model.tsv.gz` | `8a64e6e3d28b101a57075b03233e62c4b03e8c4a8d2a979399a91a00e2d8e806` |
 | `key.tsv.gz` | `e939a077cd0825f7b454a4af300ed50fb6a2f2609c71583525d44f2f8fb3fd33` |
-| `key_sequence.tsv.gz` | `274ed94f7ff4b2b0f47832d1aae141e4ab4eeb50d50ae4012adf4595b0d30cd3` |
+| `key_sequence.tsv.gz` | `734a6b1e7358390abfd6a610542f3d667b406c948906e6c07717b8cd3422dec5` |
 | `lexical.tsv.gz` | `4b56476d28bd1a070fe72352561828264faba85e01df1ea47d908cbaeff28842` |
 
 CI 以同一参照提交重生成全部 fixture 金样并与入库内容比对（见 `.github/workflows/ci.yml`）。
