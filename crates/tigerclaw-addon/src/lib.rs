@@ -122,12 +122,9 @@ pub(crate) fn wall_clock() -> f64 {
 /// 字查音+虎（⑧-2）会话态：周边文本（字符制光标）+ 窗口起点 + 已算好的提示。
 #[derive(Default)]
 struct CharacterLookupState {
-    /// 上一次刷新时是否处于查码段（用于进入时重置锚点）。
-    was_tagged: bool,
     valid: bool,
     text: String,
     cursor: usize,
-    anchor: usize,
     aux_up: String,
     aux_down: String,
 }
@@ -275,13 +272,13 @@ impl Engine {
     /// 处理一次按键：返回是否消费；副作用（提交/preedit/候选）经宿主回调送出。
     fn key(&mut self, keysym: u32, states: u32, release: bool) -> bool {
         let key = KeyEvent::new(keysym as i32, core_modifiers(states, release));
-        if let Some(consumed) = self.character_lookup_key(&key) {
-            if consumed {
-                // 查码段内 ←/→：仅滚动锚点，刷新两排后消费。
-                self.refresh_character_lookup_aux();
-                self.push_update();
-                return true;
-            }
+        // 字查音+虎查码段：←/→/↑/↓ **交应用处理**（应用光标随动），本层不消费也不改动输入；
+        // 提示在应用回传周边文本后的下一次按键（含 release）时刷新。
+        if !release
+            && self.character_lookup_tagged()
+            && matches!(key.repr().as_str(), "Left" | "Right" | "Up" | "Down")
+        {
+            return false;
         }
         let now = wall_clock();
         let result = {
@@ -364,22 +361,6 @@ impl Engine {
 
     /// 字查音+虎（⑧-2）：查码段内 ←/→ 以 2 字符步长移动锚点（返回 `Some(true)` 消费）。
     /// 进入/退出查码段由 core 处理器负责（触发字符推入/清空组合）。
-    fn character_lookup_key(&mut self, key: &KeyEvent) -> Option<bool> {
-        if key.release() || !self.character_lookup_tagged() {
-            return None;
-        }
-        match key.repr().as_str() {
-            "Left" | "Right" => {
-                let forward = key.repr().as_str() == "Right";
-                let state = &mut self.character_lookup;
-                let len = state.text.chars().count();
-                state.anchor = tigerclaw_core::character_lookup::scroll(len, state.anchor, forward);
-                Some(true)
-            }
-            _ => None,
-        }
-    }
-
     /// 当前组合末段是否为字查音+虎查码段。
     fn character_lookup_tagged(&self) -> bool {
         self.context
@@ -393,24 +374,19 @@ impl Engine {
         let tagged = self.character_lookup_tagged();
         let state = &mut self.character_lookup;
         if !tagged {
-            state.was_tagged = false;
             state.aux_up.clear();
             state.aux_down.clear();
             return;
-        }
-        if !state.was_tagged {
-            state.was_tagged = true;
-            state.anchor = tigerclaw_core::character_lookup::default_anchor(state.cursor);
         }
         if !state.valid {
             state.aux_up = "应用不支持周边文本".to_string();
             state.aux_down.clear();
             return;
         }
-        let (text, anchor) = (state.text.clone(), state.anchor);
+        let (text, cursor) = (state.text.clone(), state.cursor);
         let (up, down) = self
             .decoder
-            .character_lookup_rows(&text, anchor)
+            .character_lookup_rows(&text, cursor)
             .unwrap_or_default();
         state.aux_up = up;
         state.aux_down = down;
@@ -424,14 +400,11 @@ impl Engine {
                 state.valid = true;
                 state.text = text.to_string();
                 state.cursor = cursor_chars.min(state.text.chars().count());
-                let len = state.text.chars().count();
-                state.anchor = state.anchor.min(len);
             }
             None => {
                 state.valid = false;
                 state.text.clear();
                 state.cursor = 0;
-                state.anchor = 0;
             }
         }
         if self.character_lookup_tagged() {
@@ -582,6 +555,12 @@ impl Engine {
             .unwrap_or_default();
         if !prompt.is_empty() {
             preedit.insert_str(cursor.min(preedit.len()), &prompt);
+        }
+        // 字查音+虎查码段不下发预编辑：避免应用端 marked text 锁住光标（←/→ 无法移动）。
+        let mut cursor = cursor;
+        if self.character_lookup_tagged() {
+            preedit.clear();
+            cursor = 0;
         }
         let (mut texts, mut comments, selected) = match self.context.composition.back() {
             Some(segment) => (
@@ -1110,12 +1089,12 @@ mod tests {
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data"),
         ];
         let mut engine = Engine::new_with_dirs(host(), dirs, None, None);
-        assert!(engine.key(0x60, FCITX_CTRL, false), "音查虎触发键应被消费");
+        assert!(engine.key(0x3b, FCITX_ALT, false), "音查虎触发键应被消费");
         for code in *b"zho" {
             assert!(engine.key(u32::from(code), 0, false), "音查虎输入应被消费");
         }
         let (preedit, _, candidates, _, _, _) = last_update();
-        assert_eq!(preedit, "`zho〔拼音〕");
+        assert_eq!(preedit, ";zho〔拼音〕");
         assert_eq!(
             candidates,
             vec!["中哦", "中龘", "中欧", "找哦", "兆欧", "找欧"]
@@ -1124,13 +1103,13 @@ mod tests {
         assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "中哦");
         // 音查虎预编辑「按音节分码」：全拼音节之间插空格。
         engine.reset();
-        assert!(engine.key(0x60, FCITX_CTRL, false));
+        assert!(engine.key(0x3b, FCITX_ALT, false));
         for code in *b"zhongguo" {
             assert!(engine.key(u32::from(code), 0, false));
         }
         let (preedit, _, candidates, _, _, _) = last_update();
         assert_eq!(candidates.first().map(String::as_str), Some("中国"));
-        assert_eq!(preedit, "`zhong guo〔拼音〕");
+        assert_eq!(preedit, ";zhong guo〔拼音〕");
     }
 
     /// 字查音+虎（⑧-2）：默认 Ctrl+~ 进入组合（**带修饰键不给默认候选**）；
@@ -1147,36 +1126,71 @@ mod tests {
         let mut engine = Engine::new_with_dirs(host(), dirs, None, None);
         // 应用侧周边文本「中欧中兴」，光标在第 2 个字符后（锚点 = 2）。
         engine.set_surrounding(Some("中欧中兴"), 2);
-        // 默认 Ctrl+~（带修饰）→ 组合无默认候选；上排左侧 1 字拼音、下排虎码。
-        assert!(
-            engine.key(0x60, FCITX_CTRL | FCITX_SHIFT, false),
-            "Ctrl+~ 应被消费"
-        );
+        // 默认 Alt+'（带修饰）→ 组合无默认候选；上排「咅」、下排「虍」。
+        assert!(engine.key(0x27, FCITX_ALT, false), "Alt+' 应被消费");
         let (preedit, _, candidates, _, up, down) = last_update();
-        assert_eq!(engine.context.input(), b"~");
-        assert_eq!(preedit, "~");
+        assert_eq!(engine.context.input(), b"'");
+        assert!(preedit.is_empty(), "查码段不下发预编辑：{preedit:?}");
         assert!(
             candidates.is_empty(),
             "带修饰触发键不给默认候选：{candidates:?}"
         );
-        assert_eq!(up, "欧 ?");
-        assert_eq!(down, "欧 nbe/nbeq");
-        // ←/→ 以 1 字符步长移动锚点。
-        assert!(engine.key(0xff51, 0, false), "Left 应被消费");
-        let (_, _, _, _, up, _) = last_update();
-        assert_eq!(up, "中 zhong");
-        assert!(engine.key(0xff53, 0, false));
-        let (_, _, _, _, up, _) = last_update();
-        assert_eq!(up, "欧 ?");
+        assert_eq!(up, "咅 ?");
+        assert_eq!(down, "虍 nbe/nbeq");
+        // ←/→ 交应用（不消费）；周边文本光标随动后，提示在下一次按键刷新。
+        assert!(!engine.key(0xff51, 0, false), "Left 应交应用");
+        assert!(!engine.key(0xff53, 0, false), "Right 应交应用");
+        assert!(!engine.key(0xff52, 0, false), "Up 应交应用");
+        assert!(!engine.key(0xff54, 0, false), "Down 应交应用");
+        engine.set_surrounding(Some("中欧中兴"), 1);
+        assert!(!engine.key(0xffe1, 0, false), "修饰键不消费");
+        let (_, _, _, _, up, down) = last_update();
+        assert_eq!(up, "咅 zhong");
+        assert_eq!(down, "虍 d/dg/dgs");
         // 其它键：退出查码段并照常处理。
         assert!(engine.key(u32::from(b'a'), 0, false), "普通键照常处理");
         assert_eq!(engine.context.input(), b"a");
+        // 音查虎：带修饰键（默认 Alt+;）**不给**默认候选；单字符键（;）才给。
+        engine.reset();
+        assert!(engine.key(0x3b, FCITX_ALT, false), "Alt+; 应被消费");
+        let (_, _, candidates, _, _, _) = last_update();
+        assert!(
+            candidates.is_empty(),
+            "带修饰触发键不给默认候选：{candidates:?}"
+        );
+        engine.reset();
+        engine.apply_settings(settings::Settings {
+            pinyin_lookup_key: "semicolon".to_string(),
+            ..settings::Settings::default()
+        });
+        assert!(engine.key(0x3b, 0, false), "; 应被消费");
+        let (_, _, candidates, _, _, _) = last_update();
+        assert!(
+            // 候选为标点表映射（half_shape 的 ; → ；）。
+            candidates.iter().any(|candidate| candidate == "；"),
+            "单字符触发键应给默认候选：{candidates:?}"
+        );
+        // 音查虎：单字符触发键（`）→ 同样给默认可上屏候选，空格上屏。
+        engine.reset();
+        engine.apply_settings(settings::Settings {
+            pinyin_lookup_key: "grave".to_string(),
+            ..settings::Settings::default()
+        });
+        assert!(engine.key(0x60, 0, false), "` 应被消费");
+        let (_, _, candidates, _, _, _) = last_update();
+        assert!(
+            candidates.iter().any(|candidate| candidate == "`"),
+            "音查虎单字符触发键应给默认候选：{candidates:?}"
+        );
+        assert!(engine.key(0x20, 0, false), "空格确认候选");
+        assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "`");
         // 单字符触发键（~）→ 提供默认可上屏候选，空格上屏。
         engine.reset();
         engine.apply_settings(settings::Settings {
             character_lookup_key: "asciitilde".to_string(),
             ..settings::Settings::default()
         });
+        engine.set_surrounding(Some("中欧中兴"), 2);
         assert!(engine.key(0x7e, 0, false), "~ 应被消费");
         let (_, _, candidates, _, _, _) = last_update();
         assert!(

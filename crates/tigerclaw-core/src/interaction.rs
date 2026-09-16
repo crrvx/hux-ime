@@ -1573,24 +1573,27 @@ fn translate_segments(
             continue;
         }
         if segment.has_tag(pinyin_lookup::PINYIN_LOOKUP_TAG) {
-            // 触发键为单字符且输入仅前缀（无编码）时：给出默认可上屏候选（前缀字符）。
-            if start + pinyin_lookup_prefix(context).map_or(0, char::len_utf8) == end
-                && let Some(prefix) = pinyin_lookup_prefix(context)
-                && let Some(character) =
-                    pinyin_lookup_trigger(context).and_then(|key| single_char_trigger(&key))
-                && character == prefix
-                && let Some(candidate) = pinyin_lookup::punct_candidate(
-                    punct.as_deref_mut(),
-                    prefix,
-                    full_shape,
-                    start,
-                    end,
-                )
-            {
+            // 裸前缀（无编码）：默认可上屏候选**仅当触发键为单字符键**时提供；带修饰键无候选。
+            if end - start == pinyin_lookup_prefix(context).map_or(0, char::len_utf8) {
+                let candidates = match pinyin_lookup_trigger(context)
+                    .and_then(|key| single_char_trigger(&key))
+                    .filter(|character| Some(*character) == pinyin_lookup_prefix(context))
+                {
+                    Some(character) => pinyin_lookup::punct_candidate(
+                        punct.as_deref_mut(),
+                        character,
+                        full_shape,
+                        start,
+                        end,
+                    )
+                    .into_iter()
+                    .collect(),
+                    None => Vec::new(),
+                };
                 let segment = &mut context.composition.segments[index];
                 segment.translated = true;
                 segment.selected_index = 0;
-                segment.candidates = vec![candidate];
+                segment.candidates = candidates;
                 continue;
             }
             let slice = input[start..end].to_vec();
