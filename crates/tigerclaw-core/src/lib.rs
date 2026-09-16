@@ -6,5 +6,6 @@
 
 pub mod cache;
 pub mod decode;
+pub mod learning;
 pub mod lexicon;
 pub mod ngram;
