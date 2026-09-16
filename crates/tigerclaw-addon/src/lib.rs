@@ -12,16 +12,18 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 mod learning_store;
 mod options;
+mod settings;
 
 use learning_store::LearningStore;
 use options::OptionsStore;
+use settings::Settings;
 
 use tigerclaw_core::ascii::{AsciiComposer, AsciiResult};
 use tigerclaw_core::decode::Decoder;
 use tigerclaw_core::host::{self, HostResult};
 use tigerclaw_core::interaction::{
     CompositionBuilder, LearningCommit, LiveLearning, ProcessorEnv, ProcessorResult, SentenceState,
-    ascii_mode_option_confirm, buffered_text, option_defaults, processor, reset_early_evidence,
+    ascii_mode_option_confirm, buffered_text, processor, reset_early_evidence,
     set_allow_duplicate_single, update_notifier,
 };
 use tigerclaw_core::key::{
@@ -29,8 +31,7 @@ use tigerclaw_core::key::{
 };
 use tigerclaw_core::lexical;
 use tigerclaw_core::lexicon::{
-    DEFAULT_HIGH_FREQ_LIMIT, LEXICAL_FILE, Lexicon, MODEL_PATH, Supplement, candidate_paths,
-    data_directories,
+    LEXICAL_FILE, Lexicon, MODEL_PATH, Supplement, candidate_paths, data_directories,
 };
 use tigerclaw_core::ngram::MobileModel;
 use tigerclaw_core::punct::PunctTable;
@@ -133,6 +134,8 @@ pub struct Engine {
     builder: CompositionBuilder,
     /// 选项存储（用户目录不可用时为 `None`，此时仅用内建缺省）。
     options: Option<OptionsStore>,
+    /// 外部配置（fcitx5 配置界面 / 测试；默认 = 内建缺省）。
+    settings: Settings,
     /// 标点表（`symbols.yaml`；缺失时标点交宿主）。
     punct: Option<PunctTable>,
     /// 学习库（用户目录不可用时为禁用占位）。
@@ -169,7 +172,8 @@ impl Engine {
                 .collect::<Vec<_>>()
                 .join(":")
         )];
-        let lexicon = Lexicon::load(&dirs, DEFAULT_HIGH_FREQ_LIMIT);
+        let settings = Settings::default();
+        let lexicon = Lexicon::load(&dirs, settings.high_freq_limit);
         notes.push(format!("lexicon: {}", lexicon.data_status().canonical()));
         let learning_rules = lexicon.learning_rules.clone();
         let supplement = Supplement::load_default(dirs.first().map(PathBuf::as_path));
@@ -202,8 +206,8 @@ impl Engine {
         if let Some(options) = options.as_mut() {
             options.sync(&mut context);
         } else {
-            for (name, value) in option_defaults() {
-                context.set_option(&name, value);
+            for (name, value) in settings.option_defaults() {
+                context.set_option(name, value);
             }
         }
         // 学习库：`<user dir>/tiger_sentence_learning_<hash>.userdb/`（用户目录不可用则禁用）。
@@ -220,9 +224,9 @@ impl Engine {
         } else {
             notes.push(format!("learning: {}", learning.name));
         }
-        let learning_mode = format!(
-            "sentence-v1|rules={learning_rules}|optimal={DEFAULT_HIGH_FREQ_LIMIT}|dup={}",
-            u8::from(set_allow_duplicate_single(&context))
+        let learning_mode = settings.learning_mode(
+            &learning_rules,
+            u8::from(set_allow_duplicate_single(&context)),
         );
         let live = LiveLearning {
             mode: learning_mode.clone(),
@@ -241,6 +245,7 @@ impl Engine {
             min_retained: None,
             builder: CompositionBuilder::default(),
             options,
+            settings,
             punct,
             learning,
             learning_rules,
@@ -387,12 +392,23 @@ impl Engine {
         }
     }
 
+    /// 应用外部配置（fcitx5 配置界面 / 测试）：选项类即时生效；`high_freq_limit` 需重启。
+    pub fn apply_settings(&mut self, settings: Settings) {
+        self.settings = settings;
+        let defaults = self.settings.option_defaults();
+        for (name, value) in defaults {
+            if self.context.get_option(name) != value {
+                self.context.set_option(name, value);
+            }
+        }
+        self.refresh_learning_mode();
+    }
+
     /// 按当前规则/选项刷新学习 mode（变化时强制重设 decoder 学习）。
     fn refresh_learning_mode(&mut self) {
-        let mode = format!(
-            "sentence-v1|rules={}|optimal={DEFAULT_HIGH_FREQ_LIMIT}|dup={}",
-            self.learning_rules,
-            u8::from(set_allow_duplicate_single(&self.context))
+        let mode = self.settings.learning_mode(
+            &self.learning_rules,
+            u8::from(set_allow_duplicate_single(&self.context)),
         );
         if mode != self.learning_mode {
             self.learning_mode = mode.clone();
@@ -844,6 +860,26 @@ mod tests {
         );
         assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "甲");
         assert!(engine.context.input().is_empty(), "组合已提交并清空");
+    }
+
+    #[test]
+    fn apply_settings_switches_options_and_learning() {
+        let _guard = serial();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let settings = Settings {
+            full_shape: true,
+            ascii_punct: true,
+            tab_learning: false,
+            high_freq_limit: 100,
+            ..Default::default()
+        };
+        engine.apply_settings(settings);
+        assert!(engine.context.get_option("full_shape"));
+        assert!(engine.context.get_option("ascii_punct"));
+        assert!(
+            engine.live.mode.is_empty(),
+            "关闭 Tab 学习 → 学习 mode 为空"
+        );
     }
 
     #[test]

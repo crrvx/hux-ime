@@ -66,5 +66,9 @@ ln -sf ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
 - K3h（⑦b）：标点表（`symbols.yaml` half/full shape、`{commit}`/标量/`{pair}` 交替）；
   金样扩到 59 例/269 步；随后修正 editor `char_handler`（组合中大写字母先提交组合，金样 61 例/273 步）。
 
+- K3i（配置，Rust 半）：`settings.rs` 配置模型（早提交三项/full_shape/ascii_punct/
+  tab_learning/high_freq_limit；合并顺序 options.yaml > 设置 > 内建缺省）；
+  Qt 配置对话框与 fcitx5 配置读写待接（conf 的 `Configurable`）。
+
 已知限制（后续增量）：每引擎单会话（切换/重置即清空）；候选为展示型（点击不提交）；
 反查（⑧）、状态菜单与打包（⑨）待做。

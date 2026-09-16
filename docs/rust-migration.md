@@ -88,6 +88,8 @@ docs/
   `<user>/tiger_sentence_learning_<hash(schema_id)>.userdb/`（LevelDB，1 万条/16 MiB，60 秒节流刷新）。
 - 选项：`tiger_sentence.options.yaml`（主）+ legacy `user.yaml` 的 `var/option/*`（只读回退）；
   保存失败写属性 `tiger_sentence_options_error`（core `Options` 提供同步/抑制语义）。
+- 配置：addon `Settings`（7 项：早提交三项、full_shape/ascii_punct、tab_learning、high_freq_limit）
+  与合并顺序（options.yaml > 设置 > 内建缺省）；图形配置（fcitx5 对话框）待接。
 - 状态菜单：4 个核心开关（提前上屏、单字重码组句、提前上屏至编码、全角/半角标点）。
 
 ## 6. 测试
