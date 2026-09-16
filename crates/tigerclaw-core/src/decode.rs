@@ -21,6 +21,8 @@ const WHOLE_INPUT_SINGLE_CHARACTER_REWARD: f64 = 5.0;
 const ISOLATION_THRESHOLD: usize = 3000;
 const ISOLATION_LAMBDA: f64 = 2.0;
 const AGGREGATE_DURING_EXPANSION_THRESHOLD: usize = 128;
+const EARLY_COMMIT_MINIMUM_SHARE: f64 = 0.995;
+const EARLY_COMMIT_CLOSED_BOUNDARY_SHARE: f64 = 0.99999;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Comparator {
@@ -80,8 +82,73 @@ pub struct Evaluated {
 #[derive(Debug)]
 pub struct DecodeOutput {
     pub items: Vec<Evaluated>,
+    pub evidence: Evidence,
     pub learning_affected: bool,
     pub completed_truncated: bool,
+}
+
+/// 单条前缀证据（对应参照 `build_prefix_evidence` 的顺序数组元素）。
+#[derive(Clone, Debug)]
+pub struct PrefixEvidence {
+    pub text: String,
+    pub raw_length: usize,
+    pub share: f64,
+    pub boundary_share: f64,
+    pub boundary_closed: bool,
+    pub text_char_count: usize,
+}
+
+/// 早提交证据（对应参照 `early_commit_evidence`）。
+#[derive(Clone, Debug)]
+pub struct Evidence {
+    pub prefixes: Vec<PrefixEvidence>,
+    /// raw_length → text → `prefixes` 下标（对应参照 `_by_boundary`）。
+    pub by_boundary: HashMap<usize, HashMap<String, usize>>,
+    pub proposal: String,
+    pub proposal_share: f64,
+    pub raw_lengths: HashMap<String, usize>,
+    pub neutral_incomplete_tail: bool,
+    pub merged_incomplete_tail: bool,
+    pub neutral_low_confidence: bool,
+    pub confidence_truncated: bool,
+}
+
+impl Evidence {
+    fn default_for(truncated: bool) -> Self {
+        Self {
+            prefixes: Vec::new(),
+            by_boundary: HashMap::new(),
+            proposal: String::new(),
+            proposal_share: 0.0,
+            raw_lengths: HashMap::new(),
+            neutral_incomplete_tail: false,
+            merged_incomplete_tail: false,
+            neutral_low_confidence: false,
+            confidence_truncated: truncated,
+        }
+    }
+
+    fn truncated() -> Self {
+        Self {
+            confidence_truncated: true,
+            ..Self::default_for(false)
+        }
+    }
+
+    /// 参照 `find_prefix_evidence`。
+    pub fn find(&self, text: &str, raw_length: usize) -> Option<&PrefixEvidence> {
+        self.by_boundary
+            .get(&raw_length)
+            .and_then(|boundary| boundary.get(text))
+            .map(|&index| &self.prefixes[index])
+    }
+}
+
+/// 证据池条目（对应参照 `pool` 中的候选，含碰撞合并后的置信度）。
+struct EvidenceCandidate {
+    text: String,
+    confidence_score: f64,
+    path: usize,
 }
 
 /// 解码器：持有数据与可选 n-gram 模型（`None` = 无模型回退）。
@@ -124,12 +191,23 @@ impl Decoder {
         self.allow_duplicate_single = allowed;
     }
 
-    /// 参照 `decode(raw_code, include_early_commit=false, nil, nil)` 的冷路径。
+    /// 参照 `decode(raw_code, false, nil, nil)` 的冷路径。
     pub fn decode(&mut self, raw_code: &str) -> Result<DecodeOutput> {
+        self.decode_with(raw_code, false, "")
+    }
+
+    /// 参照 `decode(raw_code, include_early_commit, required_text_prefix, nil)` 的冷路径。
+    pub fn decode_with(
+        &mut self,
+        raw_code: &str,
+        include_early_commit: bool,
+        required_text_prefix: &str,
+    ) -> Result<DecodeOutput> {
         let raw = normalize(raw_code);
         if raw.is_empty() || !has_letter(&raw) {
             return Ok(DecodeOutput {
                 items: Vec::new(),
+                evidence: Evidence::default_for(false),
                 learning_affected: false,
                 completed_truncated: false,
             });
@@ -138,7 +216,13 @@ impl Decoder {
         let length = raw.len();
         let mut states = self.new_states(length);
         self.expand_range(&raw, &mut states, 0, length, -1)?;
-        self.emit(&raw, &mut states, length)
+        self.emit(
+            &raw,
+            &mut states,
+            length,
+            include_early_commit,
+            required_text_prefix,
+        )
     }
 
     fn new_states(&mut self, length: usize) -> Vec<Bucket> {
@@ -580,42 +664,63 @@ impl Decoder {
             .unwrap_or(self.lexicon.unknown_character_rank)
     }
 
-    fn emit(&mut self, raw: &[u8], states: &mut [Bucket], length: usize) -> Result<DecodeOutput> {
+    fn emit(
+        &mut self,
+        raw: &[u8],
+        states: &mut [Bucket],
+        length: usize,
+        include_early_commit: bool,
+        required_text_prefix: &str,
+    ) -> Result<DecodeOutput> {
         let completed =
             self.dedup_limit(std::mem::take(&mut states[length]), beam_limit_at(length));
         states[length] = completed;
         let candidates: Vec<usize> = states[length].items.clone();
-        let mut evaluated = Vec::with_capacity(candidates.len());
+        let completed_truncated = states[length].truncated;
+        let mut all = Vec::with_capacity(candidates.len());
         for index in candidates {
-            evaluated.push(self.evaluate_state(index)?);
+            all.push(self.evaluate_state(index)?);
         }
         // 参照 `emit`：无模型 → NoModel；有模型 → prefer_score 时 ScoreFirst，
         // 否则 RankFirst（注意与 `current_state_comparator` 的 allow_dup 分支不同）。
         let mut comparator = if self.model.is_none() {
             Comparator::NoModel
-        } else if self.prefer_score_over_lexicon_rank(&evaluated) {
+        } else if self.prefer_score_over_lexicon_rank(&all) {
             Comparator::ScoreFirst
         } else {
             Comparator::RankFirst
         };
-        if evaluated.iter().any(|item| item.learning_score > 0.0) {
+        if all.iter().any(|item| item.learning_score > 0.0) {
             comparator = Comparator::ScoreFirst;
         }
-        evaluated.sort_by(|left, right| {
-            if Decoder::state_better(comparator, left, right) {
+        let mut order: Vec<usize> = (0..all.len()).collect();
+        order.sort_by(|&left, &right| {
+            if Decoder::state_better(comparator, &all[left], &all[right]) {
                 std::cmp::Ordering::Less
             } else {
                 std::cmp::Ordering::Greater
             }
         });
-        evaluated.truncate(CANDIDATE_LIMIT);
-        for item in &mut evaluated {
+        order.truncate(CANDIDATE_LIMIT);
+        let mut items: Vec<Evaluated> = order.iter().map(|&index| all[index].clone()).collect();
+        for item in &mut items {
             item.segmented = segmented_from_path(raw, &self.arena, item.path);
         }
+        let mut evidence = Evidence::default_for(completed_truncated);
+        if include_early_commit {
+            evidence = self.build_early_commit_evidence(
+                raw,
+                states,
+                &all,
+                completed_truncated,
+                required_text_prefix,
+            )?;
+        }
         Ok(DecodeOutput {
-            items: evaluated,
+            items,
+            evidence,
             learning_affected: false,
-            completed_truncated: states[length].truncated,
+            completed_truncated,
         })
     }
 
@@ -630,6 +735,293 @@ impl Decoder {
                 .unwrap_or(false)
         })
     }
+}
+
+// ---------------------------------------------------------------- 早提交证据
+
+impl Decoder {
+    /// 参照 `add_early_commit_pool_candidate`。
+    fn add_pool_candidate(
+        &self,
+        pool: &mut Vec<EvidenceCandidate>,
+        pool_index: &mut HashMap<usize, HashMap<String, usize>>,
+        text: String,
+        confidence_score: f64,
+        path: usize,
+    ) {
+        if text.is_empty() {
+            return;
+        }
+        let raw_length = self.arena[path].raw_length;
+        let boundary = pool_index.entry(raw_length).or_default();
+        match boundary.get(&text).copied() {
+            None => {
+                pool.push(EvidenceCandidate {
+                    text: text.clone(),
+                    confidence_score,
+                    path,
+                });
+                boundary.insert(text, pool.len() - 1);
+            }
+            Some(position) => {
+                let previous = &pool[position];
+                let combined = logsumexp(previous.confidence_score, confidence_score);
+                let best_path = if confidence_score > previous.confidence_score {
+                    path
+                } else {
+                    previous.path
+                };
+                pool[position] = EvidenceCandidate {
+                    text,
+                    confidence_score: combined,
+                    path: best_path,
+                };
+            }
+        }
+    }
+
+    /// 参照 `incomplete_code_tail`。
+    fn incomplete_code_tail(&self, tail: &[u8]) -> bool {
+        if tail.is_empty() || !tail.iter().all(|byte| byte.is_ascii_alphabetic()) {
+            return false;
+        }
+        let Ok(text) = std::str::from_utf8(tail) else {
+            return false;
+        };
+        if !self.lexicon.proper_code_prefixes.contains(text) {
+            return false;
+        }
+        tail.len() < 2 || !self.lexicon.codes.contains_key(text)
+    }
+
+    /// 参照 `build_early_commit_evidence`。
+    fn build_early_commit_evidence(
+        &mut self,
+        raw: &[u8],
+        states: &mut [Bucket],
+        completed: &[Evaluated],
+        completed_truncated: bool,
+        required_text_prefix: &str,
+    ) -> Result<Evidence> {
+        if completed_truncated {
+            return Ok(Evidence::truncated());
+        }
+        let mut pool: Vec<EvidenceCandidate> = Vec::new();
+        let mut pool_index: HashMap<usize, HashMap<String, usize>> = HashMap::new();
+        let mut visible: Vec<&Evaluated> = Vec::new();
+        for candidate in completed {
+            if candidate.text.is_empty() {
+                continue;
+            }
+            if !required_text_prefix.is_empty() && !candidate.text.starts_with(required_text_prefix)
+            {
+                continue;
+            }
+            visible.push(candidate);
+            self.add_pool_candidate(
+                &mut pool,
+                &mut pool_index,
+                candidate.text.clone(),
+                candidate.confidence_score,
+                candidate.path,
+            );
+        }
+
+        let truncated = completed_truncated;
+        let mut merged_incomplete_tail = false;
+        let maximum_tail_length = self
+            .lexicon
+            .max_code_len
+            .saturating_sub(1)
+            .min(raw.len().saturating_sub(1));
+        for tail_length in 1..=maximum_tail_length {
+            let consumed_length = raw.len() - tail_length;
+            let tail = &raw[consumed_length..];
+            if !self.incomplete_code_tail(tail) || consumed_length >= states.len() {
+                continue;
+            }
+            let partial = self.dedup_limit(
+                std::mem::take(&mut states[consumed_length]),
+                beam_limit_at(consumed_length),
+            );
+            states[consumed_length] = partial;
+            let partial_items: Vec<usize> = states[consumed_length].items.clone();
+            let partial_truncated = states[consumed_length].truncated;
+            let mut added = false;
+            for index in partial_items {
+                let candidate = self.evaluate_state(index)?;
+                if candidate.text.is_empty() {
+                    continue;
+                }
+                if !required_text_prefix.is_empty()
+                    && !candidate.text.starts_with(required_text_prefix)
+                {
+                    continue;
+                }
+                self.add_pool_candidate(
+                    &mut pool,
+                    &mut pool_index,
+                    candidate.text.clone(),
+                    candidate.confidence_score,
+                    candidate.path,
+                );
+                added = true;
+            }
+            if added {
+                merged_incomplete_tail = true;
+                if partial_truncated {
+                    return Ok(Evidence::truncated());
+                }
+            }
+        }
+
+        let prefixes = build_prefix_evidence(&pool, &self.arena);
+
+        let mut proposal = String::new();
+        let mut proposal_share = 0.0;
+        let mut proposal_raw_length = 0usize;
+        let mut proposal_chars = 0usize;
+        let mut raw_lengths: HashMap<String, usize> = HashMap::new();
+        let mut raw_share: HashMap<String, f64> = HashMap::new();
+        for prefix in &prefixes {
+            if !prefix.boundary_closed {
+                continue;
+            }
+            let replace_raw = match raw_lengths.get(&prefix.text) {
+                None => true,
+                Some(current_length) => {
+                    let current_share = raw_share.get(&prefix.text).copied().unwrap_or(0.0);
+                    prefix.share > current_share
+                        || (prefix.share == current_share && prefix.raw_length < *current_length)
+                }
+            };
+            if replace_raw {
+                raw_lengths.insert(prefix.text.clone(), prefix.raw_length);
+                raw_share.insert(prefix.text.clone(), prefix.share);
+            }
+            if prefix.share >= EARLY_COMMIT_MINIMUM_SHARE {
+                let replace = if proposal.is_empty() {
+                    true
+                } else {
+                    let prefix_chars = prefix.text_char_count;
+                    if prefix_chars != proposal_chars {
+                        prefix_chars > proposal_chars
+                    } else if prefix.share != proposal_share {
+                        prefix.share > proposal_share
+                    } else {
+                        prefix.raw_length < proposal_raw_length
+                    }
+                };
+                if replace {
+                    proposal = prefix.text.clone();
+                    proposal_share = prefix.share;
+                    proposal_raw_length = prefix.raw_length;
+                    proposal_chars = prefix.text_char_count;
+                }
+            }
+        }
+        let by_boundary = prefix_lookup(&prefixes);
+        Ok(Evidence {
+            prefixes,
+            by_boundary,
+            proposal,
+            proposal_share,
+            raw_lengths,
+            neutral_incomplete_tail: visible.is_empty() && merged_incomplete_tail,
+            merged_incomplete_tail,
+            neutral_low_confidence: has_low_confidence_completed_generation(&visible),
+            confidence_truncated: truncated,
+        })
+    }
+}
+
+/// 参照 `build_prefix_evidence`：按 (前缀文本, raw 边界) 汇总证据。
+fn build_prefix_evidence(pool: &[EvidenceCandidate], arena: &[State]) -> Vec<PrefixEvidence> {
+    if pool.is_empty() {
+        return Vec::new();
+    }
+    let max_score = pool
+        .iter()
+        .map(|candidate| candidate.confidence_score)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let weights: Vec<f64> = pool
+        .iter()
+        .map(|candidate| (candidate.confidence_score - max_score).exp())
+        .collect();
+    let total: f64 = weights.iter().sum();
+    if total <= 0.0 {
+        return Vec::new();
+    }
+    let mut entries: Vec<PrefixEvidence> = Vec::new();
+    let mut entry_weights: Vec<f64> = Vec::new();
+    let mut entry_index: HashMap<(usize, String), usize> = HashMap::new();
+    let mut boundary_mass: HashMap<usize, f64> = HashMap::new();
+    for (position, item) in pool.iter().enumerate() {
+        let weight = weights[position];
+        let mut current = Some(item.path);
+        while let Some(index) = current {
+            let prefix_text = arena[index].text.clone();
+            if !prefix_text.is_empty() && prefix_text.len() <= item.text.len() {
+                let raw_length = arena[index].raw_length;
+                let key = (raw_length, prefix_text.clone());
+                let slot = match entry_index.get(&key) {
+                    Some(&slot) => slot,
+                    None => {
+                        let slot = entries.len();
+                        entries.push(PrefixEvidence {
+                            text: prefix_text,
+                            raw_length,
+                            share: 0.0,
+                            boundary_share: 0.0,
+                            boundary_closed: false,
+                            text_char_count: 0,
+                        });
+                        entry_weights.push(0.0);
+                        entry_index.insert(key, slot);
+                        slot
+                    }
+                };
+                entry_weights[slot] += weight;
+                *boundary_mass.entry(raw_length).or_insert(0.0) += weight;
+            }
+            current = arena[index].previous;
+        }
+    }
+    for (position, entry) in entries.iter_mut().enumerate() {
+        let boundary = boundary_mass.get(&entry.raw_length).copied().unwrap_or(0.0);
+        entry.share = entry_weights[position] / total;
+        entry.boundary_share = boundary / total;
+        entry.boundary_closed = entry.boundary_share >= EARLY_COMMIT_CLOSED_BOUNDARY_SHARE;
+        entry.text_char_count = entry.text.chars().count();
+    }
+    entries
+}
+
+fn prefix_lookup(prefixes: &[PrefixEvidence]) -> HashMap<usize, HashMap<String, usize>> {
+    let mut lookup: HashMap<usize, HashMap<String, usize>> = HashMap::new();
+    for (index, prefix) in prefixes.iter().enumerate() {
+        lookup
+            .entry(prefix.raw_length)
+            .or_default()
+            .insert(prefix.text.clone(), index);
+    }
+    lookup
+}
+
+/// 参照 `has_low_confidence_completed_generation`。
+fn has_low_confidence_completed_generation(candidates: &[&Evaluated]) -> bool {
+    if candidates.is_empty() {
+        return false;
+    }
+    let max_score = candidates
+        .iter()
+        .map(|candidate| candidate.confidence_score)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let total: f64 = candidates
+        .iter()
+        .map(|candidate| (candidate.confidence_score - max_score).exp())
+        .sum();
+    total > 0.0 && 1.0 / total < EARLY_COMMIT_MINIMUM_SHARE
 }
 
 struct Eligible {

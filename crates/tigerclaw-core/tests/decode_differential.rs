@@ -2,7 +2,9 @@
 //!
 //! 金样由 `tools/gen_decode_golden.lua` 生成：
 //! * `goldens/decode.tsv.gz`：无模型；
-//! * `goldens/decode_model.tsv.gz`：fixture 模型。
+//! * `goldens/decode_model.tsv.gz`：fixture 模型；
+//! * `goldens/decode_rank_first.tsv.gz`：fixture 模型 + 关闭单字重码；
+//! * `goldens/decode_evidence*.tsv.gz`：早提交证据（`--early-commit 1`）。
 
 use flate2::read::GzDecoder;
 use std::fs::File;
@@ -54,7 +56,7 @@ fn make_decoder(model: Option<MobileModel>) -> Decoder {
     Decoder::new(lexicon, supplement, model)
 }
 
-fn replay(mut decoder: Decoder, reader: impl BufRead) -> usize {
+fn replay(mut decoder: Decoder, reader: impl BufRead, early: bool) -> usize {
     let mut lines = reader
         .lines()
         .map(|line| line.expect("read golden line"))
@@ -75,7 +77,13 @@ fn replay(mut decoder: Decoder, reader: impl BufRead) -> usize {
             .parse()
             .expect("truncated value");
 
-        let output = decoder.decode(&input).expect("decode");
+        let output = if early {
+            decoder
+                .decode_with(&input, true, "")
+                .expect("decode with evidence")
+        } else {
+            decoder.decode(&input).expect("decode")
+        };
         assert_eq!(output.items.len(), count, "count mismatch for {input:?}");
         assert_eq!(
             output.learning_affected as u8, learning,
@@ -136,6 +144,104 @@ fn replay(mut decoder: Decoder, reader: impl BufRead) -> usize {
             );
             records += 1;
         }
+
+        if early {
+            let line = lines.next().expect("evidence record");
+            let (kind, rest) = line.split_once('\t').expect("evidence payload");
+            assert_eq!(kind, "evidence", "expected evidence record, got {kind}");
+            let mut fields = rest.split('\t');
+            let proposal = decode_hex(fields.next().expect("proposal"));
+            let share = parse_bits(fields.next().expect("share"));
+            let mut flags = (false, false, false, false);
+            let mut prefix_count = 0usize;
+            let mut raw_count = 0usize;
+            for part in fields {
+                if let Some((name, value)) = part.split_once('=') {
+                    match name {
+                        "nit" => flags.0 = value == "1",
+                        "mit" => flags.1 = value == "1",
+                        "nlc" => flags.2 = value == "1",
+                        "trunc" => flags.3 = value == "1",
+                        "prefixes" => prefix_count = value.parse().expect("prefix count"),
+                        "raws" => raw_count = value.parse().expect("raw count"),
+                        other => panic!("unknown evidence field: {other}"),
+                    }
+                }
+            }
+            let evidence = &output.evidence;
+            records += 1;
+            assert_eq!(
+                evidence.proposal, proposal,
+                "proposal mismatch for {input:?}"
+            );
+            assert_eq!(
+                evidence.proposal_share.to_bits(),
+                share,
+                "proposal share mismatch for {input:?}"
+            );
+            assert_eq!(evidence.neutral_incomplete_tail, flags.0);
+            assert_eq!(evidence.merged_incomplete_tail, flags.1);
+            assert_eq!(evidence.neutral_low_confidence, flags.2);
+            assert_eq!(evidence.confidence_truncated, flags.3);
+            assert_eq!(
+                evidence.prefixes.len(),
+                prefix_count,
+                "prefix count for {input:?}"
+            );
+
+            for (position, expected) in evidence.prefixes.iter().enumerate() {
+                let line = lines.next().expect("prefix record");
+                let (kind, rest) = line.split_once('\t').expect("prefix payload");
+                assert_eq!(kind, "prefix", "expected prefix record, got {kind}");
+                let mut fields = rest.split('\t');
+                let text = decode_hex(fields.next().expect("text"));
+                let raw_length: usize = fields.next().expect("raw_length").parse().expect("len");
+                let prefix_share = parse_bits(fields.next().expect("share"));
+                let boundary_share = parse_bits(fields.next().expect("boundary share"));
+                let closed: u8 = fields.next().expect("closed").parse().expect("closed");
+                let chars: usize = fields.next().expect("chars").parse().expect("chars");
+                let context = format!("{input:?} prefix #{position}");
+                assert_eq!(expected.text, text, "prefix text mismatch for {context}");
+                assert_eq!(
+                    expected.raw_length, raw_length,
+                    "prefix raw mismatch for {context}"
+                );
+                assert_eq!(
+                    expected.share.to_bits(),
+                    prefix_share,
+                    "prefix share for {context}"
+                );
+                assert_eq!(
+                    expected.boundary_share.to_bits(),
+                    boundary_share,
+                    "boundary share for {context}"
+                );
+                assert_eq!(
+                    expected.boundary_closed as u8, closed,
+                    "closed for {context}"
+                );
+                assert_eq!(expected.text_char_count, chars, "chars for {context}");
+                records += 1;
+            }
+
+            let mut keys: Vec<&String> = evidence.raw_lengths.keys().collect();
+            keys.sort();
+            assert_eq!(keys.len(), raw_count, "raw count mismatch for {input:?}");
+            for key in keys {
+                let line = lines.next().expect("rawlen record");
+                let (kind, rest) = line.split_once('\t').expect("rawlen payload");
+                assert_eq!(kind, "rawlen", "expected rawlen record, got {kind}");
+                let mut fields = rest.split('\t');
+                let text = decode_hex(fields.next().expect("text"));
+                let raw_length: usize = fields.next().expect("raw_length").parse().expect("len");
+                assert_eq!(&text, key, "rawlen text mismatch for {input:?}");
+                assert_eq!(
+                    raw_length, evidence.raw_lengths[key],
+                    "rawlen value mismatch for {input:?}"
+                );
+                records += 1;
+            }
+        }
         records += 1;
     }
     records
@@ -143,7 +249,11 @@ fn replay(mut decoder: Decoder, reader: impl BufRead) -> usize {
 
 #[test]
 fn decode_transcript_is_bit_exact_without_model() {
-    let records = replay(make_decoder(None), open_golden("goldens/decode.tsv.gz"));
+    let records = replay(
+        make_decoder(None),
+        open_golden("goldens/decode.tsv.gz"),
+        false,
+    );
     assert!(records > 1_900, "transcript too short: {records}");
     println!("decode (no model): {records} golden records verified");
 }
@@ -155,6 +265,7 @@ fn decode_transcript_is_bit_exact_with_fixture_model() {
     let records = replay(
         make_decoder(Some(model)),
         open_golden("goldens/decode_model.tsv.gz"),
+        false,
     );
     assert!(records > 300, "transcript too short: {records}");
     println!("decode (fixture model): {records} golden records verified");
@@ -166,7 +277,35 @@ fn decode_rank_first_transcript_is_bit_exact() {
         .expect("load fixture model");
     let mut decoder = make_decoder(Some(model));
     decoder.set_allow_duplicate_single(false);
-    let records = replay(decoder, open_golden("goldens/decode_rank_first.tsv.gz"));
+    let records = replay(
+        decoder,
+        open_golden("goldens/decode_rank_first.tsv.gz"),
+        false,
+    );
     assert!(records > 300, "transcript too short: {records}");
     println!("decode (model, no duplicate): {records} golden records verified");
+}
+
+#[test]
+fn decode_evidence_transcript_is_bit_exact_without_model() {
+    let records = replay(
+        make_decoder(None),
+        open_golden("goldens/decode_evidence.tsv.gz"),
+        true,
+    );
+    assert!(records > 4_990, "transcript too short: {records}");
+    println!("decode evidence (no model): {records} golden records verified");
+}
+
+#[test]
+fn decode_evidence_transcript_is_bit_exact_with_fixture_model() {
+    let model = MobileModel::load(repo_path("goldens/ngram_fixture.bin"), None)
+        .expect("load fixture model");
+    let records = replay(
+        make_decoder(Some(model)),
+        open_golden("goldens/decode_evidence_model.tsv.gz"),
+        true,
+    );
+    assert!(records > 830, "transcript too short: {records}");
+    println!("decode evidence (fixture model): {records} golden records verified");
 }

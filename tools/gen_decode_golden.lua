@@ -1,18 +1,21 @@
 -- 生成 decode 金样（冷路径：include_early_commit=false；未接入学习）。
 --
---   lua tools/gen_decode_golden.lua --reference <repo> --data <dir> --out <tsv> [--model <bin>] [--every N] [--duplicate 0|1]
+--   lua tools/gen_decode_golden.lua --reference <repo> --data <dir> --out <tsv> [--model <bin>] [--every N] [--duplicate 0|1] [--early-commit 0|1]
 --
 -- 数据目录需含四个数据文件；--model 时把模型拷贝为临时用户目录的
 -- models/sentence-ngram-mobile.bin 并启用（走参照的 try_load 路径）。
 -- transcript 记录（tab 分隔，`#` 注释，`-` 表示空串）：
 --   decode <hex input> count=<n> learning=<0|1> truncated=<0|1>
 --   result <hex text> <hex segmented> <bits score> <bits confidence_score> <max_rank> <edge_count> <bits supplement_score> <bits learning_score>
+--   evidence <hex proposal> <bits proposal_share> nit= mit= nlc= trunc= prefixes= raws=   （--early-commit 1）
+--   prefix <hex text> <raw_length> <bits share> <bits boundary_share> <closed> <chars>
+--   rawlen <hex text> <raw_length>
 
 local function parse_args(argv)
     local opts = {}
     local i = 1
     while i <= #argv do
-        local key = argv[i]:match("^%-%-([%w_]+)$")
+        local key = argv[i]:match("^%-%-([%w_%-]+)$")
         if not key then error("unexpected argument: " .. argv[i]) end
         opts[key] = argv[i + 1]
         i = i + 2
@@ -60,6 +63,7 @@ local sentence = require("tiger_sentence")
 sentence.set_model_enabled(opts.model ~= nil)
 sentence.ensure_lexicon(nil)
 local duplicate = opts.duplicate ~= "0"
+local early = opts["early-commit"] == "1"
 if not duplicate then
     -- 参照测试同款：以假 context 关闭“单字重码组句”。
     sentence.set_allow_duplicate_single({ get_option = function() return false end })
@@ -114,10 +118,10 @@ local function bits(value)
 end
 
 emit("# decode transcript; model=" .. (opts.model and "fixture" or "off") ..
-    " duplicate=" .. (duplicate and 1 or 0))
+    " duplicate=" .. (duplicate and 1 or 0) .. " early=" .. (early and 1 or 0))
 for _, input in ipairs(selected) do
     sentence.reset_decode_cache()
-    local results = sentence.decode(input, false)
+    local results = sentence.decode(input, early)
     emit("decode", hex(input), "count=" .. #results,
         "learning=" .. (results.learning_affected and 1 or 0),
         "truncated=" .. (results._completed_truncated and 1 or 0))
@@ -126,8 +130,35 @@ for _, input in ipairs(selected) do
             bits(item.confidence_score), tostring(item.max_rank), tostring(item.edge_count),
             bits(item.supplement_score or 0), bits(item.learning_score or 0))
     end
+    if early then
+        -- 空编码/无字母输入走参照的早退分支（无证据字段），按缺省证据处理。
+        local evidence = results.early_commit_evidence or {
+            prefixes = {}, proposal = "", proposal_share = 0.0, raw_lengths = {},
+            neutral_incomplete_tail = false, merged_incomplete_tail = false,
+            neutral_low_confidence = false, confidence_truncated = false,
+        }
+        local raw_keys = {}
+        for text in pairs(evidence.raw_lengths) do raw_keys[#raw_keys + 1] = text end
+        table.sort(raw_keys)
+        emit("evidence", hex(evidence.proposal), bits(evidence.proposal_share),
+            "nit=" .. (evidence.neutral_incomplete_tail and 1 or 0),
+            "mit=" .. (evidence.merged_incomplete_tail and 1 or 0),
+            "nlc=" .. (evidence.neutral_low_confidence and 1 or 0),
+            "trunc=" .. (evidence.confidence_truncated and 1 or 0),
+            "prefixes=" .. #evidence.prefixes,
+            "raws=" .. #raw_keys)
+        for _, prefix in ipairs(evidence.prefixes) do
+            emit("prefix", hex(prefix.text), tostring(prefix.raw_length), bits(prefix.share),
+                bits(prefix.boundary_share), prefix.boundary_closed and 1 or 0,
+                tostring(prefix.text_char_count))
+        end
+        for _, text in ipairs(raw_keys) do
+            emit("rawlen", hex(text), tostring(evidence.raw_lengths[text]))
+        end
+    end
 end
 out:close()
 os.execute("rm -rf '" .. work .. "'")
-print(string.format('{"lua":"%s","inputs":%d,"emitted":%d,"model":%s,"duplicate":%s}',
-    _VERSION, #selected, emitted, opts.model and "true" or "false", duplicate and "true" or "false"))
+print(string.format('{"lua":"%s","inputs":%d,"emitted":%d,"model":%s,"duplicate":%s,"early":%s}',
+    _VERSION, #selected, emitted, opts.model and "true" or "false", duplicate and "true" or "false",
+    early and "true" or "false"))
