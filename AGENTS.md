@@ -1,6 +1,6 @@
 # AGENTS.md
 
-虎爪（Tigerclaw）：虎句（tiger-sentense）输入方案从 fcitx5-rime 迁移到 fcitx5 原生实现。
+hux-ime：虎句（tiger-sentense）输入方案从 fcitx5-rime 迁移到 fcitx5 原生实现。
 
 ## AI 风格
 1. 中文回答，简明扼要；
@@ -24,7 +24,10 @@
 3. squash 与历史整理由用户自行执行，AI 不代做。
 
 ## 背景与约定
-- 参考实现（Rime 方案 + Lua 核心）：`/home/crux/_work/tiger-sentense-rime`
+- 参考实现（Rime 方案 + Lua 核心）：<https://github.com/crrvx/tiger-sentense-rime>
+  - 金样生成需本地检出：外部检出统一放仓库内 `external/`（已 gitignore），默认
+    `external/tiger-sentense-rime`（`git clone https://github.com/crrvx/tiger-sentense-rime external/tiger-sentense-rime`）；
+    可用 `HUX_REFERENCE_REPO` / `--reference` / `REF` 覆盖；线上地址即上
   - 主引擎 `lua/tiger_sentence.lua`；学习 `tiger_sentence_learning.lua`；
     n-gram `tiger_sentence_ngram.lua`；缓存 `tiger_sentence_cache.lua`
   - 测试 `tools/test_*.lua` + `tools/run_regressions.py`：迁移期作为逐位等价 oracle
@@ -32,7 +35,8 @@
 - 移植纪律：计算部分机械翻译 + 差分逐位验证；交互部分按行为契约自由设计；
 - Lua 仅作测试 oracle（CI/开发环境），不进入运行时依赖；
 - 版本控制：jj（Jujutsu）colocate 模式；日常操作走 jj，不直接使用 git；
-- 文档：`docs/rust-migration.md`（设计）、`docs/rime-semantics.md`（参照行为）、`docs/spike-report.md`（K0 结果）、`docs/LEXICAL_PRIOR_ATTRIBUTION.md`（词先验署名/许可）。
+- 文档：`docs/rust-migration.md`（设计）、`crates/hux-addon/README.md`（addon 使用）、`goldens/README.md`（金样）、
+  `data/README.md`（数据）、`docs/LEXICAL_PRIOR_ATTRIBUTION.md`（词先验署名/许可）。
 
 ## 特殊目录
 - `_tmp/`：本地开发 / 临时记录
