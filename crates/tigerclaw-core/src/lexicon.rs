@@ -145,6 +145,8 @@ pub struct Lexicon {
     pub ranks_path: Option<String>,
     pub whitelist_path: Option<String>,
     pub whitelist_count: usize,
+    /// 参照 `lexicon_state.learning_rules`：数据文件内容的 `learning.hash`（NUL 分隔）。
+    pub learning_rules: String,
     pub errors: Vec<String>,
 }
 
@@ -170,6 +172,7 @@ impl Lexicon {
             ranks_path: None,
             whitelist_path: None,
             whitelist_count: 0,
+            learning_rules: String::new(),
             errors: Vec::new(),
         };
         lexicon.rebuild(limit);
@@ -237,6 +240,22 @@ impl Lexicon {
         self.ranks_path = ranks_path;
         self.whitelist_path = whitelist_path;
         self.whitelist_count = whitelist_count;
+        // 参照 `build_lexicon_index` 末尾：以三份文件内容（缺失视为空串）计算规则指纹。
+        let codes_content = codes_file
+            .as_ref()
+            .map(|(content, _)| content.as_str())
+            .unwrap_or("");
+        let ranks_content = ranks_file
+            .as_ref()
+            .map(|(content, _)| content.as_str())
+            .unwrap_or("");
+        let whitelist_content = whitelist_file
+            .as_ref()
+            .map(|(content, _)| content.as_str())
+            .unwrap_or("");
+        self.learning_rules = crate::learning::hash(&format!(
+            "{codes_content}\0{ranks_content}\0{whitelist_content}"
+        ));
         self.errors = errors;
     }
 

@@ -1330,6 +1330,98 @@ pub fn learning_submit(
         .collect()
 }
 
+// ---------------------------------------------------------------- 选项同步
+
+/// 参照 `M.options` 的内建缺省表。
+pub fn option_defaults() -> HashMap<String, bool> {
+    HashMap::from([
+        ("tiger_sentence_early_commit".to_string(), true),
+        ("tiger_sentence_allow_duplicate_single".to_string(), true),
+        ("tiger_sentence_early_commit_to_preedit".to_string(), false),
+    ])
+}
+
+/// 参照 `M.options` 的配置存储（文件读写、错误属性由 K3 承担）。
+#[derive(Clone, Debug, Default)]
+pub struct Options {
+    /// schema 缺省（`tiger_sentence/option_defaults/<name>`，回退内建缺省）。
+    pub defaults: HashMap<String, bool>,
+    /// 持久化值（`options/<name>`，缺省回退 `user.yaml` 的 `var/option/<name>`）。
+    pub values: HashMap<String, bool>,
+    pub revision: u64,
+}
+
+impl Options {
+    pub fn new(defaults: HashMap<String, bool>) -> Self {
+        Self {
+            defaults,
+            values: HashMap::new(),
+            revision: 0,
+        }
+    }
+
+    /// 参照 `M.options.sync`：把持久化值（缺省回退 schema 缺省）同步进上下文选项。
+    pub fn sync(&self, context: &mut Context) {
+        for (name, fallback) in &self.defaults {
+            let value = self.values.get(name).copied().unwrap_or(*fallback);
+            if context.get_option(name) != value {
+                context.set_option(name, value);
+            }
+        }
+    }
+
+    /// 参照 `option_update_notifier` 回调：记录变更并递增 revision；
+    /// 返回是否需要持久化（写文件与失败属性由 K3 处理）。
+    pub fn observe(&mut self, context: &Context, name: &str) -> bool {
+        if !self.defaults.contains_key(name) {
+            return false;
+        }
+        let value = context.get_option(name);
+        if self.values.get(name) == Some(&value) {
+            return false;
+        }
+        self.values.insert(name.to_string(), value);
+        self.revision += 1;
+        true
+    }
+}
+
+// ---------------------------------------------------------------- ascii 策略
+
+/// 参照 `ascii_component` 私有 schema 覆盖的按键名。
+pub const ASCII_SWITCH_KEYS: [&str; 10] = [
+    "Shift_L",
+    "Shift_R",
+    "Control_L",
+    "Control_R",
+    "Alt_L",
+    "Alt_R",
+    "Super_L",
+    "Super_R",
+    "Caps_Lock",
+    "Eisu_toggle",
+];
+
+/// 参照 `ascii_component`：缓冲态下把 `commit_code`/`inline_ascii` 归一为
+/// `commit_text`，未配置样式按 `noop`（原生 ascii_composer 由 K3 宿主提供）。
+pub fn ascii_switch_styles(source: &HashMap<String, String>) -> HashMap<String, String> {
+    ASCII_SWITCH_KEYS
+        .iter()
+        .map(|name| {
+            let style = source
+                .get(*name)
+                .cloned()
+                .unwrap_or_else(|| "noop".to_string());
+            let style = if style == "commit_code" || style == "inline_ascii" {
+                "commit_text".to_string()
+            } else {
+                style
+            };
+            (name.to_string(), style)
+        })
+        .collect()
+}
+
 // ---------------------------------------------------------------- 处理器
 
 /// 处理器宿主环境（对应参照 `env` 的非会话部分；K3 补内存/词库/选项职责）。
@@ -2472,6 +2564,55 @@ mod tests {
         assert_eq!(h.press("Escape"), ProcessorResult::Consume);
         assert!(h.context.input().is_empty());
         assert!(h.state.committed_raw.is_empty());
+    }
+
+    #[test]
+    fn lexicon_learning_rules_matches_oracle() {
+        let dir =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
+        let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
+        // oracle：参照 `learning.hash(codes.."\0"..ranks.."\0"..whitelist)`（pin 版 Lua 直算）。
+        assert_eq!(lexicon.learning_rules, "99f336c6e74e055e");
+        // 数据缺失时三份内容均为空串。
+        let missing = Lexicon::load(&[], 1500);
+        assert_eq!(missing.learning_rules, crate::learning::hash("\0\0"));
+    }
+
+    #[test]
+    fn options_sync_and_observe() {
+        let mut context = Context::new();
+        let mut options = Options::new(option_defaults());
+        options.sync(&mut context);
+        assert!(context.get_option("tiger_sentence_early_commit"));
+        assert!(context.get_option("tiger_sentence_allow_duplicate_single"));
+        assert!(!context.get_option("tiger_sentence_early_commit_to_preedit"));
+        // 用户改选项 → observe 记录并请求持久化；重复观察不再请求
+        context.set_option("tiger_sentence_early_commit_to_preedit", true);
+        assert!(options.observe(&context, "tiger_sentence_early_commit_to_preedit"));
+        assert_eq!(options.revision, 1);
+        assert!(!options.observe(&context, "tiger_sentence_early_commit_to_preedit"));
+        assert!(!options.observe(&context, "other_option"));
+        // 持久化值优先于 schema 缺省
+        options
+            .values
+            .insert("tiger_sentence_early_commit".to_string(), false);
+        context.set_option("tiger_sentence_early_commit", true);
+        options.sync(&mut context);
+        assert!(!context.get_option("tiger_sentence_early_commit"));
+    }
+
+    #[test]
+    fn ascii_switch_styles_normalize_buffered_exits() {
+        let mut source = HashMap::new();
+        source.insert("Shift_L".to_string(), "commit_code".to_string());
+        source.insert("Shift_R".to_string(), "inline_ascii".to_string());
+        source.insert("Control_L".to_string(), "noop".to_string());
+        let styles = ascii_switch_styles(&source);
+        assert_eq!(styles["Shift_L"], "commit_text");
+        assert_eq!(styles["Shift_R"], "commit_text");
+        assert_eq!(styles["Control_L"], "noop");
+        assert_eq!(styles["Caps_Lock"], "noop");
+        assert_eq!(styles.len(), ASCII_SWITCH_KEYS.len());
     }
 
     #[test]
