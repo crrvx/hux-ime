@@ -620,6 +620,7 @@ pub fn submit_early(
 
 /// 参照 `try_commit_mature_prefix`：证据成熟则提交选中前缀。
 pub fn try_commit_mature_prefix(
+    learning: &mut LearningCommit<'_>,
     context: &mut Context,
     state: &mut SentenceState,
     evidence_raw: &[u8],
@@ -663,7 +664,7 @@ pub fn try_commit_mature_prefix(
     }
     let selected_text = selected.text.clone();
     let selected_raw_length = selected.raw_length;
-    state.committed_text = selected_text;
+    state.committed_text = selected_text.clone();
     state.committed_raw =
         String::from_utf8_lossy(&evidence_raw[..selected_raw_length]).into_owned();
     state.last_auto_commit_raw_length = selected_raw_length;
@@ -671,7 +672,14 @@ pub fn try_commit_mature_prefix(
     reset_early_evidence(state);
     state.save(context);
     if let Some(commit_text) = submit_early(context, state, &commit) {
-        context_commit(context, &commit_text);
+        let accepted = learning.commit_with_learning(
+            context,
+            state,
+            &commit_text,
+            &selected_text,
+            selected_raw_length,
+        );
+        learning.live.submitted.extend(accepted);
     }
     // 参照：自动上屏文本以数字结尾时重新武装待发小数点（缓冲分支亦然）。
     if ends_with_digit(&commit) {
@@ -696,7 +704,7 @@ pub struct EarlyCommitParams {
 
 /// 参照 `try_early_commit`：证据驱动的前缀提前上屏。
 pub fn try_early_commit(
-    decoder: &mut Decoder,
+    learning: &mut LearningCommit<'_>,
     context: &mut Context,
     state: &mut SentenceState,
     params: EarlyCommitParams,
@@ -717,13 +725,17 @@ pub fn try_early_commit(
         return Ok(false);
     }
     let raw = String::from_utf8_lossy(&full_raw).into_owned();
-    decoder.set_allow_duplicate_single(params.allow_duplicate_single);
+    learning
+        .decoder
+        .set_allow_duplicate_single(params.allow_duplicate_single);
     let lock = state.active_lock().map(|lock| DecodeLock {
         raw: &lock.raw,
         text: &lock.text,
         boundaries: &lock.boundaries,
     });
-    let decoded = decoder.decode_with_lock(&raw, true, &state.committed_text, lock)?;
+    let decoded = learning
+        .decoder
+        .decode_with_lock(&raw, true, &state.committed_text, lock)?;
     // 防御：调用方代次与当前状态不一致时重同步（processor 构造时取同值，通常为假）。
     if params.generation != state.model_generation {
         state.synchronize_model_state(params.generation);
@@ -737,6 +749,7 @@ pub fn try_early_commit(
 
     if state.last_seen_raw == raw {
         return Ok(try_commit_mature_prefix(
+            learning,
             context,
             state,
             &evidence_raw,
@@ -788,6 +801,7 @@ pub fn try_early_commit(
     if retain_without_counting {
         state.trackers = retain_trackers_without_counting(&state.trackers, &decoded.evidence);
         return Ok(try_commit_mature_prefix(
+            learning,
             context,
             state,
             &evidence_raw,
@@ -819,6 +833,7 @@ pub fn try_early_commit(
     }
     state.trackers = next_trackers;
     Ok(try_commit_mature_prefix(
+        learning,
         context,
         state,
         &evidence_raw,
@@ -829,7 +844,7 @@ pub fn try_early_commit(
 
 /// 参照 `try_empty_code_commit`：空码（整句唯一候选）自动上屏。
 pub fn try_empty_code_commit(
-    decoder: &mut Decoder,
+    learning: &mut LearningCommit<'_>,
     context: &mut Context,
     state: &mut SentenceState,
     full_before: &[u8],
@@ -848,7 +863,7 @@ pub fn try_empty_code_commit(
     let pending = match state.empty_code_pending.clone() {
         Some(pending) => Some(pending),
         None => capture_empty_code_candidate(
-            decoder,
+            learning.decoder,
             full_before,
             &state.committed_text,
             params.allow_duplicate_single,
@@ -870,7 +885,7 @@ pub fn try_empty_code_commit(
     };
     let raw = String::from_utf8_lossy(&full_raw).into_owned();
     if crate::decode::has_complete_candidate(
-        decoder.lexicon(),
+        learning.decoder.lexicon(),
         &raw,
         &state.committed_text,
         None,
@@ -897,7 +912,8 @@ pub fn try_empty_code_commit(
     }
     let extended_last_segment =
         String::from_utf8_lossy(&full_raw[pending.last_segment_start..]).into_owned();
-    if decoder
+    if learning
+        .decoder
         .lexicon()
         .proper_code_prefixes
         .contains(&extended_last_segment)
@@ -909,7 +925,7 @@ pub fn try_empty_code_commit(
     }
     if pending.requires_uniqueness_check
         && crate::decode::has_complete_candidate(
-            decoder.lexicon(),
+            learning.decoder.lexicon(),
             &String::from_utf8_lossy(&full_raw[..pending.base_raw_length]),
             &pending.committed_text,
             Some(&pending.candidate_text),
@@ -942,7 +958,14 @@ pub fn try_empty_code_commit(
     // 参照顺序：submit_early → 数字结尾时重武装小数点 → save_sentence_state → restore
     // （缓冲分支在 submit_early 内部已保存一次，幂等）。
     if let Some(commit_text) = submit_early(context, state, &commit) {
-        context_commit(context, &commit_text);
+        let accepted = learning.commit_with_learning(
+            context,
+            state,
+            &commit_text,
+            &pending.candidate_text,
+            pending.base_raw_length,
+        );
+        learning.live.submitted.extend(accepted);
     }
     if ends_with_digit(&commit) {
         *dot_armed = true;
@@ -972,11 +995,16 @@ pub fn apply_buffered_commit(context: &mut Context) {
 }
 
 /// 参照 librime 引擎对 `ConfirmCurrentSelection` 的**同步**反应：
-/// 末段覆盖整段输入且 `_auto_commit` 开启时，先合并缓冲前缀再立即提交
+/// 末段覆盖整段输入且 `_auto_commit` 开启时，先合并缓冲前缀，再在清空前触发
+/// 提交通知器（学习选择/暂存/提交，`learning` 为 `None` 时跳过学习），随后立即提交
 /// （librime：确认 → 选择通知 → 引擎 `OnSelect` → 自动提交 → 提交通知器 → `Clear`）。
 /// 宿主（K3）需在会话初始化时置 `_auto_commit`（对应 librime `express_editor`
 /// 的默认 true），否则确认段会保持未提交。
-pub fn confirm_selection(context: &mut Context) {
+pub fn confirm_selection(
+    learning: Option<&mut LearningCommit<'_>>,
+    context: &mut Context,
+    state: &mut SentenceState,
+) {
     if !context.confirm_current_selection() {
         return;
     }
@@ -989,6 +1017,12 @@ pub fn confirm_selection(context: &mut Context) {
         return;
     }
     apply_buffered_commit(context);
+    if let Some(learning) = learning {
+        let LearningCommit { decoder, live, now } = learning;
+        let commit_text = context.get_commit_text();
+        let accepted = learning_commit(decoder, context, state, live, *now, &commit_text);
+        live.submitted.extend(accepted);
+    }
     context.commit();
 }
 
@@ -1223,6 +1257,9 @@ pub struct Selected {
     pub text: String,
     pub raw_length: usize,
     pub diff: DiffItem,
+    /// 缓冲兜底项（参照 `{text=committed_text, path={raw_length=...}}`，缺 `text_length`）：
+    /// 参照在该形态下 `learning.diff` 报错并被 commit 通知器的 pcall 吞掉，不产出学习事件。
+    pub buffered_fallback: bool,
 }
 
 impl Selected {
@@ -1242,6 +1279,7 @@ impl Selected {
                     text_length,
                 }],
             },
+            buffered_fallback: true,
         }
     }
 }
@@ -1264,6 +1302,8 @@ pub struct LiveLearning {
     pub hide_owned: bool,
     /// 参照 `learned.store and learned.store.db`（K3 学习库就绪后置位）。
     pub store_ready: bool,
+    /// 核心内部提交（自动上屏等）接受的学习事件，等待宿主持久化（K3 排空后落库）。
+    pub submitted: Vec<Event>,
 }
 
 /// 参照 `learning_selection`：按当前段选中项从可见候选中取学习目标。
@@ -1306,6 +1346,7 @@ pub fn learning_selection(
                 text: item.text.clone(),
                 raw_length,
                 diff,
+                buffered_fallback: false,
             };
             if first.is_none() {
                 first = Some(candidate.clone());
@@ -1350,6 +1391,11 @@ pub fn learning_stage(
         submitted_first
     };
     if let Some(baseline) = baseline {
+        if selected.buffered_fallback {
+            // 参照：兜底项缺 `path.text_length`，`learning.diff` 在 boundaries() 报错、
+            // 被 commit 通知器的 pcall 吞掉：不产出事件，且 baseline 不被清空。
+            return;
+        }
         let lock_floor = state.active_lock().map(|lock| lock.raw.len()).unwrap_or(0);
         let floor = state.committed_raw.len().max(lock_floor);
         let events = learning::diff(
@@ -1379,6 +1425,10 @@ pub fn learning_submit(
     let mut accepted = Vec::new();
     let mut remaining = Vec::new();
     if let Some(selected) = selected {
+        if selected.buffered_fallback {
+            // 参照：兜底项在 stage 阶段即中止，提交不执行（pending/baseline 均不动）。
+            return Vec::new();
+        }
         if !actual.is_empty() && actual == expected && !live.mode.is_empty() {
             for event in &live.pending {
                 if event.raw_end > selected.raw_length {
@@ -1410,6 +1460,97 @@ pub fn learning_submit(
 }
 
 // ---------------------------------------------------------------- 选项同步
+
+/// 参照 commit 通知器（`prepare_learning` 注册）：选中/暂存/提交一并完成。
+/// `commit_text` 为该次提交文本；返回待持久化的学习事件。
+pub fn learning_commit(
+    decoder: &mut Decoder,
+    context: &Context,
+    state: &SentenceState,
+    live: &mut LiveLearning,
+    now: f64,
+    commit_text: &str,
+) -> Vec<Event> {
+    if live.mode.is_empty() || !live.store_ready {
+        return Vec::new();
+    }
+    let Ok(selection) = learning_selection(decoder, context, state) else {
+        return Vec::new();
+    };
+    let raw_text = String::from_utf8_lossy(&selection.raw).into_owned();
+    if raw_text.is_empty() || live.submitted_raw.as_deref() == Some(raw_text.as_str()) {
+        return Vec::new();
+    }
+    live.submitted_raw = Some(raw_text);
+    learning_stage(
+        live,
+        state,
+        selection.selected.as_ref(),
+        &selection.raw,
+        selection.first.as_ref(),
+        now,
+    );
+    // 参照：`expected = buffered_text .. selected.text:sub(#committed_text + 1)`。
+    let expected = match &selection.selected {
+        Some(selected) => {
+            let tail = selected
+                .text
+                .get(state.committed_text.len()..)
+                .unwrap_or_default();
+            format!("{}{tail}", state.buffered_text)
+        }
+        None => String::new(),
+    };
+    learning_submit(live, selection.selected.as_ref(), commit_text, &expected)
+}
+
+/// 提交点的学习提交参数：解码器 + 学习暂存 + 注入时间
+/// （对应参照 `submit_early(env, ...)` 的宿主侧）。
+pub struct LearningCommit<'a> {
+    pub decoder: &'a mut Decoder,
+    pub live: &'a mut LiveLearning,
+    pub now: f64,
+}
+
+impl LearningCommit<'_> {
+    /// 参照 `submit_early` 的非缓冲分支：提交文本，随后同步执行
+    /// ①提交通知器（`learning_commit`）与 ②按自动上屏选中项的学习提交；
+    /// 返回待宿主持久化的事件。
+    pub fn commit_with_learning(
+        &mut self,
+        context: &mut Context,
+        state: &mut SentenceState,
+        commit_text: &str,
+        selected_text: &str,
+        selected_raw_length: usize,
+    ) -> Vec<Event> {
+        context_commit(context, commit_text);
+        let mut accepted = learning_commit(
+            self.decoder,
+            context,
+            state,
+            self.live,
+            self.now,
+            commit_text,
+        );
+        let auto = Selected {
+            text: selected_text.to_string(),
+            raw_length: selected_raw_length,
+            diff: DiffItem {
+                text: selected_text.to_string(),
+                path: Vec::new(),
+            },
+            buffered_fallback: false,
+        };
+        accepted.extend(learning_submit(
+            self.live,
+            Some(&auto),
+            commit_text,
+            commit_text,
+        ));
+        accepted
+    }
+}
 
 /// 参照 `M.options` 的内建缺省表。
 pub fn option_defaults() -> HashMap<String, bool> {
@@ -1660,6 +1801,7 @@ pub fn processor(
                             text: item.text.clone(),
                             raw_length,
                             diff,
+                            buffered_fallback: false,
                         });
                         break;
                     }
@@ -1668,7 +1810,6 @@ pub fn processor(
             }
             if let Some(candidate) = candidate {
                 if candidate.raw_length > state.committed_raw.len() {
-                    learning_stage(live, state, Some(&candidate), &full_before, None, env.now);
                     state.tab_pending = false;
                     let boundaries: String = candidate
                         .diff
@@ -1698,7 +1839,19 @@ pub fn processor(
                     state.save(context);
                     if let Some(commit) = commit {
                         if let Some(text) = submit_early(context, state, &commit) {
-                            context_commit(context, &text);
+                            let accepted = LearningCommit {
+                                decoder: &mut *decoder,
+                                live: &mut *live,
+                                now: env.now,
+                            }
+                            .commit_with_learning(
+                                context,
+                                state,
+                                &text,
+                                &candidate.text,
+                                candidate.raw_length,
+                            );
+                            live.submitted.extend(accepted);
                         }
                     }
                     let mut restored = full_before[state.committed_raw.len()..].to_vec();
@@ -1717,7 +1870,11 @@ pub fn processor(
         context.push_input(ch.to_string().as_bytes());
         if is_letter
             && try_empty_code_commit(
-                decoder,
+                &mut LearningCommit {
+                    decoder: &mut *decoder,
+                    live: &mut *live,
+                    now: env.now,
+                },
                 context,
                 state,
                 &full_before,
@@ -1728,7 +1885,17 @@ pub fn processor(
         {
             return Ok(ProcessorResult::Consume);
         }
-        try_early_commit(decoder, context, state, params, env.dot_armed)?;
+        try_early_commit(
+            &mut LearningCommit {
+                decoder: &mut *decoder,
+                live: &mut *live,
+                now: env.now,
+            },
+            context,
+            state,
+            params,
+            env.dot_armed,
+        )?;
         return Ok(ProcessorResult::Consume);
     }
     if !context.is_composing() {
@@ -1753,7 +1920,15 @@ pub fn processor(
         && !key_event.alt()
         && !key_event.super_modifier()
     {
-        confirm_selection(context);
+        confirm_selection(
+            Some(&mut LearningCommit {
+                decoder: &mut *decoder,
+                live: &mut *live,
+                now: env.now,
+            }),
+            context,
+            state,
+        );
         return Ok(ProcessorResult::Forward);
     }
     if repr == "Return" || repr == "KP_Enter" {
@@ -1919,7 +2094,15 @@ pub fn processor(
                 None,
                 env.now,
             );
-            confirm_selection(context);
+            confirm_selection(
+                Some(&mut LearningCommit {
+                    decoder: &mut *decoder,
+                    live: &mut *live,
+                    now: env.now,
+                }),
+                context,
+                state,
+            );
         }
         live.pending.clear();
         live.baseline = None;
@@ -2465,6 +2648,7 @@ mod tests {
             text: text.to_string(),
             raw_length: 4,
             diff: diff_item(text),
+            buffered_fallback: false,
         }
     }
 
@@ -2515,6 +2699,88 @@ mod tests {
         let accepted = learning_submit(&mut live, Some(&selected), "交", "交疒");
         assert!(accepted.is_empty());
         assert!(live.pending.is_empty());
+    }
+
+    #[test]
+    fn buffered_fallback_produces_no_learning_events() {
+        let mode = "sentence-v1|rules=|optimal=1500|dup=1";
+        let baseline = selected_item("交交");
+        let fallback = Selected::buffered("ab", "交");
+        let mut state = SentenceState::fresh(1);
+        state.buffered_text = "交".to_string();
+        state.tab_pending = true;
+        let mut live = LiveLearning {
+            mode: mode.to_string(),
+            baseline: Some(baseline.clone()),
+            ..LiveLearning::default()
+        };
+        // stage：兜底项不产出事件，baseline 保留（参照 pcall 吞错的有效行为）
+        learning_stage(&mut live, &state, Some(&fallback), b"ab", None, 100.0);
+        assert!(live.pending.is_empty());
+        assert!(live.baseline.is_some());
+        // submit：不消费 pending/baseline
+        let accepted = learning_submit(&mut live, Some(&fallback), "交", "交");
+        assert!(accepted.is_empty());
+        assert!(live.baseline.is_some());
+    }
+
+    #[test]
+    fn learning_commit_gates_and_dedups() {
+        let mut decoder = lexicon_fixture();
+        let mut context = Context::new();
+        let state = SentenceState::fresh(1);
+        let mut live = LiveLearning::default();
+        // 未就绪 / 无 mode：不产出、不记录
+        assert!(learning_commit(&mut decoder, &context, &state, &mut live, 0.0, "x").is_empty());
+        live.mode = "m".to_string();
+        live.store_ready = true;
+        // raw 为空：不记录
+        assert!(learning_commit(&mut decoder, &context, &state, &mut live, 0.0, "x").is_empty());
+        assert!(live.submitted_raw.is_none());
+        // raw 非空：记录 submitted_raw；同 raw 再次调用被去重
+        context.push_input(b"ab");
+        learning_commit(&mut decoder, &context, &state, &mut live, 0.0, "x");
+        assert_eq!(live.submitted_raw.as_deref(), Some("ab"));
+        let pending_before = live.pending.len();
+        assert!(learning_commit(&mut decoder, &context, &state, &mut live, 0.0, "x").is_empty());
+        assert_eq!(live.pending.len(), pending_before);
+    }
+
+    #[test]
+    fn commit_with_learning_queues_accepted_events() {
+        let mut decoder = lexicon_fixture();
+        let mut context = Context::new();
+        let mut state = SentenceState::fresh(1);
+        let mut live = LiveLearning {
+            mode: "m".to_string(),
+            store_ready: true,
+            pending: vec![DiffEvent {
+                time: 0.0,
+                mode: "m".to_string(),
+                code: "ab".to_string(),
+                text: "疒".to_string(),
+                context: String::new(),
+                raw_start: 0,
+                raw_end: 2,
+                text_start: 3,
+                text_end: 6,
+            }],
+            ..LiveLearning::default()
+        };
+        let accepted = LearningCommit {
+            decoder: &mut decoder,
+            live: &mut live,
+            now: 0.0,
+        }
+        .commit_with_learning(&mut context, &mut state, "疒", "交疒", 2);
+        assert_eq!(accepted.len(), 1);
+        assert_eq!(accepted[0].text, "疒");
+        assert!(live.pending.is_empty());
+        // 自动上屏的提交文本与选中项（同步提交，供宿主持久化）
+        let queued: Vec<String> = accepted.iter().map(|event| event.text.clone()).collect();
+        live.submitted.extend(accepted);
+        assert_eq!(queued, vec!["疒".to_string()]);
+        assert_eq!(live.submitted.len(), 1);
     }
 
     #[test]
@@ -2648,11 +2914,11 @@ mod tests {
         assert_eq!(h.press("apostrophe"), ProcessorResult::Forward);
         // 空闲数字直接上屏并置待发
         assert_eq!(h.press("5"), ProcessorResult::Consume);
-        assert_eq!(h.context.get_commit_text(), "5");
+        assert_eq!(h.context.last_commit_text(), "5");
         assert!(h.dot_armed);
         // 紧随的句点按 ASCII 小数点上屏
         assert_eq!(h.press("period"), ProcessorResult::Consume);
-        assert_eq!(h.context.get_commit_text(), ".");
+        assert_eq!(h.context.last_commit_text(), ".");
         assert!(!h.dot_armed);
         // 无待发状态时句点交宿主
         assert_eq!(h.press("period"), ProcessorResult::Forward);
@@ -2668,7 +2934,7 @@ mod tests {
         h.push_segment(b"ab", &["交"]);
         // Return：提交「缓冲 + 实时输入」并清空
         assert_eq!(h.press("Return"), ProcessorResult::Consume);
-        assert_eq!(h.context.get_commit_text(), "ab");
+        assert_eq!(h.context.last_commit_text(), "ab");
         assert!(h.context.input().is_empty());
         // Escape：直接清空
         h.push_segment(b"a", &["甲"]);
@@ -2742,13 +3008,13 @@ mod tests {
             selected: false,
         });
         // `_auto_commit` 关闭：只标记选中，不提交（对应 librime 的 Forward 分支）
-        confirm_selection(&mut context);
+        confirm_selection(None, &mut context, &mut SentenceState::fresh(1));
         assert!(context.composition.back().unwrap().selected);
         assert_eq!(context.input(), b"ab");
         // 打开后：确认即提交
         context.set_option("_auto_commit", true);
-        confirm_selection(&mut context);
-        assert_eq!(context.get_commit_text(), "甲");
+        confirm_selection(None, &mut context, &mut SentenceState::fresh(1));
+        assert_eq!(context.last_commit_text(), "甲");
         assert!(context.input().is_empty());
         // 缓冲候选：提交前并入缓冲前缀
         let mut context = Context::new();
@@ -2763,8 +3029,8 @@ mod tests {
             candidates: vec![Candidate::new("sentence_buffered", 0, 2, "c", "")],
             selected: false,
         });
-        confirm_selection(&mut context);
-        assert_eq!(context.get_commit_text(), "乙c");
+        confirm_selection(None, &mut context, &mut SentenceState::fresh(1));
+        assert_eq!(context.last_commit_text(), "乙c");
     }
 
     #[test]

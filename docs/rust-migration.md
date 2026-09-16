@@ -64,6 +64,10 @@ docs/
 - addon 注册（`Category=InputMethod`、`OnDemand`）+ 输入法条目 conf；`InputMethodEngine` 实现。
 - 会话：每个 `InputContext` 一份 core 会话；`reset/activate/deactivate` 对齐。
 - UI 同步：按键后状态快照（preedit/候选/上屏）；preedit 光标做字节→字符换算。
+- 学习：提交点的通知器序列（选择/暂存/提交）已内置在核心提交路径
+  （`confirm_selection`、自动上屏的 `LearningCommit`）；宿主只需排空
+  `LiveLearning::submitted` 落库，并在 `store_ready` 置位后生效；宿主自发的提交
+  （如候选点击）调 `interaction::learning_commit`。
 - 状态菜单：4 个核心开关（提前上屏、单字重码组句、提前上屏至编码、全角/半角标点）。
 
 ## 6. 测试
