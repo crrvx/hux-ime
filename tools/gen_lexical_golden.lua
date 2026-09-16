@@ -55,7 +55,7 @@ emit("header", "bytes=" .. model.bytes, "entries=" .. model.entry_count,
     "bits=" .. model.bit_count, "hashes=" .. model.hash_count,
     "min=" .. model.minimum_length, "max=" .. model.maximum_length)
 
-for _, text in ipairs({ "", "a", "ab", "汉字", "虎整句", string.rep("a", 30), "我们的" }) do
+for _, text in ipairs({ "", "a", "ab", "汉字", "虎句", string.rep("a", 30), "我们的" }) do
     local first, second = lexical.hashes(text)
     emit("hashes", hex(text), tostring(first), tostring(second))
 end

@@ -76,7 +76,7 @@ local function bits(value)
 end
 
 -- ---------------------------------------------------------------- 工具面
-for _, text in ipairs({ "", "tiger_sentence", "虎整句", "a", "schema/虎" }) do
+for _, text in ipairs({ "", "tiger_sentence", "虎句", "a", "schema/虎" }) do
     emit("hash", hex(text), learning.hash(text))
 end
 -- ---------------------------------------------------------------- 语料
