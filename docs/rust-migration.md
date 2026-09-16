@@ -10,7 +10,8 @@
 |---|---|---|
 | **K0** ✅ | spike：`cache` + `ngram` 移植 + 差分工具链 + 陷阱审计 | fixture 29,617 条、真实模型 62,777 条逐位一致（见 [`spike-report.md`](spike-report.md)） |
 | **K1** ✅ | 计算核：lexicon、decode/beam、early-evidence、learning（见 [`spike-report.md`](spike-report.md) 与金样） | 快照差分全绿 |
-| **K2**（进行中） | 交互引擎：buffer/caret、menu、键位 `repr` ✅（`key.rs` + 键表生成/金样）、标点、ascii_composer、Tab 锁/提前上屏、选项 | 键序列金样一致 |
+| **K1.5** ✅ | 上游追平：紧凑排序先验（码形证据 / 4 码生僻字保护 / Top-5 词先验）+ 锁播种修复语义；pin 前移至上游 main `35a10b9`，金样全量重生成 | 模型版金样逐位一致（含词先验重排） |
+| **K2**（进行中） | 交互引擎：buffer/caret、menu、键位 `repr` ✅（`key.rs` + 键表生成/金样）、键序列金样 ✅（2c 探针 11 例/38 步，含空码自动上屏）、处理器/翻译器/过滤器/学习暂存与提交通知器/早提交 ✅；余：宿主集成（K3） | 键序列金样一致 |
 | **K3** | fcitx5 addon：注册、候选/预编辑/上屏、状态菜单、配置、数据路径、LevelDb | 真机可用 |
 | **K4** | 验收与打包 | 真机清单 + 性能/内存 |
 
@@ -22,12 +23,14 @@
 Cargo.toml                     # workspace
 crates/
   tigerclaw-core/              # 纯逻辑，无 fcitx5 依赖
-    src/cache.rs  ngram.rs     # K0 ✅
-    src/lexicon.rs decode.rs learning.rs    # K1
-    src/key.rs session.rs punct.rs ascii.rs config.rs   # K2
+    src/cache.rs  ngram.rs                        # K0 ✅
+    src/lexicon.rs decode.rs learning.rs          # K1 ✅
+    src/lexical.rs                                # K1.5（紧凑词先验）
+    src/key.rs key_table.rs session.rs interaction.rs   # K2（key 事件/会话/交互）
   tigerclaw-addon/             # K3：唯一依赖 fcitx5 的 crate
+data/                          # 随包数据源（词先验位图，CC BY 4.0）
 goldens/                       # 差分金样（fixture 入库；真实模型抽样本地）
-tools/                         # 金样生成/基准（Lua 参照侧）
+tools/                         # 金样生成/基准（Lua 参照侧、真 librime 探针）
 docs/
 ```
 
@@ -39,11 +42,11 @@ docs/
 |---|---:|---|---|---|
 | `tiger_sentence_cache.lua` | 40 | `cache.rs` | K0 ✅ | fixture 金样（缓存状态/淘汰序） |
 | `tiger_sentence_ngram.lua` | 550 | `ngram.rs` | K0 ✅ | 逐位 logp/observed + cache_status |
-| `tiger_sentence.lua`（词库/解码/证据） | ~2600 | `lexicon.rs` ✅ + `decode.rs` ✅（冷路径 + 证据 + 学习接线） | K1 | 数据索引金样 + 解码/证据/学习快照；增量缓存与交互状态机待 K2 |
+| `tiger_sentence.lua`（词库/解码/证据） | ~2600 | `lexicon.rs` ✅ + `decode.rs` ✅（冷路径 + 证据 + 学习接线） | K1 | 数据索引金样 + 解码/证据/学习快照；增量/锁缓存未移植（性能项） |
 | `tiger_sentence_learning.lua` | 435 | `learning.rs` ✅ | K1 | 23k 检查重放 + learning 金样 |
-| `tiger_sentence.lua`（processor/translator/filter/ascii/options） | ~1250 | `key.rs` ✅ + `session.rs`（运行时核心）| K2 | 键序列金样 |
+| `tiger_sentence_lexical.lua` | 152 | `lexical.rs` ✅（TCSLEX01） | K1.5 | 词先验金样（读取/Bloom/打分；真实位图） |
+| `tiger_sentence.lua`（processor/translator/filter/ascii/options） | ~1250 | `key.rs` ✅ + `session.rs` ✅ + `interaction.rs` ✅（会话运行时与交互层） | K2 | 键序列金样 |
 | librime `key_event`/`key_table`（宿主行为） | — | `key.rs` + `key_table.rs` ✅（由源码生成） | K2 | librime 探针金样 |
-| `tiger_sentence_ngram.lua`（模型读取） | 550 | `ngram.rs` | K0 | 逐位 logp/observed + cache_status |
 
 > `try_load`/`candidate_paths`（模型路径探测）随 K3 数据路径一并实现。
 
@@ -52,12 +55,19 @@ docs/
 - 用户目录 `~/.local/share/fcitx5/tigerclaw`；共享目录 `/usr/share/fcitx5/tigerclaw`。
 - 码表（`tiger_sentence.*.txt`）、`models/sentence-ngram-mobile.bin`、`symbols.yaml`、
   PY_c 转换产物（R2）、`tiger_sentence.options.yaml`、学习库 `<hash>.userdb/`（LevelDB 同构）。
+- 仓库内 `data/` 为随包数据源：`tiger_sentence.lexical.bin`（紧凑词先验，TCSLEX01
+  Bloom filter；CC BY 4.0 署名见 `docs/LEXICAL_PRIOR_ATTRIBUTION.md`，参数与校验和见
+  `docs/LEXICAL_PRIOR_MANIFEST.json`，CI 按 sha256 校验）。
 
 ## 5. fcitx5 集成要点（K3）
 
 - addon 注册（`Category=InputMethod`、`OnDemand`）+ 输入法条目 conf；`InputMethodEngine` 实现。
 - 会话：每个 `InputContext` 一份 core 会话；`reset/activate/deactivate` 对齐。
 - UI 同步：按键后状态快照（preedit/候选/上屏）；preedit 光标做字节→字符换算。
+- 学习：提交点的通知器序列（选择/暂存/提交）已内置在核心提交路径
+  （`confirm_selection`、自动上屏的 `LearningCommit`）；宿主只需排空
+  `LiveLearning::submitted` 落库，并在 `store_ready` 置位后生效；宿主自发的提交
+  （如候选点击）调 `interaction::learning_commit`。
 - 状态菜单：4 个核心开关（提前上屏、单字重码组句、提前上屏至编码、全角/半角标点）。
 
 ## 6. 测试

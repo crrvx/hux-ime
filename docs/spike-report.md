@@ -7,14 +7,14 @@
 
 ### 1.1 fixture 全量（入库金样）
 
-- 记录构成：29,617 条 = `logp` 18,928 + `obs` 10,676 + `status` 7 + `cfg` 2 + `trim`/`close`/`bytes` 各 1
+- 记录构成：29,616 条（另有 1 行注释头，共 29,617 行）= `logp` 18,928 + `obs` 10,676 + `status` 7 + `cfg` 2 + `trim`/`close`/`bytes` 各 1
 - 生成器内以独立 float32 oracle 自检 29,605 项，全部通过
 - Rust 重放（`cargo test -p tigerclaw-core`）：**逐位一致**
 
 ### 1.2 真实模型抽样（本地金样，不入库）
 
 - 模型：`sentence-ngram-mobile.bin`（224 MB）
-- 记录：62,777 条 = `logp` 36,384 + `obs` 26,384 + `status` 5 + `trim`/`close`/`bytes` 各 1
+- 记录：62,776 条（另有 1 行注释头，共 62,777 行）= `logp` 36,384 + `obs` 26,384 + `status` 5 + `trim`/`close`/`bytes` 各 1
 - Rust 重放：**逐位一致**；Lua 参照侧生成耗时 3.9 s
 
 ### 1.3 缓存语义
@@ -80,6 +80,6 @@ lua tools/bench_ngram.lua --reference /path/to/tiger-sentense-rime \
 
 - 补齐 `LICENSE`（GPL-3.0）与 `README.md`；
 - CI（`.github/workflows/ci.yml`）：Rust fmt/clippy/差分 + 以固定参照提交重生成 fixture 金样比对（溯源校验）；
-- 金样来源与 sha256 记入 `goldens/README.md`（参照提交 `f3b30498`）；
+- 金样来源与 sha256 记入 `goldens/README.md`（K0 时期参照提交 `f3b30498`；K1.5 起 pin 为 `35a10b93`，以该文档为准）；
 - `ngram.rs` 边界修复：非 TCSKNM02 模型明确报错、空 unigram 段返回错误而非 panic，并补单测；
 - 模型路径探测（`try_load`/`candidate_paths`）随 K3；`external/` 加入 `.gitignore`。

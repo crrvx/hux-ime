@@ -34,18 +34,18 @@
 | 成员 | 语义 |
 |---|---|
 | `input`（读/写）、`caret_pos`（读/写）、`composition`（读） | 输入串与光标（字节偏移） |
-| `is_composing()` | 存在组合段 |
+| `is_composing()` | `input` 非空**或**组合非空（librime `IsComposing`） |
 | `has_menu()` | 末段候选菜单可准备 |
 | `get_option` / `set_option` | 布尔选项；变更触发选项通知 |
 | `get_property` / `set_property` | 字符串属性 KV（锁/错误/瞬态） |
 | `clear()` | 清空组合 |
 | `push_input(ch)` | caret 处插入字节，caret 后移 |
-| `pop_input(n)` / `delete_input(n)` | 删除 caret 前 / 处 n 字节 |
+| `pop_input(n)` / `delete_input(n)` | 删除 caret 前 / 处 n 字节；越界不改动并返回 false（`n=0` 亦触发更新） |
 | `set_input(str)` | 整体替换输入串 |
-| `highlight(index)` | 移动高亮（**环绕**语义） |
+| `highlight(index)` | 移动高亮（截断到 `count-1`；空菜单归 0；未变化返回 false） |
 | `confirm_current_selection()` | 确认并提交当前选中候选 |
 | `refresh_non_confirmed_composition()` | 保留已确认段，重建未确认组合 |
-| `get_commit_text()` | 最近一次提交文本（commit 通知内使用） |
+| `get_commit_text()` | 按当前组合即时计算（未组合时为空串） |
 
 通知器（`connect(fn)` 返回 `disconnect()` 连接；同步、单线程）：
 
@@ -117,7 +117,7 @@ ascii_composer（`switch_key` 样式 + `good_old_caps_lock`），引擎需提供
 
 - 全局对象与方法存在、类型正确；`Schema(".default")` / `Schema("tiger_sentence_ascii")` 可读；
 - KeyEvent `repr` 表（字母/数字/标点/功能键/`KP_*`）与修饰查询；
-- Context 编辑语义：caret 插入、`pop_input`/`delete_input`、`highlight` 环绕、确认、重建组合、清空；
+- Context 编辑语义：caret 插入、`pop_input`/`delete_input`、`highlight`（截断/空菜单）、确认、重建组合、清空；
 - 通知器：commit/update/option 的触发时机与 `disconnect`；
 - CandidateList：过滤丢弃与注释改写后顺序保持；
 - Config 往返、缺失返回 `nil`；LevelDb 打开/查询/更新/关闭与重启保留；

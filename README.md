@@ -1,6 +1,6 @@
 # tigerclaw-fcitx5
 
-虎整句输入方案：fcitx5 原生 Rust 实现（Rust 直迁进行中，K0 已完成）。
+虎整句输入方案：fcitx5 原生 Rust 实现（Rust 直迁进行中：K0–K1.5 ✅、K2 核心 ✅；下一步 K3 fcitx5 addon）。
 
 | 文档 | 内容 |
 |---|---|
@@ -22,3 +22,8 @@ cargo fmt --all --check
 ## 许可
 
 GPL-3.0-or-later，见 [`LICENSE`](LICENSE)。
+
+随包的词先验数据 `data/tiger_sentence.lexical.bin` 为 **CC BY 4.0**（派生自
+[rime-mohu](https://github.com/fcxxxz/rime-mohu)）：署名与来源见
+[`docs/LEXICAL_PRIOR_ATTRIBUTION.md`](docs/LEXICAL_PRIOR_ATTRIBUTION.md)，
+许可正文见 [`LICENSES/CC-BY-4.0.txt`](LICENSES/CC-BY-4.0.txt)。

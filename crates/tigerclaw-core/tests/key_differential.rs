@@ -3,22 +3,15 @@
 //! 金样 `goldens/key.tsv.gz` 由 `tools/gen_key_golden.sh` 生成
 //! （系统 librime 1.17.0 + `tools/key_cases.txt`）。
 
-use flate2::read::GzDecoder;
-use std::fs::File;
-use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
-use tigerclaw_core::key::{self, KeyEvent};
+mod common;
 
-fn repo_path(relative: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join(relative)
-}
+use common::open_golden;
+use std::io::BufRead;
+use tigerclaw_core::key::{self, KeyEvent};
 
 #[test]
 fn key_transcript_is_bit_exact() {
-    let file = File::open(repo_path("goldens/key.tsv.gz")).expect("open key golden");
-    let reader = BufReader::new(GzDecoder::new(file));
+    let reader = open_golden("goldens/key.tsv.gz");
     let mut records = 0usize;
     for line in reader.lines() {
         let line = line.expect("read golden line");

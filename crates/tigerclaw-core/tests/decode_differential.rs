@@ -6,59 +6,13 @@
 //! * `goldens/decode_rank_first.tsv.gz`：fixture 模型 + 关闭单字重码；
 //! * `goldens/decode_evidence*.tsv.gz`：早提交证据（`--early-commit 1`）。
 
-use flate2::read::GzDecoder;
-use std::fs::File;
-use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+mod common;
+
+use common::{decode_hex, field, make_decoder, open_golden, parse_bits, repo_path};
+use std::io::BufRead;
 use tigerclaw_core::decode::{DecodeLock, Decoder, has_complete_candidate};
 use tigerclaw_core::learning::{Event, LearningIndex};
-use tigerclaw_core::lexicon::{Lexicon, Supplement};
 use tigerclaw_core::ngram::MobileModel;
-
-fn repo_path(relative: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join(relative)
-}
-
-fn decode_hex(text: &str) -> String {
-    if text == "-" {
-        return String::new();
-    }
-    if text.len() % 2 != 0 || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        panic!("bad hex field: {text:?}");
-    }
-    let bytes: Vec<u8> = (0..text.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&text[i..i + 2], 16).expect("hex digit"))
-        .collect();
-    String::from_utf8(bytes).expect("valid UTF-8")
-}
-
-fn parse_bits(text: &str) -> u64 {
-    let digits = text.strip_prefix("0x").expect("0x prefix");
-    let hi = u64::from_str_radix(&digits[..8], 16).expect("hex digit");
-    let lo = u64::from_str_radix(&digits[8..], 16).expect("hex digit");
-    hi << 32 | lo
-}
-
-fn field<'a>(part: &'a str, name: &str) -> &'a str {
-    part.strip_prefix(name)
-        .unwrap_or_else(|| panic!("expected {name}=..., got {part}"))
-}
-
-fn open_golden(relative: &str) -> BufReader<GzDecoder<File>> {
-    let file =
-        File::open(repo_path(relative)).unwrap_or_else(|error| panic!("open {relative}: {error}"));
-    BufReader::new(GzDecoder::new(file))
-}
-
-fn make_decoder(model: Option<MobileModel>) -> Decoder {
-    let data_dir = repo_path("goldens/lexicon");
-    let lexicon = Lexicon::load(std::slice::from_ref(&data_dir), 1500);
-    let supplement = Supplement::load_default(Some(&data_dir));
-    Decoder::new(lexicon, supplement, model)
-}
 
 fn replay(mut decoder: Decoder, reader: impl BufRead, early: bool) -> usize {
     let mut lines = reader

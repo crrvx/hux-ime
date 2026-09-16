@@ -10,6 +10,7 @@ pub mod interaction;
 pub mod key;
 pub mod key_table;
 pub mod learning;
+pub mod lexical;
 pub mod lexicon;
 pub mod ngram;
 pub mod session;

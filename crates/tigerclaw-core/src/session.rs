@@ -10,10 +10,10 @@
 //! - 事件（update/commit/option）入队；调用方在每个操作后 `drain_events()`，
 //!   与参照的同步 notifier 在可观测行为上等价。
 //! - `last_commit` 保留最近一次组合提交文本，供诊断；参照的 `get_commit_text()`
-//!   仅在 commit 通知内有效，跨实现一律以 [`Event::Commit`] 携带的文本为准。
+//!   为即时计算（任何时刻可读），跨实现一律以 [`Event::Commit`] 携带的文本为准。
 //! - 属性写入不产生事件（参照未使用 `property_update_notifier`）。
-//! - 管线（分段/翻译/过滤）由 [`Pipeline`] 注入；本增量提供模型与编辑语义，
-//!   交互层（processor/translator/filters）在后续增量接入。
+//! - 管线（分段/翻译/过滤）由 [`Pipeline`] 注入；交互层（processor/translator/filters）
+//!   见 `interaction` 模块。
 
 use hashbrown::HashMap;
 use std::collections::VecDeque;
@@ -86,24 +86,46 @@ impl Composition {
         self.segments.last()
     }
 
+    /// 参照 `Segmentation::Forward`：末段非空时追加空尾段（下一轮起点）。
+    pub fn forward(&mut self) -> bool {
+        let Some(back) = self.segments.last() else {
+            return false;
+        };
+        if back.start == back.end {
+            return false;
+        }
+        let position = back.end;
+        self.segments.push(Segment {
+            start: position,
+            end: position,
+            ..Segment::default()
+        });
+        true
+    }
+
     pub fn back_mut(&mut self) -> Option<&mut Segment> {
         self.segments.last_mut()
     }
 
-    /// 参照 `Composition::GetCommitText`：已确认段取选中候选文本，
-    /// 未确认段取原始输入切片。
+    /// 参照 `Composition::GetCommitText`：有选中候选的段取候选文本（不论段状态），
+    /// 否则取原始输入切片（`phony` 段跳过）；末尾追加未被段覆盖的输入。
     pub fn commit_text(&self, input: &[u8]) -> String {
         let mut out = Vec::new();
+        let mut end = 0usize;
         for segment in &self.segments {
-            if segment.selected
-                && let Some(candidate) = segment.selected_candidate()
-            {
+            if let Some(candidate) = segment.selected_candidate() {
+                end = candidate.end.min(input.len());
                 out.extend_from_slice(candidate.text.as_bytes());
                 continue;
             }
-            let end = segment.end.min(input.len());
+            end = segment.end.min(input.len());
             let start = segment.start.min(end);
-            out.extend_from_slice(&input[start..end]);
+            if !segment.has_tag("phony") {
+                out.extend_from_slice(&input[start..end]);
+            }
+        }
+        if input.len() > end {
+            out.extend_from_slice(&input[end..]);
         }
         String::from_utf8_lossy(&out).into_owned()
     }
@@ -131,7 +153,9 @@ pub struct Context {
     options: HashMap<String, bool>,
     properties: HashMap<String, String>,
     last_commit: String,
-    events: VecDeque<Event>,
+    events: VecDeque<(u64, Event)>,
+    /// 事件序号（[`Context`] 与 [`Session`] 的效果队列共用同一序号空间）。
+    sequence: u64,
 }
 
 impl Default for Context {
@@ -150,7 +174,24 @@ impl Context {
             properties: HashMap::new(),
             last_commit: String::new(),
             events: VecDeque::new(),
+            sequence: 0,
         }
+    }
+
+    /// 事件入队（带序号；与 [`Session`] 的效果队列共用序号空间）。
+    fn push_event(&mut self, event: Event) {
+        self.sequence += 1;
+        self.events.push_back((self.sequence, event));
+    }
+
+    /// 取下一个事件序号（供 [`Session`] 的效果队列使用）。
+    fn next_sequence(&mut self) -> u64 {
+        self.sequence += 1;
+        self.sequence
+    }
+
+    fn drain_events_stamped(&mut self) -> Vec<(u64, Event)> {
+        self.events.drain(..).collect()
     }
 
     // ------------------------------------------------------------ 基本信息
@@ -167,8 +208,9 @@ impl Context {
         self.caret = caret.min(self.input.len());
     }
 
+    /// 参照 `Context::IsComposing`：`!input.empty() || !composition.empty()`。
     pub fn is_composing(&self) -> bool {
-        !self.composition.empty()
+        !self.input.is_empty() || !self.composition.empty()
     }
 
     pub fn has_menu(&self) -> bool {
@@ -198,14 +240,20 @@ impl Context {
         caret.min(length)
     }
 
-    pub fn get_commit_text(&self) -> &str {
+    /// 参照 `Context::GetCommitText`：按当前组合即时计算（未组合时为空串）。
+    pub fn get_commit_text(&self) -> String {
+        self.composition.commit_text(&self.input)
+    }
+
+    /// 最近一次组合提交文本（诊断用；事件文本以 [`Event::Commit`] 为准）。
+    pub fn last_commit_text(&self) -> &str {
         &self.last_commit
     }
 
     /// 参照 `Engine::CommitText`：不经过组合的直接提交（事件供前端上屏）。
     pub fn direct_commit(&mut self, text: &str) {
         self.last_commit = text.to_string();
-        self.events.push_back(Event::Commit(text.to_string()));
+        self.push_event(Event::Commit(text.to_string()));
     }
 
     // ------------------------------------------------------------ 选项/属性
@@ -222,7 +270,7 @@ impl Context {
     /// 参照 `Context::set_option`：无条件触发选项通知（librime 语义）。
     pub fn set_option(&mut self, name: &str, value: bool) {
         self.options.insert(name.to_string(), value);
-        self.events.push_back(Event::Option(name.to_string()));
+        self.push_event(Event::Option(name.to_string()));
     }
 
     pub fn get_property(&self, key: &str) -> Option<&str> {
@@ -249,29 +297,31 @@ impl Context {
         let at = self.caret.min(self.input.len());
         self.input.splice(at..at, text.iter().copied());
         self.caret = at + text.len();
-        self.events.push_back(Event::Update);
+        self.push_event(Event::Update);
     }
 
-    /// 参照 `Context::PopInput`：删除 caret 前 n 字节。
+    /// 参照 `Context::PopInput`：删除 caret 前 n 字节；越界不改动并返回 false。
     pub fn pop_input(&mut self, count: usize) -> bool {
-        if count == 0 || self.caret == 0 {
+        if self.caret < count {
             return false;
         }
-        let start = self.caret.saturating_sub(count);
+        let start = self.caret - count;
         self.input.drain(start..self.caret);
         self.caret = start;
-        self.events.push_back(Event::Update);
+        self.push_event(Event::Update);
         true
     }
 
-    /// 参照 `Context::DeleteInput`：删除 caret 处 n 字节。
+    /// 参照 `Context::DeleteInput`：删除 caret 处 n 字节；越界不改动并返回 false。
     pub fn delete_input(&mut self, count: usize) -> bool {
-        if count == 0 || self.caret >= self.input.len() {
+        let Some(end) = self.caret.checked_add(count) else {
+            return false;
+        };
+        if end > self.input.len() {
             return false;
         }
-        let end = (self.caret + count).min(self.input.len());
         self.input.drain(self.caret..end);
-        self.events.push_back(Event::Update);
+        self.push_event(Event::Update);
         true
     }
 
@@ -280,33 +330,38 @@ impl Context {
         self.input.clear();
         self.input.extend_from_slice(value);
         self.caret = self.input.len();
-        self.events.push_back(Event::Update);
+        self.push_event(Event::Update);
     }
 
     pub fn clear(&mut self) {
         self.input.clear();
         self.caret = 0;
         self.composition = Composition::default();
-        self.events.push_back(Event::Update);
+        self.push_event(Event::Update);
     }
 
     // ------------------------------------------------------------ 菜单操作
 
-    /// 参照 `Context::Highlight`：截断到 `count-1`；索引未变化返回 false。
+    /// 参照 `Context::Highlight`：截断到 `count-1`；空菜单归 0；索引未变化返回 false。
     pub fn highlight(&mut self, index: usize) -> bool {
         let Some(segment) = self.composition.back_mut() else {
             return false;
         };
         if segment.candidates.is_empty() {
-            return false;
+            let changed = segment.selected_index != 0;
+            segment.selected_index = 0;
+            if changed {
+                self.push_event(Event::Update);
+            }
+            return changed;
         }
-        let count = segment.prepare(index + 1);
+        let count = segment.prepare(index.saturating_add(1));
         let new_index = if count > 0 { (count - 1).min(index) } else { 0 };
         if segment.selected_index == new_index {
             return false;
         }
         segment.selected_index = new_index;
-        self.events.push_back(Event::Update);
+        self.push_event(Event::Update);
         true
     }
 
@@ -326,13 +381,13 @@ impl Context {
         }
         let text = self.composition.commit_text(&self.input);
         self.last_commit = text.clone();
-        self.events.push_back(Event::Commit(text));
+        self.push_event(Event::Commit(text));
         self.clear();
         true
     }
 
-    /// 参照 `Context::RefreshNonConfirmedComposition`：
-    /// 从尾部弹出未确认段（`status < kSelected`），保留已确认前缀。
+    /// 参照 `ClearNonConfirmedComposition` / `RefreshNonConfirmedComposition`：
+    /// 从尾部弹出未确认段（`status < kSelected`）后追加空尾段（`Forward`）。
     pub fn refresh_non_confirmed_composition(&mut self) -> bool {
         let mut reverted = false;
         while self
@@ -346,7 +401,8 @@ impl Context {
             reverted = true;
         }
         if reverted {
-            self.events.push_back(Event::Update);
+            self.composition.forward();
+            self.push_event(Event::Update);
         }
         reverted
     }
@@ -354,7 +410,7 @@ impl Context {
     // ------------------------------------------------------------ 事件
 
     pub fn drain_events(&mut self) -> Vec<Event> {
-        self.events.drain(..).collect()
+        self.events.drain(..).map(|(_, event)| event).collect()
     }
 
     pub fn has_events(&self) -> bool {
@@ -366,8 +422,8 @@ impl Context {
 pub struct Session {
     pub context: Context,
     pipeline: Option<Box<dyn Pipeline>>,
-    /// 直接提交（`engine:commit_text`）产生的 UI 效果。
-    effects: Vec<Event>,
+    /// 直接提交（`engine:commit_text`）产生的 UI 效果（`(序号, 事件)`）。
+    effects: Vec<(u64, Event)>,
 }
 
 impl Default for Session {
@@ -397,25 +453,29 @@ impl Session {
             let mut composition = Composition::default();
             pipeline.build(&input, &mut composition);
             self.context.composition = composition;
-            for event in self.context.drain_events() {
+            for (sequence, event) in self.context.drain_events_stamped() {
                 if !matches!(event, Event::Update) {
-                    self.effects.push(event);
+                    self.effects.push((sequence, event));
                 }
             }
-            self.effects.push(Event::Update);
+            let sequence = self.context.next_sequence();
+            self.effects.push((sequence, Event::Update));
         }
     }
 
     /// 参照 `Engine::CommitText`：不经过组合的直接上屏。
     pub fn commit_text(&mut self, text: &str) {
-        self.effects.push(Event::Commit(text.to_string()));
+        let sequence = self.context.next_sequence();
+        self.effects
+            .push((sequence, Event::Commit(text.to_string())));
     }
 
-    /// 取走自上次调用以来累积的 UI 效果。
+    /// 取走自上次调用以来累积的 UI 效果（按发生顺序归并两个队列）。
     pub fn take_effects(&mut self) -> Vec<Event> {
-        let mut events: Vec<Event> = self.context.drain_events();
-        events.append(&mut self.effects);
-        events
+        let mut events = std::mem::take(&mut self.effects);
+        events.extend(self.context.drain_events_stamped());
+        events.sort_by_key(|(sequence, _)| *sequence);
+        events.into_iter().map(|(_, event)| event).collect()
     }
 }
 
@@ -440,6 +500,80 @@ mod tests {
         context.composition.segments.push(segment);
         context.drain_events();
         context
+    }
+
+    #[test]
+    fn is_composing_includes_raw_input() {
+        let mut context = Context::new();
+        assert!(!context.is_composing());
+        context.push_input(b"a");
+        assert!(context.is_composing()); // 无组合但 input 非空（librime 语义）
+        assert!(context.commit());
+        assert_eq!(context.last_commit_text(), "a");
+        assert!(!context.is_composing());
+    }
+
+    #[test]
+    fn pop_and_delete_reject_out_of_range() {
+        let mut context = Context::new();
+        context.push_input(b"ab");
+        context.set_caret(1);
+        assert!(!context.pop_input(2)); // caret < count：不改动
+        assert_eq!(context.input(), b"ab");
+        assert!(context.pop_input(1));
+        assert_eq!(context.input(), b"b");
+        context.set_caret(1);
+        assert!(!context.delete_input(2)); // 超出末尾：不改动
+        assert_eq!(context.input(), b"b");
+        context.drain_events();
+        assert!(context.delete_input(0)); // 0 长度：触发更新并返回 true
+        assert_eq!(context.drain_events(), vec![Event::Update]);
+    }
+
+    #[test]
+    fn commit_text_uses_candidates_and_appends_tail() {
+        // 未标记 selected 的段同样按选中候选取文本（librime 语义）
+        let mut context = Context::new();
+        context.set_input(b"abcd");
+        context.composition.segments.push(Segment {
+            start: 0,
+            end: 2,
+            candidates: vec![Candidate::new("sentence", 0, 2, "甲", "")],
+            ..Segment::default()
+        });
+        assert_eq!(context.composition.commit_text(context.input()), "甲cd");
+        // 无候选段取输入切片；末尾未被覆盖的输入追加
+        let mut context = Context::new();
+        context.set_input(b"abcd");
+        context.composition.segments.push(Segment {
+            start: 0,
+            end: 2,
+            ..Segment::default()
+        });
+        assert_eq!(context.composition.commit_text(context.input()), "abcd");
+    }
+
+    #[test]
+    fn empty_menu_highlight_resets_selection() {
+        let mut context = Context::new();
+        context.composition.segments.push(Segment::default());
+        context.composition.segments[0].selected_index = 2;
+        assert!(context.highlight(0));
+        assert_eq!(context.composition.segments[0].selected_index, 0);
+    }
+
+    #[test]
+    fn take_effects_keeps_chronological_order() {
+        let mut session = Session::new();
+        session.commit_text("x");
+        session.context.set_option("t", true);
+        assert_eq!(
+            session.take_effects(),
+            vec![
+                Event::Commit("x".to_string()),
+                Event::Option("t".to_string())
+            ]
+        );
     }
 
     #[test]
@@ -527,8 +661,11 @@ mod tests {
         assert!(!context.refresh_non_confirmed_composition());
         context.composition.segments.push(Segment::default());
         assert!(context.refresh_non_confirmed_composition());
-        assert_eq!(context.composition.segments.len(), 1);
+        // 已确认段保留 + 追加空尾段（参照 `Segmentation::Forward`）。
+        assert_eq!(context.composition.segments.len(), 2);
         assert!(context.composition.segments[0].selected);
+        assert_eq!(context.composition.segments[1].start, 2);
+        assert_eq!(context.composition.segments[1].end, 2);
     }
 
     #[test]
@@ -538,7 +675,7 @@ mod tests {
         assert!(context.confirm_current_selection());
         let expected = context.composition.commit_text(context.input());
         assert!(context.commit());
-        assert_eq!(context.get_commit_text(), expected);
+        assert_eq!(context.last_commit_text(), expected);
         assert!(!context.is_composing());
         assert!(context.input().is_empty());
         assert!(matches!(
@@ -553,7 +690,7 @@ mod tests {
         context.composition.segments[0].selected = true;
         context.composition.segments.push(Segment::default());
         assert!(context.refresh_non_confirmed_composition());
-        assert_eq!(context.composition.segments.len(), 1);
+        assert_eq!(context.composition.segments.len(), 2);
         assert!(context.composition.segments[0].selected);
     }
 

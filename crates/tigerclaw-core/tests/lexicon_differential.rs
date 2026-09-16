@@ -4,46 +4,11 @@
 //! * present：`goldens/lexicon/` 数据 + `goldens/lexicon.tsv.gz`；
 //! * missing：数据缺失路径 + `goldens/lexicon_missing.tsv.gz`。
 
-use flate2::read::GzDecoder;
-use std::fs::File;
-use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+mod common;
+
+use common::{decode_hex as decode, hex as encode, open_golden, repo_path};
+use std::io::BufRead;
 use tigerclaw_core::lexicon::{Lexicon, Supplement};
-
-fn repo_path(relative: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join(relative)
-}
-
-/// transcript 字符串参数：`-` 表示空串，其余为 UTF-8 字节的小写十六进制。
-fn decode(text: &str) -> String {
-    if text == "-" {
-        return String::new();
-    }
-    let bytes: Vec<u8> = (0..text.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&text[i..i + 2], 16).expect("hex digit"))
-        .collect();
-    String::from_utf8(bytes).expect("golden argument is valid UTF-8")
-}
-
-fn encode(text: &str) -> String {
-    if text.is_empty() {
-        return "-".to_string();
-    }
-    let mut out = String::with_capacity(text.len() * 2);
-    for byte in text.as_bytes() {
-        out.push_str(&format!("{byte:02x}"));
-    }
-    out
-}
-
-fn open_golden(relative: &str) -> BufReader<GzDecoder<File>> {
-    let file =
-        File::open(repo_path(relative)).unwrap_or_else(|error| panic!("open {relative}: {error}"));
-    BufReader::new(GzDecoder::new(file))
-}
 
 fn run_transcript(lexicon: &mut Lexicon, supplement: &Supplement, reader: impl BufRead) -> usize {
     let mut records = 0usize;
@@ -80,7 +45,7 @@ fn run_transcript(lexicon: &mut Lexicon, supplement: &Supplement, reader: impl B
                         .map(|entry| {
                             format!(
                                 "{}:{}:{}",
-                                encode(&entry.text),
+                                encode(entry.text.as_bytes()),
                                 entry.rank,
                                 entry.optimal_single as u8
                             )

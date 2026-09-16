@@ -2,16 +2,16 @@
 # 生成键序列金样（2c）：pin 版参照 Lua 核心 + 系统 librime + librime-lua。
 #
 # 用法：tools/gen_key_sequence_golden.sh [输出文件]
-#   REF  参照仓库路径（默认 /home/crux/_work/tiger-sentense-rime）
-#   PIN  参照固定提交（默认 f3b3049819b513ba756bbe6c6b6872759c9dc2a9）
+#   REF  参照仓库路径（默认与仓库同级的 ../tiger-sentense-rime）
+#   PIN  参照固定提交（默认 35a10b93c96af7b008fc9a05d01a8381018dc3d3，与入库金样一致；见 goldens/README.md）
 #
 # 依赖：git、g++、python3、系统 librime（rime_api.h + librime-lua.so）。
 # 金样不在 CI 重生成（探针依赖具体 librime/librime-lua 版本），见 goldens/README.md。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-REF="${REF:-/home/crux/_work/tiger-sentense-rime}"
-PIN="${PIN:-f3b3049819b513ba756bbe6c6b6872759c9dc2a9}"
+REF="${REF:-$(cd "$ROOT/.." && pwd)/tiger-sentense-rime}"
+PIN="${PIN:-35a10b93c96af7b008fc9a05d01a8381018dc3d3}"
 OUT="${1:-$ROOT/goldens/key_sequence.tsv.gz}"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/tiger-keyseq-XXXXXX")"
@@ -22,7 +22,7 @@ mkdir -p "$user/lua" "$shared"
 
 # pin 版 Lua 核心与 schema（保证与已入库金样同一参照修订）。
 for name in tiger_sentence.lua tiger_sentence_learning.lua tiger_sentence_ngram.lua \
-    tiger_sentence_cache.lua; do
+    tiger_sentence_cache.lua tiger_sentence_lexical.lua; do
     git -C "$REF" show "$PIN:lua/$name" > "$user/lua/$name"
 done
 git -C "$REF" show "$PIN:rime.lua" > "$user/rime.lua"
@@ -30,7 +30,8 @@ git -C "$REF" show "$PIN:tiger_sentence.schema.yaml" > "$user/tiger_sentence.sch
 git -C "$REF" show "$PIN:tiger_sentence_ascii.schema.yaml" > "$user/tiger_sentence_ascii.schema.yaml"
 git -C "$REF" show "$PIN:symbols.yaml" > "$user/symbols.yaml"
 
-# 合成小码表（与参照集成测试同构：单字/词组、可控重码与 Tab 翻页）。
+# 合成小码表（与参照集成测试同构：单字/词组、可控重码与 Tab 翻页；
+# 另含 1 键码 + 数字结尾文本，覆盖空码自动上屏（`try_empty_code_commit`）路径）。
 # 同一份数据入库到 goldens/key_sequence/，供 Rust 重放侧加载。
 mkdir -p "$ROOT/goldens/key_sequence"
 python3 - "$user" "$ROOT/goldens/key_sequence" <<'PY'
@@ -38,7 +39,7 @@ import pathlib
 import sys
 user = pathlib.Path(sys.argv[1])
 golden_dir = pathlib.Path(sys.argv[2])
-table = ["刘\tvp", "甲\tab", "乙\tab", "一\tcd"]
+table = ["刘\tvp", "甲\tab", "乙\tab", "一\tcd", "第7\tz"]
 table += [f"{chr(0x4E00 + i)}\tja" for i in range(22)]
 content = "\n".join(table) + "\n"
 (golden_dir / "tiger_sentence.codes.txt").write_text(content, encoding="utf-8")

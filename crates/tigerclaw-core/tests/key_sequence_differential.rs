@@ -7,6 +7,9 @@
 //! 金样与数据：`goldens/key_sequence.tsv.gz`、`goldens/key_sequence/`（合成小码表）。
 //! 再生成：`tools/gen_key_sequence_golden.sh`（依赖系统 librime + librime-lua）。
 
+mod common;
+
+use common::hex;
 use flate2::read::GzDecoder;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -35,17 +38,6 @@ struct Case {
     name: String,
     options: Vec<(String, bool)>,
     steps: Vec<Step>,
-}
-
-fn hex(text: &[u8]) -> String {
-    if text.is_empty() {
-        return "-".to_string();
-    }
-    let mut out = String::with_capacity(text.len() * 2);
-    for byte in text {
-        out.push_str(&format!("{byte:02x}"));
-    }
-    out
 }
 
 fn load_cases() -> Vec<Case> {
@@ -143,18 +135,20 @@ fn replay(case: &Case, data_dir: &Path, failures: &mut Vec<String>) {
         )
         .expect("processor");
         // 宿主提交链在 `confirm_selection` 内完成（对应 librime 引擎的同步反应）。
-        let committed: String = context
-            .drain_events()
-            .into_iter()
+        let events = context.drain_events();
+        let committed: String = events
+            .iter()
             .filter_map(|event| match event {
-                Event::Commit(text) => Some(text),
+                Event::Commit(text) => Some(text.clone()),
                 _ => None,
             })
             .collect();
-        // 组合重建（translator）：输入未变则保留原组合（含菜单高亮），
-        // 与 Rime 引擎在翻译未失效时保留段状态一致。
+        // 组合重建（translator）：提交会使翻译失效（参照引擎在提交后的 clear+push
+        // 触发重建，已确认前缀由 translator 按 `committed_text` 过滤）；其余情况
+        // 输入未变则保留原组合（含菜单高亮），与 Rime 引擎在翻译未失效时保留段状态一致。
+        let commit_invalidated = events.iter().any(|event| matches!(event, Event::Commit(_)));
         let input = context.input().to_vec();
-        if input != built_input {
+        if commit_invalidated || input != built_input {
             let mut composition = Composition::default();
             if !input.is_empty() {
                 let mut candidates = Vec::new();

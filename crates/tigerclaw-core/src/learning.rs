@@ -1,6 +1,6 @@
 //! Tab 纠错学习，对应参照 `lua/tiger_sentence_learning.lua` 的纯计算部分。
 //!
-//! 本增量：`build`（全量重放 oracle）、`runtime_index`/`update`（运行时快照）、
+//! 实现：`build`（全量重放 oracle）、`runtime_index`/`update`（运行时快照）、
 //! `score`/`prefix_score`（含物化缓存）、`reward`（路径链）、`diff`、
 //! `context`/`static`/`frame`/`unframe`/`hash`。
 //! 持久化（LevelDb `open`/`confirm`）随 K3 数据层接入。
@@ -414,7 +414,11 @@ impl LearningIndex {
         }
 
         let mut summaries: HashMap<String, Summary> = HashMap::new();
-        for group in groups.values() {
+        // 汇总为浮点累加，顺序需确定（哈希序跨进程不定）：group 键排序后遍历。
+        let mut group_keys: Vec<&String> = groups.keys().collect();
+        group_keys.sort();
+        for group_key in group_keys {
+            let group = &groups[group_key];
             for (text, choice) in &group.choices {
                 let k = key(&[&group.code, &group.mode, text]);
                 let summary = summaries.entry(k).or_insert_with(|| Summary {
@@ -510,7 +514,9 @@ impl LearningIndex {
         index
     }
 
-    /// 参照 `update_index`：仅复制受影响的 code 分区。
+    /// 参照 `update_index`：重建受影响的 code 分区。
+    /// 注意：`partitions.clone()` 为整体深拷贝（参照的 `copy` 只复制外层表），
+    /// 单次确认代价 O(历史规模)；如需优化可改为共享分区（性能项，K3 复核）。
     pub fn update(&self, accepted: &[Event], all_events: &[Event], now: f64) -> Self {
         let Some(partitions) = &self.partitions else {
             return Self::runtime(all_events, now);
@@ -571,7 +577,11 @@ impl LearningIndex {
         }
         let partition = partitions.get(code)?;
         let mut result = Materialized::default();
-        for group in partition.values() {
+        // 同 `build`：累加顺序需确定（哈希序跨进程不定）。
+        let mut group_keys: Vec<&String> = partition.keys().collect();
+        group_keys.sort();
+        for group_key in group_keys {
+            let group = &partition[group_key];
             for (text, choice) in &group.choices {
                 let k = key(&[code, &group.mode, text]);
                 let summary = result.exact.entry(k).or_insert_with(|| Summary {
@@ -790,7 +800,7 @@ pub fn diff(
                     mode: mode.to_string(),
                     code,
                     text,
-                    context: context(&selected.text[..b_first]),
+                    context: context(selected.text.get(..b_first).unwrap_or("")),
                     raw_start: first,
                     raw_end: last,
                     text_start: b_first,

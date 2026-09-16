@@ -231,7 +231,7 @@ impl KindState {
             return Ok(cached.clone());
         }
         let first = page * INDEX_PAGE_RECORDS;
-        let records = INDEX_PAGE_RECORDS.min(self.index.count - first);
+        let records = INDEX_PAGE_RECORDS.min(self.index.count.saturating_sub(first));
         let data =
             Rc::new(read_at(map, self.index.offset + (first * 16) as u64, records * 16)?.to_vec());
         counters.index_misses += 1;
@@ -295,7 +295,11 @@ impl KindState {
         } else {
             self.section_end
         };
-        let data = Rc::new(read_at(map, offset, (next_offset - offset) as usize)?.to_vec());
+        let length = next_offset
+            .checked_sub(offset)
+            .and_then(|length| usize::try_from(length).ok())
+            .ok_or_else(|| anyhow!("truncated mobile n-gram"))?;
+        let data = Rc::new(read_at(map, offset, length)?.to_vec());
         counters.page_misses += 1;
         counters.page_bytes += data.len() as u64;
         pages.insert(self.kind, page as u32, data.clone());
@@ -342,10 +346,21 @@ impl KindState {
                 .saturating_sub(page as usize * self.index_stride),
         );
         for _ in 0..remaining {
+            // 模型内部偏移/计数来自文件：畸形数据在此报错而非越界 panic。
+            if position + 16 > data.len() {
+                return Err(anyhow!("truncated mobile n-gram"));
+            }
             let context_key = le_u64(&data, position);
             let lambda = le_f32(&data, position + 8) as f64;
             let successor_count = le_u32(&data, position + 12);
             position += 16;
+            let successors_end = (successor_count as usize)
+                .checked_mul(8)
+                .and_then(|length| position.checked_add(length))
+                .filter(|end| *end <= data.len());
+            let Some(successors_end) = successors_end else {
+                return Err(anyhow!("truncated mobile n-gram"));
+            };
             if context_key == key {
                 let slot = self.context.claim(key);
                 self.slots[slot - 1] = CtxSlot {
@@ -366,7 +381,7 @@ impl KindState {
                 self.remember_absent(key);
                 return Ok((1.0, 0.0, false));
             }
-            position += successor_count as usize * 8;
+            position = successors_end;
         }
         self.remember_absent(key);
         Ok((1.0, 0.0, false))
@@ -770,5 +785,29 @@ mod tests {
         std::fs::write(&path, b"NOTAMODELBLOB").expect("write temp model");
         assert!(MobileModel::load(&path, None).is_err());
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn corrupt_index_queries_do_not_panic() {
+        // 畸形模型：头部合法、trigram 索引区被填充异常值 → 查询必须返回错误而非 panic。
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../goldens/ngram_fixture.bin");
+        let source = std::fs::read(&fixture).expect("read fixture model");
+        let directory = std::env::temp_dir();
+        for (index, fill) in [0xffu8, 0x00].into_iter().enumerate() {
+            let mut corrupted = source.clone();
+            let offset = le_u64(&corrupted, 96) as usize; // 头部 tri_index_off
+            corrupted[offset..].fill(fill);
+            let path = directory.join(format!(
+                "tigerclaw-corrupt-{}-{index}.bin",
+                std::process::id()
+            ));
+            std::fs::write(&path, &corrupted).expect("write corrupted model");
+            if let Ok(mut model) = MobileModel::load(&path, None) {
+                let _ = model.logp("甲", "乙", "丙");
+                let _ = model.has_observed_bigram("甲", "乙");
+            }
+            std::fs::remove_file(&path).ok();
+        }
     }
 }

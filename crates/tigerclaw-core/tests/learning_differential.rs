@@ -2,52 +2,12 @@
 //!
 //! 金样由 `tools/gen_learning_golden.lua` 生成（`goldens/learning.tsv.gz`）。
 
-use flate2::read::GzDecoder;
+mod common;
+
+use common::{decode_bytes, decode_hex, open_golden, parse_bits};
 use hashbrown::HashMap;
-use std::fs::File;
-use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::io::BufRead;
 use tigerclaw_core::learning::{self, DiffItem, DiffPathNode, Event, LearningIndex, RewardNode};
-
-fn repo_path(relative: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join(relative)
-}
-
-fn decode_hex(text: &str) -> String {
-    if text == "-" {
-        return String::new();
-    }
-    let bytes: Vec<u8> = (0..text.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&text[i..i + 2], 16).expect("hex digit"))
-        .collect();
-    String::from_utf8(bytes).expect("valid UTF-8")
-}
-
-fn decode_bytes(text: &str) -> Vec<u8> {
-    if text == "-" {
-        return Vec::new();
-    }
-    (0..text.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&text[i..i + 2], 16).expect("hex digit"))
-        .collect()
-}
-
-fn parse_bits(text: &str) -> u64 {
-    let digits = text.strip_prefix("0x").expect("0x prefix");
-    let hi = u64::from_str_radix(&digits[..8], 16).expect("hex digit");
-    let lo = u64::from_str_radix(&digits[8..], 16).expect("hex digit");
-    hi << 32 | lo
-}
-
-fn open_golden(relative: &str) -> BufReader<GzDecoder<File>> {
-    let file =
-        File::open(repo_path(relative)).unwrap_or_else(|error| panic!("open {relative}: {error}"));
-    BufReader::new(GzDecoder::new(file))
-}
 
 struct Harness {
     corpora: HashMap<String, Vec<Event>>,
