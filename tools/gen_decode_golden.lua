@@ -195,6 +195,41 @@ local function emit_decode_pass(input, required)
             emit("rawlen", hex(text), tostring(evidence.raw_lengths[text]))
         end
     end
+    -- has_complete_candidate：基础 / 排除文本（唯一性）/ 整段锁 / 局部锁（± 必需前缀）。
+    if early then
+        local function complete_case(excluded, group, lock, required_text)
+            local value = sentence.has_complete_candidate(
+                input, required_text, excluded, group, lock)
+            emit("complete", "input=" .. hex(input), "required=" .. hex(required_text or ""),
+                "excluded=" .. hex(excluded or ""), "group=" .. (group and 1 or 0),
+                "lock=" .. (lock and (hex(lock.raw) .. "," .. hex(lock.text)) or "-"),
+                "result=" .. (value and 1 or 0))
+        end
+        complete_case(nil, false, nil, "")
+        local top = results[1]
+        if top and top.text and top.text ~= "" then
+            complete_case(top.text, true, nil, "")
+            local node = top.path
+            local function lock_at(link)
+                if not link or not link.raw_length or link.raw_length <= 0 or not link.text_length then
+                    return nil
+                end
+                return { raw = input:sub(1, link.raw_length),
+                    text = top.text:sub(1, link.text_length),
+                    boundaries = tostring(link.raw_length) .. "," .. tostring(link.text_length) .. ";" }
+            end
+            local full = lock_at(node)
+            if full then
+                complete_case(nil, false, full, "")
+                complete_case(nil, false, full, full.text)
+            end
+            local partial = lock_at(node and node.previous)
+            if partial then
+                complete_case(nil, false, partial, "")
+                complete_case(nil, false, partial, partial.text)
+            end
+        end
+    end
 end
 
 emit("# decode transcript; model=" .. (opts.model and "fixture" or "off") ..

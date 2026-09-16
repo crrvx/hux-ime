@@ -17,8 +17,8 @@
 | `decode.tsv.gz` | decode 金样（无模型）：`decode`/`result` | 1,980 条 |
 | `decode_model.tsv.gz` | decode 金样（fixture 模型，抽样） | 278 条 |
 | `decode_rank_first.tsv.gz` | decode 金样（fixture 模型 + 关闭单字重码，抽样） | 330 条 |
-| `decode_evidence.tsv.gz` | 早提交证据金样（无模型） | 4,998 条 |
-| `decode_evidence_model.tsv.gz` | 早提交证据金样（fixture 模型，抽样） | 840 条 |
+| `decode_evidence.tsv.gz` | 早提交证据金样（无模型；含 `has_complete_candidate` 的 `complete` 用例） | 11,002 行 |
+| `decode_evidence_model.tsv.gz` | 早提交证据金样（fixture 模型，抽样；同上） | 1,824 行 |
 | `learning.tsv.gz` | 学习金样：`hash`/`score`/`prefix`/`confirmed`/`reward`/`diff`/日志编码 | 10,164 条 |
 | `decode_learning.tsv.gz` | 解码接入学习（无模型） | 1,987 条 |
 | `decode_learning_model.tsv.gz` | 解码接入学习（fixture 模型，抽样） | 358 条 |
@@ -197,8 +197,8 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 | `decode.tsv.gz` | `997a68e68077da7af63a155a01900e94fbb11b71cb9c064cd3c31eb55415c090` |
 | `decode_model.tsv.gz` | `a543ae32f83b88791b3dbb99f748da8e5add1d26590b096d561eecf532bbcfbb` |
 | `decode_rank_first.tsv.gz` | `ea08e0c2bcc6da841b2b52af189cde82dc4eb054c6dc6552d7167d99517c841e` |
-| `decode_evidence.tsv.gz` | `8d1952082c7cf937d91943786224f8cd55ee9cd92b2bf3892b7073b7861898fd` |
-| `decode_evidence_model.tsv.gz` | `d75c3b093121fed6114f88dcf5ebe10a01c862c42ae31f3d5927d32889388181` |
+| `decode_evidence.tsv.gz` | `357e782cb2e1528e76e9e066fbc2c0dacaf7b77ea8b21f71659769cad4d938ec` |
+| `decode_evidence_model.tsv.gz` | `df4362cf72c5eb7b6a1323c01c97e4445571daf958a911c13a51b4504928fe04` |
 | `learning.tsv.gz` | `fcf843527a6ab075a6158aeebfd6e3a67c3c8aa206779edf23d6f2c181aa6649` |
 | `decode_learning.tsv.gz` | `41a9894d233c32348e42164d4d29fc698c3037741c141ac0b58404094c9e9354` |
 | `decode_learning_model.tsv.gz` | `91e5fe60a515f1cdd11b815a5da68c7f1883ccc6bb80a9e37e45435cfe72f6e0` |
