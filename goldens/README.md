@@ -40,7 +40,7 @@ limit   <n>                           # 执行 apply_high_freq_limit
 supp    count=<n> error=<0|1>
 
 # decode（冷路径；include_early_commit=false，未接入学习）
-decode <hex input> count=<n> learning=<0|1> truncated=<0|1>
+decode <hex input> count=<n> learning=<0|1> truncated=<0|1> required=<hex prefix|->
 result <hex text> <hex segmented> <bits score> <bits confidence_score> <max_rank> <edge_count> <bits supplement_score> <bits learning_score>
 # decode + 早提交证据（--early-commit 1）
 evidence <hex proposal> <bits proposal_share> nit= mit= nlc= trunc= prefixes= raws=
@@ -88,10 +88,10 @@ lua tools/gen_decode_golden.lua --reference "$REF" \
   --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
   --out /tmp/decode_rank_first.tsv --every 7 --duplicate 0
 lua tools/gen_decode_golden.lua --reference "$REF" \
-  --data "$PWD/goldens/lexicon" --out /tmp/decode_evidence.tsv --early-commit 1
+  --data "$PWD/goldens/lexicon" --out /tmp/decode_evidence.tsv --early-commit 1 --required 1
 lua tools/gen_decode_golden.lua --reference "$REF" \
   --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
-  --out /tmp/decode_evidence_model.tsv --every 7 --early-commit 1
+  --out /tmp/decode_evidence_model.tsv --every 7 --early-commit 1 --required 1
 gzip -9 -n -c /tmp/decode.tsv > goldens/decode.tsv.gz
 gzip -9 -n -c /tmp/decode_model.tsv > goldens/decode_model.tsv.gz
 gzip -9 -n -c /tmp/decode_rank_first.tsv > goldens/decode_rank_first.tsv.gz
@@ -149,10 +149,10 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 | `lexicon_missing.tsv.gz` | `f5b8256deeb41b4403ca26074deec659807c4313ffe5cf727987b78be15c7a26` |
 | `lexicon_variants.tsv.gz` | `05923b1433f00bf2e9fbb6270e6b28e1f4d1cca6a93507c74dc80b48fde69ef5` |
 | `lexicon_codes_only.tsv.gz` | `3cd72cca880754ecd3744a26ecc5b70d8b5575ab268654937326bb4925b3805e` |
-| `decode.tsv.gz` | `fc6895a7631a3cf21e62dd366c1e58f6ba6757fe6bcc623557bd0f0bb1692c41` |
-| `decode_model.tsv.gz` | `3af7e02dbb31fa0bed51dc854bf5d08129fcc9858da73c190578397a99b41f8c` |
-| `decode_rank_first.tsv.gz` | `a448b426cbbaace2b7f77cdc626fecda04d4f617d1a50208eae759d70e091ca6` |
-| `decode_evidence.tsv.gz` | `c5d4790c765ed30b121fc8ecbebb70aff93cab5b927c1b1fd105a3d21e0916e9` |
-| `decode_evidence_model.tsv.gz` | `cb48ff44f0f3bf012fab12e8f02b73402e40ff4cfb9858e16315e03a11923230` |
+| `decode.tsv.gz` | `997a68e68077da7af63a155a01900e94fbb11b71cb9c064cd3c31eb55415c090` |
+| `decode_model.tsv.gz` | `a543ae32f83b88791b3dbb99f748da8e5add1d26590b096d561eecf532bbcfbb` |
+| `decode_rank_first.tsv.gz` | `ea08e0c2bcc6da841b2b52af189cde82dc4eb054c6dc6552d7167d99517c841e` |
+| `decode_evidence.tsv.gz` | `8d1952082c7cf937d91943786224f8cd55ee9cd92b2bf3892b7073b7861898fd` |
+| `decode_evidence_model.tsv.gz` | `d75c3b093121fed6114f88dcf5ebe10a01c862c42ae31f3d5927d32889388181` |
 
 CI 以同一参照提交重生成全部 fixture 金样并与入库内容比对（见 `.github/workflows/ci.yml`）。

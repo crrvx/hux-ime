@@ -24,6 +24,9 @@ fn decode_hex(text: &str) -> String {
     if text == "-" {
         return String::new();
     }
+    if text.len() % 2 != 0 || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        panic!("bad hex field: {text:?}");
+    }
     let bytes: Vec<u8> = (0..text.len())
         .step_by(2)
         .map(|i| u8::from_str_radix(&text[i..i + 2], 16).expect("hex digit"))
@@ -76,10 +79,11 @@ fn replay(mut decoder: Decoder, reader: impl BufRead, early: bool) -> usize {
         let truncated: u8 = field(parts.next().expect("truncated"), "truncated=")
             .parse()
             .expect("truncated value");
+        let required = decode_hex(field(parts.next().expect("required"), "required="));
 
         let output = if early {
             decoder
-                .decode_with(&input, true, "")
+                .decode_with(&input, true, &required)
                 .expect("decode with evidence")
         } else {
             decoder.decode(&input).expect("decode")

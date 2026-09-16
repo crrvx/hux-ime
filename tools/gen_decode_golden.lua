@@ -1,11 +1,14 @@
 -- 生成 decode 金样（冷路径：include_early_commit=false；未接入学习）。
 --
---   lua tools/gen_decode_golden.lua --reference <repo> --data <dir> --out <tsv> [--model <bin>] [--every N] [--duplicate 0|1] [--early-commit 0|1]
+--   lua tools/gen_decode_golden.lua --reference <repo> --data <dir> --out <tsv> [--model <bin>] [--every N] [--duplicate 0|1] [--early-commit 0|1] [--required 0|1]
+--
+-- --required 1：对每 3 个输入追加一次“必需前缀”遍（前缀取该输入首候选的首字符），
+-- 覆盖 build_early_commit_evidence 的 required_text_prefix 过滤路径。
 --
 -- 数据目录需含四个数据文件；--model 时把模型拷贝为临时用户目录的
 -- models/sentence-ngram-mobile.bin 并启用（走参照的 try_load 路径）。
 -- transcript 记录（tab 分隔，`#` 注释，`-` 表示空串）：
---   decode <hex input> count=<n> learning=<0|1> truncated=<0|1>
+--   decode <hex input> count=<n> learning=<0|1> truncated=<0|1> required=<hex prefix|->
 --   result <hex text> <hex segmented> <bits score> <bits confidence_score> <max_rank> <edge_count> <bits supplement_score> <bits learning_score>
 --   evidence <hex proposal> <bits proposal_share> nit= mit= nlc= trunc= prefixes= raws=   （--early-commit 1）
 --   prefix <hex text> <raw_length> <bits share> <bits boundary_share> <closed> <chars>
@@ -64,6 +67,7 @@ sentence.set_model_enabled(opts.model ~= nil)
 sentence.ensure_lexicon(nil)
 local duplicate = opts.duplicate ~= "0"
 local early = opts["early-commit"] == "1"
+local required_mode = opts.required == "1"
 if not duplicate then
     -- 参照测试同款：以假 context 关闭“单字重码组句”。
     sentence.set_allow_duplicate_single({ get_option = function() return false end })
@@ -117,14 +121,13 @@ local function bits(value)
     return string.format("0x%08x%08x", hi, lo)
 end
 
-emit("# decode transcript; model=" .. (opts.model and "fixture" or "off") ..
-    " duplicate=" .. (duplicate and 1 or 0) .. " early=" .. (early and 1 or 0))
-for _, input in ipairs(selected) do
+local function emit_decode_pass(input, required)
     sentence.reset_decode_cache()
-    local results = sentence.decode(input, early)
+    local results = sentence.decode(input, early, required ~= "" and required or nil)
     emit("decode", hex(input), "count=" .. #results,
         "learning=" .. (results.learning_affected and 1 or 0),
-        "truncated=" .. (results._completed_truncated and 1 or 0))
+        "truncated=" .. (results._completed_truncated and 1 or 0),
+        "required=" .. hex(required or ""))
     for _, item in ipairs(results) do
         emit("result", hex(item.text), hex(item.segmented), bits(item.score),
             bits(item.confidence_score), tostring(item.max_rank), tostring(item.edge_count),
@@ -154,6 +157,22 @@ for _, input in ipairs(selected) do
         end
         for _, text in ipairs(raw_keys) do
             emit("rawlen", hex(text), tostring(evidence.raw_lengths[text]))
+        end
+    end
+end
+
+emit("# decode transcript; model=" .. (opts.model and "fixture" or "off") ..
+    " duplicate=" .. (duplicate and 1 or 0) .. " early=" .. (early and 1 or 0) ..
+    " required=" .. (required_mode and 1 or 0))
+for index, input in ipairs(selected) do
+    emit_decode_pass(input, "")
+    -- 必需前缀遍：取该输入首候选的首字符（每 3 个输入一次，覆盖过滤路径）。
+    if early and required_mode and input ~= "" and index % 3 == 1 then
+        sentence.reset_decode_cache()
+        local probe = sentence.decode(input, false)
+        if #probe > 0 and probe[1].text ~= "" then
+            local prefix = utf8.char(utf8.codepoint(probe[1].text))
+            emit_decode_pass(input, prefix)
         end
     end
 end
