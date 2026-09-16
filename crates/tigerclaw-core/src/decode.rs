@@ -2353,6 +2353,38 @@ mod tests {
     }
 
     #[test]
+    fn locked_decode_replays_opaque_prefix_neutrally() {
+        let dir =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
+        let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
+        let supplement = Supplement::load_default(Some(&dir));
+        let mut decoder = Decoder::new(lexicon, supplement, None);
+        // 锁文本与任何码表边都不对应（文本级退格产生的"不透明"锁）：
+        // 参照 12d2ecc 起以中立码证据重放，而不是整段拒绝。
+        let lock = DecodeLock {
+            raw: "ab",
+            text: "某某",
+            boundaries: "2,6;",
+        };
+        let locked = decoder
+            .decode_with_lock("abab", false, "", Some(lock))
+            .expect("locked decode");
+        assert!(!locked.items.is_empty());
+        assert!(
+            locked
+                .items
+                .iter()
+                .all(|item| item.text.starts_with("某某")),
+            "{:?}",
+            locked
+                .items
+                .iter()
+                .map(|item| &item.text)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn parse_boundaries_matches_gmatch() {
         assert_eq!(parse_boundaries("2,3;"), vec![(2, 3)]);
         assert_eq!(parse_boundaries("2,3;4,6;"), vec![(2, 3), (4, 6)]);
