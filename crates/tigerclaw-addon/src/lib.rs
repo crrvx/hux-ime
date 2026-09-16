@@ -202,7 +202,9 @@ impl Engine {
         context.set_option("_auto_commit", true);
         // 选项：有存储则同步（参照 `M.options.sync`，同步写入由核心抑制观察）；
         // 无存储时直接用内建缺省。
-        let mut options = options_dir.as_deref().map(OptionsStore::load);
+        let mut options = options_dir
+            .as_deref()
+            .map(|dir| OptionsStore::load_with_defaults(dir, settings.store_defaults()));
         if let Some(options) = options.as_mut() {
             options.sync(&mut context);
         } else {

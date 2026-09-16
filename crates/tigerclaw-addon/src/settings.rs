@@ -55,6 +55,18 @@ impl Settings {
         ]
     }
 
+    /// 存储层缺省：三项早提交选项（`options.yaml` 缺失键回退到这些值）。
+    pub fn store_defaults(&self) -> hashbrown::HashMap<String, bool> {
+        [
+            (OPTION_EARLY_COMMIT, self.early_commit),
+            (OPTION_EARLY_COMMIT_TO_PREEDIT, self.early_commit_to_preedit),
+            (OPTION_ALLOW_DUPLICATE_SINGLE, self.allow_duplicate_single),
+        ]
+        .into_iter()
+        .map(|(name, value)| (name.to_string(), value))
+        .collect()
+    }
+
     /// 拼学习 mode 串（参照 `prepare_learning`：关闭 Tab 学习 → 空串 = 不记录）。
     pub fn learning_mode(&self, rules: &str, duplicate: u8) -> String {
         if !self.tab_learning {
@@ -95,6 +107,12 @@ mod tests {
         assert!(defaults.contains(&("full_shape", true)));
         assert!(defaults.contains(&(OPTION_EARLY_COMMIT, true)));
         assert_eq!(settings.learning_mode("abc", 1), "");
+        let store_defaults = settings.store_defaults();
+        assert_eq!(
+            store_defaults.get(OPTION_EARLY_COMMIT_TO_PREEDIT),
+            Some(&false)
+        );
+        assert_eq!(store_defaults.len(), 3);
         let with_learning = Settings {
             high_freq_limit: 100,
             ..Default::default()
