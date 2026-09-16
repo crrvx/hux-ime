@@ -260,12 +260,9 @@ pub fn translate(
     }
     farthest = len;
     let _ = farthest;
-    let chunks = collect_chunks(index, &edges, len);
-    let mut candidates = emit(index, &chunks, start, end, limit);
-    let preedit = String::from_utf8_lossy(input).into_owned();
-    for candidate in &mut candidates {
-        candidate.preedit = preedit.clone();
-    }
+    let chunks = collect_chunks(index, &edges, code, len);
+    let code_prefix = String::from_utf8_lossy(&input[..prefix.len_utf8()]).into_owned();
+    let mut candidates = emit(index, &chunks, &code_prefix, start, end, limit);
     reverse_comment_filter(&mut candidates, true, lexicon);
     candidates
 }
@@ -384,24 +381,44 @@ fn complete(index: &ReverseIndex, edges: &mut [Vec<Edge>], code: &[u8], farthest
     true
 }
 
-/// 路径块（同码词条区间 + 可信度）。
+/// 路径块（同码词条区间 + 可信度 + 按音节切分的输入切片）。
 struct Chunk {
     first: u32,
     count: u32,
     cursor: u32,
     penalty: f64,
+    /// 预编辑（按音节切分；不含反查前缀）。
+    preedit: String,
 }
 
 /// 广度优先收集「码恰好等于路径音节序列」的词条块（参照 `Table::Query` 的推入序）。
-fn collect_chunks(index: &ReverseIndex, edges: &[Vec<Edge>], len: usize) -> Vec<Chunk> {
+/// `code` 用于生成「按音节分码」的预编辑：上一段为全拼（正常拼写）时在下一个音节前插空格，
+/// 缩写/补全段与后续合并（如 `` `zhongguo `` → `` `zhong guo ``、`` `zho `` → `` `zho ``）。
+fn collect_chunks(
+    index: &ReverseIndex,
+    edges: &[Vec<Edge>],
+    code: &[u8],
+    len: usize,
+) -> Vec<Chunk> {
     let mut chunks = Vec::new();
     let mut queue = std::collections::VecDeque::new();
-    queue.push_back((0usize, Vec::<u16>::new(), 0.0f64));
-    while let Some((position, path, penalty)) = queue.pop_front() {
+    queue.push_back((
+        0usize,
+        Vec::<u16>::new(),
+        0.0f64,
+        String::new(),
+        KIND_NORMAL,
+    ));
+    while let Some((position, path, penalty, preedit, last_kind)) = queue.pop_front() {
         for edge in &edges[position] {
             let mut next_path = path.clone();
             next_path.push(edge.syllable as u16);
             let next_penalty = penalty + edge.penalty;
+            let mut next_preedit = preedit.clone();
+            if !next_preedit.is_empty() && last_kind == KIND_NORMAL {
+                next_preedit.push(' ');
+            }
+            next_preedit.push_str(&String::from_utf8_lossy(&code[position..edge.end]));
             if let Some(group) = index.group(&next_path) {
                 if edge.end == len {
                     chunks.push(Chunk {
@@ -409,11 +426,12 @@ fn collect_chunks(index: &ReverseIndex, edges: &[Vec<Edge>], len: usize) -> Vec<
                         count: group.count,
                         cursor: 0,
                         penalty: next_penalty,
+                        preedit: next_preedit.clone(),
                     });
                 }
             }
             if edge.end < len && index.prefix_exists(&next_path) {
-                queue.push_back((edge.end, next_path, next_penalty));
+                queue.push_back((edge.end, next_path, next_penalty, next_preedit, edge.kind));
             }
         }
     }
@@ -424,6 +442,7 @@ fn collect_chunks(index: &ReverseIndex, edges: &[Vec<Edge>], len: usize) -> Vec<
 fn emit(
     index: &ReverseIndex,
     chunks: &[Chunk],
+    code_prefix: &str,
     start: usize,
     end: usize,
     limit: usize,
@@ -451,13 +470,10 @@ fn emit(
             break;
         };
         let entry = &index.entries[(chunks[position].first + cursors[position]) as usize];
-        result.push(Candidate::new(
-            "reverse_lookup",
-            start,
-            end,
-            index.entry_text(entry),
-            "",
-        ));
+        let mut candidate =
+            Candidate::new("reverse_lookup", start, end, index.entry_text(entry), "");
+        candidate.preedit = format!("{code_prefix}{}", chunks[position].preedit);
+        result.push(candidate);
         cursors[position] += 1;
     }
     result
@@ -639,6 +655,27 @@ mod tests {
             ["中哦", "中龘", "中欧", "找哦", "兆欧", "找欧"]
         );
         assert_eq!(texts(b"`zhou"), ["周", "轴"]);
+        // 预编辑「按音节分码」：全拼段之后插空格；缩写段与后续合并。
+        let preedits = |input: &[u8]| -> Vec<String> {
+            translate(
+                &index,
+                &lexicon,
+                input,
+                '`',
+                0,
+                input.len(),
+                None,
+                false,
+                CANDIDATE_LIMIT,
+            )
+            .into_iter()
+            .map(|candidate| candidate.preedit)
+            .collect()
+        };
+        assert_eq!(preedits(b"`zhong")[0], "`zhong");
+        assert_eq!(preedits(b"`zhongguo")[0], "`zhong guo");
+        assert_eq!(preedits(b"`zhongg")[0], "`zhong g");
+        assert_eq!(preedits(b"`zho")[0], "`zho");
         assert_eq!(texts(b"`zhong"), ["中", "重", "种", "钟", "垚"]);
         assert!(texts(b"`zhon").is_empty());
         assert!(texts(b"`zuo").is_empty());

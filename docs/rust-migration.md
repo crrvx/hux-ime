@@ -78,7 +78,9 @@ docs/
 - 英文模式：**不实现**（按设计取舍）：英文输入交由 fcitx5 切换输入法；大写字母经
   `express_editor` 的 `char_handler` 直通（组合先上屏）。
 - UI 同步：按键后状态快照（preedit/候选/上屏）；preedit 光标为字节偏移
-  （fcitx `Text::setCursor` 即字节制）。
+  （fcitx `Text::setCursor` 即字节制）。preedit 取**高亮候选的 preedit**（正常段「按词分码」
+  = 解码 `segmented`，如 `sh ks`；反查段「按音节分码」= 全拼段后插空格，如 `` `zhong guo ``），
+  光标不在实况输入末尾时回退为「缓冲 + 原始输入」。
 - 数据：core `lexicon::data_directories()`（用户 → 共享）与 `candidate_paths()` 探测；
   addon 加载码表/位图/模型/反查索引（开发可用 `TIGERCLAW_DATA_DIRS`/`TIGERCLAW_MODEL` 覆盖）。
 - 反查（⑧-1）：`data/tiger_sentence.reverse.bin.gz`（TCSRV01，`tools/gen_reverse_index.py` 自参照

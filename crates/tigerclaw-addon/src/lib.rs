@@ -445,18 +445,35 @@ impl Engine {
         };
         let buffered = buffered_text(&self.context);
         let live = String::from_utf8_lossy(self.context.live_input()).into_owned();
-        let mut preedit = String::new();
-        preedit.push_str(&buffered);
-        if !buffered.is_empty() && !live.is_empty() {
-            preedit.push(' ');
-        }
-        preedit.push_str(&live);
-        let prefix_length = if buffered.is_empty() {
-            0
+        // 参照 librime `Composition::GetPreedit` + 参照 Lua 的候选 preedit：
+        // 高亮候选的 preedit（「按词分码」，含缓冲前缀与反查前缀）优先；
+        // 光标不在实况输入末尾时回退「缓冲 + 实况输入」，保证字节光标与字符串一致。
+        let highlighted = self
+            .context
+            .composition
+            .back()
+            .and_then(|segment| segment.selected_candidate())
+            .map(|candidate| candidate.preedit.clone())
+            .unwrap_or_default();
+        let caret_at_end = self.context.live_caret() >= self.context.live_input().len();
+        let (mut preedit, cursor) = if !highlighted.is_empty() && caret_at_end {
+            let cursor = highlighted.len();
+            (highlighted, cursor)
         } else {
-            buffered.len() + usize::from(!live.is_empty())
+            let mut text = String::new();
+            text.push_str(&buffered);
+            if !buffered.is_empty() && !live.is_empty() {
+                text.push(' ');
+            }
+            let prefix_length = if buffered.is_empty() {
+                0
+            } else {
+                buffered.len() + usize::from(!live.is_empty())
+            };
+            text.push_str(&live);
+            let cursor = (prefix_length + self.context.live_caret()).min(text.len());
+            (text, cursor)
         };
-        let cursor = (prefix_length + self.context.live_caret()).min(preedit.len());
         // 参照 `Composition::GetPreedit`：段提示插在光标处（如反查段的「〔拼音〕」）。
         let prompt = self
             .context
@@ -959,6 +976,36 @@ mod tests {
         );
         assert!(engine.key(0x20, 0, false));
         assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "中哦");
+        // 反查预编辑「按音节分码」：全拼音节之间插空格。
+        engine.reset();
+        for code in *b"`zhongguo" {
+            assert!(engine.key(u32::from(code), 0, false));
+        }
+        let (preedit, _, candidates, _) = last_update();
+        assert_eq!(candidates.first().map(String::as_str), Some("中国"));
+        assert_eq!(preedit, "`zhong guo〔拼音〕");
+    }
+
+    /// 预编辑「按词分码」：使用高亮候选的 preedit（`ab cd`），单字不分段（`ab`）。
+    #[test]
+    fn preedit_uses_segmented_codes() {
+        let _guard = serial();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        for code in *b"abcd" {
+            engine.key(u32::from(code), 0, false);
+        }
+        let (preedit, cursor, candidates, _) = last_update();
+        assert!(!candidates.is_empty(), "abcd 应有候选");
+        assert_eq!(preedit, "ab cd");
+        assert_eq!(cursor, 5);
+        engine.reset();
+        for code in *b"ab" {
+            engine.key(u32::from(code), 0, false);
+        }
+        let (preedit, cursor, _, _) = last_update();
+        assert_eq!(preedit, "ab");
+        assert_eq!(cursor, 2);
     }
 
     #[test]

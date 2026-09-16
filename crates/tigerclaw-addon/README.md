@@ -52,6 +52,10 @@ ln -sf ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
 未显式提供的项一律**跟随 fcitx5 全局设置**：候选列表方向不设布局提示（由全局
 「候选词排列方向」决定）、客户端内联预编辑跟随全局「预编辑」开关（`isPreeditEnabled()`）。
 
+预编辑串**按词/音节分码**：正常段用解码的 `segmented`（如输入 `shks` → 预编辑 `sh ks`，
+输入 `shk` → `shk`）；反查段按音节切分（`` `zhongguo `` → `` `zhong guo ``，缩写/未完成
+音节与后续合并，如 `` `zho `` → `` `zho ``）。
+
 ## 选项
 
 `~/.local/share/fcitx5/tigerclaw/tiger_sentence.options.yaml` 为主存储（YAML，未知键保留）；
