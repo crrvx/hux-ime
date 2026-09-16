@@ -3,6 +3,7 @@
 //! 本增量范围：normalize、rank 选择器、资格过滤、beam 扩展、桶聚合、评分与候选发射。
 //! 暂不含：早提交证据、学习集成、增量/锁缓存、模型失败回退（guarded_decode）。
 
+use crate::learning::{LearningIndex, character_count, context as learning_context};
 use crate::lexicon::{CodeEntry, Lexicon, Supplement};
 use crate::ngram::MobileModel;
 use anyhow::Result;
@@ -156,9 +157,17 @@ pub struct Decoder {
     lexicon: Lexicon,
     supplement: Supplement,
     model: Option<MobileModel>,
+    learning: Option<LearningWiring>,
     rank_of: Option<HashMap<char, usize>>,
     arena: Vec<State>,
     allow_duplicate_single: bool,
+    learning_affected: bool,
+}
+
+/// 学习接线：索引 + 模式串（参照的 `learning_index`/`learning_mode`）。
+struct LearningWiring {
+    index: LearningIndex,
+    mode: String,
 }
 
 impl Decoder {
@@ -173,9 +182,11 @@ impl Decoder {
             lexicon,
             supplement,
             model,
+            learning: None,
             rank_of,
             arena: Vec::new(),
             allow_duplicate_single: true,
+            learning_affected: false,
         }
     }
 
@@ -189,6 +200,20 @@ impl Decoder {
 
     pub fn set_allow_duplicate_single(&mut self, allowed: bool) {
         self.allow_duplicate_single = allowed;
+    }
+
+    /// 参照 `M.set_learning_for_test`：接入学习索引与模式串。
+    pub fn set_learning(&mut self, index: LearningIndex, mode: &str) {
+        self.learning = Some(LearningWiring {
+            index,
+            mode: mode.to_string(),
+        });
+        self.learning_affected = false;
+    }
+
+    pub fn clear_learning(&mut self) {
+        self.learning = None;
+        self.learning_affected = false;
     }
 
     /// 参照 `decode(raw_code, false, nil, nil)` 的冷路径。
@@ -213,6 +238,7 @@ impl Decoder {
             });
         }
         self.arena.clear();
+        self.learning_affected = false;
         let length = raw.len();
         let mut states = self.new_states(length);
         self.expand_range(&raw, &mut states, 0, length, -1)?;
@@ -565,9 +591,22 @@ impl Decoder {
                             - item.score
                             - supplement_added
                             - whole_input_bonus;
-                        // 学习集成未接入：参照的 `learned` 即 previous.learning_score，
-                        // 因此净增量为 0；此处保留公式形状。
-                        let learned = item.learning_score;
+                        // 参照：`learning.reward(learning_index, learning_mode, raw, text, consumed_end, item)`。
+                        let (learned, potential) = match &mut self.learning {
+                            Some(wiring) => learning_reward(
+                                &mut wiring.index,
+                                &wiring.mode,
+                                &self.arena,
+                                raw,
+                                &text,
+                                consumed_end,
+                                item_index,
+                            ),
+                            None => (item.learning_score, 0.0),
+                        };
+                        if learned > 0.0 || potential > 0.0 {
+                            self.learning_affected = true;
+                        }
                         let state = State {
                             score: score + learned - item.learning_score,
                             mass_score,
@@ -582,8 +621,8 @@ impl Decoder {
                             edge_chars: candidate.chars.clone(),
                             raw_length: consumed_end,
                             edge_count: item.edge_count + 1,
-                            learning_score: 0.0,
-                            learning_potential: 0.0,
+                            learning_score: learned,
+                            learning_potential: potential,
                             isolation_penalty: None,
                             isolation_last_char: None,
                             isolation_last_isolated: false,
@@ -707,7 +746,7 @@ impl Decoder {
             item.segmented = segmented_from_path(raw, &self.arena, item.path);
         }
         let mut evidence = Evidence::default_for(completed_truncated);
-        if include_early_commit {
+        if include_early_commit && !self.learning_affected {
             evidence = self.build_early_commit_evidence(
                 raw,
                 states,
@@ -719,7 +758,7 @@ impl Decoder {
         Ok(DecodeOutput {
             items,
             evidence,
-            learning_affected: false,
+            learning_affected: self.learning_affected,
             completed_truncated,
         })
     }
@@ -735,6 +774,56 @@ impl Decoder {
                 .unwrap_or(false)
         })
     }
+}
+
+// ---------------------------------------------------------------- 学习奖励
+
+/// 参照 `learning.reward`，但沿解码状态链（arena）读取节点。
+fn learning_reward(
+    index: &mut LearningIndex,
+    mode: &str,
+    arena: &[State],
+    raw: &[u8],
+    text: &str,
+    finish: usize,
+    start: usize,
+) -> (f64, f64) {
+    let mut best = arena[start].learning_score;
+    let mut potential = 0.0f64;
+    if index.codes.is_empty() || mode.is_empty() {
+        return (best, potential);
+    }
+    let mut current = Some(start);
+    loop {
+        let (t, r, node_score) = match current {
+            Some(position) => (
+                arena[position].text_length,
+                arena[position].raw_length,
+                arena[position].learning_score,
+            ),
+            None => (0, 0, 0.0),
+        };
+        let fragment = text.get(t..).unwrap_or("");
+        if character_count(fragment) > 16 {
+            break;
+        }
+        let start_byte = r.min(raw.len());
+        let end_byte = finish.min(raw.len());
+        let code = if start_byte < end_byte {
+            std::str::from_utf8(&raw[start_byte..end_byte]).unwrap_or("")
+        } else {
+            ""
+        };
+        let prefix = text.get(..t.min(text.len())).unwrap_or("");
+        let ctx = learning_context(prefix);
+        best = best.max(node_score + index.score(mode, code, fragment, &ctx));
+        potential = potential.max(index.prefix_score(mode, code, fragment, &ctx));
+        current = match current {
+            Some(position) if r > 0 => arena[position].previous,
+            _ => break,
+        };
+    }
+    (best, potential)
 }
 
 // ---------------------------------------------------------------- 早提交证据

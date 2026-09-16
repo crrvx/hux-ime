@@ -11,6 +11,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use tigerclaw_core::decode::Decoder;
+use tigerclaw_core::learning::{Event, LearningIndex};
 use tigerclaw_core::lexicon::{Lexicon, Supplement};
 use tigerclaw_core::ngram::MobileModel;
 
@@ -67,6 +68,29 @@ fn replay(mut decoder: Decoder, reader: impl BufRead, early: bool) -> usize {
     let mut records = 0usize;
     while let Some(line) = lines.next() {
         let (kind, rest) = line.split_once('\t').expect("record payload");
+        if kind == "learningsetup" {
+            let fields: Vec<&str> = rest.split('\t').collect();
+            let now: f64 = fields[0].parse().expect("learning now");
+            let mode = decode_hex(fields[1]);
+            let count: usize = fields[2].parse().expect("levent count");
+            let mut events = Vec::with_capacity(count);
+            for _ in 0..count {
+                let line = lines.next().expect("levent record");
+                let (kind, rest) = line.split_once('\t').expect("levent payload");
+                assert_eq!(kind, "levent");
+                let parts: Vec<&str> = rest.split('\t').collect();
+                events.push(Event {
+                    time: parts[0].parse().expect("time"),
+                    mode: decode_hex(parts[1]),
+                    code: decode_hex(parts[2]),
+                    text: decode_hex(parts[3]),
+                    context: decode_hex(parts[4]),
+                });
+            }
+            decoder.set_learning(LearningIndex::build(&events, now), &mode);
+            records += 1;
+            continue;
+        }
         assert_eq!(kind, "decode", "expected decode record, got {kind}");
         let mut parts = rest.split('\t');
         let input = decode_hex(parts.next().expect("input"));
@@ -312,4 +336,28 @@ fn decode_evidence_transcript_is_bit_exact_with_fixture_model() {
     );
     assert!(records > 830, "transcript too short: {records}");
     println!("decode evidence (fixture model): {records} golden records verified");
+}
+
+#[test]
+fn decode_learning_transcript_is_bit_exact_without_model() {
+    let records = replay(
+        make_decoder(None),
+        open_golden("goldens/decode_learning.tsv.gz"),
+        false,
+    );
+    assert!(records > 1_900, "transcript too short: {records}");
+    println!("decode learning (no model): {records} golden records verified");
+}
+
+#[test]
+fn decode_learning_transcript_is_bit_exact_with_fixture_model() {
+    let model = MobileModel::load(repo_path("goldens/ngram_fixture.bin"), None)
+        .expect("load fixture model");
+    let records = replay(
+        make_decoder(Some(model)),
+        open_golden("goldens/decode_learning_model.tsv.gz"),
+        false,
+    );
+    assert!(records > 300, "transcript too short: {records}");
+    println!("decode learning (fixture model): {records} golden records verified");
 }

@@ -39,7 +39,7 @@ docs/
 |---|---:|---|---|---|
 | `tiger_sentence_cache.lua` | 40 | `cache.rs` | K0 ✅ | fixture 金样（缓存状态/淘汰序） |
 | `tiger_sentence_ngram.lua` | 550 | `ngram.rs` | K0 ✅ | 逐位 logp/observed + cache_status |
-| `tiger_sentence.lua`（词库/解码/证据） | ~2600 | `lexicon.rs` ✅ + `decode.rs` ✅（冷路径 + 证据） | K1 | 数据索引金样 + 解码/证据快照；学习与增量缓存待补 |
+| `tiger_sentence.lua`（词库/解码/证据） | ~2600 | `lexicon.rs` ✅ + `decode.rs` ✅（冷路径 + 证据 + 学习接线） | K1 | 数据索引金样 + 解码/证据/学习快照；增量缓存与交互状态机待 K2 |
 | `tiger_sentence_learning.lua` | 435 | `learning.rs` ✅ | K1 | 23k 检查重放 + learning 金样 |
 | `tiger_sentence.lua`（processor/translator/filter/ascii/options） | ~1250 | `key.rs` + `session.rs` + `punct.rs` + `ascii.rs` + `config.rs` | K2 | 键序列金样 |
 | `tiger_sentence_ngram.lua`（TCSKNM01 legacy） | — | `ngram.rs` | K1 | 同上（快照） |

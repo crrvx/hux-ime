@@ -162,7 +162,7 @@ pub fn chars(text: &str) -> Option<Vec<char>> {
 }
 
 /// 参照 `character_count`：非法输入返回 0。
-fn character_count(text: &str) -> usize {
+pub(crate) fn character_count(text: &str) -> usize {
     let bytes = text.as_bytes();
     let mut count = 0usize;
     let mut index = 0usize;

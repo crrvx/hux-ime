@@ -20,6 +20,8 @@
 | `decode_evidence.tsv.gz` | 早提交证据金样（无模型） | 4,998 条 |
 | `decode_evidence_model.tsv.gz` | 早提交证据金样（fixture 模型，抽样） | 840 条 |
 | `learning.tsv.gz` | 学习金样：`hash`/`score`/`prefix`/`confirmed`/`reward`/`diff`/日志编码 | 10,164 条 |
+| `decode_learning.tsv.gz` | 解码接入学习（无模型） | 1,987 条 |
+| `decode_learning_model.tsv.gz` | 解码接入学习（fixture 模型，抽样） | 358 条 |
 | `local/`（不入库） | 真实模型抽样金样（224 MB 模型） | 62,777 条 |
 
 ## transcript 格式（TSV，`#` 注释，`-` 表示空串，字符串为 UTF-8 字节十六进制）
@@ -47,6 +49,9 @@ result <hex text> <hex segmented> <bits score> <bits confidence_score> <max_rank
 evidence <hex proposal> <bits proposal_share> nit= mit= nlc= trunc= prefixes= raws=
 prefix <hex text> <raw_length> <bits share> <bits boundary_share> <closed> <chars>
 rawlen <hex text> <raw_length>
+# decode + 学习接入（--learning 1）
+learningsetup <now> <hex mode> <n>   # 后接 n 条 levent
+levent <time> <hex mode> <hex code> <hex text> <hex ctx>
 
 # learning（纯计算；见生成器头部注释的完整字段表）
 hash <hex text> <value>
@@ -104,6 +109,15 @@ gzip -9 -n -c /tmp/decode_model.tsv > goldens/decode_model.tsv.gz
 gzip -9 -n -c /tmp/decode_rank_first.tsv > goldens/decode_rank_first.tsv.gz
 gzip -9 -n -c /tmp/decode_evidence.tsv > goldens/decode_evidence.tsv.gz
 gzip -9 -n -c /tmp/decode_evidence_model.tsv > goldens/decode_evidence_model.tsv.gz
+
+# decode + 学习（入库）
+lua tools/gen_decode_golden.lua --reference "$REF" \
+  --data "$PWD/goldens/lexicon" --out /tmp/decode_learning.tsv --learning 1
+lua tools/gen_decode_golden.lua --reference "$REF" \
+  --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
+  --out /tmp/decode_learning_model.tsv --every 7 --learning 1
+gzip -9 -n -c /tmp/decode_learning.tsv > goldens/decode_learning.tsv.gz
+gzip -9 -n -c /tmp/decode_learning_model.tsv > goldens/decode_learning_model.tsv.gz
 
 # learning（入库）
 lua tools/gen_learning_golden.lua --reference "$REF" --out /tmp/learning.tsv
@@ -166,5 +180,7 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 | `decode_evidence.tsv.gz` | `8d1952082c7cf937d91943786224f8cd55ee9cd92b2bf3892b7073b7861898fd` |
 | `decode_evidence_model.tsv.gz` | `d75c3b093121fed6114f88dcf5ebe10a01c862c42ae31f3d5927d32889388181` |
 | `learning.tsv.gz` | `fcf843527a6ab075a6158aeebfd6e3a67c3c8aa206779edf23d6f2c181aa6649` |
+| `decode_learning.tsv.gz` | `41a9894d233c32348e42164d4d29fc698c3037741c141ac0b58404094c9e9354` |
+| `decode_learning_model.tsv.gz` | `91e5fe60a515f1cdd11b815a5da68c7f1883ccc6bb80a9e37e45435cfe72f6e0` |
 
 CI 以同一参照提交重生成全部 fixture 金样并与入库内容比对（见 `.github/workflows/ci.yml`）。

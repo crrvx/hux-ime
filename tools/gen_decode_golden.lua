@@ -1,9 +1,11 @@
 -- 生成 decode 金样（冷路径：include_early_commit=false；未接入学习）。
 --
---   lua tools/gen_decode_golden.lua --reference <repo> --data <dir> --out <tsv> [--model <bin>] [--every N] [--duplicate 0|1] [--early-commit 0|1] [--required 0|1]
+--   lua tools/gen_decode_golden.lua --reference <repo> --data <dir> --out <tsv> [--model <bin>] [--every N] [--duplicate 0|1] [--early-commit 0|1] [--required 0|1] [--learning 0|1]
 --
 -- --required 1：对每 3 个输入追加一次“必需前缀”遍（前缀取该输入首候选的首字符），
 -- 覆盖 build_early_commit_evidence 的 required_text_prefix 过滤路径。
+-- --learning 1：用数据中的真实候选构造纠错事件，经 set_learning_for_test 接入解码，
+-- 并在 transcript 头部输出 learningsetup + levent 使 Rust 侧可重建同一索引。
 --
 -- 数据目录需含四个数据文件；--model 时把模型拷贝为临时用户目录的
 -- models/sentence-ngram-mobile.bin 并启用（走参照的 try_load 路径）。
@@ -68,9 +70,43 @@ sentence.ensure_lexicon(nil)
 local duplicate = opts.duplicate ~= "0"
 local early = opts["early-commit"] == "1"
 local required_mode = opts.required == "1"
+local learning_flag = opts.learning == "1"
 if not duplicate then
     -- 参照测试同款：以假 context 关闭“单字重码组句”。
     sentence.set_allow_duplicate_single({ get_option = function() return false end })
+end
+
+local learning_events = {}
+local learning_now = 0
+if learning_flag then
+    -- 纠错事件取自数据中的真实候选，保证学习评分非零。
+    local module = require("tiger_sentence_learning")
+    local view = sentence.lexicon_data_view()
+    local function pick(code, index)
+        local entries = view.codes[code]
+        if not entries or not entries[index] then return nil end
+        return entries[index].t
+    end
+    local first_a, second_a = pick("a", 1), pick("a", 2)
+    local first_ab, second_ab = pick("ab", 1), pick("ab", 2)
+    local second_abc = pick("abc", 2)
+    local context = first_ab and utf8.char(utf8.codepoint(first_ab)) or ""
+    local function learn_event(time, code, text, ctx)
+        if text then
+            learning_events[#learning_events + 1] = {
+                time = time, mode = "t", code = code, text = text, context = ctx or "",
+            }
+        end
+    end
+    for _ = 1, 3 do learn_event(1000, "a", second_a, "") end
+    learn_event(2000, "ab", second_ab, "")
+    learn_event(2000, "ab", second_ab, context)
+    learn_event(3000, "ab", first_ab, "")
+    learn_event(4000, "abc", second_abc, "")
+    learning_now = 40 * 86400
+    local index = module.build(learning_events, learning_now)
+    sentence.set_learning_for_test(index, "t")
+    local _ = first_a
 end
 
 local inputs, seen = {}, {}
@@ -163,7 +199,13 @@ end
 
 emit("# decode transcript; model=" .. (opts.model and "fixture" or "off") ..
     " duplicate=" .. (duplicate and 1 or 0) .. " early=" .. (early and 1 or 0) ..
-    " required=" .. (required_mode and 1 or 0))
+    " required=" .. (required_mode and 1 or 0) .. " learning=" .. (learning_flag and 1 or 0))
+if learning_flag then
+    emit("learningsetup", tostring(learning_now), hex("t"), tostring(#learning_events))
+    for _, e in ipairs(learning_events) do
+        emit("levent", tostring(e.time), hex(e.mode), hex(e.code), hex(e.text), hex(e.context))
+    end
+end
 for index, input in ipairs(selected) do
     emit_decode_pass(input, "")
     -- 必需前缀遍：取该输入首候选的首字符（每 3 个输入一次，覆盖过滤路径）。

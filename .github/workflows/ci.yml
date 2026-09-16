@@ -76,6 +76,13 @@ jobs:
             --out /tmp/decode_evidence_model.tsv --every 7 --early-commit 1 --required 1
           lua tools/gen_learning_golden.lua \
             --reference external/tiger-sentense-rime --out /tmp/learning.tsv
+          lua tools/gen_decode_golden.lua \
+            --reference external/tiger-sentense-rime \
+            --data "$PWD/goldens/lexicon" --out /tmp/decode_learning.tsv --learning 1
+          lua tools/gen_decode_golden.lua \
+            --reference external/tiger-sentense-rime \
+            --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
+            --out /tmp/decode_learning_model.tsv --every 7 --learning 1
       - name: Compare with committed goldens
         run: |
           cmp goldens/ngram_fixture.bin /tmp/ngram_fixture.bin
@@ -90,6 +97,8 @@ jobs:
           gunzip -c goldens/decode_evidence.tsv.gz | cmp - /tmp/decode_evidence.tsv
           gunzip -c goldens/decode_evidence_model.tsv.gz | cmp - /tmp/decode_evidence_model.tsv
           gunzip -c goldens/learning.tsv.gz | cmp - /tmp/learning.tsv
+          gunzip -c goldens/decode_learning.tsv.gz | cmp - /tmp/decode_learning.tsv
+          gunzip -c goldens/decode_learning_model.tsv.gz | cmp - /tmp/decode_learning_model.tsv
 
   # Arch 的系统 lua 即最新版；验证金样在最新 Lua 下同样逐字节一致。
   # shell: bash 显式设置（容器内默认 shell 不保证是 bash）。
@@ -151,6 +160,13 @@ jobs:
             --out /tmp/decode_evidence_model.tsv --every 7 --early-commit 1 --required 1
           lua tools/gen_learning_golden.lua \
             --reference external/tiger-sentense-rime --out /tmp/learning.tsv
+          lua tools/gen_decode_golden.lua \
+            --reference external/tiger-sentense-rime \
+            --data "$PWD/goldens/lexicon" --out /tmp/decode_learning.tsv --learning 1
+          lua tools/gen_decode_golden.lua \
+            --reference external/tiger-sentense-rime \
+            --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
+            --out /tmp/decode_learning_model.tsv --every 7 --learning 1
       - name: Compare with committed goldens
         run: |
           cmp goldens/ngram_fixture.bin /tmp/ngram_fixture.bin
@@ -165,3 +181,5 @@ jobs:
           gunzip -c goldens/decode_evidence.tsv.gz | cmp - /tmp/decode_evidence.tsv
           gunzip -c goldens/decode_evidence_model.tsv.gz | cmp - /tmp/decode_evidence_model.tsv
           gunzip -c goldens/learning.tsv.gz | cmp - /tmp/learning.tsv
+          gunzip -c goldens/decode_learning.tsv.gz | cmp - /tmp/decode_learning.tsv
+          gunzip -c goldens/decode_learning_model.tsv.gz | cmp - /tmp/decode_learning_model.tsv
