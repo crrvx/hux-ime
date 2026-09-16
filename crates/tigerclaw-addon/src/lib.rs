@@ -1,4 +1,4 @@
-//! 虎整句 fcitx5 addon 的 Rust 侧（K3）：C ABI、数据加载与会话装配。
+//! 虎爪（虎整句方案）fcitx5 addon 的 Rust 侧（K3）：C ABI、数据加载与会话装配。
 //!
 //! 分工：`shell/tigerclaw.cpp` 只做 fcitx5 接口适配（按键 → 本层；提交/preedit/候选 ← 本层回调），
 //! 逻辑在 Rust（本层 → `tigerclaw-core`）。组合重建照 2c 重放桩同构规则：

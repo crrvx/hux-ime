@@ -10,7 +10,7 @@ use tigerclaw_core::interaction::{
 };
 use tigerclaw_core::lexicon::DEFAULT_HIGH_FREQ_LIMIT;
 
-/// 虎整句引擎设置（与参照 schema / fcitx5 配置界面一一对应）。
+/// 虎整句方案引擎设置（与参照 schema / fcitx5 配置界面一一对应）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     /// 提前上屏（`tiger_sentence_early_commit`）。

@@ -12,7 +12,7 @@ cmake --build build/addon -j
 sudo cmake --install build/addon      # /usr/lib/fcitx5/libtigerclaw.so + 两个 conf
 ```
 
-安装后重启 fcitx5（`fcitx5 -r -d`），在配置工具中添加「虎整句」。
+安装后重启 fcitx5（`fcitx5 -r -d`），在配置工具中添加「虎爪」（方案：虎整句）。
 
 ## 数据目录
 

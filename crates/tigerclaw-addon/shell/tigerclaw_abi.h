@@ -1,5 +1,5 @@
 /*
- * 虎整句 fcitx5 addon 的 C ABI（Rust 侧实现，C++ 薄壳调用）。
+ * 虎爪（虎整句方案）fcitx5 addon 的 C ABI（Rust 侧实现，C++ 薄壳调用）。
  * 头文件与 `crates/tigerclaw-addon/src/lib.rs` 的导出符号一一对应。
  */
 #ifndef TIGERCLAW_ABI_H_
