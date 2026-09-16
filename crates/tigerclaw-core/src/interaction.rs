@@ -10,7 +10,8 @@
 
 use crate::decode::{Decoder, Evaluated, Evidence};
 use crate::key::KeyEvent;
-use crate::session::Context;
+use crate::lexicon::Lexicon;
+use crate::session::{Candidate, Context};
 use hashbrown::HashMap;
 
 /// 属性键（对应参照 `state_keys`）。
@@ -893,6 +894,182 @@ pub fn try_empty_code_commit(
     Ok(true)
 }
 
+/// 参照 `trim_segmented_after_raw_prefix`：去掉前 `raw_prefix_length` 个原始字符
+/// 对应的片段（片段为 ASCII，按字节计数即可）。
+pub fn trim_segmented_after_raw_prefix(segmented: &str, raw_prefix_length: usize) -> String {
+    if raw_prefix_length == 0 || segmented.is_empty() {
+        return segmented.to_string();
+    }
+    let bytes = segmented.as_bytes();
+    let mut raw_count = 0usize;
+    let mut index = 0usize;
+    while index < bytes.len() && raw_count < raw_prefix_length {
+        if bytes[index] != b' ' {
+            raw_count += 1;
+        }
+        index += 1;
+    }
+    while index < bytes.len() && bytes[index] == b' ' {
+        index += 1;
+    }
+    if index < bytes.len() {
+        segmented[index..].to_string()
+    } else {
+        String::new()
+    }
+}
+
+/// 参照 `reverse_comment`：单字显示全部编码（源序），词组逐字 `字:码组`。
+pub fn reverse_comment(lexicon: &Lexicon, text: &str) -> Option<String> {
+    if !lexicon.built {
+        return None;
+    }
+    let chars: Vec<char> = text.chars().collect();
+    if chars.is_empty() {
+        return None;
+    }
+    if chars.len() == 1 {
+        let codes = lexicon.character_codes.get(&chars[0].to_string())?;
+        if codes.is_empty() {
+            return None;
+        }
+        return Some(format!(" {}", codes.join(" / ")));
+    }
+    let mut parts = Vec::with_capacity(chars.len());
+    for ch in &chars {
+        match lexicon.character_codes.get(&ch.to_string()) {
+            Some(codes) if !codes.is_empty() => {
+                parts.push(format!("{}:{}", ch, codes.join("/")));
+            }
+            _ => parts.push(format!("{}:?", ch)),
+        }
+    }
+    Some(format!(" {}", parts.join(" ")))
+}
+
+/// 参照 `translator(input, seg, env)`：解码产出候选（无锁路径）。
+pub fn translate(
+    decoder: &mut Decoder,
+    context: &Context,
+    state: &SentenceState,
+    input: &[u8],
+    seg_start: usize,
+    seg_end: usize,
+    out: &mut Vec<Candidate>,
+) -> anyhow::Result<()> {
+    if input.first() == Some(&b'`') {
+        return Ok(()); // 反查段由 reverse lookup 处理
+    }
+    let allow_duplicate_single = set_allow_duplicate_single(context);
+    let committed_text = state.committed_text.clone();
+    let committed_raw = state.committed_raw.clone();
+    let buffered = state.buffered_text.clone();
+    let mut input = input;
+    if !buffered.is_empty() {
+        if seg_start != 0 || input.first() != Some(&b'~') {
+            return Ok(());
+        }
+        input = &input[1..];
+    }
+    if !buffered.is_empty()
+        && input.is_empty()
+        && let Some(lock) = state.active_lock()
+        && lock.raw == committed_raw
+        && lock.text == committed_text
+    {
+        let mut candidate = Candidate::new("sentence_buffered", seg_start, seg_end, "", "");
+        candidate.quality = 1000.0;
+        candidate.preedit = buffered;
+        out.push(candidate);
+        return Ok(());
+    }
+    let mut raw = committed_raw.as_bytes().to_vec();
+    raw.extend_from_slice(input);
+    let raw_text = String::from_utf8_lossy(&raw).into_owned();
+    let decoded = decoder.decode_with(&raw_text, false, &committed_text)?;
+    let mut yielded = 0usize;
+    for item in &decoded.items {
+        if !implicit_rank_allowed(
+            item,
+            &raw,
+            state.continuation_after_auto_commit,
+            allow_duplicate_single,
+        ) {
+            continue;
+        }
+        if !committed_text.is_empty() && !item.text.starts_with(&committed_text) {
+            continue;
+        }
+        let text = if committed_text.is_empty() {
+            item.text.clone()
+        } else {
+            item.text[committed_text.len()..].to_string()
+        };
+        let mut preedit = item.segmented.clone();
+        if !committed_raw.is_empty() {
+            preedit = trim_segmented_after_raw_prefix(&item.segmented, committed_raw.len());
+        }
+        if text.is_empty() && buffered.is_empty() {
+            continue;
+        }
+        let kind = if buffered.is_empty() {
+            "sentence"
+        } else {
+            "sentence_buffered"
+        };
+        let mut candidate = Candidate::new(kind, seg_start, seg_end, &text, "");
+        if !buffered.is_empty() {
+            candidate.quality = 1000.0;
+        }
+        let separator = if !buffered.is_empty() && !preedit.is_empty() {
+            " "
+        } else {
+            ""
+        };
+        candidate.preedit = format!("{buffered}{separator}{preedit}");
+        out.push(candidate);
+        yielded += 1;
+        if yielded >= CANDIDATE_LIMIT {
+            return Ok(());
+        }
+    }
+    if yielded == 0 && !buffered.is_empty() {
+        let mut candidate = Candidate::new(
+            "sentence_buffered",
+            seg_start,
+            seg_end,
+            &String::from_utf8_lossy(input),
+            "",
+        );
+        candidate.quality = 1000.0;
+        let separator = if input.is_empty() { "" } else { " " };
+        candidate.preedit = format!("{buffered}{separator}{}", String::from_utf8_lossy(input));
+        out.push(candidate);
+    }
+    Ok(())
+}
+
+/// 参照 `buffer_filter`：缓冲态只保留 `sentence_buffered` 候选。
+pub fn buffer_filter(candidates: &[Candidate], buffered: bool) -> Vec<Candidate> {
+    candidates
+        .iter()
+        .filter(|candidate| !buffered || candidate.kind == "sentence_buffered")
+        .cloned()
+        .collect()
+}
+
+/// 参照 `reverse_comment_filter`：反查段候选写入虎码注释。
+pub fn reverse_comment_filter(candidates: &mut [Candidate], active: bool, lexicon: &Lexicon) {
+    if !active {
+        return;
+    }
+    for candidate in candidates {
+        if let Some(comment) = reverse_comment(lexicon, &candidate.text) {
+            candidate.comment = comment;
+        }
+    }
+}
+
 /// 参照 `ends_with_digit`。
 pub fn ends_with_digit(text: &str) -> bool {
     let Some(last) = text.chars().last() else {
@@ -1270,5 +1447,80 @@ mod tests {
         assert!(state.continuation_after_auto_commit);
         assert_eq!(context.get_property(K_COMMITTED), Some("\t"));
         assert_eq!(context.get_property(K_LOCKS), None);
+    }
+
+    #[test]
+    fn trim_segmented_prefix() {
+        assert_eq!(trim_segmented_after_raw_prefix("ab cd ef", 2), "cd ef");
+        assert_eq!(trim_segmented_after_raw_prefix("ab cd", 1), "b cd");
+        assert_eq!(trim_segmented_after_raw_prefix("ab", 2), "");
+        assert_eq!(trim_segmented_after_raw_prefix("", 3), "");
+        assert_eq!(trim_segmented_after_raw_prefix("ab", 0), "ab");
+    }
+
+    #[test]
+    fn reverse_comment_formats() {
+        let dir =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
+        let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
+        // 来：codes.txt 源序 a, ah, ahb
+        assert_eq!(
+            reverse_comment(&lexicon, "来").expect("来 has codes"),
+            " a / ah / ahb"
+        );
+        let multi = reverse_comment(&lexicon, "来X").expect("multi");
+        assert!(multi.starts_with(" 来:"), "{multi}");
+        assert!(multi.contains(" X:?"), "{multi}");
+        assert!(reverse_comment(&lexicon, "X").is_none());
+        assert!(reverse_comment(&lexicon, "").is_none());
+    }
+
+    #[test]
+    fn buffer_filter_keeps_only_buffered() {
+        let plain = Candidate::new("sentence", 0, 2, "甲", "");
+        let buffered = Candidate::new("sentence_buffered", 0, 2, "乙", "");
+        let all = vec![plain.clone(), buffered.clone()];
+        assert_eq!(buffer_filter(&all, false), all);
+        assert_eq!(buffer_filter(&all, true), vec![buffered]);
+    }
+
+    #[test]
+    fn translate_smoke() {
+        let dir =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
+        let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
+        let supplement = crate::lexicon::Supplement::load_default(Some(&dir));
+        let mut decoder = Decoder::new(lexicon, supplement, None);
+        let context = Context::new();
+        let state = SentenceState::fresh(1);
+        let mut out = Vec::new();
+        translate(&mut decoder, &context, &state, b"ab", 0, 2, &mut out).expect("translate");
+        assert!(!out.is_empty());
+        assert!(out.iter().all(|candidate| candidate.kind == "sentence"));
+        assert!(out.iter().all(|candidate| !candidate.text.is_empty()));
+        // 缓冲态：`~` 标记 + 单锁 → buffered 快捷候选
+        let mut buffered_state = SentenceState::fresh(1);
+        buffered_state.buffered_text = "甲".to_string();
+        buffered_state.committed_raw = "ab".to_string();
+        buffered_state.committed_text = "甲".to_string();
+        buffered_state.locks.push(Lock {
+            raw: "ab".to_string(),
+            text: "甲".to_string(),
+            boundaries: "2,3;".to_string(),
+        });
+        let mut buffered_out = Vec::new();
+        translate(
+            &mut decoder,
+            &context,
+            &buffered_state,
+            b"~",
+            0,
+            1,
+            &mut buffered_out,
+        )
+        .expect("translate buffered");
+        assert_eq!(buffered_out.len(), 1);
+        assert_eq!(buffered_out[0].kind, "sentence_buffered");
+        assert_eq!(buffered_out[0].preedit, "甲");
     }
 }
