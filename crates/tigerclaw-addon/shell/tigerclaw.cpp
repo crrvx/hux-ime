@@ -23,6 +23,11 @@
 
 namespace {
 
+/// 候选页大小（与 core `host::DEFAULT_PAGE_SIZE` 一致；参照 schema `menu/page_size: 5`）。
+/// 注意：`CommonCandidateList::setCursorIndex` 是**页内索引**（越界抛异常），
+/// 绝对索引必须用 `setGlobalCursorIndex` + `setPage`。
+constexpr int kCandidatePageSize = 5;
+
 /// 配置 schema：fcitx5-configtool 依据它自动生成设置页（fcitx://config/addon/tigerclaw）。
 FCITX_CONFIGURATION(
     TigerclawConfig,
@@ -150,10 +155,16 @@ private:
             candidateList->append<fcitx::DisplayOnlyCandidateWord>(
                 fcitx::Text(text), fcitx::Text(comment));
         }
+        // 翻页交由 fcitx5 面板（页大小与引擎一致）：绝对索引 → 全局光标 + 所在页。
+        candidateList->setPageSize(kCandidatePageSize);
         if (count > 0) {
             // 防御：越界不设光标索引。
             const int index = std::min(std::max(selected, 0), count - 1);
-            candidateList->setCursorIndex(index);
+            candidateList->setGlobalCursorIndex(index);
+            const int page = index / candidateList->pageSize();
+            if (page < candidateList->totalPages()) {
+                candidateList->setPage(page);
+            }
         }
         context_->inputPanel().setCandidateList(std::move(candidateList));
         context_->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);

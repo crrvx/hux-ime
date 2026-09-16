@@ -20,3 +20,7 @@ commit-zho		` z h o space
 digit-zhong		` z h o n g 1
 mixed-after-letter		a ` z h
 upper-after-prefix		` Z
+nav-page-equal		` z = =
+nav-page-minus		` z = = -
+nav-page-keys		` z Page_Down Page_Down Page_Up
+nav-page-zho		` z h o = -

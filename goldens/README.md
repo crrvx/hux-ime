@@ -25,7 +25,7 @@
 | `key.tsv.gz` | 键名/键事件金样（librime 探针）：`name`/`repr`/`parse`/`modifier` | 5132 行 |
 | `key_sequence.tsv.gz` | 键序列金样（真 librime 探针，2c）：逐步 `consumed`/输入/光标/提交/候选/注释/高亮 | 55 例 / 236 步（含空码自动上屏、编辑/导航键、标点表、大写字母 DirectCommit；英文模式已移除） |
 | `key_sequence/` | 键序列夹具（合成码表 + `symbols.yaml`＝参照 pin 同文件；探针与 Rust 重放共用；发布默认见 `data/symbols.yaml`） | 2 文件 |
-| `reverse.tsv.gz` | 反查金样（⑧-1，真 librime 探针，pin `898579f`）：逐步 `consumed`/输入/光标/提交/候选/注释/高亮 | 20 例 / 107 步（裸前缀标点候选、缩写/全拼剪枝、多音节词、导航/退格/Escape/上屏） |
+| `reverse.tsv.gz` | 反查金样（⑧-1，真 librime 探针，pin `898579f`）：逐步 `consumed`/输入/光标/提交/候选/注释/高亮 | 24 例 / 127 步（裸前缀标点候选、缩写/全拼剪枝、多音节词、翻页 `=`/`-`/Page 键、导航/退格/Escape/上屏） |
 | `reverse/` | 反查夹具（小 `PY_c.dict.yaml` + 合成码表 + `symbols.yaml` + `gen_reverse_index.py` 生成的 `tiger_sentence.reverse.bin`；探针与 Rust 重放共用） | 4 文件 + 生成物 |
 | `lexical.tsv.gz` | 词先验金样（TCSLEX01 读取/Bloom/打分；真实位图 + 码表语料） | 753 行 |
 | `local/`（不入库） | 真实模型抽样金样（224 MB 模型） | 62,777 条 |
@@ -239,7 +239,7 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 | `decode_learning_model.tsv.gz` | `8a64e6e3d28b101a57075b03233e62c4b03e8c4a8d2a979399a91a00e2d8e806` |
 | `key.tsv.gz` | `e939a077cd0825f7b454a4af300ed50fb6a2f2609c71583525d44f2f8fb3fd33` |
 | `key_sequence.tsv.gz` | `7aab00446c0c3cc8e0256d0a67a868b6f84b5cc77f4ecb84d5f18c1cb2ca8dcb` |
-| `reverse.tsv.gz` | `c6abbe80bf5b603cff086c737f5ec0d58c6b7c912fe654a8fca2ba5ddda49bd7` |
+| `reverse.tsv.gz` | `9e2437a282e2dd2530e1dcdc5ac6a9d103b5113fdd4cfa44634f5fb2ff3d244f` |
 | `lexical.tsv.gz` | `5b559b2504e21c69b4f702678a96d2947abfe7d7c26adcd2b25c3d4de761e0c3` |
 
 CI 以同一参照提交重生成全部 fixture 金样并与入库内容比对（见 `.github/workflows/ci.yml`）。

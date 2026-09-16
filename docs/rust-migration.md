@@ -72,8 +72,8 @@ docs/
   前缀增量保留段，未变的段保留菜单与高亮；提交后旧段不复用）。
 - 宿主处理器链：core `host::process_key` 在 `processor` 返回 `Forward` 后执行 librime
   原生组件等价物（`key_binder` → `selector` → `navigator` → `express_editor`；`speller`/
-  `punctuator` 见 ⑦）：菜单导航/翻页、字节光标移动（Home/End、Ctrl/Shift+Left/Right）、
-  退格/删除；
+  `punctuator` 见 ⑦）：菜单导航/翻页（含 schema 的 `-`(when paging)→Page_Up、`=`(when has_menu)
+  →Page_Down 绑定）、字节光标移动（Home/End、Ctrl/Shift+Left/Right）、退格/删除；
   `Consumed` 时宿主吞键，`Forward` 时交基础应用（空闲编辑键）。
 - 英文模式：**不实现**（按设计取舍）：英文输入交由 fcitx5 切换输入法；大写字母经
   `express_editor` 的 `char_handler` 直通（组合先上屏）。
