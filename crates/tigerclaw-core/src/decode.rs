@@ -1,7 +1,8 @@
 //! Beam 解码（冷路径），对应参照 `decode_full` / `decode` 的去缓存形态。
 //!
-//! 本增量范围：normalize、rank 选择器、资格过滤、beam 扩展、桶聚合、评分与候选发射。
-//! 暂不含：早提交证据、学习集成、增量/锁缓存、模型失败回退（guarded_decode）。
+//! 本增量范围：normalize、rank 选择器、资格过滤、beam 扩展、桶聚合、评分与候选发射、
+//! 早提交证据、学习集成、锁播种（`decode_with_lock`）。
+//! 暂不含：增量/锁缓存（性能优化）、模型失败回退（guarded_decode）。
 
 use crate::learning::{LearningIndex, character_count, context as learning_context};
 use crate::lexicon::{CodeEntry, Lexicon, Supplement};
@@ -94,6 +95,27 @@ pub struct DecodeOutput {
     pub visible_prefixes: HashSet<(usize, String)>,
     pub learning_affected: bool,
     pub completed_truncated: bool,
+}
+
+impl DecodeOutput {
+    fn empty() -> Self {
+        Self {
+            items: Vec::new(),
+            confidence_candidates: Vec::new(),
+            evidence: Evidence::default_for(false),
+            visible_prefixes: HashSet::new(),
+            learning_affected: false,
+            completed_truncated: false,
+        }
+    }
+}
+
+/// 交互层锁（对应参照 `{ raw, text, boundaries }`；`boundaries` 形如 `"2,3;4,6;"`）。
+#[derive(Clone, Copy, Debug)]
+pub struct DecodeLock<'a> {
+    pub raw: &'a str,
+    pub text: &'a str,
+    pub boundaries: &'a str,
 }
 
 /// 单条前缀证据（对应参照 `build_prefix_evidence` 的顺序数组元素）。
@@ -236,16 +258,41 @@ impl Decoder {
         include_early_commit: bool,
         required_text_prefix: &str,
     ) -> Result<DecodeOutput> {
+        self.decode_with_lock(raw_code, include_early_commit, required_text_prefix, None)
+    }
+
+    /// 参照 `decode(raw_code, include_early_commit, required_text_prefix, locked)` 的冷路径。
+    pub fn decode_with_lock(
+        &mut self,
+        raw_code: &str,
+        include_early_commit: bool,
+        required_text_prefix: &str,
+        lock: Option<DecodeLock<'_>>,
+    ) -> Result<DecodeOutput> {
         let raw = normalize(raw_code);
+        if let Some(lock) = lock {
+            let prefix = normalize(lock.raw);
+            if prefix.is_empty() || !raw.starts_with(&prefix) {
+                return Ok(DecodeOutput::empty());
+            }
+            self.arena.clear();
+            self.learning_affected = false;
+            let length = raw.len();
+            let mut states = self.new_states(length);
+            if !self.seed_locked(&raw, &mut states, &prefix, &lock)? {
+                return Ok(DecodeOutput::empty());
+            }
+            self.expand_range(&raw, &mut states, prefix.len(), length, -1)?;
+            return self.emit(
+                &raw,
+                &mut states,
+                length,
+                include_early_commit,
+                required_text_prefix,
+            );
+        }
         if raw.is_empty() || !has_letter(&raw) {
-            return Ok(DecodeOutput {
-                items: Vec::new(),
-                confidence_candidates: Vec::new(),
-                evidence: Evidence::default_for(false),
-                visible_prefixes: HashSet::new(),
-                learning_affected: false,
-                completed_truncated: false,
-            });
+            return Ok(DecodeOutput::empty());
         }
         self.arena.clear();
         self.learning_affected = false;
@@ -259,6 +306,107 @@ impl Decoder {
             include_early_commit,
             required_text_prefix,
         )
+    }
+
+    /// 参照 `decode` 的 locked 播种：按 `boundaries` 重建已确认前缀的路径与分数
+    /// （不重搜索、不允许边跨过锁），成功后把种子放入 `states[#prefix]`。
+    fn seed_locked(
+        &mut self,
+        raw: &[u8],
+        states: &mut [Bucket],
+        prefix: &[u8],
+        lock: &DecodeLock<'_>,
+    ) -> Result<bool> {
+        let mut seed_index = 0usize;
+        let mut seed_text_length = 0usize;
+        for (raw_length, text_length) in parse_boundaries(lock.boundaries) {
+            let fragment = lock.text.get(seed_text_length..text_length).unwrap_or("");
+            let chars: Vec<char> = fragment.chars().collect();
+            let seed = &self.arena[seed_index];
+            let seed_score = seed.score;
+            let seed_prev2 = seed.prev2;
+            let seed_prev1 = seed.prev1;
+            let seed_supplement_state = seed.supplement_state;
+            let seed_supplement_score = seed.supplement_score;
+            let seed_learning_score = seed.learning_score;
+            let seed_edge_count = seed.edge_count;
+            let mut score = seed_score;
+            let mut prev2 = seed_prev2;
+            let mut prev1 = seed_prev1;
+            let mut supplement_state = seed_supplement_state;
+            let mut supplement_added = 0.0;
+            for &ch in &chars {
+                score += self.logp(prev2, prev1, ch)?;
+                score += EMITTED_CHARACTER_REWARD;
+                if self.supplement.count > 0 {
+                    let (state, reward) = self.supplement.advance(supplement_state, ch);
+                    supplement_state = state;
+                    score += reward;
+                    supplement_added += reward;
+                }
+                prev2 = prev1;
+                prev1 = ch;
+            }
+            let text = lock
+                .text
+                .get(..text_length)
+                .unwrap_or(lock.text)
+                .to_string();
+            let supplement_score = seed_supplement_score + supplement_added;
+            let mass_score = score - supplement_score - seed_learning_score;
+            let (learned, potential) = match &mut self.learning {
+                Some(wiring) => learning_reward(
+                    &mut wiring.index,
+                    &wiring.mode,
+                    &self.arena,
+                    raw,
+                    &text,
+                    raw_length,
+                    seed_index,
+                ),
+                None => (seed_learning_score, 0.0),
+            };
+            if learned > 0.0 || potential > 0.0 {
+                self.learning_affected = true;
+            }
+            let state = State {
+                score: score + learned - seed_learning_score,
+                mass_score,
+                text,
+                prev2,
+                prev1,
+                max_rank: 1,
+                supplement_state,
+                supplement_score,
+                previous: Some(seed_index),
+                edge_chars: chars,
+                text_length,
+                raw_length,
+                edge_count: seed_edge_count + 1,
+                learning_score: learned,
+                learning_potential: potential,
+                isolation_penalty: None,
+                isolation_last_char: None,
+                isolation_last_isolated: false,
+            };
+            seed_index = self.arena.len();
+            self.arena.push(state);
+            seed_text_length = text_length;
+        }
+        let accepted = {
+            let seed = &self.arena[seed_index];
+            seed.raw_length == prefix.len() && seed.text.as_str() == lock.text
+        };
+        if !accepted {
+            return Ok(false);
+        }
+        states[0] = Bucket::default();
+        let bucket = &mut states[prefix.len()];
+        bucket.items.push(seed_index);
+        if bucket.items.len() >= AGGREGATE_DURING_EXPANSION_THRESHOLD {
+            self.ensure_aggregated(bucket);
+        }
+        Ok(true)
     }
 
     fn new_states(&mut self, length: usize) -> Vec<Bucket> {
@@ -1241,6 +1389,44 @@ fn has_letter(raw: &[u8]) -> bool {
     raw.iter().any(|byte| byte.is_ascii_alphabetic())
 }
 
+/// 参照 `locked.boundaries:gmatch("(%d+),(%d+);")`。
+fn parse_boundaries(value: &str) -> Vec<(usize, usize)> {
+    let bytes = value.as_bytes();
+    let mut result = Vec::new();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let first_start = index;
+        while index < bytes.len() && bytes[index].is_ascii_digit() {
+            index += 1;
+        }
+        if index == first_start {
+            index += 1;
+            continue;
+        }
+        let first = &value[first_start..index];
+        if bytes.get(index) != Some(&b',') {
+            continue;
+        }
+        index += 1;
+        let second_start = index;
+        while index < bytes.len() && bytes[index].is_ascii_digit() {
+            index += 1;
+        }
+        if index == second_start {
+            continue;
+        }
+        let second = &value[second_start..index];
+        if bytes.get(index) != Some(&b';') {
+            continue;
+        }
+        index += 1;
+        if let (Ok(raw_length), Ok(text_length)) = (first.parse(), second.parse()) {
+            result.push((raw_length, text_length));
+        }
+    }
+    result
+}
+
 /// 参照 `trailing_selector_span`；供后续增量路径（扩展/删减缓存）使用。
 #[allow(dead_code)]
 fn trailing_selector_span(raw: &[u8]) -> usize {
@@ -1509,5 +1695,172 @@ mod tests {
         assert_eq!(parse_selector(b"ab00", 2), (0, 4));
         assert_eq!(parse_selector(b"ab99999999999999999999", 2), (u64::MAX, 22));
         assert_eq!(parse_selector(b"ab", 2), (0, 2));
+    }
+
+    #[test]
+    fn locked_decode_rebuilds_confirmed_prefix() {
+        let dir =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
+        let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
+        let supplement = Supplement::load_default(Some(&dir));
+        let mut decoder = Decoder::new(lexicon, supplement, None);
+        let unlocked = decoder.decode_with("ab", false, "").expect("decode");
+        let top = unlocked.items.first().expect("candidates").clone();
+        // 路径链 root..top；取第一个非根节点作为局部锁边界。
+        let mut chain = Vec::new();
+        let mut current = Some(top.path);
+        while let Some(index) = current {
+            chain.push(index);
+            current = decoder.arena[index].previous;
+        }
+        chain.reverse();
+        assert!(chain.len() >= 2, "期望多节点路径");
+        let node = chain[1];
+        let (raw_length, text_length) = (
+            decoder.arena[node].raw_length,
+            decoder.arena[node].text_length,
+        );
+        let locked_text = decoder.arena[node].text.clone();
+        let locked_raw = "ab"[..raw_length].to_string();
+        let boundaries = format!("{raw_length},{text_length};");
+        let lock = DecodeLock {
+            raw: &locked_raw,
+            text: &locked_text,
+            boundaries: &boundaries,
+        };
+        let locked = decoder
+            .decode_with_lock("ab", false, "", Some(lock))
+            .expect("locked decode");
+        assert!(!locked.items.is_empty());
+        for item in &locked.items {
+            assert!(item.text.starts_with(&locked_text), "{}", item.text);
+        }
+    }
+
+    #[test]
+    fn locked_decode_honors_full_input_lock() {
+        let dir =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
+        let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
+        let supplement = Supplement::load_default(Some(&dir));
+        let mut decoder = Decoder::new(lexicon, supplement, None);
+        let unlocked = decoder.decode_with("ab", false, "").expect("decode");
+        let top = unlocked.items.first().expect("candidates").clone();
+        let mut chain = Vec::new();
+        let mut current = Some(top.path);
+        while let Some(index) = current {
+            chain.push(index);
+            current = decoder.arena[index].previous;
+        }
+        chain.reverse();
+        // 全量锁：以顶层候选路径的全部边界重建，前缀即整段输入。
+        let boundaries: String = chain[1..]
+            .iter()
+            .map(|&index| {
+                format!(
+                    "{},{};",
+                    decoder.arena[index].raw_length, decoder.arena[index].text_length
+                )
+            })
+            .collect();
+        let lock = DecodeLock {
+            raw: "ab",
+            text: &top.text,
+            boundaries: &boundaries,
+        };
+        let locked = decoder
+            .decode_with_lock("ab", false, "", Some(lock))
+            .expect("locked decode");
+        assert!(!locked.items.is_empty());
+        assert!(
+            locked.items.iter().all(|item| item.text == top.text),
+            "{:?}",
+            locked
+                .items
+                .iter()
+                .map(|item| &item.text)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn locked_decode_rejects_mismatches() {
+        let dir =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
+        let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
+        let supplement = Supplement::load_default(Some(&dir));
+        let mut decoder = Decoder::new(lexicon, supplement, None);
+        let unlocked = decoder.decode_with("ab", false, "").expect("decode");
+        let top = unlocked.items.first().expect("candidates").clone();
+        let node = decoder.arena[top.path].previous.expect("non-root path");
+        let (raw_length, text_length) = (
+            decoder.arena[node].raw_length,
+            decoder.arena[node].text_length,
+        );
+        let locked_text = decoder.arena[node].text.clone();
+        let locked_raw = "ab"[..raw_length].to_string();
+        let boundaries = format!("{raw_length},{text_length};");
+        let raw_mismatch = DecodeLock {
+            raw: "xy",
+            text: &locked_text,
+            boundaries: &boundaries,
+        };
+        assert!(
+            decoder
+                .decode_with_lock("ab", false, "", Some(raw_mismatch))
+                .unwrap()
+                .items
+                .is_empty()
+        );
+        let empty_raw = DecodeLock {
+            raw: "",
+            text: &locked_text,
+            boundaries: &boundaries,
+        };
+        assert!(
+            decoder
+                .decode_with_lock("ab", false, "", Some(empty_raw))
+                .unwrap()
+                .items
+                .is_empty()
+        );
+        let short = "0,0;".to_string();
+        let short_lock = DecodeLock {
+            raw: &locked_raw,
+            text: &locked_text,
+            boundaries: &short,
+        };
+        assert!(
+            decoder
+                .decode_with_lock("ab", false, "", Some(short_lock))
+                .unwrap()
+                .items
+                .is_empty()
+        );
+        // 边界文本长度与锁文本不一致（"a" != "ab"）
+        let text_boundary = format!("{raw_length},1;");
+        let text_lock = DecodeLock {
+            raw: &locked_raw,
+            text: "ab",
+            boundaries: &text_boundary,
+        };
+        assert!(
+            decoder
+                .decode_with_lock("ab", false, "", Some(text_lock))
+                .unwrap()
+                .items
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn parse_boundaries_matches_gmatch() {
+        assert_eq!(parse_boundaries("2,3;"), vec![(2, 3)]);
+        assert_eq!(parse_boundaries("2,3;4,6;"), vec![(2, 3), (4, 6)]);
+        assert_eq!(parse_boundaries(""), Vec::<(usize, usize)>::new());
+        assert_eq!(parse_boundaries("abc"), Vec::<(usize, usize)>::new());
+        assert_eq!(parse_boundaries("2,;"), Vec::<(usize, usize)>::new());
+        assert_eq!(parse_boundaries("2,3"), Vec::<(usize, usize)>::new());
+        assert_eq!(parse_boundaries("x2,3;"), vec![(2, 3)]);
     }
 }

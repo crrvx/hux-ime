@@ -8,7 +8,7 @@
 //! - `read_locks` 采用严格整数解析：非法帧一律返回空表（参照的 `tonumber`
 //!   对空白/浮点更宽容，但属性数据只由本实现写出，实际不会出现该差异）。
 
-use crate::decode::{Decoder, Evaluated, Evidence};
+use crate::decode::{DecodeLock, Decoder, Evaluated, Evidence};
 use crate::key::KeyEvent;
 use crate::lexicon::Lexicon;
 use crate::session::{Candidate, Context};
@@ -986,7 +986,12 @@ pub fn translate(
     let mut raw = committed_raw.as_bytes().to_vec();
     raw.extend_from_slice(input);
     let raw_text = String::from_utf8_lossy(&raw).into_owned();
-    let decoded = decoder.decode_with(&raw_text, false, &committed_text)?;
+    let lock = state.active_lock().map(|lock| DecodeLock {
+        raw: &lock.raw,
+        text: &lock.text,
+        boundaries: &lock.boundaries,
+    });
+    let decoded = decoder.decode_with_lock(&raw_text, false, &committed_text, lock)?;
     let mut yielded = 0usize;
     for item in &decoded.items {
         if !implicit_rank_allowed(
