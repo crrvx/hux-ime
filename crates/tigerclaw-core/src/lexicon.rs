@@ -176,7 +176,8 @@ impl Lexicon {
         lexicon
     }
 
-    /// 参照 `M.apply_high_freq_limit`（<0 归零；nil 相当于不变）。
+    /// 参照 `M.apply_high_freq_limit` 的重建路径；负数由调用方归一为 0
+    /// （Rust 侧 API 为 `usize`，与参照的 `value < 0 → 0` 等价）。
     pub fn apply_high_freq_limit(&mut self, limit: usize) {
         self.rebuild(limit);
     }
@@ -239,6 +240,8 @@ impl Lexicon {
         self.errors = errors;
     }
 
+    /// 数据文件按 UTF-8 文本读取；不可读（含非法 UTF-8）视为缺失。
+    /// 参照实现对字节流宽松，本项目数据文件均为 UTF-8。
     fn read_data_file(&self, name: &str) -> Option<(String, String)> {
         for directory in &self.dirs {
             let path = directory.join(name);

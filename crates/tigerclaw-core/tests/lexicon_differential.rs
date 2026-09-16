@@ -108,30 +108,43 @@ fn run_transcript(lexicon: &mut Lexicon, supplement: &Supplement, reader: impl B
     records
 }
 
-#[test]
-fn lexicon_present_transcript_is_exact() {
-    let data_dir = repo_path("goldens/lexicon");
+fn replay(data_relative: &str, golden_relative: &str) -> usize {
+    let data_dir = repo_path(data_relative);
     let mut lexicon = Lexicon::load(std::slice::from_ref(&data_dir), 1500);
     let supplement = Supplement::load_default(Some(&data_dir));
-    let records = run_transcript(
-        &mut lexicon,
-        &supplement,
-        open_golden("goldens/lexicon.tsv.gz"),
-    );
+    run_transcript(&mut lexicon, &supplement, open_golden(golden_relative))
+}
+
+#[test]
+fn lexicon_present_transcript_is_exact() {
+    let records = replay("goldens/lexicon", "goldens/lexicon.tsv.gz");
     assert!(records > 18_000, "transcript too short: {records} records");
     println!("lexicon present: {records} golden records verified");
 }
 
 #[test]
-fn lexicon_missing_transcript_is_exact() {
-    let data_dir = repo_path("goldens/no-such-data-dir");
-    let mut lexicon = Lexicon::load(std::slice::from_ref(&data_dir), 1500);
-    let supplement = Supplement::load_default(Some(&data_dir));
-    let records = run_transcript(
-        &mut lexicon,
-        &supplement,
-        open_golden("goldens/lexicon_missing.tsv.gz"),
+fn lexicon_variants_transcript_is_exact() {
+    let records = replay(
+        "goldens/lexicon_variants",
+        "goldens/lexicon_variants.tsv.gz",
     );
+    assert!(records > 20, "transcript too short: {records} records");
+    println!("lexicon variants: {records} golden records verified");
+}
+
+#[test]
+fn lexicon_codes_only_transcript_is_exact() {
+    let records = replay(
+        "goldens/lexicon_codes_only",
+        "goldens/lexicon_codes_only.tsv.gz",
+    );
+    assert!(records > 10, "transcript too short: {records} records");
+    println!("lexicon codes-only: {records} golden records verified");
+}
+
+#[test]
+fn lexicon_missing_transcript_is_exact() {
+    let records = replay("goldens/no-such-data-dir", "goldens/lexicon_missing.tsv.gz");
     assert_eq!(records, 5, "unexpected record count: {records}");
     println!("lexicon missing: {records} golden records verified");
 }

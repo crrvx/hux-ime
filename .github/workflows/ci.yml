@@ -50,12 +50,20 @@ jobs:
           lua tools/gen_lexicon_golden.lua \
             --reference external/tiger-sentense-rime \
             --data /tmp/no-such-dir --out /tmp/lexicon_missing.tsv --mode missing
+          lua tools/gen_lexicon_golden.lua \
+            --reference external/tiger-sentense-rime \
+            --data "$PWD/goldens/lexicon_variants" --out /tmp/lexicon_variants.tsv --mode present
+          lua tools/gen_lexicon_golden.lua \
+            --reference external/tiger-sentense-rime \
+            --data "$PWD/goldens/lexicon_codes_only" --out /tmp/lexicon_codes_only.tsv --mode present
       - name: Compare with committed goldens
         run: |
           cmp goldens/ngram_fixture.bin /tmp/ngram_fixture.bin
           gunzip -c goldens/ngram_fixture.tsv.gz | cmp - /tmp/ngram_fixture.tsv
           gunzip -c goldens/lexicon.tsv.gz | cmp - /tmp/lexicon.tsv
           gunzip -c goldens/lexicon_missing.tsv.gz | cmp - /tmp/lexicon_missing.tsv
+          gunzip -c goldens/lexicon_variants.tsv.gz | cmp - /tmp/lexicon_variants.tsv
+          gunzip -c goldens/lexicon_codes_only.tsv.gz | cmp - /tmp/lexicon_codes_only.tsv
 
   # Arch 的系统 lua 即最新版；验证金样在最新 Lua 下同样逐字节一致。
   # shell: bash 显式设置（容器内默认 shell 不保证是 bash）。
@@ -91,9 +99,17 @@ jobs:
           lua tools/gen_lexicon_golden.lua \
             --reference external/tiger-sentense-rime \
             --data /tmp/no-such-dir --out /tmp/lexicon_missing.tsv --mode missing
+          lua tools/gen_lexicon_golden.lua \
+            --reference external/tiger-sentense-rime \
+            --data "$PWD/goldens/lexicon_variants" --out /tmp/lexicon_variants.tsv --mode present
+          lua tools/gen_lexicon_golden.lua \
+            --reference external/tiger-sentense-rime \
+            --data "$PWD/goldens/lexicon_codes_only" --out /tmp/lexicon_codes_only.tsv --mode present
       - name: Compare with committed goldens
         run: |
           cmp goldens/ngram_fixture.bin /tmp/ngram_fixture.bin
           gunzip -c goldens/ngram_fixture.tsv.gz | cmp - /tmp/ngram_fixture.tsv
           gunzip -c goldens/lexicon.tsv.gz | cmp - /tmp/lexicon.tsv
           gunzip -c goldens/lexicon_missing.tsv.gz | cmp - /tmp/lexicon_missing.tsv
+          gunzip -c goldens/lexicon_variants.tsv.gz | cmp - /tmp/lexicon_variants.tsv
+          gunzip -c goldens/lexicon_codes_only.tsv.gz | cmp - /tmp/lexicon_codes_only.tsv

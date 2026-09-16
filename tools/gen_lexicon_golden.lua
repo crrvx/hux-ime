@@ -114,14 +114,15 @@ if mode == "missing" then
 else
     for _, code in ipairs(codes) do emit_probe(view, code) end
 
-    -- 关闭高频限制：全部放开非最优码（按序每 3 个抽样复核）。
+    -- 关闭高频限制：全部放开非最优码（大数据集按序每 3 个抽样；小数据集全量复核）。
     emit("limit", "0")
     sentence.apply_high_freq_limit(0)
     emit("status", status_payload())
     emit_lengths()
     view = sentence.lexicon_data_view()
     codes = sorted_codes(view)
-    for i = 1, #codes, 3 do emit_probe(view, codes[i]) end
+    local step = #codes <= 32 and 1 or 3
+    for i = 1, #codes, step do emit_probe(view, codes[i]) end
 
     -- 恢复默认限制。
     emit("limit", "1500")

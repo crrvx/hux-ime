@@ -12,6 +12,8 @@
 | `lexicon/` | 码表数据夹具（codes / char_ranks / full_code_whitelist / supplement） | 4 文件 |
 | `lexicon.tsv.gz` | lexicon 金样：`status`/`lengths`/`probe`/`limit`/`supp` | 18,357 条 |
 | `lexicon_missing.tsv.gz` | 数据缺失路径金样 | 5 条 |
+| `lexicon_variants/` + `lexicon_variants.tsv.gz` | 解析边界数据（BOM/CRLF/大写码/重复/非法行/白名单豁免/高频过滤） | 27 条 |
+| `lexicon_codes_only/` + `lexicon_codes_only.tsv.gz` | 仅码表（无字频/白名单/补充） | 13 条 |
 | `local/`（不入库） | 真实模型抽样金样（224 MB 模型） | 62,777 条 |
 
 ## transcript 格式（TSV，`#` 注释，`-` 表示空串，字符串为 UTF-8 字节十六进制）
@@ -54,8 +56,14 @@ lua tools/gen_lexicon_golden.lua --reference "$REF" \
   --data "$PWD/goldens/lexicon" --out /tmp/lexicon.tsv --mode present
 lua tools/gen_lexicon_golden.lua --reference "$REF" \
   --data /tmp/no-such-dir --out /tmp/lexicon_missing.tsv --mode missing
+lua tools/gen_lexicon_golden.lua --reference "$REF" \
+  --data "$PWD/goldens/lexicon_variants" --out /tmp/lexicon_variants.tsv --mode present
+lua tools/gen_lexicon_golden.lua --reference "$REF" \
+  --data "$PWD/goldens/lexicon_codes_only" --out /tmp/lexicon_codes_only.tsv --mode present
 gzip -9 -n -c /tmp/lexicon.tsv > goldens/lexicon.tsv.gz
 gzip -9 -n -c /tmp/lexicon_missing.tsv > goldens/lexicon_missing.tsv.gz
+gzip -9 -n -c /tmp/lexicon_variants.tsv > goldens/lexicon_variants.tsv.gz
+gzip -9 -n -c /tmp/lexicon_codes_only.tsv > goldens/lexicon_codes_only.tsv.gz
 ```
 
 ## 校验
@@ -96,6 +104,8 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 | `tiger_sentence.full_code_whitelist.txt` | `05d257457898146262f7dbf264103c70a8cf2ee92d188b770ad13232b293f566` |
 | `tiger_sentence.supplement.txt` | `538f7d60ae378235628a86e7ef20d24396453488fde950a88e52fdb6f558a5ac` |
 
+- `lexicon_variants/` 与 `lexicon_codes_only/` 为人工构造的解析边界数据（无上游来源）。
+
 - 已入库金样 sha256：
 
 | 文件 | sha256 |
@@ -104,5 +114,7 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 | `ngram_fixture.tsv.gz` | `905dfac57fafd2a4eb55d18cc0d23b9ac5b363aecee55cc610f755bd8ccfb9ee` |
 | `lexicon.tsv.gz` | `28b410dc42a5a17bfb93138843139d3946a6decc3d3ea5d867f70740f5242135` |
 | `lexicon_missing.tsv.gz` | `f5b8256deeb41b4403ca26074deec659807c4313ffe5cf727987b78be15c7a26` |
+| `lexicon_variants.tsv.gz` | `05923b1433f00bf2e9fbb6270e6b28e1f4d1cca6a93507c74dc80b48fde69ef5` |
+| `lexicon_codes_only.tsv.gz` | `3cd72cca880754ecd3744a26ecc5b70d8b5575ab268654937326bb4925b3805e` |
 
 CI 以同一参照提交重生成全部 fixture 金样并与入库内容比对（见 `.github/workflows/ci.yml`）。
