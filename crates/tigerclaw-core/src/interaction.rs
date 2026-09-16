@@ -1523,4 +1523,47 @@ mod tests {
         assert_eq!(buffered_out[0].kind, "sentence_buffered");
         assert_eq!(buffered_out[0].preedit, "甲");
     }
+
+    #[test]
+    fn translate_guards() {
+        let dir =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
+        let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
+        let supplement = crate::lexicon::Supplement::load_default(Some(&dir));
+        let mut decoder = Decoder::new(lexicon, supplement, None);
+        let context = Context::new();
+        let state = SentenceState::fresh(1);
+        // 反查段（` 前缀）由 reverse lookup 处理，translator 不产出候选。
+        let mut out = Vec::new();
+        translate(&mut decoder, &context, &state, b"`ni", 0, 3, &mut out).expect("translate");
+        assert!(out.is_empty());
+        // 缓冲态下非零起点（后续段）不翻译。
+        let mut buffered_state = SentenceState::fresh(1);
+        buffered_state.buffered_text = "甲".to_string();
+        let mut out = Vec::new();
+        translate(
+            &mut decoder,
+            &context,
+            &buffered_state,
+            b"~ab",
+            2,
+            5,
+            &mut out,
+        )
+        .expect("translate");
+        assert!(out.is_empty());
+        // 缓冲态缺少 `~` 标记同样不翻译。
+        let mut out = Vec::new();
+        translate(
+            &mut decoder,
+            &context,
+            &buffered_state,
+            b"ab",
+            0,
+            2,
+            &mut out,
+        )
+        .expect("translate");
+        assert!(out.is_empty());
+    }
 }
