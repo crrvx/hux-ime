@@ -41,7 +41,8 @@ FCITX_CONFIGURATION(
         this, "HighFreqLimit", "高频字过滤上限（重启生效）", 1500, fcitx::IntConstrain(0, 20000)};
     fcitx::Option<fcitx::Key> reversePinyinKey{this, "ReversePinyinKey", "反查-拼音（点击录制按键）", fcitx::Key(FcitxKey_grave)};
     fcitx::Option<fcitx::Key> reverseHanziKey{this, "ReverseHanziKey", "反查-汉字（点击录制按键）", fcitx::Key(FcitxKey_grave, fcitx::KeyState::Shift)};
-    fcitx::Option<fcitx::Key> quickInputKey{this, "QuickInputKey", "快速输入（点击录制按键）", fcitx::Key(FcitxKey_semicolon)};);
+    fcitx::Option<fcitx::Key> quickInputKey{this, "QuickInputKey", "快速输入（点击录制按键）", fcitx::Key(FcitxKey_semicolon)};
+    fcitx::Option<bool> panelPreedit{this, "PanelPreedit", "候选窗口显示预编辑文本（默认关闭；客户端内联预编辑仍随 fcitx5 全局设置）", false};);
 
 class TigerclawEngine : public fcitx::InputMethodEngine {
 public:
@@ -139,7 +140,9 @@ private:
             static_cast<size_t>(cursor) <= preeditString.size()) {
             preeditText.setCursor(cursor);
         }
-        context_->inputPanel().setPreedit(preeditText);
+        // 候选窗口预编辑：可配置关闭（关闭后仅候选与注释）。
+        context_->inputPanel().setPreedit(config_.panelPreedit.value() ? preeditText
+                                                                      : fcitx::Text());
         // 客户端内联预编辑：跟随 fcitx5 全局预编辑设置（`isPreeditEnabled`）。
         context_->inputPanel().setClientPreedit(context_->isPreeditEnabled() ? preeditText
                                                                             : fcitx::Text());

@@ -47,6 +47,7 @@ ln -sf ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
 | FullShape / AsciiPunct | 关/关 | 全角标点 / ASCII 标点直通 |
 | TabLearning | 开 | Tab 选字写学习库 |
 | HighFreqLimit | 1500 | 高频字过滤上限（重启生效）|
+| PanelPreedit | 关 | 候选窗口显示预编辑文本（默认关；仅宿主显示项，不经引擎；客户端内联预编辑仍随全局）|
 
 未显式提供的项一律**跟随 fcitx5 全局设置**：候选列表方向不设布局提示（由全局
 「候选词排列方向」决定）、客户端内联预编辑跟随全局「预编辑」开关（`isPreeditEnabled()`）。
@@ -81,8 +82,8 @@ ln -sf ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
 
 - K3i（配置，Rust 半）：`settings.rs` 配置模型（早提交三项/full_shape/ascii_punct/
   tab_learning/high_freq_limit；合并顺序 options.yaml > 设置 > 内建缺省）；
-  图形配置：C++ `TigerclawConfig` schema（7 项）+ `getConfig/setConfig`，
+  图形配置：C++ `TigerclawConfig` schema（11 项：引擎 10 + 宿主显示 1）+ `getConfig/setConfig`，
   fcitx5-configtool 自动生成设置页（`~/.config/fcitx5/conf/tigerclaw.conf`），经 ABI `tigerclaw_engine_apply_settings` 生效。
 
 已知限制（后续增量）：每引擎单会话（切换/重置即清空）；候选为展示型（点击不提交）；
-反查（⑧）、状态菜单与打包（⑨）待做。
+拼音反查（⑧-1）已接线；汉字查码（⑧-2）、状态菜单与打包（⑨）待做。
