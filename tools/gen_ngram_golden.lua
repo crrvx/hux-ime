@@ -1,7 +1,7 @@
 -- 生成 ngram 差分金样 transcript（TSV），供 Rust 侧逐位重放比对。
 --
--- 参照实现来自 tiger-sentense-rime 仓库（Lua 5.4）：
---   lua5.4 tools/gen_ngram_golden.lua --reference <repo> --model <bin> --out <tsv> [--mode fixture|sample]
+-- 参照实现来自 tiger-sentense-rime 仓库：
+--   lua tools/gen_ngram_golden.lua --reference <repo> --model <bin> --out <tsv> [--mode fixture|sample]
 --
 -- 模式：
 --   fixture 生成 model_fixture.lua 的确定性小模型（写入 --model），并用独立
@@ -154,7 +154,8 @@ local function run_fixture()
     emit_status(model)
     model.close()
     emit("close")
-    print(string.format('{"mode":"fixture","emitted":%d,"oracle_checks":%d}', emitted, checks))
+    print(string.format('{"mode":"fixture","lua":"%s","emitted":%d,"oracle_checks":%d}',
+        _VERSION, emitted, checks))
 end
 
 -- ----------------------------------------------------------------- sample
@@ -226,7 +227,7 @@ local function run_sample()
     emit_status(model)
     model.close()
     emit("close")
-    print(string.format('{"mode":"sample","emitted":%d}', emitted))
+    print(string.format('{"mode":"sample","lua":"%s","emitted":%d}', _VERSION, emitted))
 end
 
 local started = os.clock()

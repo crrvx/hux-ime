@@ -1,0 +1,15 @@
+﻿去	AB
+来	aa
+来	aa
+来	AB
+甲乙	abc
+bad	1a
+nospace
+spaced	cd extra
+甲	ef
+lead	ea
+乙	ghij
+# comment
+丙	ij
+丙	kl
+

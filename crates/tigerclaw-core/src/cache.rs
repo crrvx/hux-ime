@@ -21,7 +21,7 @@ pub struct Fifo<K, V> {
     limit: usize,
 }
 
-impl<K: Copy + Eq + Hash, V> Fifo<K, V> {
+impl<K: Clone + Eq + Hash, V> Fifo<K, V> {
     pub fn new(limit: usize) -> Self {
         assert!(limit >= 1, "invalid cache limit");
         Self {
@@ -43,15 +43,15 @@ impl<K: Copy + Eq + Hash, V> Fifo<K, V> {
             return self.values.get(&key).expect("just inserted");
         }
         let slot = self.next;
-        if let Some(Some(old)) = self.keys.get(slot - 1).copied() {
+        if let Some(Some(old)) = self.keys.get(slot - 1).cloned() {
             self.values.remove(&old);
         }
         if slot > self.keys.len() {
-            self.keys.push(Some(key));
+            self.keys.push(Some(key.clone()));
         } else {
-            self.keys[slot - 1] = Some(key);
+            self.keys[slot - 1] = Some(key.clone());
         }
-        self.values.insert(key, value);
+        self.values.insert(key.clone(), value);
         self.next = slot % self.limit + 1;
         self.values.get(&key).expect("just inserted")
     }
@@ -85,7 +85,7 @@ pub struct Columns<K> {
     limit: usize,
 }
 
-impl<K: Copy + Eq + Hash> Columns<K> {
+impl<K: Clone + Eq + Hash> Columns<K> {
     pub fn new(limit: usize) -> Self {
         assert!(limit >= 1, "invalid cache limit");
         Self {
@@ -107,13 +107,13 @@ impl<K: Copy + Eq + Hash> Columns<K> {
             return *slot;
         }
         let slot = self.next;
-        if let Some(Some(old)) = self.keys.get(slot - 1).copied() {
+        if let Some(Some(old)) = self.keys.get(slot - 1).cloned() {
             self.map.remove(&old);
         }
         if slot > self.keys.len() {
-            self.keys.push(Some(key));
+            self.keys.push(Some(key.clone()));
         } else {
-            self.keys[slot - 1] = Some(key);
+            self.keys[slot - 1] = Some(key.clone());
         }
         self.map.insert(key, slot);
         self.next = slot % self.limit + 1;

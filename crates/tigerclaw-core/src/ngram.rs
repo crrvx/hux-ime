@@ -1,6 +1,6 @@
 //! TCSKNM02 分页 KN 语言模型读取，对应参照实现 `lua/tiger_sentence_ngram.lua`。
 //!
-//! K0 范围：TCSKNM02（mobile）；TCSKNM01（legacy）随 K1 补齐。
+//! 模型格式：TCSKNM02（mobile）。加载器仅接受该格式。
 //! 语义保真要点：两级稀疏索引、按字节分页的 LRU 页缓存、列式上下文缓存、
 //! FIFO 索引缓存、`cache_status` 计数（`#keys` 语义）。
 
@@ -514,9 +514,6 @@ impl MobileModel {
 
         match map.get(..8) {
             Some(b"TCSKNM02") => {}
-            Some(b"TCSKNM01") => {
-                bail!("legacy TCSKNM01 model is not supported yet: {display}")
-            }
             _ => bail!("not a mobile TCSKNM02 model: {display}"),
         }
         if map.len() < MOBILE_HEADER_SIZE {
@@ -695,9 +692,11 @@ impl MobileModel {
     }
 
     pub fn logp(&mut self, prev2: &str, prev1: &str, target: &str) -> Result<f64> {
-        let first = scalar(prev2);
-        let second = scalar(prev1);
-        let third = scalar(target);
+        self.logp_codes(scalar(prev2), scalar(prev1), scalar(target))
+    }
+
+    /// 与 `logp` 相同，但直接接收码点（解码热路径）。
+    pub fn logp_codes(&mut self, first: u32, second: u32, third: u32) -> Result<f64> {
         let unigram = self
             .unigram_values
             .get(&(third as i64))
@@ -720,7 +719,12 @@ impl MobileModel {
     }
 
     pub fn has_observed_bigram(&mut self, prev: &str, target: &str) -> Result<bool> {
-        let (_, _, observed) = self.lookup_bigram(scalar(prev), scalar(target))?;
+        self.has_observed_bigram_codes(scalar(prev), scalar(target))
+    }
+
+    /// 与 `has_observed_bigram` 相同，但直接接收码点。
+    pub fn has_observed_bigram_codes(&mut self, prev: u32, target: u32) -> Result<bool> {
+        let (_, _, observed) = self.lookup_bigram(prev, target)?;
         Ok(observed)
     }
 
@@ -760,23 +764,11 @@ mod tests {
     }
 
     #[test]
-    fn rejects_legacy_and_unknown_models() {
+    fn rejects_unknown_models() {
         let directory = std::env::temp_dir();
-        let write = |name: &str, bytes: &[u8]| {
-            let path = directory.join(format!("tigerclaw-{name}-{}.bin", std::process::id()));
-            std::fs::write(&path, bytes).expect("write temp model");
-            path
-        };
-        let legacy = write("legacy", b"TCSKNM01-not-really-a-model");
-        let error = match MobileModel::load(&legacy, None) {
-            Ok(_) => panic!("legacy model accepted"),
-            Err(error) => error.to_string(),
-        };
-        assert!(error.contains("TCSKNM01"), "unexpected error: {error}");
-        std::fs::remove_file(&legacy).ok();
-
-        let unknown = write("unknown", b"NOTAMODELBLOB");
-        assert!(MobileModel::load(&unknown, None).is_err());
-        std::fs::remove_file(&unknown).ok();
+        let path = directory.join(format!("tigerclaw-unknown-{}.bin", std::process::id()));
+        std::fs::write(&path, b"NOTAMODELBLOB").expect("write temp model");
+        assert!(MobileModel::load(&path, None).is_err());
+        std::fs::remove_file(&path).ok();
     }
 }

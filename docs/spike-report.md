@@ -32,7 +32,7 @@
 
 | 实现 | 加载 | 查询 | 结果校验和 |
 |---|---:|---:|---|
-| Lua 5.4（参照） | 2.3 ms | 1162.9 ms | `0x7fe3970ae1d51e3c` |
+| Lua（参照） | 2.3 ms | 1162.9 ms | `0x7fe3970ae1d51e3c` |
 | Rust（release，mmap） | 0.6 ms | 14.2 ms | `0x7fe3970ae1d51e3c` |
 
 - 查询吞吐约 **82×**；加载约 4×（校验和一致，性能提升不是以行为偏差换来的）
@@ -71,7 +71,7 @@ cargo test -p tigerclaw-core
 # 基准（真实模型 + 本地抽样金样）
 cargo run --release -q --example ngram_bench -- \
   ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin goldens/local/ngram_sample.tsv
-lua5.4 tools/bench_ngram.lua --reference /path/to/tiger-sentense-rime \
+lua tools/bench_ngram.lua --reference /path/to/tiger-sentense-rime \
   --model ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
   --transcript goldens/local/ngram_sample.tsv
 ```
@@ -81,5 +81,5 @@ lua5.4 tools/bench_ngram.lua --reference /path/to/tiger-sentense-rime \
 - 补齐 `LICENSE`（GPL-3.0）与 `README.md`；
 - CI（`.github/workflows/ci.yml`）：Rust fmt/clippy/差分 + 以固定参照提交重生成 fixture 金样比对（溯源校验）；
 - 金样来源与 sha256 记入 `goldens/README.md`（参照提交 `f3b30498`）；
-- `ngram.rs` 边界修复：TCSKNM01 legacy 明确报错、空 unigram 段返回错误而非 panic，并补单测；
+- `ngram.rs` 边界修复：非 TCSKNM02 模型明确报错、空 unigram 段返回错误而非 panic，并补单测；
 - 模型路径探测（`try_load`/`candidate_paths`）随 K3；`external/` 加入 `.gitignore`。
