@@ -5,5 +5,6 @@
 //! 见 `docs/rust-migration.md` 与 `docs/rime-semantics.md`。
 
 pub mod cache;
+pub mod decode;
 pub mod lexicon;
 pub mod ngram;

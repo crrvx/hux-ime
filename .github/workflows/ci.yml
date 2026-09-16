@@ -56,6 +56,13 @@ jobs:
           lua tools/gen_lexicon_golden.lua \
             --reference external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon_codes_only" --out /tmp/lexicon_codes_only.tsv --mode present
+          lua tools/gen_decode_golden.lua \
+            --reference external/tiger-sentense-rime \
+            --data "$PWD/goldens/lexicon" --out /tmp/decode.tsv
+          lua tools/gen_decode_golden.lua \
+            --reference external/tiger-sentense-rime \
+            --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
+            --out /tmp/decode_model.tsv --every 7
       - name: Compare with committed goldens
         run: |
           cmp goldens/ngram_fixture.bin /tmp/ngram_fixture.bin
@@ -64,6 +71,8 @@ jobs:
           gunzip -c goldens/lexicon_missing.tsv.gz | cmp - /tmp/lexicon_missing.tsv
           gunzip -c goldens/lexicon_variants.tsv.gz | cmp - /tmp/lexicon_variants.tsv
           gunzip -c goldens/lexicon_codes_only.tsv.gz | cmp - /tmp/lexicon_codes_only.tsv
+          gunzip -c goldens/decode.tsv.gz | cmp - /tmp/decode.tsv
+          gunzip -c goldens/decode_model.tsv.gz | cmp - /tmp/decode_model.tsv
 
   # Arch 的系统 lua 即最新版；验证金样在最新 Lua 下同样逐字节一致。
   # shell: bash 显式设置（容器内默认 shell 不保证是 bash）。
@@ -105,6 +114,13 @@ jobs:
           lua tools/gen_lexicon_golden.lua \
             --reference external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon_codes_only" --out /tmp/lexicon_codes_only.tsv --mode present
+          lua tools/gen_decode_golden.lua \
+            --reference external/tiger-sentense-rime \
+            --data "$PWD/goldens/lexicon" --out /tmp/decode.tsv
+          lua tools/gen_decode_golden.lua \
+            --reference external/tiger-sentense-rime \
+            --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
+            --out /tmp/decode_model.tsv --every 7
       - name: Compare with committed goldens
         run: |
           cmp goldens/ngram_fixture.bin /tmp/ngram_fixture.bin
@@ -113,3 +129,5 @@ jobs:
           gunzip -c goldens/lexicon_missing.tsv.gz | cmp - /tmp/lexicon_missing.tsv
           gunzip -c goldens/lexicon_variants.tsv.gz | cmp - /tmp/lexicon_variants.tsv
           gunzip -c goldens/lexicon_codes_only.tsv.gz | cmp - /tmp/lexicon_codes_only.tsv
+          gunzip -c goldens/decode.tsv.gz | cmp - /tmp/decode.tsv
+          gunzip -c goldens/decode_model.tsv.gz | cmp - /tmp/decode_model.tsv

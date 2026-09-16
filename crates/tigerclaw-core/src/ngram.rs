@@ -695,9 +695,11 @@ impl MobileModel {
     }
 
     pub fn logp(&mut self, prev2: &str, prev1: &str, target: &str) -> Result<f64> {
-        let first = scalar(prev2);
-        let second = scalar(prev1);
-        let third = scalar(target);
+        self.logp_codes(scalar(prev2), scalar(prev1), scalar(target))
+    }
+
+    /// 与 `logp` 相同，但直接接收码点（解码热路径）。
+    pub fn logp_codes(&mut self, first: u32, second: u32, third: u32) -> Result<f64> {
         let unigram = self
             .unigram_values
             .get(&(third as i64))
@@ -720,7 +722,12 @@ impl MobileModel {
     }
 
     pub fn has_observed_bigram(&mut self, prev: &str, target: &str) -> Result<bool> {
-        let (_, _, observed) = self.lookup_bigram(scalar(prev), scalar(target))?;
+        self.has_observed_bigram_codes(scalar(prev), scalar(target))
+    }
+
+    /// 与 `has_observed_bigram` 相同，但直接接收码点。
+    pub fn has_observed_bigram_codes(&mut self, prev: u32, target: u32) -> Result<bool> {
+        let (_, _, observed) = self.lookup_bigram(prev, target)?;
         Ok(observed)
     }
 

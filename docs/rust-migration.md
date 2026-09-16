@@ -9,7 +9,7 @@
 | 阶段 | 内容 | 验收 |
 |---|---|---|
 | **K0** ✅ | spike：`cache` + `ngram` 移植 + 差分工具链 + 陷阱审计 | fixture 29,617 条、真实模型 62,777 条逐位一致（见 [`spike-report.md`](spike-report.md)） |
-| **K1**（进行中） | 计算核：lexicon ✅、decode/beam、early-evidence、learning | 快照差分全绿 |
+| **K1**（进行中） | 计算核：lexicon ✅、decode/beam ✅（冷路径）、early-evidence、learning | 快照差分全绿 |
 | **K2** | 交互引擎：buffer/caret、menu、键位 `repr`、标点、ascii_composer、Tab 锁/提前上屏、选项 | 键序列金样一致 |
 | **K3** | fcitx5 addon：注册、候选/预编辑/上屏、状态菜单、配置、数据路径、LevelDb | 真机可用 |
 | **K4** | 验收与打包 | 真机清单 + 性能/内存 |
@@ -39,7 +39,7 @@ docs/
 |---|---:|---|---|---|
 | `tiger_sentence_cache.lua` | 40 | `cache.rs` | K0 ✅ | fixture 金样（缓存状态/淘汰序） |
 | `tiger_sentence_ngram.lua` | 550 | `ngram.rs` | K0 ✅ | 逐位 logp/observed + cache_status |
-| `tiger_sentence.lua`（词库/解码/证据） | ~2600 | `lexicon.rs` ✅ + `decode.rs` | K1 | 数据索引金样 + 解码快照（同输入→同候选/分数位模式） |
+| `tiger_sentence.lua`（词库/解码/证据） | ~2600 | `lexicon.rs` ✅ + `decode.rs` ✅（冷路径） | K1 | 数据索引金样 + 解码快照（同输入→同候选/分数位模式）；证据/学习待补 |
 | `tiger_sentence_learning.lua` | 435 | `learning.rs` | K1 | 现成 23k 检查重放 |
 | `tiger_sentence.lua`（processor/translator/filter/ascii/options） | ~1250 | `key.rs` + `session.rs` + `punct.rs` + `ascii.rs` + `config.rs` | K2 | 键序列金样 |
 | `tiger_sentence_ngram.lua`（TCSKNM01 legacy） | — | `ngram.rs` | K1 | 同上（快照） |
