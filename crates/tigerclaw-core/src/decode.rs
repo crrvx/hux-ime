@@ -1784,6 +1784,39 @@ mod tests {
     }
 
     #[test]
+    fn locked_decode_expands_after_partial_lock() {
+        let dir =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
+        let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
+        let supplement = Supplement::load_default(Some(&dir));
+        let mut decoder = Decoder::new(lexicon, supplement, None);
+        // 码表事实：ab → 交（rank 1）、疒（rank 2）；整段输入 >1 字节时单字节尾边被跳过，
+        // 故 "abab" 唯一两段路径为 ab+ab。锁住首边后应继续解出 交交/交疒。
+        let lock = DecodeLock {
+            raw: "ab",
+            text: "交",
+            boundaries: "2,3;",
+        };
+        let locked = decoder
+            .decode_with_lock("abab", false, "", Some(lock))
+            .expect("locked decode");
+        assert!(!locked.items.is_empty());
+        assert!(locked.items.iter().all(|item| item.text.starts_with("交")));
+        assert!(
+            locked
+                .items
+                .iter()
+                .any(|item| item.text.chars().count() > 1),
+            "扩展应产生多字候选：{:?}",
+            locked
+                .items
+                .iter()
+                .map(|item| &item.text)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn locked_decode_rejects_mismatches() {
         let dir =
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
