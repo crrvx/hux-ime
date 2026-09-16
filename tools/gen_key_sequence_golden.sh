@@ -3,7 +3,7 @@
 #
 # 用法：tools/gen_key_sequence_golden.sh [输出文件]
 #   REF  参照仓库路径（默认 /home/crux/_work/tiger-sentense-rime）
-#   PIN  参照固定提交（默认 f3b3049819b513ba756bbe6c6b6872759c9dc2a9）
+#   PIN  参照固定提交（默认 35a10b93c96af7b008fc9a05d01a8381018dc3d3，与入库金样一致；见 goldens/README.md）
 #
 # 依赖：git、g++、python3、系统 librime（rime_api.h + librime-lua.so）。
 # 金样不在 CI 重生成（探针依赖具体 librime/librime-lua 版本），见 goldens/README.md。
@@ -11,7 +11,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REF="${REF:-/home/crux/_work/tiger-sentense-rime}"
-PIN="${PIN:-f3b3049819b513ba756bbe6c6b6872759c9dc2a9}"
+PIN="${PIN:-35a10b93c96af7b008fc9a05d01a8381018dc3d3}"
 OUT="${1:-$ROOT/goldens/key_sequence.tsv.gz}"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/tiger-keyseq-XXXXXX")"

@@ -179,7 +179,7 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 
 | 文件 | sha256 |
 |---|---|
-| `lua/tiger_sentence.lua` | `989a9207eb06755d547b14a752707c147753274147a33e939d765429f2e0e848` |
+| `lua/tiger_sentence.lua` | `fe11e07da98bd3223136a89e283d80e7c01b90c14c0ccba6cbcfd283927778b7` |
 | `lua/tiger_sentence_learning.lua` | `335e530bb42b8fa2c432b900a0e5ff9d7509e74a8674d099456083088b36f85e` |
 | `lua/tiger_sentence_ngram.lua` | `a3d59e09fbff3b09b0ac79ef66b7560210b5503c2af38eb5615069d6465cb361` |
 | `lua/tiger_sentence_cache.lua` | `8ebd209588fb62d0bf888e752b95d8588ecbcdef2af40f8b009865fc3c41da7c` |
@@ -215,7 +215,7 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 | `decode_learning.tsv.gz` | `41a9894d233c32348e42164d4d29fc698c3037741c141ac0b58404094c9e9354` |
 | `decode_learning_model.tsv.gz` | `8a64e6e3d28b101a57075b03233e62c4b03e8c4a8d2a979399a91a00e2d8e806` |
 | `key.tsv.gz` | `e939a077cd0825f7b454a4af300ed50fb6a2f2609c71583525d44f2f8fb3fd33` |
-| `key_sequence.tsv.gz` | `ac95ec618801efe0b01785bf0f0dd19015a79b3e903d6b45858b359919443fb0` |
+| `key_sequence.tsv.gz` | `505dafb3cfe1c931379d963daeb0ed069701e0dd47620ebcc349eba40d7ede70` |
 | `lexical.tsv.gz` | `4b56476d28bd1a070fe72352561828264faba85e01df1ea47d908cbaeff28842` |
 
 CI 以同一参照提交重生成全部 fixture 金样并与入库内容比对（见 `.github/workflows/ci.yml`）。
