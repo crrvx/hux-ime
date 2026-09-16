@@ -1,4 +1,4 @@
-// 键序列金样探针（2c）：真 librime + librime-lua 驱动 pin 版虎整句 Lua 核心。
+// 键序列金样探针（2c）：真 librime + librime-lua 驱动 pin 版虎句 Lua 核心。
 //
 // 用法：rime_sequence_probe <user_dir> <shared_dir> <lua_plugin> <cases_file>
 // 输出：每步一行 TSV：

@@ -1,4 +1,4 @@
-// 虎爪（虎整句方案）fcitx5 addon 的 C++ 薄壳：只做 fcitx5 接口适配，逻辑在 Rust（libtigerclaw_addon）。
+// 虎爪（虎句方案）fcitx5 addon 的 C++ 薄壳：只做 fcitx5 接口适配，逻辑在 Rust（libtigerclaw_addon）。
 #include <fcitx-config/configuration.h>
 #include <fcitx-config/option.h>
 #include <fcitx-config/iniparser.h>

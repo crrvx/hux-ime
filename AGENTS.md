@@ -1,6 +1,6 @@
 # AGENTS.md
 
-虎爪（Tigerclaw）：虎整句（tiger-sentense）输入方案从 fcitx5-rime 迁移到 fcitx5 原生实现。
+虎爪（Tigerclaw）：虎句（tiger-sentense）输入方案从 fcitx5-rime 迁移到 fcitx5 原生实现。
 
 ## AI 风格
 1. 中文回答，简明扼要；
