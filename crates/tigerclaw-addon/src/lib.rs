@@ -565,6 +565,46 @@ pub unsafe extern "C" fn tigerclaw_engine_status(engine: *const Engine) -> *cons
     }
 }
 
+/// 外部配置（C ABI 布局；与 `shell/tigerclaw_abi.h` 一致）。
+#[derive(Clone, Copy, Debug, Default)]
+#[repr(C)]
+pub struct TigerclawOptions {
+    pub early_commit: i32,
+    pub early_commit_to_preedit: i32,
+    pub allow_duplicate_single: i32,
+    pub full_shape: i32,
+    pub ascii_punct: i32,
+    pub tab_learning: i32,
+    pub high_freq_limit: i32,
+}
+
+/// 应用外部配置（fcitx5 配置界面 → C++ 壳 → 本入口）。返回 1 = 已应用。
+///
+/// # Safety
+/// `engine` 须有效；`options` 须为空或指向有效 `TigerclawOptions`。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tigerclaw_engine_apply_settings(
+    engine: *mut Engine,
+    options: *const TigerclawOptions,
+) -> i32 {
+    let Some(engine) = (unsafe { engine.as_mut() }) else {
+        return 0;
+    };
+    let Some(options) = (unsafe { options.as_ref() }) else {
+        return 0;
+    };
+    engine.apply_settings(Settings {
+        early_commit: options.early_commit != 0,
+        early_commit_to_preedit: options.early_commit_to_preedit != 0,
+        allow_duplicate_single: options.allow_duplicate_single != 0,
+        full_shape: options.full_shape != 0,
+        ascii_punct: options.ascii_punct != 0,
+        tab_learning: options.tab_learning != 0,
+        high_freq_limit: options.high_freq_limit.max(0) as usize,
+    });
+    1
+}
+
 /// 处理一次按键：返回 1 = 已消费。
 ///
 /// # Safety
@@ -882,6 +922,34 @@ mod tests {
             engine.live.mode.is_empty(),
             "关闭 Tab 学习 → 学习 mode 为空"
         );
+    }
+
+    #[test]
+    fn ffi_apply_settings_roundtrip() {
+        let _guard = serial();
+        let engine = unsafe { tigerclaw_engine_new(std::ptr::null()) };
+        assert!(!engine.is_null());
+        let options = TigerclawOptions {
+            early_commit: 0,
+            early_commit_to_preedit: 1,
+            allow_duplicate_single: 1,
+            full_shape: 1,
+            ascii_punct: 1,
+            tab_learning: 0,
+            high_freq_limit: 800,
+        };
+        let applied = unsafe { tigerclaw_engine_apply_settings(engine, &options) };
+        assert_eq!(applied, 1);
+        let state = unsafe { &mut *engine };
+        assert!(!state.settings.early_commit);
+        assert!(state.context.get_option("full_shape"));
+        assert!(state.context.get_option("ascii_punct"));
+        assert!(
+            state.live.mode.is_empty(),
+            "tab_learning=0 → 学习 mode 为空"
+        );
+        assert_eq!(state.settings.high_freq_limit, 800);
+        unsafe { tigerclaw_engine_free(engine) };
     }
 
     #[test]

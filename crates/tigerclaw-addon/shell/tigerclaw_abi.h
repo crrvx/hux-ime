@@ -51,3 +51,26 @@ int32_t tigerclaw_engine_key(tigerclaw_engine *engine, uint32_t keysym,
 #endif
 
 #endif /* TIGERCLAW_ABI_H_ */
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* 外部配置（Rust 侧 Settings 的 C 布局；由壳从 fcitx5 配置读出后传入）。 */
+typedef struct tigerclaw_options {
+  int32_t early_commit;
+  int32_t early_commit_to_preedit;
+  int32_t allow_duplicate_single;
+  int32_t full_shape;
+  int32_t ascii_punct;
+  int32_t tab_learning;
+  int32_t high_freq_limit;
+} tigerclaw_options;
+
+/* 应用外部配置；返回 1 = 已应用。 */
+int32_t tigerclaw_engine_apply_settings(tigerclaw_engine *engine,
+                                        const tigerclaw_options *options);
+
+#ifdef __cplusplus
+}
+#endif

@@ -23,7 +23,8 @@ add_custom_target(tigerclaw-rust ALL
     COMMENT "cargo build -p tigerclaw-addon (${TIGERCLAW_CARGO_PROFILE})"
     VERBATIM)
 
-add_library(tigerclaw SHARED shell/tigerclaw.cpp)
+add_library(tigerclaw SHARED shell/tigerclaw.cpp
+    shell/tigerclaw_abi.h)
 add_dependencies(tigerclaw tigerclaw-rust)
 target_include_directories(tigerclaw PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/shell")
 target_link_libraries(tigerclaw PRIVATE Fcitx5::Core "${TIGERCLAW_RUST_LIB}" dl pthread m)
