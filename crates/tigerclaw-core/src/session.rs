@@ -9,6 +9,9 @@
 //!   触发提交事件（事件含提交文本）并清空组合。
 //! - 事件（update/commit/option）入队；调用方在每个操作后 `drain_events()`，
 //!   与参照的同步 notifier 在可观测行为上等价。
+//! - `last_commit` 保留最近一次组合提交文本，供诊断；参照的 `get_commit_text()`
+//!   仅在 commit 通知内有效，跨实现一律以 [`Event::Commit`] 携带的文本为准。
+//! - 属性写入不产生事件（参照未使用 `property_update_notifier`）。
 //! - 管线（分段/翻译/过滤）由 [`Pipeline`] 注入；本增量提供模型与编辑语义，
 //!   交互层（processor/translator/filters）在后续增量接入。
 
@@ -62,9 +65,9 @@ impl Segment {
         self.candidates.get(self.selected_index)
     }
 
-    /// 参照 `Menu::Prepare(n)`：物化到至少 n 条，返回当前可用数量。
+    /// 参照 `Menu::Prepare(n)`：返回当前可用数量（本实现候选为即时生成）。
     pub fn prepare(&self, count: usize) -> usize {
-        self.candidates.len().min(count.max(1))
+        self.candidates.len().min(count)
     }
 }
 
@@ -205,11 +208,8 @@ impl Context {
         self.options.get(name).copied().unwrap_or(false)
     }
 
+    /// 参照 `Context::set_option`：无条件触发选项通知（librime 语义）。
     pub fn set_option(&mut self, name: &str, value: bool) {
-        if self.get_option(name) == value {
-            self.options.insert(name.to_string(), value);
-            return;
-        }
         self.options.insert(name.to_string(), value);
         self.events.push_back(Event::Option(name.to_string()));
     }
@@ -321,23 +321,23 @@ impl Context {
     }
 
     /// 参照 `Context::RefreshNonConfirmedComposition`：
-    /// 保留已确认段，仅重建未确认尾部（管线由调用方在事件后驱动）。
+    /// 从尾部弹出未确认段（`status < kSelected`），保留已确认前缀。
     pub fn refresh_non_confirmed_composition(&mut self) -> bool {
-        if self.composition.empty() {
-            return false;
-        }
-        let first_open = self
+        let mut reverted = false;
+        while self
             .composition
             .segments
-            .iter()
-            .position(|segment| !segment.selected)
-            .unwrap_or(self.composition.segments.len());
-        if first_open >= self.composition.segments.len() {
-            return false;
+            .last()
+            .map(|segment| !segment.selected)
+            .unwrap_or(false)
+        {
+            self.composition.segments.pop();
+            reverted = true;
         }
-        self.composition.segments.truncate(first_open);
-        self.events.push_back(Event::Update);
-        true
+        if reverted {
+            self.events.push_back(Event::Update);
+        }
+        reverted
     }
 
     // ------------------------------------------------------------ 事件
@@ -379,13 +379,18 @@ impl Session {
     }
 
     /// 重建组合（分段 → 翻译 → 过滤），随后把 context 事件并入效果队列。
+    /// 仅丢弃重复的 Update；Commit/Option 等语义事件保留。
     pub fn refresh(&mut self) {
         if let Some(pipeline) = self.pipeline.as_mut() {
             let input = self.context.input().to_vec();
             let mut composition = Composition::default();
             pipeline.build(&input, &mut composition);
             self.context.composition = composition;
-            self.context.drain_events();
+            for event in self.context.drain_events() {
+                if !matches!(event, Event::Update) {
+                    self.effects.push(event);
+                }
+            }
             self.effects.push(Event::Update);
         }
     }
@@ -456,8 +461,63 @@ mod tests {
         assert_eq!(context.composition.back().unwrap().selected_index, 2);
         context.drain_events();
         context.set_option("t", true);
-        let events = context.drain_events();
-        assert_eq!(events, vec![Event::Option("t".to_string())]);
+        assert_eq!(context.drain_events(), vec![Event::Option("t".to_string())]);
+        // 参照 `Context::set_option` 无条件通知：同值再设仍触发。
+        context.set_option("t", true);
+        assert_eq!(context.drain_events(), vec![Event::Option("t".to_string())]);
+    }
+
+    #[test]
+    fn empty_menu_highlight_fails() {
+        let mut context = Context::new();
+        assert!(!context.highlight(0));
+        context.composition.segments.push(Segment::default());
+        assert!(!context.highlight(0));
+        assert!(!context.confirm_current_selection());
+    }
+
+    #[test]
+    fn buffered_marker_live_views() {
+        let mut context = Context::new();
+        context.set_property("tiger_sentence_buffered_text", "甲");
+        context.set_input(b"~ab");
+        assert_eq!(context.live_input(), b"ab");
+        context.set_caret(2); // "~a|b"
+        assert_eq!(context.live_caret(), 1);
+        context.set_property("tiger_sentence_buffered_text", "");
+        assert_eq!(context.live_input(), b"~ab");
+        assert_eq!(context.live_caret(), 2);
+    }
+
+    #[test]
+    fn commit_text_spans_selected_and_raw_segments() {
+        let mut context = Context::new();
+        context.set_input(b"abcd");
+        context.composition.segments.push(Segment {
+            start: 0,
+            end: 2,
+            selected: true,
+            candidates: vec![Candidate::new("sentence", 0, 2, "甲", "")],
+            selected_index: 0,
+            tags: Vec::new(),
+        });
+        context.composition.segments.push(Segment {
+            start: 2,
+            end: 4,
+            ..Segment::default()
+        });
+        assert_eq!(context.composition.commit_text(context.input()), "甲cd");
+    }
+
+    #[test]
+    fn refresh_pops_open_tail_only() {
+        let mut context = context_with_menu(&["甲"]);
+        context.composition.segments[0].selected = true;
+        assert!(!context.refresh_non_confirmed_composition());
+        context.composition.segments.push(Segment::default());
+        assert!(context.refresh_non_confirmed_composition());
+        assert_eq!(context.composition.segments.len(), 1);
+        assert!(context.composition.segments[0].selected);
     }
 
     #[test]
@@ -484,5 +544,36 @@ mod tests {
         assert!(context.refresh_non_confirmed_composition());
         assert_eq!(context.composition.segments.len(), 1);
         assert!(context.composition.segments[0].selected);
+    }
+
+    #[test]
+    fn session_refresh_preserves_semantic_events() {
+        struct OneSegment;
+        impl Pipeline for OneSegment {
+            fn build(&mut self, input: &[u8], composition: &mut Composition) {
+                if input.is_empty() {
+                    return;
+                }
+                composition.segments.push(Segment {
+                    start: 0,
+                    end: input.len(),
+                    ..Segment::default()
+                });
+            }
+        }
+        let mut session = Session::new();
+        session.set_pipeline(Box::new(OneSegment));
+        session.context.set_input(b"ab");
+        session.refresh(); // 先由管线建立组合
+        assert!(session.context.is_composing());
+        assert!(session.context.commit());
+        session.refresh(); // 语义事件（Commit）应保留
+        let effects = session.take_effects();
+        assert!(
+            effects
+                .iter()
+                .any(|event| matches!(event, Event::Commit(text) if text == "ab"))
+        );
+        assert!(session.context.composition.empty());
     }
 }
