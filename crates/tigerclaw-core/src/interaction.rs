@@ -2188,6 +2188,7 @@ mod tests {
             score: 0.0,
             confidence_score: 0.0,
             code_score: 0.0,
+            lexical_score: 0.0,
             max_rank: 2,
             supplement_score: 0.0,
             learning_score: 0.0,

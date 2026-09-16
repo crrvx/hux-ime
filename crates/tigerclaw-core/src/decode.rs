@@ -7,11 +7,12 @@
 use crate::learning::{
     DiffItem, DiffPathNode, LearningIndex, character_count, context as learning_context,
 };
-use crate::lexical::LexicalModel;
+use crate::lexical::{self, LexicalModel};
 use crate::lexicon::{CodeEntry, Lexicon, Supplement};
 use crate::ngram::MobileModel;
 use anyhow::Result;
 use hashbrown::{HashMap, HashSet};
+use std::path::PathBuf;
 
 pub const BOS: char = '\u{2}';
 pub const EOS: char = '\u{3}';
@@ -84,7 +85,12 @@ struct State {
     learning_potential: f64,
     isolation_penalty: Option<f64>,
     isolation_last_char: Option<char>,
-    isolation_last_isolated: bool,
+    /// 最近被隔离字符的权重（`canonical_isolation_factor`；0 表示未隔离）。
+    isolation_last_weight: f64,
+    /// 该边是否为主码单字边（4 码生僻字保护用）。
+    edge_primary_single: bool,
+    /// 该边的码长（仅保护边记录；4 码生僻字保护用）。
+    edge_code_length: Option<usize>,
 }
 
 #[derive(Default)]
@@ -106,6 +112,8 @@ pub struct Evaluated {
     pub confidence_score: f64,
     /// 码形证据分（参照 `item.code_score`；只参与排序比较）。
     pub code_score: f64,
+    /// 词先验加权分（参照 `item.lexical_score`；emit 重排时写入）。
+    pub lexical_score: f64,
     pub max_rank: usize,
     pub supplement_score: f64,
     pub learning_score: f64,
@@ -227,6 +235,7 @@ pub struct Decoder {
     learning_affected: bool,
     ranking_prior: RankingPriorParameters,
     lexical: Option<LexicalModel>,
+    lexical_load_error: Option<String>,
 }
 
 /// 学习接线：索引 + 模式串（参照的 `learning_index`/`learning_mode`）。
@@ -243,6 +252,15 @@ impl Decoder {
                 .filter_map(|(text, rank)| text.chars().next().map(|ch| (ch, *rank)))
                 .collect()
         });
+        // 参照模块初始化：从数据目录加载紧凑词先验（缺省关闭）。
+        let (lexical, lexical_load_error) = {
+            let paths: Vec<PathBuf> = lexicon
+                .dirs()
+                .iter()
+                .map(|directory| directory.join("tiger_sentence.lexical.bin"))
+                .collect();
+            lexical::load_first(&paths)
+        };
         Self {
             lexicon,
             supplement,
@@ -253,7 +271,8 @@ impl Decoder {
             allow_duplicate_single: true,
             learning_affected: false,
             ranking_prior: RankingPriorParameters::default(),
-            lexical: None,
+            lexical,
+            lexical_load_error,
         }
     }
 
@@ -300,6 +319,11 @@ impl Decoder {
 
     pub fn set_lexical_model(&mut self, model: Option<LexicalModel>) {
         self.lexical = model;
+    }
+
+    /// 参照 `ranking_prior.lexical_load_error`（有文件但无效时记录）。
+    pub fn lexical_load_error(&self) -> Option<&str> {
+        self.lexical_load_error.as_deref()
     }
 
     /// 参照 `item.path`：返回路径末节点 raw 长度与 `learning.diff` 所需路径
@@ -392,6 +416,58 @@ impl Decoder {
 
     /// 参照 `decode` 的 locked 播种：按 `boundaries` 重建已确认前缀的路径与分数
     /// （不重搜索、不允许边跨过锁），成功后把种子放入 `states[#prefix]`。
+    /// 参照 `ranking_prior.resolve_locked_edge`：从已确认的 raw/text 边界反解码表边。
+    /// 返回（边字符、主码单字标记、码长、选中名次）。
+    fn resolve_locked_edge(
+        &self,
+        raw: &[u8],
+        raw_start: usize,
+        raw_end: usize,
+        text: &str,
+    ) -> Option<(Vec<char>, bool, usize, u64)> {
+        for &code_length in &self.lexicon.lengths {
+            let code_end = raw_start + code_length;
+            if code_end > raw_end {
+                continue;
+            }
+            let Ok(code) = std::str::from_utf8(&raw[raw_start..code_end]) else {
+                continue;
+            };
+            let Some(candidates) = self.lexicon.codes.get(code) else {
+                continue;
+            };
+            let (selected_rank, consumed_end) = parse_selector(raw, code_end);
+            if consumed_end != raw_end {
+                continue;
+            }
+            if selected_rank > 0 {
+                if let Some(candidate) = candidates.get(selected_rank as usize - 1)
+                    && candidate.text == text
+                {
+                    return Some((
+                        candidate.text.chars().collect(),
+                        candidate.primary_single,
+                        code_length,
+                        selected_rank,
+                    ));
+                }
+            } else {
+                // 整段菜单可以不写选择器而锁定非首候选。
+                for candidate in candidates {
+                    if candidate.text == text {
+                        return Some((
+                            candidate.text.chars().collect(),
+                            candidate.primary_single,
+                            code_length,
+                            0,
+                        ));
+                    }
+                }
+            }
+        }
+        None
+    }
+
     fn seed_locked(
         &mut self,
         raw: &[u8],
@@ -401,17 +477,41 @@ impl Decoder {
     ) -> Result<bool> {
         let mut seed_index = 0usize;
         let mut seed_text_length = 0usize;
+        let code_reward_per_key = if self.model.is_some() {
+            self.ranking_prior.canonical_code_reward
+        } else {
+            0.0
+        };
+        let protect_primary_rare = self.ranking_prior.canonical_isolation_factor < 1.0;
         for (raw_length, text_length) in parse_boundaries(lock.boundaries) {
-            let fragment = lock.text.get(seed_text_length..text_length).unwrap_or("");
-            let chars: Vec<char> = fragment.chars().collect();
+            let edge_text = lock.text.get(seed_text_length..text_length).unwrap_or("");
             let seed = &self.arena[seed_index];
             let seed_score = seed.score;
+            let seed_raw_length = seed.raw_length;
+            let seed_code_score = seed.code_score;
             let seed_prev2 = seed.prev2;
             let seed_prev1 = seed.prev1;
             let seed_supplement_state = seed.supplement_state;
             let seed_supplement_score = seed.supplement_score;
             let seed_learning_score = seed.learning_score;
             let seed_edge_count = seed.edge_count;
+            // 参照 `resolve_locked_edge`：反解该已确认边，恢复码形证据与保护元数据。
+            let resolved = self.resolve_locked_edge(raw, seed_raw_length, raw_length, edge_text);
+            // 文本级退格可能缩短已确认多字边而保留 raw 边界（如 团圆/cd → 团/cd）：
+            // 此类旧锁以中立码证据重放，不再整段拒绝（参照 12d2ecc 修复）。
+            let chars: Vec<char> = match &resolved {
+                Some((chars, _, _, _)) => chars.clone(),
+                None => edge_text.chars().collect(),
+            };
+            let (edge_primary_single, edge_code_length) = match &resolved {
+                Some((_, primary_single, code_length, selected_rank)) => (
+                    protect_primary_rare
+                        && chars.len() == 1
+                        && (*primary_single || *selected_rank > 0),
+                    protect_primary_rare.then_some(*code_length),
+                ),
+                None => (false, None),
+            };
             let mut score = seed_score;
             let mut prev2 = seed_prev2;
             let mut prev1 = seed_prev1;
@@ -428,6 +528,16 @@ impl Decoder {
                 }
                 prev2 = prev1;
                 prev1 = ch;
+            }
+            // 码形证据：与普通扩展一致地累计（只进排序分，不进 mass）。
+            let mut code_score = seed_code_score;
+            if let Some((_, primary_single, code_length, selected_rank)) = &resolved
+                && code_reward_per_key > 0.0
+                && *selected_rank == 0
+                && *primary_single
+                && chars.len() == 1
+            {
+                code_score += code_reward_per_key * *code_length as f64;
             }
             let text = lock
                 .text
@@ -454,7 +564,7 @@ impl Decoder {
             let state = State {
                 score: score + learned - seed_learning_score,
                 mass_score,
-                code_score: 0.0,
+                code_score,
                 text,
                 prev2,
                 prev1,
@@ -468,9 +578,11 @@ impl Decoder {
                 edge_count: seed_edge_count + 1,
                 learning_score: learned,
                 learning_potential: potential,
+                edge_primary_single,
+                edge_code_length,
                 isolation_penalty: None,
                 isolation_last_char: None,
-                isolation_last_isolated: false,
+                isolation_last_weight: 0.0,
             };
             seed_index = self.arena.len();
             self.arena.push(state);
@@ -513,7 +625,9 @@ impl Decoder {
             learning_potential: 0.0,
             isolation_penalty: None,
             isolation_last_char: None,
-            isolation_last_isolated: false,
+            isolation_last_weight: 0.0,
+            edge_primary_single: false,
+            edge_code_length: None,
         };
         self.add_state(&mut states[0], root);
         states
@@ -755,6 +869,13 @@ impl Decoder {
         minimum_consumed_end: isize,
     ) -> Result<()> {
         let lengths = self.lexicon.lengths.clone();
+        // 码形证据只随路径累计、不进 Beam 分数（参照 `expand_range` 顶部）。
+        let code_reward_per_key = if self.model.is_some() {
+            self.ranking_prior.canonical_code_reward
+        } else {
+            0.0
+        };
+        let protect_primary_rare = self.ranking_prior.canonical_isolation_factor < 1.0;
         for position in from_pos..length {
             let limit = beam_limit_at(position);
             states[position] = self.dedup_limit(std::mem::take(&mut states[position]), limit);
@@ -819,6 +940,15 @@ impl Decoder {
                         if selected_rank == 0 {
                             score -= RANK_PENALTY * candidate.log_rank;
                         }
+                        // 主码单字边：按覆盖的原始键数累计码形证据（不入 beam 分）。
+                        let mut code_reward_added = 0.0;
+                        if code_reward_per_key > 0.0
+                            && selected_rank == 0
+                            && candidate.primary_single
+                            && candidate.chars.len() == 1
+                        {
+                            code_reward_added = code_reward_per_key * code_length as f64;
+                        }
                         let mut whole_input_bonus = 0.0;
                         if whole_input_edge
                             && selected_rank == 0
@@ -852,7 +982,7 @@ impl Decoder {
                         let state = State {
                             score: score + learned - item.learning_score,
                             mass_score,
-                            code_score: 0.0,
+                            code_score: item.code_score + code_reward_added,
                             text_length: text.len(),
                             text,
                             prev2,
@@ -866,9 +996,13 @@ impl Decoder {
                             edge_count: item.edge_count + 1,
                             learning_score: learned,
                             learning_potential: potential,
+                            edge_primary_single: protect_primary_rare
+                                && candidate.chars.len() == 1
+                                && (candidate.primary_single || selected_rank > 0),
+                            edge_code_length: protect_primary_rare.then_some(code_length),
                             isolation_penalty: None,
                             isolation_last_char: None,
-                            isolation_last_isolated: false,
+                            isolation_last_weight: 0.0,
                         };
                         self.add_state(&mut states[consumed_end], state);
                     }
@@ -879,15 +1013,22 @@ impl Decoder {
     }
 
     fn evaluate_state(&mut self, index: usize) -> Result<Evaluated> {
-        let ending_adjustment = self.logp(self.arena[index].prev2, self.arena[index].prev1, EOS)?
-            - self.path_isolation_penalty(index)?;
+        let eos_score = self.logp(self.arena[index].prev2, self.arena[index].prev1, EOS)?;
+        let path_penalty = self.path_isolation_penalty(index)?;
+        let text = self.arena[index].text.clone();
+        let code_score = self.arena[index].code_score;
+        // 码形与词先验只进排序分；置信度保留旧的**文本级**隔离项，避免
+        // 启发式证据制造"高置信早提交"（参照 `evaluate_state`）。
+        let ending_adjustment = eos_score - path_penalty + code_score;
+        let confidence_ending_adjustment = eos_score - self.isolation_penalty(&text)?;
         let state = &self.arena[index];
         let previous = state.previous;
         Ok(Evaluated {
             text: state.text.clone(),
             score: state.score + ending_adjustment,
-            confidence_score: state.mass_score + ending_adjustment,
+            confidence_score: state.mass_score + confidence_ending_adjustment,
             code_score: state.code_score,
+            lexical_score: 0.0,
             max_rank: state.max_rank.max(1),
             supplement_score: state.supplement_score,
             learning_score: state.learning_score,
@@ -897,6 +1038,29 @@ impl Decoder {
             previous_raw_length: previous.map(|i| self.arena[i].raw_length).unwrap_or(0),
             previous_text: previous.map(|i| self.arena[i].text.clone()),
         })
+    }
+
+    /// 参照 `isolation_penalty`：仅按文本的相邻 bigram 判定（置信度专用，
+    /// 不被码形证据抬高；参照侧另有按文本缓存，属性能优化，此处不移植）。
+    fn isolation_penalty(&mut self, text: &str) -> Result<f64> {
+        if self.model.is_none() || !self.lexicon.isolation_enabled || text.is_empty() {
+            return Ok(0.0);
+        }
+        let chars: Vec<char> = text.chars().collect();
+        let mut penalty = 0.0;
+        for index in 0..chars.len() {
+            let rank = self.rank_of_char(chars[index]);
+            if rank <= ISOLATION_THRESHOLD {
+                continue;
+            }
+            let left_hit = index > 0 && self.has_observed_bigram(chars[index - 1], chars[index])?;
+            let right_hit = index + 1 < chars.len()
+                && self.has_observed_bigram(chars[index], chars[index + 1])?;
+            if !left_hit && !right_hit {
+                penalty += ISOLATION_LAMBDA;
+            }
+        }
+        Ok(penalty)
     }
 
     fn path_isolation_penalty(&mut self, index: usize) -> Result<f64> {
@@ -911,35 +1075,46 @@ impl Decoder {
             Some(previous) => self.path_isolation_penalty(previous)?,
             None => 0.0,
         };
-        let (mut last_char, mut last_isolated) = match previous {
+        let (mut last_char, mut last_weight) = match previous {
             Some(previous) => (
                 self.arena[previous].isolation_last_char,
-                self.arena[previous].isolation_last_isolated,
+                self.arena[previous].isolation_last_weight,
             ),
-            None => (None, false),
+            None => (None, 0.0),
+        };
+        // 4 码及以上主码/显式选重单字边：生僻罚按 `canonical_isolation_factor` 缩放
+        // （默认 0.0 即免罚）；其余边系数 1.0（参照 `edge_factor`）。
+        let edge_factor = if self.arena[index].edge_primary_single
+            && self.arena[index].edge_code_length.unwrap_or(0)
+                >= self.ranking_prior.canonical_isolation_min_code_length
+        {
+            self.ranking_prior.canonical_isolation_factor
+        } else {
+            1.0
         };
         let edge_chars = self.arena[index].edge_chars.clone();
         for ch in edge_chars {
             let rank = self.rank_of_char(ch);
             let rare = rank > ISOLATION_THRESHOLD;
+            let rare_weight = if rare { edge_factor } else { 0.0 };
             let mut linked = false;
             if let Some(last) = last_char
-                && (last_isolated || rare)
+                && (last_weight > 0.0 || rare_weight > 0.0)
             {
                 linked = self.has_observed_bigram(last, ch)?;
             }
-            if last_isolated && linked {
-                penalty -= ISOLATION_LAMBDA;
+            if last_weight > 0.0 && linked {
+                penalty -= ISOLATION_LAMBDA * last_weight;
             }
-            last_isolated = rare && !linked;
-            if last_isolated {
-                penalty += ISOLATION_LAMBDA;
+            last_weight = if rare && !linked { rare_weight } else { 0.0 };
+            if last_weight > 0.0 {
+                penalty += ISOLATION_LAMBDA * last_weight;
             }
             last_char = Some(ch);
         }
         self.arena[index].isolation_penalty = Some(penalty);
         self.arena[index].isolation_last_char = last_char;
-        self.arena[index].isolation_last_isolated = last_isolated;
+        self.arena[index].isolation_last_weight = last_weight;
         Ok(penalty)
     }
 
@@ -989,6 +1164,28 @@ impl Decoder {
         });
         order.truncate(CANDIDATE_LIMIT);
         let mut items: Vec<Evaluated> = order.iter().map(|&index| all[index].clone()).collect();
+        // 词先验：只重排展示 Top-N（不改 mass/置信度，也不改变候选集合）。
+        if items.len() > 1
+            && let Some(model) = &self.lexical
+            && self.ranking_prior.lexical_prior_weight > 0.0
+            && self.model.is_some()
+        {
+            let mut cache = HashMap::new();
+            let limit = self.ranking_prior.lexical_candidate_limit.min(items.len());
+            for item in items.iter_mut().take(limit) {
+                let lexical_score = model.score_with_cache(&item.text, &mut cache)
+                    * self.ranking_prior.lexical_prior_weight;
+                item.lexical_score = lexical_score;
+                item.score += lexical_score;
+            }
+            items.sort_by(|left, right| {
+                if Decoder::state_better(comparator, left, right) {
+                    std::cmp::Ordering::Less
+                } else {
+                    std::cmp::Ordering::Greater
+                }
+            });
+        }
         for item in &mut items {
             item.segmented = segmented_from_path(raw, &self.arena, item.path);
         }
@@ -1378,6 +1575,7 @@ struct Eligible {
     text: String,
     rank: usize,
     optimal_single: bool,
+    primary_single: bool,
     is_single: bool,
     chars: Vec<char>,
     log_rank: f64,
@@ -1390,6 +1588,7 @@ impl Eligible {
             text: entry.text.clone(),
             rank: entry.rank,
             optimal_single: entry.optimal_single,
+            primary_single: entry.primary_single,
             is_single: chars.len() == 1,
             chars,
             log_rank: (entry.rank as f64).ln(),
@@ -1401,6 +1600,7 @@ impl Eligible {
 struct StateView {
     score: f64,
     mass_score: f64,
+    code_score: f64,
     text: String,
     prev2: char,
     prev1: char,
@@ -1416,6 +1616,7 @@ impl State {
         StateView {
             score: self.score,
             mass_score: self.mass_score,
+            code_score: self.code_score,
             text: self.text.clone(),
             prev2: self.prev2,
             prev1: self.prev1,

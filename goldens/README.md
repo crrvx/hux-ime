@@ -8,24 +8,24 @@
 | 文件 | 用途 | 规模 |
 |---|---|---|
 | `ngram_fixture.bin` | ngram 确定性小模型（参照仓库 `tools/model_fixture.lua` 生成） | 17,480 B |
-| `ngram_fixture.tsv.gz` | ngram 金样：`logp`/`obs`/`status`/`cfg`/`trim` | 29,617 条 |
+| `ngram_fixture.tsv.gz` | ngram 金样：`logp`/`obs`/`status`/`cfg`/`trim` | 29617 行 |
 | `lexicon/` | 码表数据夹具（codes / char_ranks / full_code_whitelist / supplement） | 4 文件 |
-| `lexicon.tsv.gz` | lexicon 金样：`status`/`lengths`/`probe`/`limit`/`supp` | 18,357 条 |
-| `lexicon_missing.tsv.gz` | 数据缺失路径金样 | 5 条 |
+| `lexicon.tsv.gz` | lexicon 金样：`status`/`lengths`/`probe`/`limit`/`supp` | 18357 行 |
+| `lexicon_missing.tsv.gz` | 数据缺失路径金样 | 6 行 |
 | `lexicon_variants/` + `lexicon_variants.tsv.gz` | 解析边界数据（BOM/CRLF/大写码/重复/非法行/白名单豁免/高频过滤） | 27 条 |
 | `lexicon_codes_only/` + `lexicon_codes_only.tsv.gz` | 仅码表（无字频/白名单/补充） | 13 条 |
-| `decode.tsv.gz` | decode 金样（无模型）：`decode`/`result` | 1,980 条 |
-| `decode_model.tsv.gz` | decode 金样（fixture 模型，抽样） | 278 条 |
-| `decode_rank_first.tsv.gz` | decode 金样（fixture 模型 + 关闭单字重码，抽样） | 330 条 |
-| `decode_evidence.tsv.gz` | 早提交证据金样（无模型；含 `has_complete_candidate` 的 `complete` 用例） | 11,002 行 |
-| `decode_evidence_model.tsv.gz` | 早提交证据金样（fixture 模型，抽样；同上） | 1,824 行 |
-| `learning.tsv.gz` | 学习金样：`hash`/`score`/`prefix`/`confirmed`/`reward`/`diff`/日志编码 | 10,164 条 |
-| `decode_learning.tsv.gz` | 解码接入学习（无模型） | 1,987 条 |
-| `decode_learning_model.tsv.gz` | 解码接入学习（fixture 模型，抽样） | 358 条 |
-| `key.tsv.gz` | 键名/键事件金样（librime 探针）：`name`/`repr`/`parse`/`modifier` | 5,113 条 |
+| `decode.tsv.gz` | decode 金样（无模型）：`decode`/`result` | 1980 行 |
+| `decode_model.tsv.gz` | decode 金样（fixture 模型，抽样） | 351 行 |
+| `decode_rank_first.tsv.gz` | decode 金样（fixture 模型 + 关闭单字重码，抽样） | 330 行 |
+| `decode_evidence.tsv.gz` | 早提交证据金样（无模型；含 `has_complete_candidate` 的 `complete` 用例） | 11002 行 |
+| `decode_evidence_model.tsv.gz` | 早提交证据金样（fixture 模型，抽样；同上） | 1824 行 |
+| `learning.tsv.gz` | 学习金样：`hash`/`score`/`prefix`/`confirmed`/`reward`/`diff`/日志编码 | 10164 行 |
+| `decode_learning.tsv.gz` | 解码接入学习（无模型） | 1987 行 |
+| `decode_learning_model.tsv.gz` | 解码接入学习（fixture 模型，抽样） | 358 行 |
+| `key.tsv.gz` | 键名/键事件金样（librime 探针）：`name`/`repr`/`parse`/`modifier` | 5132 行 |
 | `key_sequence.tsv.gz` | 键序列金样（真 librime 探针，2c）：逐步 `consumed`/输入/光标/提交/候选/高亮 | 10 例 / 36 步 |
 | `key_sequence/` | 键序列夹具码表（探针与 Rust 重放共用） | 1 文件 |
-| `lexical.tsv.gz` | 词先验金样（TCSLEX01 读取/Bloom/打分；真实位图 + 码表语料） | 752 条 |
+| `lexical.tsv.gz` | 词先验金样（TCSLEX01 读取/Bloom/打分；真实位图 + 码表语料） | 753 行 |
 | `local/`（不入库） | 真实模型抽样金样（224 MB 模型） | 62,777 条 |
 
 ## transcript 格式（TSV，`#` 注释，`-` 表示空串，字符串为 UTF-8 字节十六进制）
@@ -105,14 +105,17 @@ lua tools/gen_decode_golden.lua --reference "$REF" \
   --data "$PWD/goldens/lexicon" --out /tmp/decode.tsv
 lua tools/gen_decode_golden.lua --reference "$REF" \
   --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
+  --lexical "$PWD/data/tiger_sentence.lexical.bin" \
   --out /tmp/decode_model.tsv --every 7
 lua tools/gen_decode_golden.lua --reference "$REF" \
   --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
+  --lexical "$PWD/data/tiger_sentence.lexical.bin" \
   --out /tmp/decode_rank_first.tsv --every 7 --duplicate 0
 lua tools/gen_decode_golden.lua --reference "$REF" \
   --data "$PWD/goldens/lexicon" --out /tmp/decode_evidence.tsv --early-commit 1 --required 1
 lua tools/gen_decode_golden.lua --reference "$REF" \
   --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
+  --lexical "$PWD/data/tiger_sentence.lexical.bin" \
   --out /tmp/decode_evidence_model.tsv --every 7 --early-commit 1 --required 1
 gzip -9 -n -c /tmp/decode.tsv > goldens/decode.tsv.gz
 gzip -9 -n -c /tmp/decode_model.tsv > goldens/decode_model.tsv.gz
@@ -125,6 +128,7 @@ lua tools/gen_decode_golden.lua --reference "$REF" \
   --data "$PWD/goldens/lexicon" --out /tmp/decode_learning.tsv --learning 1
 lua tools/gen_decode_golden.lua --reference "$REF" \
   --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
+  --lexical "$PWD/data/tiger_sentence.lexical.bin" \
   --out /tmp/decode_learning_model.tsv --every 7 --learning 1
 gzip -9 -n -c /tmp/decode_learning.tsv > goldens/decode_learning.tsv.gz
 gzip -9 -n -c /tmp/decode_learning_model.tsv > goldens/decode_learning_model.tsv.gz
@@ -139,7 +143,7 @@ bash tools/gen_key_golden.sh /path/to/librime
 # key_sequence（入库；需要系统 librime + librime-lua，构建 pin 版隔离环境）
 bash tools/gen_key_sequence_golden.sh
 
-# lexical（入库；需要参照 main ≥ 35a10b9 的词先验模块与 data/ 位图；CI 随 pin 前移接入）
+# lexical（入库；需要参照的词先验模块与 data/ 位图；CI 已接入）
 lua tools/gen_lexical_golden.lua --reference "$REF" --model data/tiger_sentence.lexical.bin --out /tmp/lexical.tsv
 gzip -9 -n -c /tmp/lexical.tsv > goldens/lexical.tsv.gz
 ```
@@ -162,8 +166,7 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 
 ## 来源与校验和
 
-- 参照实现（绝大多数金样）：`crrvx/tiger-sentense-rime` @ `f3b3049819b513ba756bbe6c6b6872759c9dc2a9`；
-  `lexical.tsv.gz` 为例外，需 main `35a10b9` 及更新（词先验模块随该提交进入 main），pin 前移后统一。
+- 参照实现：`crrvx/tiger-sentense-rime` @ `35a10b93c96af7b008fc9a05d01a8381018dc3d3`（main）
 - 键名表来源：librime `src/rime/key_table.cc`（sha256 `2f7c6a8b4f2aa474d700a87bd4bd1baa48a2655cd6ce4d2ba05b768f284d9d78`，librime 1.17.0 固定提交 `33e78140`）；
   `key_table.rs` 由 `tools/gen_key_table.py` 生成，CI 以同提交重新生成并比对；`key.tsv.gz` 由系统 librime 1.17.0 探针（`tools/key_probe.cpp`）生成，
   因探针依赖具体 librime 版本，**CI 不重生成该金样**（仅按 Rust 侧重放校验 + 键表生成比对）。
@@ -171,7 +174,7 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
   （探针头部记录参照提交、`tiger_sentence.lua` sha256 与 librime 版本）；同样**不在 CI 重生成**。数据夹具 `key_sequence/` 入库并与 Rust 重放共用。
 - 词先验金样：`lexical.tsv.gz` 由 `tools/gen_lexical_golden.lua` 以参照 main `35a10b9`（词先验模块随该提交进入 main）
   与入库位图 `data/tiger_sentence.lexical.bin` 生成（CC BY 4.0，见 `docs/LEXICAL_PRIOR_ATTRIBUTION.md`）；
-  语料取自参照码表与确定性采样，重放不依赖外部词表与网络。
+  语料取自参照码表与确定性采样，重放不依赖外部词表与网络；**已在 CI 中再生成比对**。
 - 参照仓库文件（生成时；`lua/`、`tools/` 均为参照仓库路径）：
 
 | 文件 | sha256 |
@@ -203,16 +206,16 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 | `lexicon_missing.tsv.gz` | `f5b8256deeb41b4403ca26074deec659807c4313ffe5cf727987b78be15c7a26` |
 | `lexicon_variants.tsv.gz` | `05923b1433f00bf2e9fbb6270e6b28e1f4d1cca6a93507c74dc80b48fde69ef5` |
 | `lexicon_codes_only.tsv.gz` | `3cd72cca880754ecd3744a26ecc5b70d8b5575ab268654937326bb4925b3805e` |
-| `decode.tsv.gz` | `ea08e0c2bcc6da841b2b52af189cde82dc4eb054c6dc6552d7167d99517c841e` |
-| `decode_model.tsv.gz` | `997a68e68077da7af63a155a01900e94fbb11b71cb9c064cd3c31eb55415c090` |
-| `decode_rank_first.tsv.gz` | `a543ae32f83b88791b3dbb99f748da8e5add1d26590b096d561eecf532bbcfbb` |
+| `decode.tsv.gz` | `0fb6182ec3379a1eac865870cfa8b214ecb0eab044fc6ec3f4bf07783a6c92f6` |
+| `decode_model.tsv.gz` | `9fcdf60ce2eaa0a07e0a7749b04a8abfe586e259feb1b2002bd14d1cf08e8c35` |
+| `decode_rank_first.tsv.gz` | `6df164942f6de48c48921118e32dff9297d4fdc381524baebeca6562a98c0ae0` |
 | `decode_evidence.tsv.gz` | `357e782cb2e1528e76e9e066fbc2c0dacaf7b77ea8b21f71659769cad4d938ec` |
-| `decode_evidence_model.tsv.gz` | `df4362cf72c5eb7b6a1323c01c97e4445571daf958a911c13a51b4504928fe04` |
-| `learning.tsv.gz` | `fcf843527a6ab075a6158aeebfd6e3a67c3c8aa206779edf23d6f2c181aa6649` |
+| `decode_evidence_model.tsv.gz` | `96289e3254228c9dec63806db2ab738da2d3cb11bd0adad2e0eb672210a3e766` |
+| `learning.tsv.gz` | `58392f2e5aec6ab5f87c116b366747b0d0c746fc0bab5d13361821b8bbeead32` |
 | `decode_learning.tsv.gz` | `41a9894d233c32348e42164d4d29fc698c3037741c141ac0b58404094c9e9354` |
-| `decode_learning_model.tsv.gz` | `91e5fe60a515f1cdd11b815a5da68c7f1883ccc6bb80a9e37e45435cfe72f6e0` |
+| `decode_learning_model.tsv.gz` | `8a64e6e3d28b101a57075b03233e62c4b03e8c4a8d2a979399a91a00e2d8e806` |
 | `key.tsv.gz` | `e939a077cd0825f7b454a4af300ed50fb6a2f2609c71583525d44f2f8fb3fd33` |
-| `key_sequence.tsv.gz` | `2051872c13a63e209c64c177e3b647c6fd0dabeb788ced46b0af701e36fdb7d9` |
+| `key_sequence.tsv.gz` | `ac95ec618801efe0b01785bf0f0dd19015a79b3e903d6b45858b359919443fb0` |
 | `lexical.tsv.gz` | `4b56476d28bd1a070fe72352561828264faba85e01df1ea47d908cbaeff28842` |
 
 CI 以同一参照提交重生成全部 fixture 金样并与入库内容比对（见 `.github/workflows/ci.yml`）。

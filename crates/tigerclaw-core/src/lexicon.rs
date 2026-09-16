@@ -92,6 +92,8 @@ pub struct CodeEntry {
     pub text: String,
     pub rank: usize,
     pub optimal_single: bool,
+    /// 该字的最强合法拼写（rank-1 优先，其次最短）；排序先验的 P(code|character) 证据。
+    pub primary_single: bool,
 }
 
 /// `data_status()` 的稳定字段（路径不入样）。
@@ -291,6 +293,11 @@ impl Lexicon {
     pub fn lengths(&self) -> &[usize] {
         &self.lengths
     }
+
+    /// 数据目录（参照 `lexicon_state.directories` 的用途：定位词先验位图等随包数据）。
+    pub fn dirs(&self) -> &[PathBuf] {
+        &self.dirs
+    }
 }
 
 // ---------------------------------------------------------------- 解析
@@ -436,6 +443,8 @@ fn build_lexicon_index(
                     text: text.clone(),
                     rank: position + 1,
                     optimal_single: optimal_input.get(text.as_str()).map(String::as_str)
+                        == Some(code.as_str()),
+                    primary_single: primary.get(text.as_str()).map(String::as_str)
                         == Some(code.as_str()),
                 });
             }

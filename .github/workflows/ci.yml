@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       REFERENCE_REPO: https://github.com/crrvx/tiger-sentense-rime
-      REFERENCE_COMMIT: f3b3049819b513ba756bbe6c6b6872759c9dc2a9
+      REFERENCE_COMMIT: 35a10b93c96af7b008fc9a05d01a8381018dc3d3
       LIBRIME_REPO: https://github.com/rime/librime
       LIBRIME_COMMIT: 33e78140250125871856cdc5b42ddc6a5fcd3cd4
     steps:
@@ -78,10 +78,12 @@ jobs:
           lua tools/gen_decode_golden.lua \
             --reference external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
+            --lexical "$PWD/data/tiger_sentence.lexical.bin" \
             --out /tmp/decode_model.tsv --every 7
           lua tools/gen_decode_golden.lua \
             --reference external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
+            --lexical "$PWD/data/tiger_sentence.lexical.bin" \
             --out /tmp/decode_rank_first.tsv --every 7 --duplicate 0
           lua tools/gen_decode_golden.lua \
             --reference external/tiger-sentense-rime \
@@ -89,6 +91,7 @@ jobs:
           lua tools/gen_decode_golden.lua \
             --reference external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
+            --lexical "$PWD/data/tiger_sentence.lexical.bin" \
             --out /tmp/decode_evidence_model.tsv --every 7 --early-commit 1 --required 1
           lua tools/gen_learning_golden.lua \
             --reference external/tiger-sentense-rime --out /tmp/learning.tsv
@@ -98,7 +101,11 @@ jobs:
           lua tools/gen_decode_golden.lua \
             --reference external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
+            --lexical "$PWD/data/tiger_sentence.lexical.bin" \
             --out /tmp/decode_learning_model.tsv --every 7 --learning 1
+          lua tools/gen_lexical_golden.lua \
+            --reference external/tiger-sentense-rime \
+            --model "$PWD/data/tiger_sentence.lexical.bin" --out /tmp/lexical.tsv
       - name: Compare with committed goldens
         run: |
           cmp goldens/ngram_fixture.bin /tmp/ngram_fixture.bin
@@ -115,6 +122,7 @@ jobs:
           gunzip -c goldens/learning.tsv.gz | cmp - /tmp/learning.tsv
           gunzip -c goldens/decode_learning.tsv.gz | cmp - /tmp/decode_learning.tsv
           gunzip -c goldens/decode_learning_model.tsv.gz | cmp - /tmp/decode_learning_model.tsv
+          gunzip -c goldens/lexical.tsv.gz | cmp - /tmp/lexical.tsv
 
   # Arch 的系统 lua 即最新版；验证金样在最新 Lua 下同样逐字节一致。
   # shell: bash 显式设置（容器内默认 shell 不保证是 bash）。
@@ -126,7 +134,7 @@ jobs:
         shell: bash
     env:
       REFERENCE_REPO: https://github.com/crrvx/tiger-sentense-rime
-      REFERENCE_COMMIT: f3b3049819b513ba756bbe6c6b6872759c9dc2a9
+      REFERENCE_COMMIT: 35a10b93c96af7b008fc9a05d01a8381018dc3d3
     steps:
       - name: Install toolchain
         run: pacman -Sy --noconfirm git lua gzip
@@ -162,10 +170,12 @@ jobs:
           lua tools/gen_decode_golden.lua \
             --reference external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
+            --lexical "$PWD/data/tiger_sentence.lexical.bin" \
             --out /tmp/decode_model.tsv --every 7
           lua tools/gen_decode_golden.lua \
             --reference external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
+            --lexical "$PWD/data/tiger_sentence.lexical.bin" \
             --out /tmp/decode_rank_first.tsv --every 7 --duplicate 0
           lua tools/gen_decode_golden.lua \
             --reference external/tiger-sentense-rime \
@@ -173,6 +183,7 @@ jobs:
           lua tools/gen_decode_golden.lua \
             --reference external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
+            --lexical "$PWD/data/tiger_sentence.lexical.bin" \
             --out /tmp/decode_evidence_model.tsv --every 7 --early-commit 1 --required 1
           lua tools/gen_learning_golden.lua \
             --reference external/tiger-sentense-rime --out /tmp/learning.tsv
@@ -182,7 +193,11 @@ jobs:
           lua tools/gen_decode_golden.lua \
             --reference external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
+            --lexical "$PWD/data/tiger_sentence.lexical.bin" \
             --out /tmp/decode_learning_model.tsv --every 7 --learning 1
+          lua tools/gen_lexical_golden.lua \
+            --reference external/tiger-sentense-rime \
+            --model "$PWD/data/tiger_sentence.lexical.bin" --out /tmp/lexical.tsv
       - name: Compare with committed goldens
         run: |
           cmp goldens/ngram_fixture.bin /tmp/ngram_fixture.bin
@@ -199,3 +214,4 @@ jobs:
           gunzip -c goldens/learning.tsv.gz | cmp - /tmp/learning.tsv
           gunzip -c goldens/decode_learning.tsv.gz | cmp - /tmp/decode_learning.tsv
           gunzip -c goldens/decode_learning_model.tsv.gz | cmp - /tmp/decode_learning_model.tsv
+          gunzip -c goldens/lexical.tsv.gz | cmp - /tmp/lexical.tsv

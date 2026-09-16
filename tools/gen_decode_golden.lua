@@ -61,6 +61,9 @@ end
 if opts.model then
     assert(copy_file(opts.model, work .. "/models/sentence-ngram-mobile.bin"), "model copy failed")
 end
+if opts.lexical then
+    assert(copy_file(opts.lexical, work .. "/tiger_sentence.lexical.bin"), "lexical copy failed")
+end
 
 package.path = reference .. "/lua/?.lua;" .. package.path
 rime_api = { get_user_data_dir = function() return work end }

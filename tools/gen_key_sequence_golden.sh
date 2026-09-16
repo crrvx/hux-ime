@@ -22,7 +22,7 @@ mkdir -p "$user/lua" "$shared"
 
 # pin 版 Lua 核心与 schema（保证与已入库金样同一参照修订）。
 for name in tiger_sentence.lua tiger_sentence_learning.lua tiger_sentence_ngram.lua \
-    tiger_sentence_cache.lua; do
+    tiger_sentence_cache.lua tiger_sentence_lexical.lua; do
     git -C "$REF" show "$PIN:lua/$name" > "$user/lua/$name"
 done
 git -C "$REF" show "$PIN:rime.lua" > "$user/rime.lua"

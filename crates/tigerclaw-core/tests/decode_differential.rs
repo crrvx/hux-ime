@@ -55,7 +55,9 @@ fn open_golden(relative: &str) -> BufReader<GzDecoder<File>> {
 
 fn make_decoder(model: Option<MobileModel>) -> Decoder {
     let data_dir = repo_path("goldens/lexicon");
-    let lexicon = Lexicon::load(std::slice::from_ref(&data_dir), 1500);
+    // `data/` 提供词先验位图（与金样生成时的参照数据目录一致）。
+    let lexical_dir = repo_path("data");
+    let lexicon = Lexicon::load(&[data_dir.clone(), lexical_dir], 1500);
     let supplement = Supplement::load_default(Some(&data_dir));
     Decoder::new(lexicon, supplement, model)
 }
