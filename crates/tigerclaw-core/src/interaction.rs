@@ -5,6 +5,8 @@
 //! - 参照的 `env` 瞬态状态在 Rust 由调用方持有 [`SentenceState`]（每会话一份）；
 //! - 参照的 decode 增量缓存属性能优化，本移植的解码为无状态冷路径，
 //!   `invalidate_edit_state` 因此只处理锁与瞬态标记（语义一致）。
+//! - `read_locks` 采用严格整数解析：非法帧一律返回空表（参照的 `tonumber`
+//!   对空白/浮点更宽容，但属性数据只由本实现写出，实际不会出现该差异）。
 
 use crate::key::KeyEvent;
 use crate::session::Context;
@@ -84,11 +86,11 @@ impl SentenceState {
     }
 
     /// 参照 `sentence_state`：从 context 属性同步已确认/缓冲/锁。
-    pub fn load(&mut self, context: &Context, model_generation: u64) {
+    pub fn load(&mut self, context: &mut Context, model_generation: u64) {
         let combined = context.get_property(K_COMMITTED).unwrap_or("").to_string();
         let (mut committed_raw, mut committed_text) = parse_committed_property(&combined);
         if combined.is_empty() {
-            // 旧双属性格式的一次性迁移。
+            // 旧双属性格式的一次性迁移：写回合并属性并清空旧键。
             let old_raw = context
                 .get_property(K_COMMITTED_RAW_LEGACY)
                 .unwrap_or("")
@@ -98,8 +100,11 @@ impl SentenceState {
                 .unwrap_or("")
                 .to_string();
             if !old_raw.is_empty() || !old_text.is_empty() {
-                committed_raw = old_raw;
-                committed_text = old_text;
+                committed_raw = old_raw.clone();
+                committed_text = old_text.clone();
+                set_property_if_changed(context, K_COMMITTED, &format!("{old_raw}\t{old_text}"));
+                set_property_if_changed(context, K_COMMITTED_RAW_LEGACY, "");
+                set_property_if_changed(context, K_COMMITTED_TEXT_LEGACY, "");
             }
         }
         self.synchronize_model_state(model_generation);
@@ -502,5 +507,61 @@ mod tests {
         invalidate_edit_state(&mut context, &mut state, 0, 2);
         assert_eq!(state.locks.len(), 1);
         assert_eq!(state.locks[0].raw, "ab");
+    }
+
+    #[test]
+    fn load_migrates_legacy_committed_properties() {
+        let mut context = Context::new();
+        context.set_property(K_COMMITTED_RAW_LEGACY, "ab");
+        context.set_property(K_COMMITTED_TEXT_LEGACY, "甲");
+        let mut state = SentenceState::fresh(1);
+        state.load(&mut context, 1);
+        assert_eq!(state.committed_raw, "ab");
+        assert_eq!(state.committed_text, "甲");
+        assert_eq!(context.get_property(K_COMMITTED), Some("ab\t甲"));
+        assert_eq!(context.get_property(K_COMMITTED_RAW_LEGACY), None);
+        assert_eq!(context.get_property(K_COMMITTED_TEXT_LEGACY), None);
+    }
+
+    #[test]
+    fn save_clears_legacy_keys_once() {
+        let mut context = Context::new();
+        context.set_property(K_CONFIDENCE_LEGACY, "x");
+        context.set_property(K_EVIDENCE_RAW_LEGACY, "y");
+        let mut state = SentenceState::fresh(1);
+        state.save(&mut context);
+        assert!(state.legacy_cleared);
+        assert_eq!(context.get_property(K_CONFIDENCE_LEGACY), None);
+        assert_eq!(context.get_property(K_EVIDENCE_RAW_LEGACY), None);
+    }
+
+    #[test]
+    fn model_generation_change_resets_transients() {
+        let (context, mut state) = state_with_lock("ab", "甲");
+        let _ = context;
+        state.last_seen_raw = "raw".to_string();
+        assert!(state.synchronize_model_state(2));
+        assert!(state.last_seen_raw.is_empty());
+        assert!(!state.synchronize_model_state(2));
+        assert_eq!(state.model_generation, 2);
+    }
+
+    #[test]
+    fn duplicate_single_option_reads_context() {
+        let mut context = Context::new();
+        assert!(!set_allow_duplicate_single(&context));
+        context.set_option(OPTION_ALLOW_DUPLICATE_SINGLE, true);
+        assert!(set_allow_duplicate_single(&context));
+    }
+
+    #[test]
+    fn reset_empties_committed_and_locks() {
+        let (mut context, mut state) = state_with_lock("ab", "甲");
+        state.reset(&mut context, true);
+        assert!(state.committed_raw.is_empty());
+        assert!(state.locks.is_empty());
+        assert!(state.continuation_after_auto_commit);
+        assert_eq!(context.get_property(K_COMMITTED), Some("\t"));
+        assert_eq!(context.get_property(K_LOCKS), None);
     }
 }
