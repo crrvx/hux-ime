@@ -83,6 +83,7 @@ pub struct HostCallback {
             *const *const c_char,
             i32,
             i32,
+            *const c_char,
         ),
     >,
 }
@@ -132,6 +133,17 @@ pub(crate) fn wall_clock() -> f64 {
         .unwrap_or(0.0)
 }
 
+/// 字查音+虎（⑧-2）会话态：周边文本（字符制光标）+ 窗口起点 + 已算好的提示。
+#[derive(Default)]
+struct CharacterLookupState {
+    active: bool,
+    valid: bool,
+    text: String,
+    cursor: usize,
+    start: usize,
+    aux: String,
+}
+
 /// 引擎：数据 + 单会话（`Context`/`SentenceState`/学习暂存）。
 pub struct Engine {
     host: Option<HostCallback>,
@@ -151,6 +163,8 @@ pub struct Engine {
     punct: Option<PunctTable>,
     /// 学习库（用户目录不可用时为禁用占位）。
     learning: LearningStore,
+    /// 字查音+虎（⑧-2）会话态。
+    character_lookup: CharacterLookupState,
     /// 学习规则串（来自码表；用于拼 mode）。
     learning_rules: String,
     /// 当前学习 mode 串与已应用的索引版本。
@@ -259,6 +273,7 @@ impl Engine {
             settings,
             punct,
             learning,
+            character_lookup: CharacterLookupState::default(),
             learning_rules,
             learning_mode,
             applied_learning: None,
@@ -272,6 +287,11 @@ impl Engine {
     /// 处理一次按键：返回是否消费；副作用（提交/preedit/候选）经宿主回调送出。
     fn key(&mut self, keysym: u32, states: u32, release: bool) -> bool {
         let key = KeyEvent::new(keysym as i32, core_modifiers(states, release));
+        if let Some(consumed) = self.character_lookup_key(&key) {
+            if consumed {
+                return true;
+            }
+        }
         let now = wall_clock();
         let result = {
             let mut env = ProcessorEnv {
@@ -350,8 +370,102 @@ impl Engine {
         consumed
     }
 
+    /// 字查音+虎（⑧-2）：触发键切换；激活时 ←/→ 以 2 字符步长滚动、Esc 退出，
+    /// 其它键退出并照常处理。返回 `Some(consumed)` 表示按键已在本层处理完毕。
+    fn character_lookup_key(&mut self, key: &KeyEvent) -> Option<bool> {
+        if key.release() {
+            return None;
+        }
+        let repr = key.repr();
+        if repr == self.settings.character_lookup_key {
+            if self.character_lookup.active {
+                self.exit_character_lookup();
+            } else {
+                let state = &mut self.character_lookup;
+                state.active = true;
+                state.start = tigerclaw_core::character_lookup::default_start(state.cursor);
+                self.refresh_character_lookup_aux();
+            }
+            self.push_update();
+            return Some(true);
+        }
+        if !self.character_lookup.active {
+            return None;
+        }
+        match repr.as_str() {
+            "Left" | "Right" => {
+                let state = &mut self.character_lookup;
+                let len = state.text.chars().count();
+                state.start =
+                    tigerclaw_core::character_lookup::scroll(len, state.start, repr == "Right");
+                self.refresh_character_lookup_aux();
+                self.push_update();
+                Some(true)
+            }
+            "Escape" => {
+                self.exit_character_lookup();
+                self.push_update();
+                Some(true)
+            }
+            _ => {
+                // 其它键：退出模式后照常处理（不消费）。
+                self.exit_character_lookup();
+                None
+            }
+        }
+    }
+
+    fn exit_character_lookup(&mut self) {
+        let start = self.character_lookup.start;
+        self.character_lookup.active = false;
+        self.character_lookup.aux.clear();
+        self.character_lookup.start = start;
+    }
+
+    /// 重算提示：应用不支持周边文本时给出说明。
+    fn refresh_character_lookup_aux(&mut self) {
+        let state = &mut self.character_lookup;
+        if !state.active {
+            state.aux.clear();
+            return;
+        }
+        if !state.valid {
+            state.aux = "应用不支持周边文本".to_string();
+            return;
+        }
+        let (text, start) = (state.text.clone(), state.start);
+        state.aux = self
+            .decoder
+            .character_lookup_hint(&text, start)
+            .unwrap_or_default();
+    }
+
+    /// 宿主送入应用侧周边文本（字符制光标；`None` = 应用不支持/不可用）。
+    pub fn set_surrounding(&mut self, text: Option<&str>, cursor_chars: usize) {
+        let state = &mut self.character_lookup;
+        match text {
+            Some(text) => {
+                state.valid = true;
+                state.text = text.to_string();
+                state.cursor = cursor_chars.min(state.text.chars().count());
+                let len = state.text.chars().count();
+                state.start = state.start.min(len);
+            }
+            None => {
+                state.valid = false;
+                state.text.clear();
+                state.cursor = 0;
+                state.start = 0;
+            }
+        }
+        if state.active {
+            self.refresh_character_lookup_aux();
+        }
+    }
+
     /// 重置会话（`activate`/`deactivate`/`reset`）。
     fn reset(&mut self) {
+        self.character_lookup = CharacterLookupState::default();
         self.context.clear();
         self.state.reset(&mut self.context, false);
         self.live.pending.clear();
@@ -522,6 +636,7 @@ impl Engine {
         let text_pointers: Vec<*const c_char> = texts.iter().map(|text| text.as_ptr()).collect();
         let comment_pointers: Vec<*const c_char> =
             comments.iter().map(|comment| comment.as_ptr()).collect();
+        let aux = CString::new(self.character_lookup.aux.as_str()).unwrap_or_default();
         // SAFETY: 指针数组与 C 串在本调用期间有效；计数与数组长度一致。
         unsafe {
             update(
@@ -532,6 +647,7 @@ impl Engine {
                 comment_pointers.as_ptr(),
                 text_pointers.len() as i32,
                 selected,
+                aux.as_ptr(),
             );
         }
     }
@@ -645,6 +761,32 @@ pub unsafe extern "C" fn tigerclaw_engine_apply_settings(
     1
 }
 
+/// 送入应用侧周边文本（字符制光标；`valid=0` 表示不可用/应用不支持）。返回 1 = 已受理。
+///
+/// # Safety
+/// `engine` 须有效（可为空指针）；`text` 须为空或指向 NUL 结尾字符串。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tigerclaw_engine_set_surrounding(
+    engine: *mut Engine,
+    text: *const c_char,
+    cursor_chars: i32,
+    valid: i32,
+) -> i32 {
+    let Some(engine) = (unsafe { engine.as_mut() }) else {
+        return 0;
+    };
+    if valid == 0 || text.is_null() {
+        engine.set_surrounding(None, 0);
+    } else {
+        let text = unsafe { std::ffi::CStr::from_ptr(text) };
+        engine.set_surrounding(
+            Some(text.to_string_lossy().as_ref()),
+            cursor_chars.max(0) as usize,
+        );
+    }
+    1
+}
+
 /// 处理一次按键：返回 1 = 已消费。
 ///
 /// # Safety
@@ -668,7 +810,7 @@ mod tests {
     use std::sync::Mutex;
 
     static COMMITS: Mutex<Vec<String>> = Mutex::new(Vec::new());
-    type UpdateSnapshot = (String, i32, Vec<String>, i32);
+    type UpdateSnapshot = (String, i32, Vec<String>, i32, String);
     static UPDATES: Mutex<Vec<UpdateSnapshot>> = Mutex::new(Vec::new());
     /// 回调记录为进程级静态：使用它们的测试串行执行，避免并发串扰。
     static TEST_SEQUENCE: Mutex<()> = Mutex::new(());
@@ -695,6 +837,7 @@ mod tests {
         _comments: *const *const c_char,
         count: i32,
         selected: i32,
+        aux_down: *const c_char,
     ) {
         let preedit = unsafe { std::ffi::CStr::from_ptr(preedit) }
             .to_string_lossy()
@@ -708,10 +851,17 @@ mod tests {
                     .into_owned(),
             );
         }
+        let aux = if aux_down.is_null() {
+            String::new()
+        } else {
+            unsafe { std::ffi::CStr::from_ptr(aux_down) }
+                .to_string_lossy()
+                .into_owned()
+        };
         UPDATES
             .lock()
             .unwrap()
-            .push((preedit, cursor, candidates, selected));
+            .push((preedit, cursor, candidates, selected, aux));
     }
 
     fn host() -> Option<HostCallback> {
@@ -770,7 +920,7 @@ mod tests {
         assert!(engine.key(u32::from(b'a'), 0, false));
         assert!(engine.key(u32::from(b'b'), 0, false));
         assert_eq!(engine.context.input(), b"ab");
-        let (preedit, cursor, candidates, selected) =
+        let (preedit, cursor, candidates, selected, _) =
             UPDATES.lock().unwrap().last().cloned().expect("update");
         assert_eq!(preedit, "ab");
         assert_eq!(cursor, 2);
@@ -814,37 +964,37 @@ mod tests {
         let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
         assert!(engine.key(u32::from(b'a'), 0, false));
         assert!(engine.key(u32::from(b'b'), 0, false));
-        let (preedit, cursor, candidates, _) = last_update();
+        let (preedit, cursor, candidates, _, _) = last_update();
         assert_eq!(preedit, "ab");
         assert_eq!(cursor, 2);
         assert_eq!(candidates, vec!["甲".to_string(), "乙".to_string()]);
         // ←：光标左移；组合按 caret 前缀重建（候选清空）
         assert!(engine.key(0xff51, 0, false), "组合中 Left 应被消费");
-        let (preedit, cursor, candidates, _) = last_update();
+        let (preedit, cursor, candidates, _, _) = last_update();
         assert_eq!(preedit, "ab");
         assert_eq!(cursor, 1);
         assert!(candidates.is_empty(), "光标在输入中间时无候选");
         // →：回到末尾，候选恢复
         assert!(engine.key(0xff53, 0, false));
-        let (_, cursor, candidates, _) = last_update();
+        let (_, cursor, candidates, _, _) = last_update();
         assert_eq!(cursor, 2);
         assert_eq!(candidates, vec!["甲".to_string(), "乙".to_string()]);
         // ↓：高亮下移；↑ 到首项
         assert!(engine.key(0xff54, 0, false));
-        let (_, _, _, selected) = last_update();
+        let (_, _, _, selected, _) = last_update();
         assert_eq!(selected, 1);
         assert!(engine.key(0xff52, 0, false));
-        let (_, _, _, selected) = last_update();
+        let (_, _, _, selected, _) = last_update();
         assert_eq!(selected, 0);
         // 退格：删除输入
         assert!(engine.key(0xff08, 0, false));
-        let (preedit, cursor, candidates, _) = last_update();
+        let (preedit, cursor, candidates, _, _) = last_update();
         assert_eq!(preedit, "a");
         assert_eq!(cursor, 1);
         assert!(candidates.is_empty());
         // 再退格清空组合；此后交宿主
         assert!(engine.key(0xff08, 0, false));
-        let (preedit, _, candidates, _) = last_update();
+        let (preedit, _, candidates, _, _) = last_update();
         assert!(preedit.is_empty());
         assert!(candidates.is_empty());
         assert!(!engine.key(0xff08, 0, false), "空闲 BackSpace 交宿主");
@@ -955,7 +1105,8 @@ mod tests {
         let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
         engine.key(u32::from(b'a'), 0, false);
         engine.reset();
-        let (preedit, _, candidates, _) = UPDATES.lock().unwrap().last().cloned().expect("update");
+        let (preedit, _, candidates, _, _) =
+            UPDATES.lock().unwrap().last().cloned().expect("update");
         assert!(preedit.is_empty());
         assert!(candidates.is_empty());
         assert!(engine.context.input().is_empty());
@@ -976,7 +1127,7 @@ mod tests {
         for code in *b"zho" {
             assert!(engine.key(u32::from(code), 0, false), "音查虎输入应被消费");
         }
-        let (preedit, _, candidates, _) = last_update();
+        let (preedit, _, candidates, _, _) = last_update();
         assert_eq!(preedit, "`zho〔拼音〕");
         assert_eq!(
             candidates,
@@ -989,9 +1140,58 @@ mod tests {
         for code in *b"`zhongguo" {
             assert!(engine.key(u32::from(code), 0, false));
         }
-        let (preedit, _, candidates, _) = last_update();
+        let (preedit, _, candidates, _, _) = last_update();
         assert_eq!(candidates.first().map(String::as_str), Some("中国"));
         assert_eq!(preedit, "`zhong guo〔拼音〕");
+    }
+
+    /// 字查音+虎（⑧-2）：触发 → 前2+后2「音·虎码」提示；←/→ 步长 2；Esc 退出；
+    /// 应用不支持周边文本时给出说明。
+    #[test]
+    fn character_lookup_end_to_end() {
+        let _guard = serial();
+        UPDATES.lock().unwrap().clear();
+        let dirs = vec![
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/pinyin_lookup"),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+        ];
+        let mut engine = Engine::new_with_dirs(host(), dirs, None, None);
+        // 触发键：Shift+`（默认 字查音+虎）。
+        assert!(engine.key(0x60, FCITX_SHIFT, false), "触发键应被消费");
+        let (_, _, _, _, aux) = last_update();
+        assert_eq!(aux, "应用不支持周边文本");
+        // 送入周边文本「中欧中兴」，光标在第 2 个字符后 → 窗口 = 前 2 + 后 2。
+        engine.set_surrounding(Some("中欧中兴"), 2);
+        assert!(engine.key(0x60, FCITX_SHIFT, false), "再次触发应退出");
+        assert!(engine.key(0x60, FCITX_SHIFT, false), "再次触发应进入");
+        let (_, _, _, _, aux) = last_update();
+        assert_eq!(
+            aux,
+            "中 zhong·d/dg/dgs  欧 ?·nbe/nbeq  中 zhong·d/dg/dgs  兴 ?·xing/xingb"
+        );
+        // ←/→ 以 2 字符步长滚动窗口。
+        assert!(engine.key(0xff53, 0, false), "Right 应被消费");
+        let (_, _, _, _, aux) = last_update();
+        assert_eq!(aux, "中 zhong·d/dg/dgs  兴 ?·xing/xingb");
+        assert!(engine.key(0xff51, 0, false), "Left 应被消费");
+        assert!(engine.key(0xff51, 0, false), "Left 应被消费");
+        let (_, _, _, _, aux) = last_update();
+        assert_eq!(
+            aux,
+            "中 zhong·d/dg/dgs  欧 ?·nbe/nbeq  中 zhong·d/dg/dgs  兴 ?·xing/xingb"
+        );
+        // Esc 退出并清空提示；普通键退出后照常处理（不消费）。
+        assert!(engine.key(0xff1b, 0, false), "Escape 应被消费");
+        let (_, _, _, _, aux) = last_update();
+        assert!(aux.is_empty());
+        assert!(engine.key(0x60, FCITX_SHIFT, false), "重新进入");
+        assert!(
+            engine.key(u32::from(b'a'), 0, false),
+            "普通键退出后照常处理（消费为输入）"
+        );
+        let (_, _, _, _, aux) = last_update();
+        assert!(aux.is_empty());
+        assert_eq!(engine.context.input(), b"a");
     }
 
     /// 预编辑「按词分码」：使用高亮候选的 preedit（`ab cd`），单字不分段（`ab`）。
@@ -1003,7 +1203,7 @@ mod tests {
         for code in *b"abcd" {
             engine.key(u32::from(code), 0, false);
         }
-        let (preedit, cursor, candidates, _) = last_update();
+        let (preedit, cursor, candidates, _, _) = last_update();
         assert!(!candidates.is_empty(), "abcd 应有候选");
         assert_eq!(preedit, "ab cd");
         assert_eq!(cursor, 5);
@@ -1011,7 +1211,7 @@ mod tests {
         for code in *b"ab" {
             engine.key(u32::from(code), 0, false);
         }
-        let (preedit, cursor, _, _) = last_update();
+        let (preedit, cursor, _, _, _) = last_update();
         assert_eq!(preedit, "ab");
         assert_eq!(cursor, 2);
     }

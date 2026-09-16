@@ -9,6 +9,7 @@
 #include <fcitx/inputcontext.h>
 #include <fcitx/inputmethodengine.h>
 #include <fcitx/inputmethodentry.h>
+#include <fcitx/surroundingtext.h>
 #include <fcitx/inputpanel.h>
 #include <fcitx/text.h>
 #include <fcitx/userinterface.h>
@@ -39,9 +40,20 @@ FCITX_CONFIGURATION(
     fcitx::Option<bool> tabLearning{this, "TabLearning", "Tab 选字写入学习库", true};
     fcitx::Option<int, fcitx::IntConstrain> highFreqLimit{
         this, "HighFreqLimit", "高频字过滤上限（重启生效）", 1500, fcitx::IntConstrain(0, 20000)};
-    fcitx::Option<fcitx::Key> pinyinLookupKey{this, "PinyinLookupKey", "音查虎：用拼音查虎码（点击录制按键）", fcitx::Key(FcitxKey_grave)};
-    fcitx::Option<fcitx::Key> characterLookupKey{this, "CharacterLookupKey", "字查音+虎：查光标处汉字的拼音与虎码（点击录制按键）", fcitx::Key(FcitxKey_grave, fcitx::KeyState::Shift)};
-    fcitx::Option<fcitx::Key> quickInputKey{this, "QuickInputKey", "快速输入（点击录制按键）", fcitx::Key(FcitxKey_semicolon)};
+    // 单键选项须显式放宽「允许无修饰键」：默认 KeyConstrain 会拒绝 ` / ; 这类
+    // 无修饰键（配置工具的按键录制会报「不满足约束」）。
+    fcitx::Option<fcitx::Key, fcitx::KeyConstrain> pinyinLookupKey{
+        this, "PinyinLookupKey", "音查虎：用拼音查虎码（点击录制按键）",
+        fcitx::Key(FcitxKey_grave),
+        fcitx::KeyConstrain(fcitx::KeyConstrainFlag::AllowModifierLess)};
+    fcitx::Option<fcitx::Key, fcitx::KeyConstrain> characterLookupKey{
+        this, "CharacterLookupKey", "字查音+虎：查光标处汉字的拼音与虎码（点击录制按键）",
+        fcitx::Key(FcitxKey_grave, fcitx::KeyState::Shift),
+        fcitx::KeyConstrain(fcitx::KeyConstrainFlag::AllowModifierLess)};
+    fcitx::Option<fcitx::Key, fcitx::KeyConstrain> quickInputKey{
+        this, "QuickInputKey", "快速输入（点击录制按键）",
+        fcitx::Key(FcitxKey_semicolon),
+        fcitx::KeyConstrain(fcitx::KeyConstrainFlag::AllowModifierLess)};
     fcitx::Option<bool> panelPreedit{this, "PanelPreedit", "候选窗口显示预编辑文本（默认关闭；客户端内联预编辑仍随 fcitx5 全局设置）", false};);
 
 class TigerclawEngine : public fcitx::InputMethodEngine {
@@ -74,6 +86,14 @@ public:
         FCITX_UNUSED(entry);
         const auto &key = keyEvent.key();
         context_ = keyEvent.inputContext();
+        // 应用侧周边文本（字查音+虎用；应用不支持时 valid=0）。
+        const auto &surrounding = context_->surroundingText();
+        if (surrounding.isValid()) {
+            tigerclaw_engine_set_surrounding(engine_, surrounding.text().c_str(),
+                                             static_cast<int32_t>(surrounding.cursor()), 1);
+        } else {
+            tigerclaw_engine_set_surrounding(engine_, nullptr, 0, 0);
+        }
         const int consumed =
             tigerclaw_engine_key(engine_, key.sym(), key.states().toInteger(),
                                  keyEvent.isRelease() ? 1 : 0);
@@ -116,9 +136,9 @@ private:
     static void updateCallback(void *user, const char *preedit, int32_t cursor,
                                const char *const *texts,
                                const char *const *comments, int32_t count,
-                               int32_t selected) {
+                               int32_t selected, const char *auxDown) {
         static_cast<TigerclawEngine *>(user)->applyUpdate(
-            preedit, cursor, texts, comments, count, selected);
+            preedit, cursor, texts, comments, count, selected, auxDown);
     }
 
     void applyCommit(const char *text) {
@@ -130,7 +150,7 @@ private:
     /// 应用 UI 快照：preedit（面板 + 客户端内联）+ 候选列表与高亮。
     void applyUpdate(const char *preedit, int32_t cursor,
                      const char *const *texts, const char *const *comments,
-                     int32_t count, int32_t selected) {
+                     int32_t count, int32_t selected, const char *auxDown) {
         if (context_ == nullptr) {
             return;
         }
@@ -169,6 +189,10 @@ private:
                 candidateList->setPage(page);
             }
         }
+        // 字查音+虎（⑧-2）：辅助文本（auxDown）；空串清除。
+        context_->inputPanel().setAuxDown(auxDown != nullptr && *auxDown != '\0'
+                                              ? fcitx::Text(auxDown)
+                                              : fcitx::Text());
         context_->inputPanel().setCandidateList(std::move(candidateList));
         context_->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
     }

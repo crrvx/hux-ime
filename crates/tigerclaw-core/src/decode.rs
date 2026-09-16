@@ -301,6 +301,18 @@ impl Decoder {
         self.pinyin_load_error.as_deref()
     }
 
+    /// 字查音+虎提示（懒加载索引；缺索引返回 `None`）。
+    pub fn character_lookup_hint(&mut self, text: &str, start: usize) -> Option<String> {
+        self.pinyin_index();
+        let index = self.pinyin.as_ref()?;
+        Some(crate::character_lookup::hint(
+            index,
+            &self.lexicon,
+            text,
+            start,
+        ))
+    }
+
     /// 音查虎候选（含虎码注释过滤；上限 [`crate::pinyin_lookup::CANDIDATE_LIMIT`]）。
     pub fn pinyin_candidates(
         &mut self,

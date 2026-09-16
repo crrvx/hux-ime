@@ -5,6 +5,7 @@
 //! 见 `docs/rust-migration.md` 与 `docs/rime-semantics.md`。
 
 pub mod cache;
+pub mod character_lookup;
 pub mod decode;
 pub mod host;
 pub mod interaction;

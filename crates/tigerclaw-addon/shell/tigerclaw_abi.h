@@ -21,7 +21,7 @@ typedef struct tigerclaw_engine tigerclaw_engine;
  * commit: 上屏文本（UTF-8，NUL 结尾）。
  * update: UI 状态快照——preedit（UTF-8，NUL 结尾）+ 光标（字节偏移，与
  *         fcitx `Text::cursor` 一致）+ 候选数组（文本/注释，各 NUL 结尾）+
- *         候选数 + 当前高亮索引。
+ *         候选数 + 当前高亮索引 + 辅助文本（auxDown，UTF-8，NUL 结尾，可为 ""）。
  */
 typedef struct tigerclaw_host {
     void *user;
@@ -29,7 +29,8 @@ typedef struct tigerclaw_host {
     void (*update)(void *user, const char *preedit_utf8, int32_t cursor_bytes,
                    const char *const *candidate_texts,
                    const char *const *candidate_comments,
-                   int32_t candidate_count, int32_t candidate_selected);
+                   int32_t candidate_count, int32_t candidate_selected,
+                   const char *aux_down_utf8);
 } tigerclaw_host;
 
 tigerclaw_engine *tigerclaw_engine_new(const tigerclaw_host *host);
@@ -45,6 +46,11 @@ const char *tigerclaw_engine_status(const tigerclaw_engine *engine);
  */
 int32_t tigerclaw_engine_key(tigerclaw_engine *engine, uint32_t keysym,
                              uint32_t states, int32_t release);
+
+/* 送入应用侧周边文本（字符制光标；valid=0 表示不可用/应用不支持）。 */
+int32_t tigerclaw_engine_set_surrounding(tigerclaw_engine *engine,
+                                         const char *text_utf8,
+                                         int32_t cursor_chars, int32_t valid);
 
 #ifdef __cplusplus
 }

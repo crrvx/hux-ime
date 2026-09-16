@@ -63,13 +63,15 @@ struct Entry {
     len: u16,
 }
 
-/// 拼音索引（TCSRV01；音查虎用）。
+/// 拼音索引（TCSRV01；音查虎与字查音+虎共用）。
 pub struct PinyinIndex {
     syllables: Vec<String>,
     /// 拼写键（字节序）：键 → [(音节 id, 类型)]。
     spellings: Vec<SpellingEntry>,
     /// 词条组（按码字典序；前缀连续）。
     groups: Vec<Group>,
+    /// 单字读音倒排（字查音+虎用；源序，含多音字）。
+    character_pinyin: hashbrown::HashMap<char, Vec<String>>,
     text: String,
     entries: Vec<Entry>,
 }
@@ -150,7 +152,35 @@ impl PinyinIndex {
         if first as usize != entry_count {
             bail!("entry count mismatch");
         }
+        // 单字读音倒排：组内音节串按源序收集，去重。
+        let mut character_pinyin: hashbrown::HashMap<char, Vec<String>> = hashbrown::HashMap::new();
+        {
+            let entry_text = |entry: &Entry| -> &str {
+                let start = entry.offset as usize;
+                &text[start..start + entry.len as usize]
+            };
+            for group in &groups {
+                let reading: String = group
+                    .code
+                    .iter()
+                    .map(|id| syllables[*id as usize].as_str())
+                    .collect::<Vec<_>>()
+                    .join("");
+                let end = group.first + group.count;
+                for entry in &entries[group.first as usize..end as usize] {
+                    let mut chars = entry_text(entry).chars();
+                    let (Some(ch), None) = (chars.next(), chars.next()) else {
+                        continue;
+                    };
+                    let readings = character_pinyin.entry(ch).or_default();
+                    if !readings.contains(&reading) {
+                        readings.push(reading.clone());
+                    }
+                }
+            }
+        }
         Ok(Self {
+            character_pinyin,
             syllables,
             spellings,
             groups,
@@ -172,6 +202,14 @@ impl PinyinIndex {
     /// 词条数（诊断）。
     pub fn entry_count(&self) -> usize {
         self.entries.len()
+    }
+
+    /// 单字读音（源序；无记录返回空切片）。
+    pub fn character_pinyin(&self, ch: char) -> &[String] {
+        self.character_pinyin
+            .get(&ch)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
     }
 
     fn entry_text(&self, entry: &Entry) -> &str {

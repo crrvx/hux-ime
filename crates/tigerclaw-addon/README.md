@@ -41,7 +41,7 @@ ln -sf ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
 | 项 | 默认 | 说明 |
 |---|---|---|
 | PinyinLookupKey | `` ` `` | **音查虎**（用拼音查虎码）触发键（按键录入；已随 ⑧-1 接线）|
-| CharacterLookupKey | Shift+`` ` `` | **字查音+虎**（查光标处汉字的拼音与虎码）触发键（按键录入；行为随 ⑧-2）|
+| CharacterLookupKey | Shift+`` ` `` | **字查音+虎**（查光标处文本的音与虎码）触发键（按键录入；⑧-2 已接线）|
 | QuickInputKey | `;` | 快速输入触发键（按键录入；行为随 ⑨ 数据接线）|
 | EarlyCommit / EarlyCommitToPreedit / AllowDuplicateSingle | 开/关/开 | 早提交三项 |
 | FullShape / AsciiPunct | 关/关 | 全角标点 / ASCII 标点直通 |
@@ -49,12 +49,21 @@ ln -sf ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
 | HighFreqLimit | 1500 | 高频字过滤上限（重启生效）|
 | PanelPreedit | 关 | 候选窗口显示预编辑文本（默认关；仅宿主显示项，不经引擎；客户端内联预编辑仍随全局）|
 
+快捷键选项用 `fcitx5` 原生按键录入控件（`KeyConstrain(AllowModifierLess)`，允许 `` ` ``、`;`
+这类无修饰键）。
+
 未显式提供的项一律**跟随 fcitx5 全局设置**：候选列表方向不设布局提示（由全局
 「候选词排列方向」决定）、客户端内联预编辑跟随全局「预编辑」开关（`isPreeditEnabled()`）。
 
 预编辑串**按词/音节分码**：正常段用解码的 `segmented`（如输入 `shks` → 预编辑 `sh ks`，
 输入 `shk` → `shk`）；音查虎段按音节切分（`` `zhongguo `` → `` `zhong guo ``，缩写/未完成
 音节与后续合并，如 `` `zho `` → `` `zho ``）。
+
+**字查音+虎**（⑧-2）：触发键进入查码态，取应用侧周边文本（fcitx5 surrounding text，需应用
+支持；不支持时辅助文本条提示「应用不支持周边文本」）；显示**光标前 2 + 后 2 个字符**，每字
+「音·虎码」（如 `中 zhong·d/dg/dgs`，多音/多码以 `/` 连接，缺数据为 `?`，空白字符跳过显示）；
+←/→ **以 2 字符为步长**滚动窗口；**仅提示、不上屏**；Esc / 再次触发 / 其它任意键退出。
+展示面为输入面板辅助文本条（auxDown）。
 
 ## 选项
 
@@ -90,4 +99,4 @@ ln -sf ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
   fcitx5-configtool 自动生成设置页（`~/.config/fcitx5/conf/tigerclaw.conf`），经 ABI `tigerclaw_engine_apply_settings` 生效。
 
 已知限制（后续增量）：每引擎单会话（切换/重置即清空）；候选为展示型（点击不提交）；
-音查虎（⑧-1）已接线；字查音+虎（⑧-2）、状态菜单与打包（⑨）待做。
+音查虎（⑧-1）与字查音+虎（⑧-2）均已接线；状态菜单与打包（⑨）待做。
