@@ -11,4 +11,8 @@ description = "虎整句 fcitx5 addon：C ABI 与宿主适配（K3）"
 crate-type = ["staticlib"]
 
 [dependencies]
+anyhow.workspace = true
+hashbrown.workspace = true
+rusty-leveldb = "4.0.1"
 tigerclaw-core = { path = "../tigerclaw-core" }
+yaml-rust2 = "0.13.0"

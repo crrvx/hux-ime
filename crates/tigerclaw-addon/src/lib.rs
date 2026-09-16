@@ -10,17 +10,25 @@ use std::ffi::{CString, c_char, c_void};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+mod learning_store;
+mod options;
+
+use learning_store::LearningStore;
+use options::OptionsStore;
+
 use tigerclaw_core::decode::Decoder;
 use tigerclaw_core::interaction::{
-    CompositionBuilder, LiveLearning, ProcessorEnv, ProcessorResult, SentenceState, buffered_text,
-    option_defaults, processor,
+    CompositionBuilder, LearningCommit, LiveLearning, ProcessorEnv, ProcessorResult, SentenceState,
+    buffered_text, confirm_selection, option_defaults, processor, reset_early_evidence,
+    set_allow_duplicate_single,
 };
 use tigerclaw_core::key::{
     K_ALT_MASK, K_CONTROL_MASK, K_LOCK_MASK, K_RELEASE_MASK, K_SHIFT_MASK, K_SUPER_MASK, KeyEvent,
 };
 use tigerclaw_core::lexical;
 use tigerclaw_core::lexicon::{
-    LEXICAL_FILE, Lexicon, MODEL_PATH, Supplement, candidate_paths, data_directories,
+    DEFAULT_HIGH_FREQ_LIMIT, LEXICAL_FILE, Lexicon, MODEL_PATH, Supplement, candidate_paths,
+    data_directories,
 };
 use tigerclaw_core::ngram::MobileModel;
 use tigerclaw_core::session::{Context, Event};
@@ -97,10 +105,11 @@ fn default_model_path(dirs: &[PathBuf]) -> Option<PathBuf> {
         .find(|path| path.is_file())
 }
 
-fn wall_clock() -> f64 {
+/// 参照 `os.time()`：整秒墙钟（学习事件时间戳）。
+pub(crate) fn wall_clock() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|value| value.as_secs_f64())
+        .map(|value| value.as_secs() as f64)
         .unwrap_or(0.0)
 }
 
@@ -115,6 +124,15 @@ pub struct Engine {
     min_retained: Option<i64>,
     /// 组合重建（提交或输入变化时重建，保留段状态含菜单高亮）。
     builder: CompositionBuilder,
+    /// 选项存储（用户目录不可用时为 `None`，此时仅用内建缺省）。
+    options: Option<OptionsStore>,
+    /// 学习库（用户目录不可用时为禁用占位）。
+    learning: LearningStore,
+    /// 学习规则串（来自码表；用于拼 mode）。
+    learning_rules: String,
+    /// 当前学习 mode 串与已应用的索引版本。
+    learning_mode: String,
+    applied_learning: Option<u64>,
     status: CString,
 }
 
@@ -124,13 +142,16 @@ impl Engine {
         let model = std::env::var_os("TIGERCLAW_MODEL")
             .map(PathBuf::from)
             .or_else(|| default_model_path(&dirs));
-        Self::new_with_dirs(host, dirs, model)
+        // 选项存于标准用户目录（与数据目录的开发覆盖解耦）。
+        let options_dir = data_directories().into_iter().next();
+        Self::new_with_dirs(host, dirs, model, options_dir)
     }
 
     fn new_with_dirs(
         host: Option<HostCallback>,
         dirs: Vec<PathBuf>,
         model_path: Option<PathBuf>,
+        options_dir: Option<PathBuf>,
     ) -> Self {
         let mut notes = vec![format!(
             "dirs: {}",
@@ -139,8 +160,9 @@ impl Engine {
                 .collect::<Vec<_>>()
                 .join(":")
         )];
-        let lexicon = Lexicon::load(&dirs, 1500);
+        let lexicon = Lexicon::load(&dirs, DEFAULT_HIGH_FREQ_LIMIT);
         notes.push(format!("lexicon: {}", lexicon.data_status().canonical()));
+        let learning_rules = lexicon.learning_rules.clone();
         let supplement = Supplement::load_default(dirs.first().map(PathBuf::as_path));
         let model = model_path.and_then(|path| match MobileModel::load(&path, None) {
             Ok(model) => Some(model),
@@ -157,20 +179,55 @@ impl Engine {
             notes.push(format!("lexical: {error}"));
         }
         let mut context = Context::new();
-        // 宿主缺省：`_auto_commit`（librime `express_editor` 默认 true）+ 核心选项缺省。
+        // 宿主缺省：`_auto_commit`（librime `express_editor` 默认 true）。
         context.set_option("_auto_commit", true);
-        for (name, value) in option_defaults() {
-            context.set_option(&name, value);
+        // 选项：有存储则同步（参照 `M.options.sync`，同步写入由核心抑制观察）；
+        // 无存储时直接用内建缺省。
+        let mut options = options_dir.as_deref().map(OptionsStore::load);
+        if let Some(options) = options.as_mut() {
+            options.sync(&mut context);
+        } else {
+            for (name, value) in option_defaults() {
+                context.set_option(&name, value);
+            }
         }
+        // 学习库：`<user dir>/tiger_sentence_learning_<hash>.userdb/`（用户目录不可用则禁用）。
+        let learning = match options_dir.as_deref() {
+            Some(dir) => LearningStore::open(
+                dir,
+                &learning_store::store_name(learning_store::DEFAULT_SCHEMA_ID),
+                wall_clock(),
+            ),
+            None => LearningStore::disabled("user data directory unavailable"),
+        };
+        if let Some(error) = &learning.error {
+            notes.push(format!("learning: {error}"));
+        } else {
+            notes.push(format!("learning: {}", learning.name));
+        }
+        let learning_mode = format!(
+            "sentence-v1|rules={learning_rules}|optimal={DEFAULT_HIGH_FREQ_LIMIT}|dup={}",
+            u8::from(set_allow_duplicate_single(&context))
+        );
+        let live = LiveLearning {
+            mode: learning_mode.clone(),
+            store_ready: learning.store_ready(),
+            ..LiveLearning::default()
+        };
         let engine = Self {
             host,
             decoder,
             context,
             state: SentenceState::fresh(1),
-            live: LiveLearning::default(),
+            live,
             dot_armed: false,
             min_retained: None,
             builder: CompositionBuilder::default(),
+            options,
+            learning,
+            learning_rules,
+            learning_mode,
+            applied_learning: None,
             status: CString::new(notes.join("; ")).unwrap_or_default(),
         };
         engine.push_update();
@@ -180,19 +237,22 @@ impl Engine {
     /// 处理一次按键：返回是否消费；副作用（提交/preedit/候选）经宿主回调送出。
     fn key(&mut self, keysym: u32, states: u32, release: bool) -> bool {
         let key = KeyEvent::new(keysym as i32, core_modifiers(states, release));
-        let mut env = ProcessorEnv {
-            now: wall_clock(),
-            dot_armed: &mut self.dot_armed,
-            min_retained: self.min_retained,
+        let now = wall_clock();
+        let result = {
+            let mut env = ProcessorEnv {
+                now,
+                dot_armed: &mut self.dot_armed,
+                min_retained: self.min_retained,
+            };
+            processor(
+                &key,
+                &mut self.context,
+                &mut self.state,
+                &mut self.decoder,
+                &mut self.live,
+                &mut env,
+            )
         };
-        let result = processor(
-            &key,
-            &mut self.context,
-            &mut self.state,
-            &mut self.decoder,
-            &mut self.live,
-            &mut env,
-        );
         let consumed = match result {
             Ok(result) => matches!(result, ProcessorResult::Consume),
             Err(error) => {
@@ -201,15 +261,64 @@ impl Engine {
             }
         };
         let mut commits = Vec::new();
+        let mut option_events = Vec::new();
         let mut invalidated = false;
         for event in self.context.drain_events() {
-            if let Event::Commit(text) = event {
-                invalidated = true;
-                commits.push(text);
+            match event {
+                Event::Commit(text) => {
+                    invalidated = true;
+                    commits.push(text);
+                }
+                Event::Option(name) => option_events.push(name),
+                Event::Update => {}
             }
         }
         for text in commits {
             self.host_commit(&text);
+        }
+        for name in option_events {
+            // 参照选项通知器：ascii_mode 打开且有缓冲时确认当前选中。
+            if name == "ascii_mode"
+                && self.context.get_option("ascii_mode")
+                && !buffered_text(&self.context).is_empty()
+            {
+                confirm_selection(
+                    Some(&mut LearningCommit {
+                        decoder: &mut self.decoder,
+                        live: &mut self.live,
+                        now,
+                    }),
+                    &mut self.context,
+                    &mut self.state,
+                );
+            }
+            self.observe_option(&name);
+        }
+        // 学习：核心暂存 → 落库；刷新打分（未组合时，60 秒节流）；应用索引。
+        let submitted = std::mem::take(&mut self.live.submitted);
+        if !submitted.is_empty() {
+            self.learning.confirm(&submitted);
+        }
+        self.refresh_learning_mode();
+        if !self.context.is_composing() {
+            self.learning.refresh_scores(now);
+        }
+        self.apply_learning();
+        // 参照 update 通知器：非组合清暂存；缓冲且实况输入为空时隐藏候选。
+        if !self.context.is_composing() {
+            self.live.pending.clear();
+            self.live.baseline = None;
+            self.live.submitted_raw = None;
+            if !buffered_text(&self.context).is_empty() {
+                self.state.reset(&mut self.context, false);
+            }
+        }
+        let hide = !buffered_text(&self.context).is_empty() && self.context.live_input().is_empty();
+        if hide || self.live.hide_owned {
+            self.live.hide_owned = hide;
+            if self.context.get_option("_hide_candidate") != hide {
+                self.context.set_option("_hide_candidate", hide);
+            }
         }
         if let Err(error) = self.builder.rebuild(
             &mut self.decoder,
@@ -232,7 +341,44 @@ impl Engine {
         self.live.submitted_raw = None;
         self.dot_armed = false;
         self.builder.reset();
+        if let Some(options) = self.options.as_mut() {
+            options.sync(&mut self.context);
+        }
         self.push_update();
+    }
+
+    /// 选项事件 → 记录/持久化（参照 `M.options` 的选项通知器）。
+    fn observe_option(&mut self, name: &str) {
+        if let Some(options) = self.options.as_mut() {
+            options.observe(&mut self.context, name);
+        }
+    }
+
+    /// 按当前规则/选项刷新学习 mode（变化时强制重设 decoder 学习）。
+    fn refresh_learning_mode(&mut self) {
+        let mode = format!(
+            "sentence-v1|rules={}|optimal={DEFAULT_HIGH_FREQ_LIMIT}|dup={}",
+            self.learning_rules,
+            u8::from(set_allow_duplicate_single(&self.context))
+        );
+        if mode != self.learning_mode {
+            self.learning_mode = mode.clone();
+            self.live.mode = mode;
+            self.applied_learning = None;
+        }
+    }
+
+    /// 索引变化时重设 decoder 学习（参照 `active_index` 变化：重置早证据与空码态）。
+    fn apply_learning(&mut self) {
+        let version = self.learning.index_version();
+        if self.applied_learning == Some(version) {
+            return;
+        }
+        self.applied_learning = Some(version);
+        self.decoder
+            .set_learning(self.learning.index().clone(), &self.learning_mode);
+        reset_early_evidence(&mut self.state);
+        self.state.empty_code_pending = None;
     }
 
     /// 提交回调（`engine:commit_text`）。
@@ -271,7 +417,7 @@ impl Engine {
             buffered.len() + usize::from(!live.is_empty())
         };
         let cursor = (prefix_length + self.context.live_caret()).min(preedit.len());
-        let (texts, comments, selected) = match self.context.composition.back() {
+        let (mut texts, mut comments, selected) = match self.context.composition.back() {
             Some(segment) => (
                 segment
                     .candidates
@@ -287,6 +433,11 @@ impl Engine {
             ),
             None => (Vec::new(), Vec::new(), 0),
         };
+        // 参照 `_hide_candidate`：缓冲且实况输入为空时隐藏候选。
+        if self.context.get_option("_hide_candidate") {
+            texts.clear();
+            comments.clear();
+        }
         let preedit = CString::new(preedit).unwrap_or_default();
         let texts: Vec<CString> = texts
             .iter()
@@ -439,11 +590,36 @@ mod tests {
         ]
     }
 
+    fn temp_user_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("tigerclaw-user-{}-{tag}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).expect("temp user dir");
+        dir
+    }
+
+    #[test]
+    fn engine_wires_learning_store() {
+        let dir = temp_user_dir("learning");
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, Some(dir.clone()));
+        assert!(engine.live.store_ready, "用户目录可用时学习库应就绪");
+        assert!(engine.live.mode.starts_with("sentence-v1|rules="));
+        engine.key(u32::from(b'a'), 0, false);
+        assert!(engine.applied_learning.is_some(), "按键后应已应用学习索引");
+        assert!(
+            dir.join(format!(
+                "{}.userdb",
+                learning_store::store_name(learning_store::DEFAULT_SCHEMA_ID)
+            ))
+            .is_dir()
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     #[test]
     fn types_composition_and_commits_with_fixture() {
         COMMITS.lock().unwrap().clear();
         UPDATES.lock().unwrap().clear();
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None);
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
         // 「甲/乙」共用码 ab：输入两个键后出现候选，space 确认并提交。
         assert!(engine.key(u32::from(b'a'), 0, false));
         assert!(engine.key(u32::from(b'b'), 0, false));
@@ -461,7 +637,7 @@ mod tests {
 
     #[test]
     fn modifiers_and_release_pass_through() {
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None);
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
         assert!(!engine.key(u32::from(b'a'), FCITX_CTRL, false)); // Ctrl+a 交宿主
         assert!(!engine.key(u32::from(b'a'), 0, true)); // release 交宿主
         assert!(!engine.key(0xff0d, 0, false)); // Return 空闲交宿主
@@ -469,7 +645,7 @@ mod tests {
 
     #[test]
     fn idle_editing_keys_pass_through() {
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None);
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
         // BackSpace/Delete/Left/Right/Up/Down/Home/End/Page_Up/Page_Down/Escape/Tab
         for keysym in [
             0xff08, 0xffff, 0xff51, 0xff53, 0xff52, 0xff54, 0xff50, 0xff57, 0xff55, 0xff56, 0xff1b,
@@ -485,7 +661,7 @@ mod tests {
     #[test]
     fn reset_clears_panel() {
         UPDATES.lock().unwrap().clear();
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None);
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
         engine.key(u32::from(b'a'), 0, false);
         engine.reset();
         let (preedit, _, candidates, _) = UPDATES.lock().unwrap().last().cloned().expect("update");

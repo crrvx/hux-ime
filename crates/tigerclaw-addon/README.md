@@ -35,12 +35,27 @@ ln -sf ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
   ~/.local/share/fcitx5/tigerclaw/models/
 ```
 
+## 选项
+
+`~/.local/share/fcitx5/tigerclaw/tiger_sentence.options.yaml` 为主存储（YAML，未知键保留）；
+缺失键回退 `user.yaml` 的 `var/option/<name>`（只读）。保存失败写入属性
+`tiger_sentence_options_error`。
+
+## 学习
+
+`~/.local/share/fcitx5/tigerclaw/tiger_sentence_learning_<hash(schema_id)>.userdb/`
+（LevelDB：键 `e/%010d`、值 = frame 五元组；上限 1 万条 / 16 MiB；`refresh_scores` 60 秒节流，
+与 Rime 同构、可直接迁移）。提交点的通知器序列由 core 负责，宿主排空
+`LiveLearning::submitted` 落库。
+
 ## 状态
 
 - K3a：注册（addon/输入法条目 conf）+ 按键回路；
-- K3b：core 会话接线——fcitx5 状态 → core（Rime）掩码、`processor` + `translate` 组合重建
-  （照 2c 重放桩规则：提交或输入变化时重建）、提交 / preedit（字节光标）/ 候选与高亮、
-  `activate/deactivate/reset` 生命周期、`_auto_commit` 与核心选项缺省。
+- K3b：core 会话接线——fcitx5 状态 → core（Rime）掩码、`CompositionBuilder` 组合重建
+  （提交或输入变化时重建）、提交 / preedit（字节光标）/ 候选与高亮、
+  `activate/deactivate/reset` 生命周期、`_auto_commit`；
+- K3d：选项持久化（`options.yaml` + legacy 回退 + 错误属性）；
+- K3e：学习库（LevelDB 落库 + 节流刷新 + `_hide_candidate` / `ascii_mode` 确认）。
 
 已知限制（后续增量）：每引擎单会话（切换/重置即清空）；候选为展示型（点击不提交）；
 组合中的编辑/导航键（←→/↑↓/Page、退格、Home/End 等）参照交宿主链，宿主等价物见 K3 ⑥；
