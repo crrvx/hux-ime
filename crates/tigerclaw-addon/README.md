@@ -36,6 +36,21 @@ ln -sf ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
   ~/.local/share/fcitx5/tigerclaw/models/
 ```
 
+## 配置（fcitx5-configtool 生成的设置页）
+
+| 项 | 默认 | 说明 |
+|---|---|---|
+| ReversePinyinKey | `` ` `` | 反查-拼音触发键（按键录入；行为随 ⑧ 反查接线）|
+| ReverseHanziKey | Shift+`` ` `` | 反查-汉字触发键（按键录入；行为随 ⑧）|
+| QuickInputKey | `;` | 快速输入触发键（按键录入；行为随 ⑨ 数据接线）|
+| EarlyCommit / EarlyCommitToPreedit / AllowDuplicateSingle | 开/关/开 | 早提交三项 |
+| FullShape / AsciiPunct | 关/关 | 全角标点 / ASCII 标点直通 |
+| TabLearning | 开 | Tab 选字写学习库 |
+| HighFreqLimit | 1500 | 高频字过滤上限（重启生效）|
+
+未显式提供的项一律**跟随 fcitx5 全局设置**：候选列表方向不设布局提示（由全局
+「候选词排列方向」决定）、客户端内联预编辑跟随全局「预编辑」开关（`isPreeditEnabled()`）。
+
 ## 选项
 
 `~/.local/share/fcitx5/tigerclaw/tiger_sentence.options.yaml` 为主存储（YAML，未知键保留）；

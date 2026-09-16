@@ -535,6 +535,12 @@ pub struct TigerclawOptions {
     pub ascii_punct: i32,
     pub tab_learning: i32,
     pub high_freq_limit: i32,
+    pub reverse_pinyin_sym: i32,
+    pub reverse_pinyin_states: i32,
+    pub reverse_hanzi_sym: i32,
+    pub reverse_hanzi_states: i32,
+    pub quick_input_sym: i32,
+    pub quick_input_states: i32,
 }
 
 /// 应用外部配置（fcitx5 配置界面 → C++ 壳 → 本入口）。返回 1 = 已应用。
@@ -552,6 +558,13 @@ pub unsafe extern "C" fn tigerclaw_engine_apply_settings(
     let Some(options) = (unsafe { options.as_ref() }) else {
         return 0;
     };
+    // fcitx5 按键（keysym + 状态位）→ rime 键名；未设（sym=0）为空串。
+    let key_repr = |sym: i32, states: i32| -> String {
+        if sym == 0 {
+            return String::new();
+        }
+        KeyEvent::new(sym, core_modifiers(states as u32, false)).repr()
+    };
     engine.apply_settings(Settings {
         early_commit: options.early_commit != 0,
         early_commit_to_preedit: options.early_commit_to_preedit != 0,
@@ -560,6 +573,9 @@ pub unsafe extern "C" fn tigerclaw_engine_apply_settings(
         ascii_punct: options.ascii_punct != 0,
         tab_learning: options.tab_learning != 0,
         high_freq_limit: options.high_freq_limit.max(0) as usize,
+        reverse_pinyin_key: key_repr(options.reverse_pinyin_sym, options.reverse_pinyin_states),
+        reverse_hanzi_key: key_repr(options.reverse_hanzi_sym, options.reverse_hanzi_states),
+        quick_input_key: key_repr(options.quick_input_sym, options.quick_input_states),
     });
     1
 }
@@ -841,6 +857,12 @@ mod tests {
             ascii_punct: 1,
             tab_learning: 0,
             high_freq_limit: 800,
+            reverse_pinyin_sym: 0x60,
+            reverse_pinyin_states: 0,
+            reverse_hanzi_sym: 0x60,
+            reverse_hanzi_states: 1,
+            quick_input_sym: 0x3b,
+            quick_input_states: 0,
         };
         let applied = unsafe { tigerclaw_engine_apply_settings(engine, &options) };
         assert_eq!(applied, 1);
@@ -853,6 +875,9 @@ mod tests {
             "tab_learning=0 → 学习 mode 为空"
         );
         assert_eq!(state.settings.high_freq_limit, 800);
+        assert_eq!(state.settings.reverse_pinyin_key, "grave");
+        assert_eq!(state.settings.reverse_hanzi_key, "Shift+grave");
+        assert_eq!(state.settings.quick_input_key, "semicolon");
         unsafe { tigerclaw_engine_free(engine) };
     }
 

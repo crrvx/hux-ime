@@ -15,6 +15,7 @@
 #include <fcitx-utils/key.h>
 #include <fcitx-utils/log.h>
 
+#include <algorithm>
 #include <memory>
 #include <string>
 
@@ -32,7 +33,10 @@ FCITX_CONFIGURATION(
     fcitx::Option<bool> asciiPunct{this, "AsciiPunct", "ASCII 标点直通（不做中文标点映射）", false};
     fcitx::Option<bool> tabLearning{this, "TabLearning", "Tab 选字写入学习库", true};
     fcitx::Option<int, fcitx::IntConstrain> highFreqLimit{
-        this, "HighFreqLimit", "高频字过滤上限（重启生效）", 1500, fcitx::IntConstrain(0, 20000)};);
+        this, "HighFreqLimit", "高频字过滤上限（重启生效）", 1500, fcitx::IntConstrain(0, 20000)};
+    fcitx::Option<fcitx::Key> reversePinyinKey{this, "ReversePinyinKey", "反查-拼音（点击录制按键）", fcitx::Key(FcitxKey_grave)};
+    fcitx::Option<fcitx::Key> reverseHanziKey{this, "ReverseHanziKey", "反查-汉字（点击录制按键）", fcitx::Key(FcitxKey_grave, fcitx::KeyState::Shift)};
+    fcitx::Option<fcitx::Key> quickInputKey{this, "QuickInputKey", "快速输入（点击录制按键）", fcitx::Key(FcitxKey_semicolon)};);
 
 class TigerclawEngine : public fcitx::InputMethodEngine {
 public:
@@ -131,7 +135,9 @@ private:
             preeditText.setCursor(cursor);
         }
         context_->inputPanel().setPreedit(preeditText);
-        context_->inputPanel().setClientPreedit(preeditText);
+        // 客户端内联预编辑：跟随 fcitx5 全局预编辑设置（`isPreeditEnabled`）。
+        context_->inputPanel().setClientPreedit(context_->isPreeditEnabled() ? preeditText
+                                                                            : fcitx::Text());
         context_->updatePreedit();
 
         auto candidateList = std::make_unique<fcitx::CommonCandidateList>();
@@ -145,7 +151,9 @@ private:
                 fcitx::Text(text), fcitx::Text(comment));
         }
         if (count > 0) {
-            candidateList->setCursorIndex(selected);
+            // 防御：越界不设光标索引。
+            const int index = std::min(std::max(selected, 0), count - 1);
+            candidateList->setCursorIndex(index);
         }
         context_->inputPanel().setCandidateList(std::move(candidateList));
         context_->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
@@ -164,6 +172,13 @@ private:
         options.ascii_punct = config_.asciiPunct.value() ? 1 : 0;
         options.tab_learning = config_.tabLearning.value() ? 1 : 0;
         options.high_freq_limit = config_.highFreqLimit.value();
+        const auto fillKey = [](int32_t *sym, int32_t *states, const fcitx::Key &key) {
+            *sym = static_cast<int32_t>(key.sym());
+            *states = static_cast<int32_t>(key.states().toInteger());
+        };
+        fillKey(&options.reverse_pinyin_sym, &options.reverse_pinyin_states, config_.reversePinyinKey.value());
+        fillKey(&options.reverse_hanzi_sym, &options.reverse_hanzi_states, config_.reverseHanziKey.value());
+        fillKey(&options.quick_input_sym, &options.quick_input_states, config_.quickInputKey.value());
         if (tigerclaw_engine_apply_settings(engine_, &options) == 0) {
             FCITX_WARN() << "tigerclaw: apply settings failed";
         }
