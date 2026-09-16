@@ -17,7 +17,7 @@ sudo cmake --install build/addon      # /usr/lib/fcitx5/libtigerclaw.so + 两个
 ## 数据目录
 
 默认按 `~/.local/share/fcitx5/tigerclaw` → `/usr/share/fcitx5/tigerclaw` 查找
-（码表四件套、`tiger_sentence.lexical.bin`、可选 `models/sentence-ngram-mobile.bin`）。
+（码表四件套、`tiger_sentence.lexical.bin`、`symbols.yaml`、可选 `models/sentence-ngram-mobile.bin`）。
 开发可用环境变量覆盖（目录冒号分隔 / 模型路径）：
 
 ```sh
@@ -61,7 +61,9 @@ ln -sf ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
   2c 键序列金样扩到 36 例/200 步（编辑/导航键、缓冲/锁定态）；
 - K3g（⑦a）：ascii_composer——core `ascii` 模块（Shift 轻击/Caps 切换 `ascii_mode`、
   `commit_code`/`commit_text`/`clear` 样式、ascii 直通、`good_old_caps_lock`）；
-  金样扩到 42 例/237 步（CapsLock 为 fcitx5 适配：不按键切换，不入金样）。
+  金样扩到 42 例/237 步（CapsLock 为 fcitx5 适配：不按键切换，不入金样）；
+- K3h（⑦b）：标点表（`symbols.yaml` half/full shape、`{commit}`/标量/`{pair}` 交替）；
+  金样扩到 59 例/269 步；随后修正 editor `char_handler`（组合中大写字母先提交组合，金样 61 例/273 步）。
 
 已知限制（后续增量）：每引擎单会话（切换/重置即清空）；候选为展示型（点击不提交）；
-标点表（⑦b）、反查（⑧）、状态菜单与打包（⑨）待做。
+反查（⑧）、状态菜单与打包（⑨）待做。

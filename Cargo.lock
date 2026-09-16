@@ -347,6 +347,7 @@ dependencies = [
  "flate2",
  "hashbrown 0.15.5",
  "memmap2",
+ "yaml-rust2",
 ]
 
 [[package]]

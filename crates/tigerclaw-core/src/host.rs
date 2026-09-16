@@ -12,6 +12,7 @@
 //! - `speller`/`punctuator` 属 ⑦；`editor/char_handler`（Printables 直接提交）同。
 
 use crate::key::{K_CONTROL_MASK, K_SHIFT_MASK, KeyEvent};
+use crate::punct::PunctTable;
 use crate::session::Context;
 
 /// 参照 schema `menu/page_size`。
@@ -24,13 +25,22 @@ pub enum HostResult {
     Forward,
 }
 
-/// 参照处理器链（`key_binder` → `selector` → `navigator` → `express_editor`）。
-pub fn process_key(key_event: &KeyEvent, context: &mut Context) -> HostResult {
+/// 参照处理器链（`key_binder` → `speller` → `punctuator` → `selector` → `navigator`
+/// → `express_editor`；`speller` 由 core `processor` 承担，见 ⑦）。
+pub fn process_key(
+    key_event: &KeyEvent,
+    context: &mut Context,
+    punct: Option<&mut PunctTable>,
+) -> HostResult {
     if key_event.release() {
         return HostResult::Forward;
     }
     // 依序执行，前一处理器吞键则不再继续（参照引擎的处理器链）。
     let mut result = key_binder(key_event, context);
+    if result == HostResult::Consumed {
+        return result;
+    }
+    result = punctuator(key_event, context, punct);
     if result == HostResult::Consumed {
         return result;
     }
@@ -43,6 +53,45 @@ pub fn process_key(key_event: &KeyEvent, context: &mut Context) -> HostResult {
         return result;
     }
     editor(key_event, context)
+}
+
+// ---------------------------------------------------------------- punctuator
+
+/// 参照 `Punctuator::ProcessKeyEvent`（`digit_separators: ""`，`use_space` 缺省 false）。
+///
+/// 命中标点表后：把当前组合文本（选中候选或原始输入）与标点一并提交并清空
+/// （参照 `PushInput` → `punct` 段翻译 → `ConfirmUniquePunct`/`AutoCommitPunct`/`PairPunct`
+/// 的净效果；候选菜单形态参照表未使用）。
+fn punctuator(
+    key_event: &KeyEvent,
+    context: &mut Context,
+    punct: Option<&mut PunctTable>,
+) -> HostResult {
+    let Some(table) = punct else {
+        return HostResult::Forward;
+    };
+    if key_event.ctrl() || key_event.alt() || key_event.super_modifier() {
+        return HostResult::Forward;
+    }
+    let keycode = key_event.keycode;
+    if !(0x20..0x7f).contains(&keycode) {
+        return HostResult::Forward;
+    }
+    if context.get_option("ascii_punct") {
+        return HostResult::Forward;
+    }
+    // `use_space = false`：组合中的空格交后续处理器（core `processor` 已消费）。
+    if keycode == 0x20 && context.is_composing() {
+        return HostResult::Forward;
+    }
+    let full_shape = context.get_option("full_shape");
+    let Some(text) = table.resolve(char::from(keycode as u8), full_shape) else {
+        return HostResult::Forward;
+    };
+    let commit = format!("{}{}", context.get_commit_text(), text);
+    context.clear();
+    context.direct_commit(&commit);
+    HostResult::Consumed
 }
 
 // ---------------------------------------------------------------- key_binder
@@ -563,7 +612,67 @@ mod tests {
 
     fn press(context: &mut Context, repr: &str) -> HostResult {
         let key = KeyEvent::from_repr(repr).expect("key repr");
-        process_key(&key, context)
+        process_key(&key, context, None)
+    }
+
+    #[test]
+    fn editor_char_handler_commits_before_passing_through() {
+        // 组合中收到大写字母：先提交组合（保证上屏顺序），按键交宿主。
+        let mut context = context_with_menu(&["甲", "乙"], 0);
+        let upper = KeyEvent::from_repr("A").expect("key");
+        assert_eq!(process_key(&upper, &mut context, None), HostResult::Forward);
+        assert_eq!(context.last_commit_text(), "甲");
+        assert!(context.input().is_empty());
+        // 空闲：不提交也不消费
+        let mut context = Context::new();
+        assert_eq!(process_key(&upper, &mut context, None), HostResult::Forward);
+        assert_eq!(context.last_commit_text(), "");
+    }
+
+    #[test]
+    fn punctuator_commits_with_composition_text() {
+        let mut table = PunctTable::parse(
+            "punctuator:\n  half_shape:\n    \",\": { commit: ， }\n    \"'\": { pair: [ \"‘\", \"’\" ] }\n",
+        )
+        .expect("punct table");
+        // 空闲：只提交标点
+        let mut context = Context::new();
+        let comma = KeyEvent::from_repr("comma").expect("key");
+        assert_eq!(
+            process_key(&comma, &mut context, Some(&mut table)),
+            HostResult::Consumed
+        );
+        assert_eq!(context.last_commit_text(), "，");
+        // 组合中：组合文本 + 标点一并提交并清空
+        let mut context = context_with_menu(&["甲", "乙"], 0);
+        assert_eq!(
+            process_key(&comma, &mut context, Some(&mut table)),
+            HostResult::Consumed
+        );
+        assert_eq!(context.last_commit_text(), "甲，");
+        assert!(context.input().is_empty());
+        // pair：按键交替
+        let mut context = Context::new();
+        let apostrophe = KeyEvent::from_repr("apostrophe").expect("key");
+        assert_eq!(
+            process_key(&apostrophe, &mut context, Some(&mut table)),
+            HostResult::Consumed
+        );
+        assert_eq!(context.last_commit_text(), "‘");
+        assert_eq!(
+            process_key(&apostrophe, &mut context, Some(&mut table)),
+            HostResult::Consumed
+        );
+        assert_eq!(context.last_commit_text(), "’");
+        // 半角空格未映射：不消费（交宿主）
+        let mut context = Context::new();
+        let space = KeyEvent::from_repr("space").expect("key");
+        assert_eq!(
+            process_key(&space, &mut context, Some(&mut table)),
+            HostResult::Forward
+        );
+        // 无表：不消费
+        assert_eq!(process_key(&comma, &mut context, None), HostResult::Forward);
     }
 
     #[test]
@@ -637,20 +746,6 @@ mod tests {
         assert_eq!(context.caret(), 1);
         assert_eq!(press(&mut context, "Home"), HostResult::Consumed);
         assert_eq!(context.caret(), 0);
-    }
-
-    #[test]
-    fn editor_char_handler_commits_before_passing_through() {
-        // 组合中收到大写字母：先提交组合（保证上屏顺序），按键交宿主。
-        let mut context = context_with_menu(&["甲", "乙"], 0);
-        let upper = KeyEvent::from_repr("A").expect("key");
-        assert_eq!(process_key(&upper, &mut context), HostResult::Forward);
-        assert_eq!(context.last_commit_text(), "甲");
-        assert!(context.input().is_empty());
-        // 空闲：不提交也不消费
-        let mut context = Context::new();
-        assert_eq!(process_key(&upper, &mut context), HostResult::Forward);
-        assert_eq!(context.last_commit_text(), "");
     }
 
     #[test]

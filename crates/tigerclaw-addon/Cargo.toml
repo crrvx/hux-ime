@@ -15,4 +15,4 @@ anyhow.workspace = true
 hashbrown.workspace = true
 rusty-leveldb = "4.0.1"
 tigerclaw-core = { path = "../tigerclaw-core" }
-yaml-rust2 = "0.13.0"
+yaml-rust2.workspace = true

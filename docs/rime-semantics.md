@@ -99,12 +99,13 @@
 `lua_processor@tiger_sentence_*` 之后是参照 schema 的原生链：
 `key_binder` → `speller` → `punctuator` → `selector` → `navigator` → `express_editor`。
 Rust 侧对应 `host` 模块（⑥ 已实现 key_binder/selector/navigator/express_editor 子集；
-speller/punctuator 见 ⑦）。关键事实（pin `33e78140` + schema）：
+`speller` 见 ⑦）。关键事实（pin `33e78140` + schema）：
 
 | 组件 | 行为 |
 |---|---|
 | `ascii_composer` | 链首：Shift 轻击（按下后 500ms 内抬起）切换 `ascii_mode`；样式 `commit_code`（提交原始编码）/`commit_text`（确认选中）/`clear`（清组合）等，缓冲态下 `commit_code`/`inline_ascii` 归一为 `commit_text`；`good_old_caps_lock: true` 时 Caps 事件放行交系统切换；ascii 空闲按键直通（`kRejected`）。**fcitx5 适配**：**不处理 CapsLock 敲击**（只放行交系统），改为跟随**系统 caps 状态**（每个按键事件观察，状态变化即同步 `ascii_mode`）；大写字母（caps 位已置）一律直通 |
 | `key_binder` | `Tab`→Down、`Shift+Tab`→Up（`when: has_menu` 且非 ascii_mode）；`paging` 条件由段上的 `paging` 标签决定 |
+| `punctuator` | 单个可打印 ASCII 键（无 Ctrl/Alt/Super；`ascii_punct` 关闭；`use_space=false` 时组合中空格除外）查表（`punctuator/<half|full>_shape`，`import_preset: symbols`）：标量/`{commit}` 直提交、`{pair}` 按键交替；组合中提交「组合文本 + 标点」并清空；`digit_separators: ""` 不做数字分隔符 |
 | `selector` | 仅当末段有菜单（`status >= kGuess` 且非 `raw` 标签）；Horizontal\|Stacked：Up/Down 移候选（不环绕）、Page_Up/Down 翻页（`menu/page_size: 5`，`page_down_cycle` 缺省 false）、Home/End 回高亮 0（高亮为 0 时交 navigator）；末页号上报为 `selected_index / page_size`、页内高亮 `% page_size` |
 | `navigator` | 组合中：Left/Right 移动字节光标（多段时按 spans 跨段跳）；Ctrl(+Shift)+Left/Right 按音节跳（单段即首/尾）；Home/End 到组合起点/输入末尾；`_vertical` 时改用上/下键；`FallbackOptions::All`：Shift 依次按 Ctrl、忽略 Shift 重试 |
 | `express_editor` | `_auto_commit=true`：space → 确认/提交、BackSpace → 撤销上次编辑（`PopInput`）、Delete → 删光标处、Return → 提交原始输入、Escape → 取消组合；可打印字符按 `char_handler`（ExpressEditor = `DirectCommit`）：先提交当前组合再交宿主（保证上屏顺序） |

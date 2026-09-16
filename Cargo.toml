@@ -12,6 +12,7 @@ rust-version = "1.85"
 anyhow = "1"
 hashbrown = "0.15"
 memmap2 = "0.9"
+yaml-rust2 = "0.13.0"
 
 [profile.release]
 lto = "thin"

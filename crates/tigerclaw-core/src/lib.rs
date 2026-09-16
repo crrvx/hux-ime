@@ -15,4 +15,5 @@ pub mod learning;
 pub mod lexical;
 pub mod lexicon;
 pub mod ngram;
+pub mod punct;
 pub mod session;

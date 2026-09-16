@@ -10,6 +10,7 @@ description = "虎整句核心逻辑（Rust 直迁；差分验证）"
 anyhow.workspace = true
 hashbrown.workspace = true
 memmap2.workspace = true
+yaml-rust2.workspace = true
 
 [dev-dependencies]
 flate2 = "1"

@@ -33,6 +33,7 @@ use tigerclaw_core::lexicon::{
     data_directories,
 };
 use tigerclaw_core::ngram::MobileModel;
+use tigerclaw_core::punct::PunctTable;
 use tigerclaw_core::session::{Context, Event};
 
 // fcitx5 `KeyState` 位（`fcitx-utils/keysym.h`）。
@@ -132,6 +133,8 @@ pub struct Engine {
     builder: CompositionBuilder,
     /// 选项存储（用户目录不可用时为 `None`，此时仅用内建缺省）。
     options: Option<OptionsStore>,
+    /// 标点表（`symbols.yaml`；缺失时标点交宿主）。
+    punct: Option<PunctTable>,
     /// 学习库（用户目录不可用时为禁用占位）。
     learning: LearningStore,
     /// 学习规则串（来自码表；用于拼 mode）。
@@ -184,6 +187,12 @@ impl Engine {
         if let Some(error) = lexical_error {
             notes.push(format!("lexical: {error}"));
         }
+        let (punct, punct_error) = PunctTable::load_first(&candidate_paths(&dirs, "symbols.yaml"));
+        if punct.is_none()
+            && let Some(error) = punct_error
+        {
+            notes.push(format!("punct: {error}"));
+        }
         let mut context = Context::new();
         // 宿主缺省：`_auto_commit`（librime `express_editor` 默认 true）。
         context.set_option("_auto_commit", true);
@@ -232,6 +241,7 @@ impl Engine {
             min_retained: None,
             builder: CompositionBuilder::default(),
             options,
+            punct,
             learning,
             learning_rules,
             learning_mode,
@@ -283,7 +293,8 @@ impl Engine {
                 Ok(ProcessorResult::Consume) => true,
                 // 参照链：处理器未消费的键交宿主等价物（selector/navigator/express_editor 等）。
                 Ok(ProcessorResult::Forward) => {
-                    host::process_key(&key, &mut self.context) == HostResult::Consumed
+                    host::process_key(&key, &mut self.context, self.punct.as_mut())
+                        == HostResult::Consumed
                 }
                 Err(error) => {
                     eprintln!("tigerclaw: processor error: {error}");
@@ -794,6 +805,29 @@ mod tests {
             "caps 关后恢复中文输入"
         );
         assert_eq!(engine.context.input(), b"a");
+    }
+
+    #[test]
+    fn punctuation_commits_via_table() {
+        COMMITS.lock().unwrap().clear();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        // 空闲：标点直提交（symbols.yaml half_shape："." → 。）
+        assert!(engine.key(0x2e, 0, false), "period 应被消费");
+        assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "。");
+        // 组合中：当前候选 + 标点一并提交并清空
+        assert!(engine.key(u32::from(b'a'), 0, false));
+        assert!(engine.key(u32::from(b'b'), 0, false));
+        assert!(engine.key(0x2c, 0, false), "comma 应被消费");
+        assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "甲，");
+        assert!(engine.context.input().is_empty());
+        // pair 交替（apostrophe：'‘' / '’'）
+        assert!(engine.key(0x27, 0, false));
+        assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "‘");
+        assert!(engine.key(0x27, 0, false));
+        assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "’");
+        // 半角空格未映射：交宿主
+        assert!(!engine.key(0x20, 0, false), "空闲空格交宿主");
     }
 
     #[test]

@@ -35,7 +35,9 @@ git -C "$REF" show "$PIN:symbols.yaml" > "$user/symbols.yaml"
 # 合成小码表（与参照集成测试同构：单字/词组、可控重码与 Tab 翻页；
 # 另含 1 键码 + 数字结尾文本，覆盖空码自动上屏（`try_empty_code_commit`）路径）。
 # 同一份数据入库到 goldens/key_sequence/，供 Rust 重放侧加载。
+# 标点表 symbols.yaml 同步入库（与探针 user 目录同一来源），供标点用例重放。
 mkdir -p "$ROOT/goldens/key_sequence"
+git -C "$REF" show "$PIN:symbols.yaml" > "$ROOT/goldens/key_sequence/symbols.yaml"
 python3 - "$user" "$ROOT/goldens/key_sequence" <<'PY'
 import pathlib
 import sys

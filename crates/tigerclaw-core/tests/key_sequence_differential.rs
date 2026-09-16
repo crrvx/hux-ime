@@ -27,6 +27,7 @@ use tigerclaw_core::interaction::{
 };
 use tigerclaw_core::key::KeyEvent;
 use tigerclaw_core::lexicon::{Lexicon, Supplement};
+use tigerclaw_core::punct::PunctTable;
 use tigerclaw_core::session::{Context, Event};
 
 struct Step {
@@ -126,6 +127,12 @@ fn replay(case: &Case, data_dir: &Path, failures: &mut Vec<String>) {
     }
     let mut builder = CompositionBuilder::default();
     let mut ascii = AsciiComposer::reference();
+    let (punct_table, punct_error) = PunctTable::load_first(&[data_dir.join("symbols.yaml")]);
+    assert!(
+        punct_table.is_some(),
+        "缺少标点表 symbols.yaml：{punct_error:?}"
+    );
+    let mut punct = punct_table;
     for (index, step) in case.steps.iter().enumerate() {
         let label = format!("{}[{}] {}", case.name, index, step.repr);
         let key = KeyEvent::from_repr(&step.repr).expect("key repr");
@@ -161,7 +168,7 @@ fn replay(case: &Case, data_dir: &Path, failures: &mut Vec<String>) {
             consumed = match result {
                 ProcessorResult::Consume => true,
                 ProcessorResult::Forward => {
-                    host_process_key(&key, &mut context) == HostResult::Consumed
+                    host_process_key(&key, &mut context, punct.as_mut()) == HostResult::Consumed
                 }
             };
         }
