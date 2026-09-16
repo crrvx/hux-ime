@@ -12,7 +12,7 @@
 | **K1** ✅ | 计算核：lexicon、decode/beam、early-evidence、learning（见 [`spike-report.md`](spike-report.md) 与金样） | 快照差分全绿 |
 | **K1.5** ✅ | 上游追平：紧凑排序先验（码形证据 / 4 码生僻字保护 / Top-5 词先验）+ 锁播种修复语义；pin 前移至上游 main `35a10b9`，金样全量重生成 | 模型版金样逐位一致（含词先验重排） |
 | **K2** ✅ | 交互引擎：buffer/caret、menu、键位 `repr` ✅（`key.rs` + 键表生成/金样）、键序列金样 ✅（2c 探针 55 例/236 步，含空码自动上屏、编辑/导航键、标点表、大写字母）、处理器/翻译器/过滤器/学习暂存与提交通知器/早提交 ✅；宿主等价物见 K3 ⑥ | 键序列金样一致 |
-| **K3**（进行中） | fcitx5 addon：注册、候选/预编辑/上屏、数据路径、选项、学习库 ✅；宿主编辑语义 ✅（⑥）；英文模式**不实现**（⑦a 已移除：英文输入交 fcitx5 切换输入法）；标点表 ✅（⑦b）；反查、打包、状态菜单待做 | 真机可用 |
+| **K3**（进行中） | fcitx5 addon：注册、候选/预编辑/上屏、数据路径、选项、学习库 ✅；宿主编辑语义 ✅（⑥）；英文模式**不实现**（⑦a 已移除：英文输入交 fcitx5 切换输入法）；标点表 ✅（⑦b）；拼音反查 ✅（⑧-1：TCSRV01 索引 + 反查翻译/接线/金样）；汉字查码（⑧-2）、打包（⑨）、状态菜单待做 | 真机可用 |
 | **K4** | 验收与打包 | 真机清单 + 性能/内存 |
 
 移植纪律：计算部分机械翻译（逐位保真）；交互部分按行为契约自由设计。每个模块迁完即接线，差分常绿。
@@ -73,13 +73,18 @@ docs/
 - 宿主处理器链：core `host::process_key` 在 `processor` 返回 `Forward` 后执行 librime
   原生组件等价物（`key_binder` → `selector` → `navigator` → `express_editor`；`speller`/
   `punctuator` 见 ⑦）：菜单导航/翻页、字节光标移动（Home/End、Ctrl/Shift+Left/Right）、
-  退格/删除；`Consumed` 时宿主吞键，`Forward` 时交基础应用（空闲编辑键）。
+  退格/删除；
+  `Consumed` 时宿主吞键，`Forward` 时交基础应用（空闲编辑键）。
 - 英文模式：**不实现**（按设计取舍）：英文输入交由 fcitx5 切换输入法；大写字母经
   `express_editor` 的 `char_handler` 直通（组合先上屏）。
 - UI 同步：按键后状态快照（preedit/候选/上屏）；preedit 光标为字节偏移
   （fcitx `Text::setCursor` 即字节制）。
 - 数据：core `lexicon::data_directories()`（用户 → 共享）与 `candidate_paths()` 探测；
-  addon 加载码表/位图/模型（开发可用 `TIGERCLAW_DATA_DIRS`/`TIGERCLAW_MODEL` 覆盖）。
+  addon 加载码表/位图/模型/反查索引（开发可用 `TIGERCLAW_DATA_DIRS`/`TIGERCLAW_MODEL` 覆盖）。
+- 反查（⑧-1）：`data/tiger_sentence.reverse.bin.gz`（TCSRV01，`tools/gen_reverse_index.py` 自参照
+  `PY_c.dict.yaml` 生成；`docs/REVERSE_INDEX_MANIFEST.json` 登记来源与校验和）；语义（拼写缩写/剪枝/
+  补全/排序/上限 20）与接线（recognizer/matcher/翻译路由/段提示）见 `docs/reverse-lookup.md`；
+  金样 `goldens/reverse.tsv.gz`（真 librime 探针）+ Rust 重放。
 - 学习：提交点的通知器序列（选择/暂存/提交）已内置在核心提交路径
   （`confirm_selection`、自动上屏的 `LearningCommit`）；宿主只需排空
   `LiveLearning::submitted` 落库，并在 `store_ready` 置位后生效；宿主自发的提交

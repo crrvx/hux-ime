@@ -15,4 +15,5 @@ pub mod lexical;
 pub mod lexicon;
 pub mod ngram;
 pub mod punct;
+pub mod reverse;
 pub mod session;

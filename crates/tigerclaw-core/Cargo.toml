@@ -8,6 +8,7 @@ description = "虎句方案核心逻辑（虎爪 Tigerclaw；Rust 直迁、差�
 
 [dependencies]
 anyhow.workspace = true
+flate2 = "1"
 hashbrown.workspace = true
 memmap2.workspace = true
 yaml-rust2.workspace = true

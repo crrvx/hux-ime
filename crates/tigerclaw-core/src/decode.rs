@@ -10,6 +10,8 @@ use crate::learning::{
 use crate::lexical::{self, LexicalModel};
 use crate::lexicon::{CodeEntry, Lexicon, Supplement};
 use crate::ngram::MobileModel;
+use crate::punct::PunctTable;
+use crate::session::Candidate;
 use anyhow::Result;
 use hashbrown::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -236,6 +238,10 @@ pub struct Decoder {
     ranking_prior: RankingPriorParameters,
     lexical: Option<LexicalModel>,
     lexical_load_error: Option<String>,
+    /// 反查索引（懒加载；缺文件时为 `None`）。
+    reverse: Option<crate::reverse::ReverseIndex>,
+    reverse_checked: bool,
+    reverse_load_error: Option<String>,
 }
 
 /// 学习接线：索引 + 模式串（参照的 `learning_index`/`learning_mode`）。
@@ -273,7 +279,53 @@ impl Decoder {
             ranking_prior: RankingPriorParameters::default(),
             lexical,
             lexical_load_error,
+            reverse: None,
+            reverse_checked: false,
+            reverse_load_error: None,
         }
+    }
+
+    /// 反查索引（首次访问时按数据目录懒加载）。
+    pub fn reverse_index(&mut self) -> Option<&crate::reverse::ReverseIndex> {
+        if !self.reverse_checked {
+            self.reverse_checked = true;
+            let (index, error) = crate::reverse::load_first(self.lexicon.dirs());
+            self.reverse = index;
+            self.reverse_load_error = error;
+        }
+        self.reverse.as_ref()
+    }
+
+    /// 反查索引载入错误（有文件但无效时记录）。
+    pub fn reverse_load_error(&self) -> Option<&str> {
+        self.reverse_load_error.as_deref()
+    }
+
+    /// 反查候选（含虎码注释过滤；上限 [`crate::reverse::CANDIDATE_LIMIT`]）。
+    pub fn reverse_candidates(
+        &mut self,
+        input: &[u8],
+        prefix: char,
+        start: usize,
+        end: usize,
+        punct: Option<&mut PunctTable>,
+        full_shape: bool,
+    ) -> Vec<Candidate> {
+        self.reverse_index();
+        let Some(index) = self.reverse.as_ref() else {
+            return Vec::new();
+        };
+        crate::reverse::translate(
+            index,
+            &self.lexicon,
+            input,
+            prefix,
+            start,
+            end,
+            punct,
+            full_shape,
+            crate::reverse::CANDIDATE_LIMIT,
+        )
     }
 
     pub fn lexicon(&self) -> &Lexicon {

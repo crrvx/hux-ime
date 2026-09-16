@@ -21,8 +21,9 @@ use settings::Settings;
 use tigerclaw_core::decode::Decoder;
 use tigerclaw_core::host::{self, HostResult};
 use tigerclaw_core::interaction::{
-    CompositionBuilder, LiveLearning, ProcessorEnv, ProcessorResult, SentenceState, buffered_text,
-    processor, reset_early_evidence, set_allow_duplicate_single, update_notifier,
+    CompositionBuilder, K_REVERSE_PREFIX, LiveLearning, ProcessorEnv, ProcessorResult,
+    SentenceState, buffered_text, processor, reset_early_evidence, set_allow_duplicate_single,
+    update_notifier,
 };
 use tigerclaw_core::key::{
     K_ALT_MASK, K_CONTROL_MASK, K_LOCK_MASK, K_RELEASE_MASK, K_SHIFT_MASK, K_SUPER_MASK, KeyEvent,
@@ -105,6 +106,22 @@ fn default_model_path(dirs: &[PathBuf]) -> Option<PathBuf> {
     candidate_paths(dirs, MODEL_PATH)
         .into_iter()
         .find(|path| path.is_file())
+}
+
+/// 反查前缀字符：可打印 ASCII 且无修饰键时启用（参照 `recognizer` 的 `ch > 0x20 && ch < 0x80`）。
+fn reverse_prefix_char(key_repr: &str) -> Option<char> {
+    let event = KeyEvent::from_repr(key_repr)?;
+    let code = event.keycode;
+    if (0x20..0x7f).contains(&code)
+        && !event.shift()
+        && !event.ctrl()
+        && !event.alt()
+        && !event.super_modifier()
+    {
+        char::from_u32(code as u32)
+    } else {
+        None
+    }
 }
 
 /// 参照 `os.time()`：整秒墙钟（学习事件时间戳）。
@@ -229,7 +246,7 @@ impl Engine {
             store_ready: learning.store_ready(),
             ..LiveLearning::default()
         };
-        let engine = Self {
+        let mut engine = Self {
             host,
             decoder,
             context,
@@ -247,6 +264,7 @@ impl Engine {
             applied_learning: None,
             status: CString::new(notes.join("; ")).unwrap_or_default(),
         };
+        engine.sync_reverse_prefix();
         engine.push_update();
         engine
     }
@@ -323,6 +341,7 @@ impl Engine {
             &mut self.context,
             &self.state,
             invalidated,
+            self.punct.as_mut(),
         ) {
             eprintln!("tigerclaw: rebuild error: {error}");
         }
@@ -362,7 +381,18 @@ impl Engine {
                 self.context.set_option(name, value);
             }
         }
+        self.sync_reverse_prefix();
         self.refresh_learning_mode();
+    }
+
+    /// 反查前缀（`_reverse_prefix`）：配置键为可打印 ASCII 且无修饰时启用，否则关闭反查。
+    fn sync_reverse_prefix(&mut self) {
+        let value = reverse_prefix_char(&self.settings.reverse_pinyin_key)
+            .map(|ch| ch.to_string())
+            .unwrap_or_default();
+        if self.context.get_property(K_REVERSE_PREFIX).unwrap_or("") != value {
+            self.context.set_property(K_REVERSE_PREFIX, &value);
+        }
     }
 
     /// 按当前规则/选项刷新学习 mode（变化时强制重设 decoder 学习）。
@@ -427,6 +457,16 @@ impl Engine {
             buffered.len() + usize::from(!live.is_empty())
         };
         let cursor = (prefix_length + self.context.live_caret()).min(preedit.len());
+        // 参照 `Composition::GetPreedit`：段提示插在光标处（如反查段的「〔拼音〕」）。
+        let prompt = self
+            .context
+            .composition
+            .back()
+            .map(|segment| segment.prompt.clone())
+            .unwrap_or_default();
+        if !prompt.is_empty() {
+            preedit.insert_str(cursor.min(preedit.len()), &prompt);
+        }
         let (mut texts, mut comments, selected) = match self.context.composition.back() {
             Some(segment) => (
                 segment
@@ -787,6 +827,7 @@ mod tests {
 
     #[test]
     fn punctuation_commits_via_table() {
+        let _guard = serial();
         COMMITS.lock().unwrap().clear();
         UPDATES.lock().unwrap().clear();
         let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
@@ -810,6 +851,7 @@ mod tests {
 
     #[test]
     fn uppercase_letter_commits_composition_first() {
+        let _guard = serial();
         // 用户报告：组合中收到大写字母时，应先上屏当前候选（而非把字母插到预编辑之前）。
         COMMITS.lock().unwrap().clear();
         UPDATES.lock().unwrap().clear();
@@ -892,6 +934,31 @@ mod tests {
         assert!(preedit.is_empty());
         assert!(candidates.is_empty());
         assert!(engine.context.input().is_empty());
+    }
+
+    /// 反查（⑧-1）端到端：设置 → 前缀识别 → 候选/注释 → 预编辑提示 → 空格上屏。
+    #[test]
+    fn reverse_lookup_end_to_end() {
+        let _guard = serial();
+        COMMITS.lock().unwrap().clear();
+        UPDATES.lock().unwrap().clear();
+        let dirs = vec![
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/reverse"),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+        ];
+        let mut engine = Engine::new_with_dirs(host(), dirs, None, None);
+        assert!(engine.key(u32::from(b'`'), 0, false), "反查前缀应被消费");
+        for code in *b"zho" {
+            assert!(engine.key(u32::from(code), 0, false), "反查输入应被消费");
+        }
+        let (preedit, _, candidates, _) = last_update();
+        assert_eq!(preedit, "`zho〔拼音〕");
+        assert_eq!(
+            candidates,
+            vec!["中哦", "中龘", "中欧", "找哦", "兆欧", "找欧"]
+        );
+        assert!(engine.key(0x20, 0, false));
+        assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "中哦");
     }
 
     #[test]

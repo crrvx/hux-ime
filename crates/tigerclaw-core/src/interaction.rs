@@ -13,6 +13,8 @@ use crate::decode::{DecodeLock, Decoder, Evaluated, Evidence};
 use crate::key::KeyEvent;
 use crate::learning::{self, DiffEvent, DiffItem, DiffPathNode, Event};
 use crate::lexicon::Lexicon;
+use crate::punct::PunctTable;
+use crate::reverse;
 use crate::session::{Candidate, Composition, Context, Segment};
 use hashbrown::HashMap;
 
@@ -27,6 +29,15 @@ pub const K_PROPOSAL_LEGACY: &str = "tiger_sentence_proposal";
 pub const K_STABLE_LEGACY: &str = "tiger_sentence_stable";
 pub const K_EVIDENCE_RAW_LEGACY: &str = "tiger_sentence_evidence_raw";
 pub const K_OPTIONS_ERROR: &str = "tiger_sentence_options_error";
+/// 反查前缀（内部属性：宿主按设置写入；空/缺省 = 反查关闭）。
+pub const K_REVERSE_PREFIX: &str = "_reverse_prefix";
+
+/// 反查前缀字符（宿主写入 [`K_REVERSE_PREFIX`]；空/缺省 = 关闭）。
+pub fn reverse_prefix(context: &Context) -> Option<char> {
+    context
+        .get_property(K_REVERSE_PREFIX)
+        .and_then(|value| value.chars().next())
+}
 
 /// 选项名（对应参照 `allow_duplicate_single_option`）。
 pub const OPTION_ALLOW_DUPLICATE_SINGLE: &str = "tiger_sentence_allow_duplicate_single";
@@ -376,6 +387,20 @@ pub fn is_plain_char_key(key_event: &KeyEvent, repr: &str) -> Option<char> {
         return Some(ch);
     }
     None
+}
+
+/// 参照 `Recognizer::ProcessKeyEvent`：可被反查模式接受的字符（`ch > 0x20 && ch < 0x80`，
+/// 排除 Ctrl/Alt/Super；空格由 `use_space=false` 排除）。
+fn recognizer_char(key_event: &KeyEvent) -> Option<char> {
+    if key_event.ctrl() || key_event.alt() || key_event.super_modifier() {
+        return None;
+    }
+    let code = key_event.keycode;
+    if code > 0x20 && code < 0x7f {
+        char::from_u32(code as u32)
+    } else {
+        None
+    }
 }
 
 /// 参照 `reset_early_evidence`。
@@ -1206,6 +1231,7 @@ impl CompositionBuilder {
         context: &mut Context,
         state: &SentenceState,
         invalidated: bool,
+        punct: Option<&mut PunctTable>,
     ) -> anyhow::Result<bool> {
         let input = context.input().to_vec();
         let caret = context.caret().min(input.len());
@@ -1221,8 +1247,9 @@ impl CompositionBuilder {
             self.apply_reset(context, &input);
         }
         let seg_input = self.built_input.clone();
-        calculate_segmentation(&mut context.composition, &seg_input, caret);
-        translate_segments(decoder, context, state, &seg_input)?;
+        let prefix = reverse_prefix(context);
+        calculate_segmentation(&mut context.composition, &seg_input, caret, prefix);
+        translate_segments(decoder, context, state, &seg_input, punct)?;
         Ok(true)
     }
 
@@ -1261,9 +1288,16 @@ fn common_prefix_length(left: &[u8], right: &[u8]) -> usize {
 }
 
 /// 参照 `ConcreteEngine::CalculateSegmentation`。
-fn calculate_segmentation(composition: &mut Composition, input: &[u8], caret: usize) {
+fn calculate_segmentation(
+    composition: &mut Composition,
+    input: &[u8],
+    caret: usize,
+    prefix: Option<char>,
+) {
     while !composition.has_finished_segmentation(input) {
         let start = composition.current_start_position();
+        // 参照 segmentors 顺序：matcher → abc_segmentor → punct_segmentor → fallback。
+        matcher(composition, input, prefix);
         abc_segmentor(composition, input);
         fallback_segmentor(composition, input);
         if start == composition.current_end_position() {
@@ -1285,6 +1319,34 @@ fn calculate_segmentation(composition: &mut Composition, input: &[u8], caret: us
     {
         composition.forward();
     }
+}
+
+/// 参照 `Matcher::Proceed`（`recognizer/patterns`）：活跃输入匹配
+/// `^<前缀>[a-z]*'?$` 时，由本段独占剩余输入（标签 [`reverse::REVERSE_TAG`]）。
+fn matcher(composition: &mut Composition, input: &[u8], prefix: Option<char>) {
+    let Some(prefix) = prefix else {
+        return;
+    };
+    let start = composition.confirmed_position();
+    let Some(active) = input.get(start..) else {
+        return;
+    };
+    if !reverse::matches_pattern(active, prefix) {
+        return;
+    }
+    // 参照 `GetMatch`：命中段必须覆盖到输入末尾；起点为当前末尾或既有段起点。
+    if start != composition.current_end_position()
+        && !composition
+            .segments
+            .iter()
+            .any(|segment| segment.start == start)
+    {
+        return;
+    }
+    while composition.current_start_position() > start {
+        composition.segments.pop();
+    }
+    add_segment(composition, start, input.len(), &[reverse::REVERSE_TAG]);
 }
 
 /// 参照 `AbcSegmentor::Proceed`：从当前位置取最长合法拼写段。
@@ -1374,7 +1436,10 @@ fn translate_segments(
     context: &mut Context,
     state: &SentenceState,
     input: &[u8],
+    mut punct: Option<&mut PunctTable>,
 ) -> anyhow::Result<()> {
+    let prefix = reverse_prefix(context);
+    let full_shape = context.get_option("full_shape");
     for index in 0..context.composition.segments.len() {
         let segment = &context.composition.segments[index];
         if segment.translated || segment.selected {
@@ -1386,6 +1451,32 @@ fn translate_segments(
             segment.translated = true;
             segment.candidates.clear();
             segment.selected_index = 0;
+            continue;
+        }
+        if segment.has_tag(reverse::REVERSE_TAG) {
+            let slice = input[start..end].to_vec();
+            let candidates = match prefix {
+                Some(prefix) if reverse::matches_pattern(&slice, prefix) => decoder
+                    .reverse_candidates(
+                        &slice,
+                        prefix,
+                        start,
+                        end,
+                        punct.as_deref_mut(),
+                        full_shape,
+                    ),
+                _ => Vec::new(),
+            };
+            let segment = &mut context.composition.segments[index];
+            segment.translated = true;
+            segment.selected_index = 0;
+            segment.prompt = if prefix.is_some_and(|prefix| slice.first() == Some(&(prefix as u8)))
+            {
+                reverse::REVERSE_TIPS.to_string()
+            } else {
+                String::new()
+            };
+            segment.candidates = candidates;
             continue;
         }
         let mut candidates = Vec::new();
@@ -1895,6 +1986,18 @@ pub fn processor(
 ) -> anyhow::Result<ProcessorResult> {
     if key_event.release() {
         return Ok(ProcessorResult::Forward);
+    }
+    // 参照处理器链 `recognizer`（位于 speller/标点之前）：反查段输入的按键在此被接受，
+    // 否则后续处理器会把它当普通字符/标点处理。
+    if let Some(prefix) = reverse_prefix(context)
+        && let Some(ch) = recognizer_char(key_event)
+    {
+        let mut next = context.input().to_vec();
+        next.push(ch as u8);
+        if reverse::matches_pattern(&next, prefix) {
+            context.push_input(&[ch as u8]);
+            return Ok(ProcessorResult::Consume);
+        }
     }
     let repr = key_event.repr();
     let repr = repr.as_str();
@@ -2940,7 +3043,7 @@ mod tests {
         context.push_input(b"ab");
         assert!(
             builder
-                .rebuild(&mut decoder, &mut context, &state, false)
+                .rebuild(&mut decoder, &mut context, &state, false, None)
                 .expect("rebuild")
         );
         let segment = context.composition.back().expect("segment");
@@ -2959,14 +3062,14 @@ mod tests {
             .expect("segment")
             .selected_index = 1;
         builder
-            .rebuild(&mut decoder, &mut context, &state, false)
+            .rebuild(&mut decoder, &mut context, &state, false, None)
             .expect("rebuild");
         let segment = context.composition.back().expect("segment");
         assert!(segment.has_tag("marker"));
         assert_eq!(segment.selected_index, 1);
         // 提交失效：段重建（标记与高亮消失）
         builder
-            .rebuild(&mut decoder, &mut context, &state, true)
+            .rebuild(&mut decoder, &mut context, &state, true, None)
             .expect("rebuild");
         let segment = context.composition.back().expect("segment");
         assert!(!segment.has_tag("marker"));
@@ -2974,19 +3077,19 @@ mod tests {
         // 输入变化：重建（更长的段覆盖旧段）
         context.push_input(b"c");
         builder
-            .rebuild(&mut decoder, &mut context, &state, false)
+            .rebuild(&mut decoder, &mut context, &state, false, None)
             .expect("rebuild");
         assert_eq!(context.composition.back().expect("segment").end, 3);
         // 光标移入输入中间：组合只覆盖 caret 前缀（参照 Compose 语义）
         context.set_caret(1);
         builder
-            .rebuild(&mut decoder, &mut context, &state, false)
+            .rebuild(&mut decoder, &mut context, &state, false, None)
             .expect("rebuild");
         assert_eq!(context.composition.back().expect("segment").end, 1);
         // 光标移回末尾：重新覆盖完整输入
         context.set_caret(3);
         builder
-            .rebuild(&mut decoder, &mut context, &state, false)
+            .rebuild(&mut decoder, &mut context, &state, false, None)
             .expect("rebuild");
         assert_eq!(context.composition.back().expect("segment").end, 3);
     }
@@ -3157,6 +3260,7 @@ mod tests {
                 start: 0,
                 end: input.len(),
                 tags: Vec::new(),
+                prompt: String::new(),
                 selected_index: 0,
                 candidates,
                 selected: false,
@@ -3254,6 +3358,7 @@ mod tests {
             start: 0,
             end: 2,
             tags: Vec::new(),
+            prompt: String::new(),
             selected_index: 0,
             candidates: vec![Candidate::new("sentence", 0, 2, "甲", "")],
             selected: false,
@@ -3277,6 +3382,7 @@ mod tests {
             start: 0,
             end: 2,
             tags: Vec::new(),
+            prompt: String::new(),
             selected_index: 0,
             candidates: vec![Candidate::new("sentence_buffered", 0, 2, "c", "")],
             selected: false,

@@ -174,7 +174,13 @@ fn replay(case: &Case, data_dir: &Path, failures: &mut Vec<String>) {
             }
         }
         builder
-            .rebuild(&mut decoder, &mut context, &state, commit_invalidated)
+            .rebuild(
+                &mut decoder,
+                &mut context,
+                &state,
+                commit_invalidated,
+                punct.as_mut(),
+            )
             .expect("rebuild");
         // 参照 update 通知器（暂存清理 / 缓冲隐藏）。
         update_notifier(&mut context, &mut state, &mut live);
