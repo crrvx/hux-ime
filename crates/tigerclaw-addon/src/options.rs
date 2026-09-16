@@ -118,14 +118,22 @@ impl OptionsStore {
         };
         let mut names: Vec<&String> = self.options.values.keys().collect();
         names.sort();
-        let mut options = yaml_rust2::yaml::Hash::new();
+        // 在既有 `options:` 映射上更新（保留未知键与键序）。
+        let entry = map
+            .entry(Yaml::String(OPTIONS_KEY.to_string()))
+            .or_insert_with(|| Yaml::Hash(yaml_rust2::yaml::Hash::new()));
+        if !matches!(entry, Yaml::Hash(_)) {
+            *entry = Yaml::Hash(yaml_rust2::yaml::Hash::new());
+        }
+        let Yaml::Hash(options) = entry else {
+            return Err(anyhow::anyhow!("invalid options mapping"));
+        };
         for name in names {
             options.insert(
                 Yaml::String(name.clone()),
                 Yaml::Boolean(self.options.values[name]),
             );
         }
-        map.insert(Yaml::String(OPTIONS_KEY.to_string()), Yaml::Hash(options));
         let mut text = String::new();
         YamlEmitter::new(&mut text).dump(&document)?;
         if let Some(parent) = self.path.parent() {
@@ -161,7 +169,7 @@ mod tests {
         let dir = temp_dir("roundtrip");
         std::fs::write(
             dir.join(OPTIONS_FILE),
-            "options:\n  tiger_sentence_early_commit: false\n",
+            "options:\n  tiger_sentence_early_commit: false\n  some_other_option: true\ncustom: 1\n",
         )
         .expect("write");
         let mut store = OptionsStore::load(&dir);
@@ -180,6 +188,9 @@ mod tests {
         );
         let text = std::fs::read_to_string(dir.join(OPTIONS_FILE)).expect("read");
         assert!(text.contains("tiger_sentence_early_commit: true"), "{text}");
+        // 未知键（`options:` 内与其他顶层键）原样保留
+        assert!(text.contains("some_other_option: true"), "{text}");
+        assert!(text.contains("custom: 1"), "{text}");
         std::fs::remove_dir_all(&dir).ok();
     }
 

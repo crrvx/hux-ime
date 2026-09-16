@@ -32,4 +32,4 @@
 - 移植纪律：计算部分机械翻译 + 差分逐位验证；交互部分按行为契约自由设计；
 - Lua 仅作测试 oracle（CI/开发环境），不进入运行时依赖；
 - 版本控制：jj（Jujutsu）colocate 模式；日常操作走 jj，不直接使用 git；
-- 文档：`docs/rust-migration.md`（设计）、`docs/rime-semantics.md`（参照行为）、`docs/spike-report.md`（K0 结果）、`docs/LEXICAL_PRIOR_ATTRIBUTION.md`（词先验署名/许可）。
+- 文档：`docs/rust-migration.md`（设计）、`docs/rime-semantics.md`（参照行为）、`docs/spike-report.md`（K0 结果）、`docs/LEXICAL_PRIOR_ATTRIBUTION.md`（词先验署名/许可）、`docs/handoff.md`（K3 收尾/K4 对接）。

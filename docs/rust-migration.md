@@ -62,7 +62,7 @@ docs/
 ## 5. fcitx5 集成要点（K3）
 
 - addon 注册（`Category=InputMethod`、`OnDemand`）+ 输入法条目 conf；`InputMethodEngine` 实现。
-- 构建/安装：`cmake -S crates/tigerclaw-addon -B build-addon -DCMAKE_INSTALL_PREFIX=/usr`
+- 构建/安装：`cmake -S crates/tigerclaw-addon -B build/addon -DCMAKE_INSTALL_PREFIX=/usr`
   → `cmake --build` → `cmake --install`；产物 `/usr/lib/fcitx5/libtigerclaw.so` 与
   `/usr/share/fcitx5/{addon,inputmethod}/tigerclaw.conf`（C++ 薄壳链接 Rust 静态库）。
 - 会话：每引擎单会话（`activate/deactivate/reset` 清空）；组合重建由

@@ -261,38 +261,43 @@ impl Engine {
             }
         };
         let mut commits = Vec::new();
-        let mut option_events = Vec::new();
         let mut invalidated = false;
-        for event in self.context.drain_events() {
-            match event {
-                Event::Commit(text) => {
-                    invalidated = true;
-                    commits.push(text);
+        // 事件泵：选项事件可能触发 ascii_mode 确认（进而产生提交），循环至排空（有界）。
+        for _ in 0..4 {
+            let events = self.context.drain_events();
+            if events.is_empty() {
+                break;
+            }
+            for event in events {
+                match event {
+                    Event::Commit(text) => {
+                        invalidated = true;
+                        commits.push(text);
+                    }
+                    Event::Option(name) => {
+                        // 参照选项通知器：ascii_mode 打开且有缓冲时确认当前选中。
+                        if name == "ascii_mode"
+                            && self.context.get_option("ascii_mode")
+                            && !buffered_text(&self.context).is_empty()
+                        {
+                            confirm_selection(
+                                Some(&mut LearningCommit {
+                                    decoder: &mut self.decoder,
+                                    live: &mut self.live,
+                                    now,
+                                }),
+                                &mut self.context,
+                                &mut self.state,
+                            );
+                        }
+                        self.observe_option(&name);
+                    }
+                    Event::Update => {}
                 }
-                Event::Option(name) => option_events.push(name),
-                Event::Update => {}
             }
         }
         for text in commits {
             self.host_commit(&text);
-        }
-        for name in option_events {
-            // 参照选项通知器：ascii_mode 打开且有缓冲时确认当前选中。
-            if name == "ascii_mode"
-                && self.context.get_option("ascii_mode")
-                && !buffered_text(&self.context).is_empty()
-            {
-                confirm_selection(
-                    Some(&mut LearningCommit {
-                        decoder: &mut self.decoder,
-                        live: &mut self.live,
-                        now,
-                    }),
-                    &mut self.context,
-                    &mut self.state,
-                );
-            }
-            self.observe_option(&name);
         }
         // 学习：核心暂存 → 落库；刷新打分（未组合时，60 秒节流）；应用索引。
         let submitted = std::mem::take(&mut self.live.submitted);

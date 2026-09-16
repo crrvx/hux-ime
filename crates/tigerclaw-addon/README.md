@@ -6,10 +6,10 @@ fcitx5 addon：**C++ 薄壳**（`shell/`，只做 fcitx5 接口适配）+ **Rust
 ## 构建与安装
 
 ```sh
-cmake -S crates/tigerclaw-addon -B build-addon \
+cmake -S crates/tigerclaw-addon -B build/addon \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
-cmake --build build-addon -j
-sudo cmake --install build-addon      # /usr/lib/fcitx5/libtigerclaw.so + 两个 conf
+cmake --build build/addon -j
+sudo cmake --install build/addon      # /usr/lib/fcitx5/libtigerclaw.so + 两个 conf
 ```
 
 安装后重启 fcitx5（`fcitx5 -r -d`），在配置工具中添加「虎整句」。

@@ -84,6 +84,10 @@ impl LearningStore {
             index_version: 0,
         };
         let path = user_dir.join(format!("{name}.userdb"));
+        // 用户目录可能尚不存在（参照的 rime 用户目录总是由框架创建）。
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
         // rusty-leveldb 默认 `create_if_missing`。
         let mut db = match DB::open(&path, Options::default()) {
             Ok(db) => db,
@@ -265,6 +269,19 @@ mod tests {
         assert_eq!(reopened.events[1].time, 101.0);
         assert!(dir.join(format!("{name}.userdb")).is_dir());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn open_creates_missing_user_dir() {
+        let base =
+            std::env::temp_dir().join(format!("tigerclaw-learning-nested-{}", std::process::id()));
+        std::fs::remove_dir_all(&base).ok();
+        let user_dir = base.join("nested/user");
+        let name = store_name("x");
+        let store = LearningStore::open(&user_dir, &name, 100.0);
+        assert!(store.store_ready(), "缺失的用户目录应被创建且库可用");
+        assert!(user_dir.join(format!("{name}.userdb")).is_dir());
+        std::fs::remove_dir_all(&base).ok();
     }
 
     #[test]
