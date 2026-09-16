@@ -109,7 +109,14 @@ local corpora = {
         ev(8000, "m5", "z", "壬", ""),
     },
 }
-for name, events in pairs(corpora) do
+local function sorted_keys(table_)
+    local keys = {}
+    for key in pairs(table_) do keys[#keys + 1] = key end
+    table.sort(keys)
+    return keys
+end
+for _, name in ipairs(sorted_keys(corpora)) do
+    local events = corpora[name]
     emit("corpus", name, tostring(#events))
     for _, e in ipairs(events) do
         emit("event", tostring(e.time), hex(e.mode), hex(e.code), hex(e.text), hex(e.context))
@@ -245,7 +252,7 @@ local function emit_chain(name, node)
             bits(item.learning_score), hex(item.text))
     end
 end
-for name, node in pairs(chains) do emit_chain(name, node) end
+for _, name in ipairs(sorted_keys(chains)) do emit_chain(name, chains[name]) end
 
 local reward_cases = {
     { "full_base", "one", "m1", "ab", "甲乙", 2 },
@@ -278,7 +285,8 @@ local function build_path(entries)
     end
     return node
 end
-for name, case in pairs(diffcases) do
+for _, name in ipairs(sorted_keys(diffcases)) do
+    local case = diffcases[name]
     emit("diffcase", name, hex(case.text), tostring(#case.path))
     for _, entry in ipairs(case.path) do
         emit("diffpath", tostring(entry[1]), tostring(entry[2]))

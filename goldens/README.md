@@ -140,7 +140,7 @@ lua tools/gen_decode_golden.lua --reference "$REF" \
 gzip -9 -n -c /tmp/decode_learning.tsv > goldens/decode_learning.tsv.gz
 gzip -9 -n -c /tmp/decode_learning_model.tsv > goldens/decode_learning_model.tsv.gz
 
-# learning（入库）
+# learning（入库；生成器对 corpora/chains/diffcases 按名排序迭代，输出与 Lua 进程哈希序无关）
 lua tools/gen_learning_golden.lua --reference "$REF" --out /tmp/learning.tsv
 gzip -9 -n -c /tmp/learning.tsv > goldens/learning.tsv.gz
 
@@ -234,7 +234,7 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 | `decode_rank_first.tsv.gz` | `6df164942f6de48c48921118e32dff9297d4fdc381524baebeca6562a98c0ae0` |
 | `decode_evidence.tsv.gz` | `357e782cb2e1528e76e9e066fbc2c0dacaf7b77ea8b21f71659769cad4d938ec` |
 | `decode_evidence_model.tsv.gz` | `96289e3254228c9dec63806db2ab738da2d3cb11bd0adad2e0eb672210a3e766` |
-| `learning.tsv.gz` | `4595835175b21320eefa030d1827831e5afcfaa657aa3b177e0390e5f57a89d8` |
+| `learning.tsv.gz` | `d8eff6b6b67cf8803f9965e71d171ec9fb88f3e7e3bc61368c11e19ac70358cf` |
 | `decode_learning.tsv.gz` | `41a9894d233c32348e42164d4d29fc698c3037741c141ac0b58404094c9e9354` |
 | `decode_learning_model.tsv.gz` | `8a64e6e3d28b101a57075b03233e62c4b03e8c4a8d2a979399a91a00e2d8e806` |
 | `key.tsv.gz` | `e939a077cd0825f7b454a4af300ed50fb6a2f2609c71583525d44f2f8fb3fd33` |
