@@ -515,7 +515,7 @@ pub fn capture_empty_code_candidate(
     allow_duplicate_single: bool,
 ) -> anyhow::Result<Option<EmptyCodePending>> {
     let raw = String::from_utf8_lossy(full_before).into_owned();
-    let decoded = decoder.decode_with(&raw, false, "")?;
+    let decoded = decoder.decode_with(&raw, false, committed_text)?;
     if decoded.items.is_empty() || decoded.learning_affected {
         return Ok(None);
     }
@@ -543,12 +543,13 @@ pub fn capture_empty_code_candidate(
         .iter()
         .filter(|candidate| is_eligible(candidate))
         .collect();
-    let candidate_index = decoded
-        .confidence_candidates
+    let candidate_index = eligible
         .iter()
-        .take_while(|candidate| !std::ptr::eq(*candidate, &decoded.items[first_index]))
-        .filter(|candidate| is_eligible(candidate))
-        .count();
+        .position(|candidate| {
+            candidate.path == decoded.items[first_index].path
+                && candidate.text == decoded.items[first_index].text
+        })
+        .unwrap_or(0);
     let first = &decoded.items[first_index];
     if first.text.is_empty()
         || !first.text.starts_with(committed_text)
@@ -689,7 +690,7 @@ pub fn try_early_commit(
         return Ok(false);
     }
     let raw = String::from_utf8_lossy(&full_raw).into_owned();
-    let decoded = decoder.decode_with(&raw, true, "")?;
+    let decoded = decoder.decode_with(&raw, true, &state.committed_text)?;
     if params.generation != state.model_generation {
         state.synchronize_model_state(params.generation);
         return Ok(false);
@@ -840,7 +841,6 @@ pub fn try_empty_code_commit(
         return Ok(false);
     }
     if pending.committed_text != state.committed_text
-        || pending.base_raw_length == 0
         || pending.base_raw_length >= full_raw.len()
         || pending.last_segment_start >= full_raw.len()
     {
@@ -883,10 +883,12 @@ pub fn try_empty_code_commit(
     state.suspended = false;
     state.empty_code_pending = None;
     state.continuation_after_auto_commit = true;
-    state.save(context);
+    // 参照顺序：submit_early → save_sentence_state → restore（缓冲分支在
+    // submit_early 内部已保存一次，幂等）。
     if let Some(commit_text) = submit_early(context, state, &commit) {
         context_commit(context, &commit_text);
     }
+    state.save(context);
     restore_composition_input(context, &retained_raw);
     Ok(true)
 }
