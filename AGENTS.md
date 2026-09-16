@@ -1,0 +1,35 @@
+# AGENTS.md
+
+虎整句（Tiger Sentence）输入方案：从 fcitx5-rime 迁移到 fcitx5 原生实现。
+
+## AI 风格
+1. 中文回答，简明扼要；
+2. 若有任何未尽事宜，随时提问/建议；
+3. 提出问题时，同时列举可行的方案供用户选择。
+
+## 任务
+1. fcitx5-rime -> fcitx5 原生（Rust 直迁）；
+2. 核心逻辑全量移植 Rust（Lua 退居测试 oracle，不进运行时）；
+3. 以差分验证保证行为等价（fixture 金样入库；真实模型本地差分）。
+
+## 原则
+1. 自顶向下设计，自底向上实现；
+2. 模块化-高内聚低耦合；
+3. 代码简练但清晰；
+4. 文档详略得当且内容完备。
+
+## 协作流程
+1. AI 的每次修改：若当前节点非空，则在对应历史节点上 `jj new` 开新副本，改动只落在该副本内，不直接改动已有节点；
+2. 修改完成后交由用户审阅确认；
+3. squash 与历史整理由用户自行执行，AI 不代做。
+
+## 背景与约定
+- 参考实现（Rime 方案 + Lua 核心）：`/home/crux/_work/tiger-sentense-rime`
+  - 主引擎 `lua/tiger_sentence.lua`；学习 `tiger_sentence_learning.lua`；
+    n-gram `tiger_sentence_ngram.lua`；缓存 `tiger_sentence_cache.lua`
+  - 测试 `tools/test_*.lua` + `tools/run_regressions.py`：迁移期作为逐位等价 oracle
+- 路线：K0（已完成）→ K1 计算核 → K2 交互引擎 → K3 fcitx5 addon → K4 验收；
+- 移植纪律：计算部分机械翻译 + 差分逐位验证；交互部分按行为契约自由设计；
+- Lua 仅作测试 oracle（CI/开发环境），不进入运行时依赖；
+- 版本控制：jj（Jujutsu）colocate 模式；日常操作走 jj，不直接使用 git；
+- 文档：`docs/rust-migration.md`（设计）、`docs/rime-semantics.md`（参照行为）、`docs/spike-report.md`（K0 结果）。

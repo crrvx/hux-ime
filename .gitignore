@@ -1,0 +1,21 @@
+# 构建产物
+build/
+target/
+cmake-build-*/
+compile_commands.json
+
+# 编辑器 / 系统
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+
+# 本地临时
+*.log
+
+# 真实模型差分金样（仅本地生成）
+goldens/local/
+
+# CI 内临时克隆的参照仓库
+external/

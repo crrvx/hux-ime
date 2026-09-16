@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test -p tigerclaw-core
+
+  golden-provenance:
+    runs-on: ubuntu-latest
+    env:
+      REFERENCE_REPO: https://github.com/crrvx/tiger-sentense-rime
+      REFERENCE_COMMIT: f3b3049819b513ba756bbe6c6b6872759c9dc2a9
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Lua 5.4
+        run: sudo apt-get update && sudo apt-get install -y lua5.4
+      - name: Fetch reference implementation
+        run: |
+          git init external/tiger-sentense-rime
+          git -C external/tiger-sentense-rime remote add origin "$REFERENCE_REPO"
+          git -C external/tiger-sentense-rime fetch --depth 1 origin "$REFERENCE_COMMIT"
+          git -C external/tiger-sentense-rime checkout --detach FETCH_HEAD
+      - name: Regenerate fixture golden
+        run: |
+          lua5.4 tools/gen_ngram_golden.lua \
+            --reference external/tiger-sentense-rime \
+            --model /tmp/ngram_fixture.bin \
+            --out /tmp/ngram_fixture.tsv --mode fixture
+      - name: Compare with committed golden
+        run: |
+          cmp goldens/ngram_fixture.bin /tmp/ngram_fixture.bin
+          gunzip -c goldens/ngram_fixture.tsv.gz | cmp - /tmp/ngram_fixture.tsv
