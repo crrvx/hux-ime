@@ -52,6 +52,9 @@ docs/
 - 用户目录 `~/.local/share/fcitx5/tigerclaw`；共享目录 `/usr/share/fcitx5/tigerclaw`。
 - 码表（`tiger_sentence.*.txt`）、`models/sentence-ngram-mobile.bin`、`symbols.yaml`、
   PY_c 转换产物（R2）、`tiger_sentence.options.yaml`、学习库 `<hash>.userdb/`（LevelDB 同构）。
+- 仓库内 `data/` 为随包数据源：`tiger_sentence.lexical.bin`（紧凑词先验，TCSLEX01
+  Bloom filter；CC BY 4.0 署名见 `docs/LEXICAL_PRIOR_ATTRIBUTION.md`，参数与校验和见
+  `docs/LEXICAL_PRIOR_MANIFEST.json`，CI 按 sha256 校验）。
 
 ## 5. fcitx5 集成要点（K3）
 
