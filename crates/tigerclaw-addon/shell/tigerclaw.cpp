@@ -39,8 +39,8 @@ FCITX_CONFIGURATION(
     fcitx::Option<bool> tabLearning{this, "TabLearning", "Tab 选字写入学习库", true};
     fcitx::Option<int, fcitx::IntConstrain> highFreqLimit{
         this, "HighFreqLimit", "高频字过滤上限（重启生效）", 1500, fcitx::IntConstrain(0, 20000)};
-    fcitx::Option<fcitx::Key> reversePinyinKey{this, "ReversePinyinKey", "反查-拼音（点击录制按键）", fcitx::Key(FcitxKey_grave)};
-    fcitx::Option<fcitx::Key> reverseHanziKey{this, "ReverseHanziKey", "反查-汉字（点击录制按键）", fcitx::Key(FcitxKey_grave, fcitx::KeyState::Shift)};
+    fcitx::Option<fcitx::Key> reversePinyinKey{this, "ReversePinyinKey", "音查虎：用拼音查虎码（点击录制按键）", fcitx::Key(FcitxKey_grave)};
+    fcitx::Option<fcitx::Key> reverseHanziKey{this, "ReverseHanziKey", "字查音+虎：查光标处汉字的拼音与虎码（点击录制按键）", fcitx::Key(FcitxKey_grave, fcitx::KeyState::Shift)};
     fcitx::Option<fcitx::Key> quickInputKey{this, "QuickInputKey", "快速输入（点击录制按键）", fcitx::Key(FcitxKey_semicolon)};
     fcitx::Option<bool> panelPreedit{this, "PanelPreedit", "候选窗口显示预编辑文本（默认关闭；客户端内联预编辑仍随 fcitx5 全局设置）", false};);
 

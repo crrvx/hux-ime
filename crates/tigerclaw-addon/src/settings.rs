@@ -27,7 +27,7 @@ pub struct Settings {
     pub tab_learning: bool,
     /// 高频字过滤上限（参照 `tiger_sentence/high_freq_limit`；创建词库时生效）。
     pub high_freq_limit: usize,
-    /// 反查-拼音 / 反查-汉字触发键（rime 键名；行为随 ⑧ 反查接线）。
+    /// 音查虎（拼音查虎码）/ 字查音+虎（查光标处汉字的音与虎码）触发键（rime 键名）。
     pub reverse_pinyin_key: String,
     pub reverse_hanzi_key: String,
     /// 快速输入触发键（rime 键名；行为随 ⑨ 数据接线）。

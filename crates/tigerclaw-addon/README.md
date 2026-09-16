@@ -40,8 +40,8 @@ ln -sf ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
 
 | 项 | 默认 | 说明 |
 |---|---|---|
-| ReversePinyinKey | `` ` `` | 反查-拼音触发键（按键录入；行为随 ⑧ 反查接线）|
-| ReverseHanziKey | Shift+`` ` `` | 反查-汉字触发键（按键录入；行为随 ⑧）|
+| ReversePinyinKey | `` ` `` | **音查虎**（用拼音查虎码）触发键（按键录入；已随 ⑧-1 接线）|
+| ReverseHanziKey | Shift+`` ` `` | **字查音+虎**（查光标处汉字的拼音与虎码）触发键（按键录入；行为随 ⑧-2）|
 | QuickInputKey | `;` | 快速输入触发键（按键录入；行为随 ⑨ 数据接线）|
 | EarlyCommit / EarlyCommitToPreedit / AllowDuplicateSingle | 开/关/开 | 早提交三项 |
 | FullShape / AsciiPunct | 关/关 | 全角标点 / ASCII 标点直通 |
@@ -90,4 +90,4 @@ ln -sf ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
   fcitx5-configtool 自动生成设置页（`~/.config/fcitx5/conf/tigerclaw.conf`），经 ABI `tigerclaw_engine_apply_settings` 生效。
 
 已知限制（后续增量）：每引擎单会话（切换/重置即清空）；候选为展示型（点击不提交）；
-拼音反查（⑧-1）已接线；汉字查码（⑧-2）、状态菜单与打包（⑨）待做。
+音查虎（⑧-1）已接线；字查音+虎（⑧-2）、状态菜单与打包（⑨）待做。
