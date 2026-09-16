@@ -178,13 +178,15 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 
 ## 来源与校验和
 
-- 参照实现：`crrvx/tiger-sentense-rime` @ `8b615235c17c858e1eca8f1a41fbc74e202f8bbe`（main；含自动上屏对齐修复；反查金样另用 `898579f`，见下）
+- 参照实现（主干）：`crrvx/tiger-sentense-rime` @ `8b615235c17c858e1eca8f1a41fbc74e202f8bbe`（main；含自动上屏对齐修复）
+- 参照实现（反查）：`feat/reverse-lookup` @ `898579f833df53f1dec5639d56e685751a8a7f71` **与上述 main 本地合并**
+  （上游未合并该分支；生成器 `tools/gen_reverse_golden.sh` 自建临时 worktree 合并，`PIN`/`BASE` 可覆盖）
 - 键名表来源：librime `src/rime/key_table.cc`（sha256 `2f7c6a8b4f2aa474d700a87bd4bd1baa48a2655cd6ce4d2ba05b768f284d9d78`，librime 1.17.0 固定提交 `33e78140`）；
   `key_table.rs` 由 `tools/gen_key_table.py` 生成，CI 以同提交重新生成并比对；`key.tsv.gz` 由系统 librime 1.17.0 探针（`tools/key_probe.cpp`）生成，
   因探针依赖具体 librime 版本，**CI 不重生成该金样**（仅按 Rust 侧重放校验 + 键表生成比对）。
 - 键序列金样：`key_sequence.tsv.gz` 由 `tools/rime_sequence_probe.cpp` 在隔离环境中驱动**真 librime + librime-lua** 与 pin 版 Lua 核心生成
   （探针头部记录参照提交、`tiger_sentence.lua` sha256 与 librime 版本）；同样**不在 CI 重生成**。数据夹具 `key_sequence/` 入库并与 Rust 重放共用。
-- 反查金样（⑧-1）：`reverse.tsv.gz` 由同一探针在参照提交 `898579f`（含 `PY_c` 与反查接线）上生成
+- 反查金样（⑧-1）：`reverse.tsv.gz` 由同一探针在参照态「`feat/reverse-lookup` @ `898579f` + main @ `8b615235`（本地合并）」上生成
   （探针头部记录该提交、`tiger_sentence.lua` 与 `PY_c.dict.yaml` 的 sha256）；夹具 `reverse/` 入库并与
   Rust 重放共用，其中 `tiger_sentence.reverse.bin` 由 `tools/gen_reverse_index.py` 生成（CI 重生成比对）。
   真实 `PY_c` 索引（`data/tiger_sentence.reverse.bin.gz`）的校验和与来源见
@@ -239,7 +241,7 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 | `decode_learning_model.tsv.gz` | `8a64e6e3d28b101a57075b03233e62c4b03e8c4a8d2a979399a91a00e2d8e806` |
 | `key.tsv.gz` | `e939a077cd0825f7b454a4af300ed50fb6a2f2609c71583525d44f2f8fb3fd33` |
 | `key_sequence.tsv.gz` | `84a9145076252454a1f0af30b55ce9cd9e721062df97336248ff1eff8790d6fc` |
-| `reverse.tsv.gz` | `9e2437a282e2dd2530e1dcdc5ac6a9d103b5113fdd4cfa44634f5fb2ff3d244f` |
+| `reverse.tsv.gz` | `e8b46ad43bd7488527687b51931740dc574b98b6fddb56e32f435b184b38a19d` |
 | `lexical.tsv.gz` | `5b559b2504e21c69b4f702678a96d2947abfe7d7c26adcd2b25c3d4de761e0c3` |
 
 CI 以同一参照提交重生成全部 fixture 金样并与入库内容比对（见 `.github/workflows/ci.yml`）。
