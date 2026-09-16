@@ -156,6 +156,17 @@ fn decode_transcript_is_bit_exact_with_fixture_model() {
         make_decoder(Some(model)),
         open_golden("goldens/decode_model.tsv.gz"),
     );
-    assert!(records > 270, "transcript too short: {records}");
+    assert!(records > 300, "transcript too short: {records}");
     println!("decode (fixture model): {records} golden records verified");
+}
+
+#[test]
+fn decode_rank_first_transcript_is_bit_exact() {
+    let model = MobileModel::load(repo_path("goldens/ngram_fixture.bin"), None)
+        .expect("load fixture model");
+    let mut decoder = make_decoder(Some(model));
+    decoder.set_allow_duplicate_single(false);
+    let records = replay(decoder, open_golden("goldens/decode_rank_first.tsv.gz"));
+    assert!(records > 300, "transcript too short: {records}");
+    println!("decode (model, no duplicate): {records} golden records verified");
 }

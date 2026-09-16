@@ -1,6 +1,6 @@
 -- 生成 decode 金样（冷路径：include_early_commit=false；未接入学习）。
 --
---   lua tools/gen_decode_golden.lua --reference <repo> --data <dir> --out <tsv> [--model <bin>] [--every N]
+--   lua tools/gen_decode_golden.lua --reference <repo> --data <dir> --out <tsv> [--model <bin>] [--every N] [--duplicate 0|1]
 --
 -- 数据目录需含四个数据文件；--model 时把模型拷贝为临时用户目录的
 -- models/sentence-ngram-mobile.bin 并启用（走参照的 try_load 路径）。
@@ -59,6 +59,11 @@ rime_api = { get_user_data_dir = function() return work end }
 local sentence = require("tiger_sentence")
 sentence.set_model_enabled(opts.model ~= nil)
 sentence.ensure_lexicon(nil)
+local duplicate = opts.duplicate ~= "0"
+if not duplicate then
+    -- 参照测试同款：以假 context 关闭“单字重码组句”。
+    sentence.set_allow_duplicate_single({ get_option = function() return false end })
+end
 
 local inputs, seen = {}, {}
 local function add(text, always)
@@ -108,7 +113,8 @@ local function bits(value)
     return string.format("0x%08x%08x", hi, lo)
 end
 
-emit("# decode transcript; model=" .. (opts.model and "fixture" or "off"))
+emit("# decode transcript; model=" .. (opts.model and "fixture" or "off") ..
+    " duplicate=" .. (duplicate and 1 or 0))
 for _, input in ipairs(selected) do
     sentence.reset_decode_cache()
     local results = sentence.decode(input, false)
@@ -123,5 +129,5 @@ for _, input in ipairs(selected) do
 end
 out:close()
 os.execute("rm -rf '" .. work .. "'")
-print(string.format('{"lua":"%s","inputs":%d,"emitted":%d,"model":%s}',
-    _VERSION, #selected, emitted, opts.model and "true" or "false"))
+print(string.format('{"lua":"%s","inputs":%d,"emitted":%d,"model":%s,"duplicate":%s}',
+    _VERSION, #selected, emitted, opts.model and "true" or "false", duplicate and "true" or "false"))

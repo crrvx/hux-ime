@@ -749,7 +749,7 @@ fn trailing_selector_span(raw: &[u8]) -> usize {
 }
 
 /// 参照 `parse_selector`：返回 (选中 rank, 消耗到的字节位置)；0 = 无选择器。
-fn parse_selector(raw: &[u8], code_end: usize) -> (u32, usize) {
+fn parse_selector(raw: &[u8], code_end: usize) -> (u64, usize) {
     let next = code_end;
     if next >= raw.len() {
         return (0, code_end);
@@ -766,7 +766,9 @@ fn parse_selector(raw: &[u8], code_end: usize) -> (u32, usize) {
             if token == "0" {
                 return (10, digit_end + 1);
             }
-            return (token.parse::<u32>().unwrap_or(0), digit_end + 1);
+            // Lua `tonumber(token)` 对超长数字得到巨大浮点，永不匹配任何 rank；
+            // 溢出时取 u64::MAX，避免退化成“无选择器”。
+            return (token.parse::<u64>().unwrap_or(u64::MAX), digit_end + 1);
         }
         _ => {}
     }
@@ -776,7 +778,7 @@ fn parse_selector(raw: &[u8], code_end: usize) -> (u32, usize) {
 /// 参照 `eligible_candidates`。
 fn eligible_candidates(
     candidates: &[CodeEntry],
-    selected_rank: u32,
+    selected_rank: u64,
     whole_input_edge: bool,
     allow_duplicate_single: bool,
 ) -> Vec<&CodeEntry> {
@@ -784,7 +786,7 @@ fn eligible_candidates(
     if candidates.len() == 1 {
         let candidate = &candidates[0];
         if selected_rank > 0 {
-            if candidate.rank as u32 == selected_rank {
+            if candidate.rank as u64 == selected_rank {
                 return vec![candidate];
             }
         } else if whole_input_edge
@@ -808,7 +810,7 @@ fn eligible_candidates(
     let rank = if selected_rank > 0 { selected_rank } else { 1 };
     candidates
         .iter()
-        .filter(|entry| entry.rank as u32 == rank)
+        .filter(|entry| entry.rank as u64 == rank)
         .collect()
 }
 
@@ -853,6 +855,8 @@ mod tests {
         assert_eq!(parse_selector(b"ab'", 2), (3, 3));
         assert_eq!(parse_selector(b"ab0", 2), (10, 3));
         assert_eq!(parse_selector(b"ab12", 2), (12, 4));
+        assert_eq!(parse_selector(b"ab00", 2), (0, 4));
+        assert_eq!(parse_selector(b"ab99999999999999999999", 2), (u64::MAX, 22));
         assert_eq!(parse_selector(b"ab", 2), (0, 2));
     }
 }

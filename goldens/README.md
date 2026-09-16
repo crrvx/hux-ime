@@ -16,6 +16,7 @@
 | `lexicon_codes_only/` + `lexicon_codes_only.tsv.gz` | 仅码表（无字频/白名单/补充） | 13 条 |
 | `decode.tsv.gz` | decode 金样（无模型）：`decode`/`result` | 1,980 条 |
 | `decode_model.tsv.gz` | decode 金样（fixture 模型，抽样） | 278 条 |
+| `decode_rank_first.tsv.gz` | decode 金样（fixture 模型 + 关闭单字重码，抽样） | 330 条 |
 | `local/`（不入库） | 真实模型抽样金样（224 MB 模型） | 62,777 条 |
 
 ## transcript 格式（TSV，`#` 注释，`-` 表示空串，字符串为 UTF-8 字节十六进制）
@@ -77,8 +78,12 @@ lua tools/gen_decode_golden.lua --reference "$REF" \
 lua tools/gen_decode_golden.lua --reference "$REF" \
   --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
   --out /tmp/decode_model.tsv --every 7
+lua tools/gen_decode_golden.lua --reference "$REF" \
+  --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
+  --out /tmp/decode_rank_first.tsv --every 7 --duplicate 0
 gzip -9 -n -c /tmp/decode.tsv > goldens/decode.tsv.gz
 gzip -9 -n -c /tmp/decode_model.tsv > goldens/decode_model.tsv.gz
+gzip -9 -n -c /tmp/decode_rank_first.tsv > goldens/decode_rank_first.tsv.gz
 ```
 
 ## 校验
@@ -133,5 +138,6 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 | `lexicon_codes_only.tsv.gz` | `3cd72cca880754ecd3744a26ecc5b70d8b5575ab268654937326bb4925b3805e` |
 | `decode.tsv.gz` | `fc6895a7631a3cf21e62dd366c1e58f6ba6757fe6bcc623557bd0f0bb1692c41` |
 | `decode_model.tsv.gz` | `3af7e02dbb31fa0bed51dc854bf5d08129fcc9858da73c190578397a99b41f8c` |
+| `decode_rank_first.tsv.gz` | `a448b426cbbaace2b7f77cdc626fecda04d4f617d1a50208eae759d70e091ca6` |
 
 CI 以同一参照提交重生成全部 fixture 金样并与入库内容比对（见 `.github/workflows/ci.yml`）。
