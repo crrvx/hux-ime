@@ -1,44 +1,42 @@
-//! 字查音+虎（⑧-2）：读取周边文本窗口，生成每字「音·虎码」提示。
+//! 字查音+虎（⑧-2）：查**光标左侧**汉字的**拼音（上排）与虎码（下排）**。
 //!
-//! 契约（用户裁决）：显示**光标前 2 + 后 2 个字符**（窗口 4 字、光标居中），
-//! ←/→ 以 **2 字符**为步长滚动窗口；仅提示、不上屏；不改应用文本与光标。
-//! 提示形如 `中 zhong·d/dg/dgs`（音多读、码多码以 `/` 连接；缺数据为 `?`），
-//! 字符之间两空格分隔；空白字符跳过显示（仍占窗口位置）。
+//! 触发键（默认 `~`）与音查虎同机制：按键被推入组合（本段标签 [`TAG`]），候选含
+//! **默认可上屏项**（触发字符，按标点表取半/全角，空格上屏）；上排 auxUp = 光标左侧
+//! 最多 [`BEFORE`] 个字的拼音，下排 auxDown = 其虎码；←/→ 以 [`STEP`] 字符步长移动锚点；
+//! 不修改应用文本与光标。
 
 use crate::lexicon::Lexicon;
 use crate::pinyin_lookup::PinyinIndex;
 
-/// 光标前保留的字符数。
-pub const BEFORE: usize = 2;
-/// 光标后保留的字符数。
-pub const AFTER: usize = 2;
-/// 滚动步长（字符）。
-pub const STEP: usize = 2;
+/// 组合段标签（同音查虎段的 `pinyin_lookup` 对应）。
+pub const TAG: &str = "character_lookup";
+/// 光标左侧保留的字符数（上排拼音、下排虎码）。
+pub const BEFORE: usize = 1;
+/// 锚点滚动步长（字符）。
+pub const STEP: usize = 1;
 
-/// 环绕光标（字符制）的默认窗口起点（`光标 - BEFORE`，夹紧到 0）。
-pub fn default_start(cursor_chars: usize) -> usize {
-    cursor_chars.saturating_sub(BEFORE)
+/// 默认锚点 = 光标（字符制）。
+pub fn default_anchor(cursor_chars: usize) -> usize {
+    cursor_chars
 }
 
-/// 按 `STEP` 滚动窗口起点（`forward` 为向更后的文本），夹紧到 `[0, len]`。
-pub fn scroll(text_chars: usize, start: usize, forward: bool) -> usize {
-    let start = if forward {
-        start.saturating_add(STEP)
+/// 按 `STEP` 移动锚点（`forward` 为向更后的文本），夹紧到 `[0, text_chars]`。
+pub fn scroll(text_chars: usize, anchor: usize, forward: bool) -> usize {
+    let anchor = if forward {
+        anchor.saturating_add(STEP)
     } else {
-        start.saturating_sub(STEP)
+        anchor.saturating_sub(STEP)
     };
-    start.min(text_chars)
+    anchor.min(text_chars)
 }
 
-/// 窗口内的字符（`start` 起最多 [`BEFORE`] + [`AFTER`] 个字符）。
-pub fn window_chars<'a>(text: &'a str, start: usize) -> impl Iterator<Item = char> + 'a {
-    text.chars().skip(start).take(BEFORE + AFTER)
-}
-
-/// 生成提示文本（窗口内每字「音·虎码」；空白跳过）。
-pub fn hint(index: &PinyinIndex, lexicon: &Lexicon, text: &str, start: usize) -> String {
-    let mut parts: Vec<String> = Vec::new();
-    for ch in window_chars(text, start) {
+/// 生成两排提示：`(拼音排, 虎码排)`——内容为光标左侧最多 [`BEFORE`] 个字。
+pub fn rows(index: &PinyinIndex, lexicon: &Lexicon, text: &str, anchor: usize) -> (String, String) {
+    let anchor = anchor.min(text.chars().count());
+    let start = anchor.saturating_sub(BEFORE);
+    let mut pinyin_parts: Vec<String> = Vec::new();
+    let mut code_parts: Vec<String> = Vec::new();
+    for ch in text.chars().skip(start).take(anchor - start) {
         if ch.is_whitespace() {
             continue;
         }
@@ -57,9 +55,10 @@ pub fn hint(index: &PinyinIndex, lexicon: &Lexicon, text: &str, start: usize) ->
                 _ => "?".to_string(),
             }
         };
-        parts.push(format!("{ch} {reading}·{codes}"));
+        pinyin_parts.push(format!("{ch} {reading}"));
+        code_parts.push(format!("{ch} {codes}"));
     }
-    parts.join("  ")
+    (pinyin_parts.join("  "), code_parts.join("  "))
 }
 
 #[cfg(test)]
@@ -74,44 +73,38 @@ mod tests {
     }
 
     #[test]
-    fn window_and_scroll_are_char_based() {
-        assert_eq!(default_start(0), 0);
-        assert_eq!(default_start(1), 0);
-        assert_eq!(default_start(2), 0);
-        assert_eq!(default_start(5), 3);
-        assert_eq!(scroll(10, 3, true), 5);
-        assert_eq!(scroll(10, 3, false), 1);
+    fn anchor_scroll_is_char_based() {
+        assert_eq!(default_anchor(5), 5);
+        assert_eq!(scroll(10, 3, true), 4);
+        assert_eq!(scroll(10, 3, false), 2);
         assert_eq!(scroll(10, 9, true), 10); // 夹紧到文本长度
         assert_eq!(scroll(10, 0, false), 0);
-        assert_eq!(
-            window_chars("甲乙丙丁戊己", 1).collect::<String>(),
-            "乙丙丁戊"
-        );
     }
 
     #[test]
-    fn hint_formats_reading_and_codes() {
-        // 夹具码表：中 = d/dg/dgs；PY_c：中 = zhong。
+    fn rows_show_left_side_pinyin_and_codes() {
         let lexicon = Lexicon::load(
             &[PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/pinyin_lookup")],
             0,
         );
         let index = index();
-        // 夹具 PY_c 无单字「欧」（仅出现在词条里）→ 音为 ?；码表有「欧」→ 码为 nbe/nbeq。
-        let text = "中欧";
-        assert_eq!(
-            hint(&index, &lexicon, text, 0),
-            "中 zhong·d/dg/dgs  欧 ?·nbe/nbeq"
-        );
-        // 空白跳过显示，仍占窗口位置；码表/词典都缺 → 音码皆 ?。
-        assert_eq!(
-            hint(&index, &lexicon, "中 欧", 0),
-            "中 zhong·d/dg/dgs  欧 ?·nbe/nbeq"
-        );
-        assert_eq!(
-            hint(&index, &lexicon, "龘中", 0),
-            "龘 ?·?  中 zhong·d/dg/dgs"
-        );
-        assert_eq!(hint(&index, &lexicon, "", 0), "");
+        // 夹具 PY_c 无单字「欧」（仅出现在词条里）→ 音为 ?；码表有「欧」→ nbe/nbeq。
+        let (pinyin_row, code_row) = rows(&index, &lexicon, "中欧中兴", 2);
+        assert_eq!(pinyin_row, "欧 ?");
+        assert_eq!(code_row, "欧 nbe/nbeq");
+        let (pinyin_row, code_row) = rows(&index, &lexicon, "中欧中兴", 1);
+        assert_eq!(pinyin_row, "中 zhong");
+        assert_eq!(code_row, "中 d/dg/dgs");
+        let (pinyin_row, code_row) = rows(&index, &lexicon, "中欧中兴", 0);
+        assert!(pinyin_row.is_empty() && code_row.is_empty());
+        // 空白跳过显示、仍占位置（按字符计数）。
+        let (pinyin_row, _) = rows(&index, &lexicon, "中 欧兴", 3);
+        assert_eq!(pinyin_row, "欧 ?");
+        let (pinyin_row, _) = rows(&index, &lexicon, "中 欧兴", 4);
+        assert_eq!(pinyin_row, "兴 ?");
+        // 码表/词典都缺 → 音码皆 ?。
+        let (pinyin_row, code_row) = rows(&index, &lexicon, "龘", 1);
+        assert_eq!(pinyin_row, "龘 ?");
+        assert_eq!(code_row, "龘 ?");
     }
 }

@@ -40,14 +40,14 @@ ln -sf ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
 
 | 项 | 默认 | 说明 |
 |---|---|---|
-| PinyinLookupKey | `` ` `` | **音查虎**（用拼音查虎码）触发键（按键录入；已随 ⑧-1 接线）|
-| CharacterLookupKey | Shift+`` ` `` | **字查音+虎**（查光标处文本的音与虎码）触发键（按键录入；⑧-2 已接线）|
+| PinyinLookupKey | Ctrl+`` ` `` | **音查虎**（用拼音查虎码）触发键（⑧-1）|
+| CharacterLookupKey | Ctrl+`~` | **字查音+虎**（查光标左侧汉字的拼音与虎码）触发键（⑧-2）|
 | QuickInputKey | `;` | 快速输入触发键（按键录入；行为随 ⑨ 数据接线）|
 | EarlyCommit / EarlyCommitToPreedit / AllowDuplicateSingle | 开/关/开 | 早提交三项 |
 | FullShape / AsciiPunct | 关/关 | 全角标点 / ASCII 标点直通 |
 | TabLearning | 开 | Tab 选字写学习库 |
 | HighFreqLimit | 1500 | 高频字过滤上限（重启生效）|
-| PanelPreedit | 关 | 候选窗口显示预编辑文本（默认关；仅宿主显示项，不经引擎；客户端内联预编辑仍随全局）|
+| PanelPreedit | 关 | 候选窗口显示预编辑文本（仅宿主显示项，不经引擎）|
 
 快捷键选项用 `fcitx5` 原生按键录入控件（`KeyConstrain(AllowModifierLess)`，允许 `` ` ``、`;`
 这类无修饰键）。
@@ -59,11 +59,15 @@ ln -sf ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
 输入 `shk` → `shk`）；音查虎段按音节切分（`` `zhongguo `` → `` `zhong guo ``，缩写/未完成
 音节与后续合并，如 `` `zho `` → `` `zho ``）。
 
-**字查音+虎**（⑧-2）：触发键进入查码态，取应用侧周边文本（fcitx5 surrounding text，需应用
-支持；不支持时辅助文本条提示「应用不支持周边文本」）；显示**光标前 2 + 后 2 个字符**，每字
-「音·虎码」（如 `中 zhong·d/dg/dgs`，多音/多码以 `/` 连接，缺数据为 `?`，空白字符跳过显示）；
-←/→ **以 2 字符为步长**滚动窗口；**仅提示、不上屏**；Esc / 再次触发 / 其它任意键退出。
-展示面为输入面板辅助文本条（auxDown）。
+**音查虎 / 字查音+虎**（⑧-1/⑧-2）同机制：触发键推入组合（触发键可配置；**默认 Ctrl+`` ` ``
+与 Ctrl+`~`**）；**仅当触发键为单字符键（无 Ctrl/Alt/Super）时**给出默认可上屏候选（触发字符，
+按标点表取半/全角，空格上屏），带修饰键的触发不给默认候选。
+
+**字查音+虎**：取应用侧周边文本（fcitx5 surrounding text，需应用支持；不支持时上排提示
+「应用不支持周边文本」）；**两排显示光标左侧 1 个字**——**上排 = 拼音、下排 = 虎码**（如
+`中 zhong` / `中 d/dg/dgs`；多音/多码以 `/` 连接，缺数据为 `?`，空白字符跳过显示）；
+←/→ **以 1 字符为步长**移动锚点；Esc / 再次触发 / 其它任意键退出（打字照常输入）。
+展示面为输入面板辅助文本条（auxUp/auxDown）。
 
 ## 选项
 

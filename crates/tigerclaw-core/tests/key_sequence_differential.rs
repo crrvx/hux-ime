@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use tigerclaw_core::decode::Decoder;
 use tigerclaw_core::host::{HostResult, process_key as host_process_key};
 use tigerclaw_core::interaction::{
-    CompositionBuilder, K_PINYIN_LOOKUP_PREFIX, LiveLearning, OPTION_EARLY_COMMIT,
+    CompositionBuilder, K_PINYIN_LOOKUP_KEY, LiveLearning, OPTION_EARLY_COMMIT,
     OPTION_EARLY_COMMIT_TO_PREEDIT, ProcessorEnv, ProcessorResult, SentenceState, processor,
     update_notifier,
 };
@@ -120,7 +120,7 @@ fn replay(
     case: &Case,
     data_dir: &Path,
     page_size: usize,
-    pinyin_lookup_prefix: Option<char>,
+    lookup_key: Option<&str>,
     failures: &mut Vec<String>,
 ) {
     let dirs = [data_dir.to_path_buf()];
@@ -135,8 +135,8 @@ fn replay(
     context.set_option("_auto_commit", true);
     context.set_option(OPTION_EARLY_COMMIT, true);
     context.set_option(OPTION_EARLY_COMMIT_TO_PREEDIT, false);
-    if let Some(prefix) = pinyin_lookup_prefix {
-        context.set_property(K_PINYIN_LOOKUP_PREFIX, &prefix.to_string());
+    if let Some(key) = lookup_key {
+        context.set_property(K_PINYIN_LOOKUP_KEY, key);
     }
     for (name, value) in &case.options {
         context.set_option(name, *value);
@@ -329,7 +329,7 @@ fn pinyin_lookup_matches_reference() {
             case,
             &data_dir,
             tigerclaw_core::host::DEFAULT_PAGE_SIZE,
-            Some('`'),
+            Some("grave"),
             &mut failures,
         );
     }

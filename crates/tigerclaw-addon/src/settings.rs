@@ -44,8 +44,8 @@ impl Default for Settings {
             ascii_punct: false,
             tab_learning: true,
             high_freq_limit: DEFAULT_HIGH_FREQ_LIMIT,
-            pinyin_lookup_key: "grave".to_string(),
-            character_lookup_key: "Shift+grave".to_string(),
+            pinyin_lookup_key: "Control+grave".to_string(),
+            character_lookup_key: "Control+asciitilde".to_string(),
             quick_input_key: "semicolon".to_string(),
         }
     }

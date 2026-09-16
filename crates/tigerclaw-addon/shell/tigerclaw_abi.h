@@ -21,7 +21,8 @@ typedef struct tigerclaw_engine tigerclaw_engine;
  * commit: 上屏文本（UTF-8，NUL 结尾）。
  * update: UI 状态快照——preedit（UTF-8，NUL 结尾）+ 光标（字节偏移，与
  *         fcitx `Text::cursor` 一致）+ 候选数组（文本/注释，各 NUL 结尾）+
- *         候选数 + 当前高亮索引 + 辅助文本（auxDown，UTF-8，NUL 结尾，可为 ""）。
+ *         候选数 + 当前高亮索引 + 两排辅助文本（auxUp = 字查音+虎上排/光标左、
+ *         auxDown = 下排/光标右；UTF-8，NUL 结尾，可为 ""）。
  */
 typedef struct tigerclaw_host {
     void *user;
@@ -30,7 +31,7 @@ typedef struct tigerclaw_host {
                    const char *const *candidate_texts,
                    const char *const *candidate_comments,
                    int32_t candidate_count, int32_t candidate_selected,
-                   const char *aux_down_utf8);
+                   const char *aux_up_utf8, const char *aux_down_utf8);
 } tigerclaw_host;
 
 tigerclaw_engine *tigerclaw_engine_new(const tigerclaw_host *host);

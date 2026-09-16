@@ -43,18 +43,18 @@ FCITX_CONFIGURATION(
     // 单键选项须显式放宽「允许无修饰键」：默认 KeyConstrain 会拒绝 ` / ; 这类
     // 无修饰键（配置工具的按键录制会报「不满足约束」）。
     fcitx::Option<fcitx::Key, fcitx::KeyConstrain> pinyinLookupKey{
-        this, "PinyinLookupKey", "音查虎：用拼音查虎码（点击录制按键）",
-        fcitx::Key(FcitxKey_grave),
+        this, "PinyinLookupKey", "音查虎：用拼音查虎码",
+        fcitx::Key(FcitxKey_grave, fcitx::KeyState::Ctrl),
         fcitx::KeyConstrain(fcitx::KeyConstrainFlag::AllowModifierLess)};
     fcitx::Option<fcitx::Key, fcitx::KeyConstrain> characterLookupKey{
-        this, "CharacterLookupKey", "字查音+虎：查光标处汉字的拼音与虎码（点击录制按键）",
-        fcitx::Key(FcitxKey_grave, fcitx::KeyState::Shift),
+        this, "CharacterLookupKey", "字查音+虎：查光标左侧汉字的拼音与虎码",
+        fcitx::Key(FcitxKey_asciitilde, fcitx::KeyState::Ctrl),
         fcitx::KeyConstrain(fcitx::KeyConstrainFlag::AllowModifierLess)};
     fcitx::Option<fcitx::Key, fcitx::KeyConstrain> quickInputKey{
-        this, "QuickInputKey", "快速输入（点击录制按键）",
+        this, "QuickInputKey", "快速输入",
         fcitx::Key(FcitxKey_semicolon),
         fcitx::KeyConstrain(fcitx::KeyConstrainFlag::AllowModifierLess)};
-    fcitx::Option<bool> panelPreedit{this, "PanelPreedit", "候选窗口显示预编辑文本（默认关闭；客户端内联预编辑仍随 fcitx5 全局设置）", false};);
+    fcitx::Option<bool> panelPreedit{this, "PanelPreedit", "候选窗口显示预编辑文本", false};);
 
 class TigerclawEngine : public fcitx::InputMethodEngine {
 public:
@@ -136,9 +136,10 @@ private:
     static void updateCallback(void *user, const char *preedit, int32_t cursor,
                                const char *const *texts,
                                const char *const *comments, int32_t count,
-                               int32_t selected, const char *auxDown) {
+                               int32_t selected, const char *auxUp,
+                               const char *auxDown) {
         static_cast<TigerclawEngine *>(user)->applyUpdate(
-            preedit, cursor, texts, comments, count, selected, auxDown);
+            preedit, cursor, texts, comments, count, selected, auxUp, auxDown);
     }
 
     void applyCommit(const char *text) {
@@ -150,7 +151,8 @@ private:
     /// 应用 UI 快照：preedit（面板 + 客户端内联）+ 候选列表与高亮。
     void applyUpdate(const char *preedit, int32_t cursor,
                      const char *const *texts, const char *const *comments,
-                     int32_t count, int32_t selected, const char *auxDown) {
+                     int32_t count, int32_t selected, const char *auxUp,
+                     const char *auxDown) {
         if (context_ == nullptr) {
             return;
         }
@@ -189,10 +191,12 @@ private:
                 candidateList->setPage(page);
             }
         }
-        // 字查音+虎（⑧-2）：辅助文本（auxDown）；空串清除。
-        context_->inputPanel().setAuxDown(auxDown != nullptr && *auxDown != '\0'
-                                              ? fcitx::Text(auxDown)
-                                              : fcitx::Text());
+        // 字查音+虎（⑧-2）：两排辅助文本（上排 = 光标左、下排 = 光标右）；空串清除。
+        const auto auxText = [](const char *value) {
+            return value != nullptr && *value != '\0' ? fcitx::Text(value) : fcitx::Text();
+        };
+        context_->inputPanel().setAuxUp(auxText(auxUp));
+        context_->inputPanel().setAuxDown(auxText(auxDown));
         context_->inputPanel().setCandidateList(std::move(candidateList));
         context_->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
     }

@@ -301,15 +301,15 @@ impl Decoder {
         self.pinyin_load_error.as_deref()
     }
 
-    /// 字查音+虎提示（懒加载索引；缺索引返回 `None`）。
-    pub fn character_lookup_hint(&mut self, text: &str, start: usize) -> Option<String> {
+    /// 字查音+虎两排提示（上排 = 光标左侧拼音、下排 = 虎码；懒加载索引，缺索引返回 `None`）。
+    pub fn character_lookup_rows(&mut self, text: &str, anchor: usize) -> Option<(String, String)> {
         self.pinyin_index();
         let index = self.pinyin.as_ref()?;
-        Some(crate::character_lookup::hint(
+        Some(crate::character_lookup::rows(
             index,
             &self.lexicon,
             text,
-            start,
+            anchor,
         ))
     }
 

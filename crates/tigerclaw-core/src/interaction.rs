@@ -9,8 +9,9 @@
 //! - `read_locks` 采用严格整数解析：非法帧一律返回空表（参照的 `tonumber`
 //!   对空白/浮点更宽容，但属性数据只由本实现写出，实际不会出现该差异）。
 
+use crate::character_lookup;
 use crate::decode::{DecodeLock, Decoder, Evaluated, Evidence};
-use crate::key::KeyEvent;
+use crate::key::{K_ALT_MASK, K_CONTROL_MASK, K_SUPER_MASK, KeyEvent};
 use crate::learning::{self, DiffEvent, DiffItem, DiffPathNode, Event};
 use crate::lexicon::Lexicon;
 use crate::pinyin_lookup;
@@ -29,14 +30,72 @@ pub const K_PROPOSAL_LEGACY: &str = "tiger_sentence_proposal";
 pub const K_STABLE_LEGACY: &str = "tiger_sentence_stable";
 pub const K_EVIDENCE_RAW_LEGACY: &str = "tiger_sentence_evidence_raw";
 pub const K_OPTIONS_ERROR: &str = "tiger_sentence_options_error";
-/// 音查虎前缀（内部属性：宿主按设置写入；空/缺省 = 音查虎关闭）。
-pub const K_PINYIN_LOOKUP_PREFIX: &str = "_pinyin_lookup_prefix";
+/// 音查虎触发键（内部属性：宿主按设置写入 rime 键名；空/缺省 = 关闭）。
+pub const K_PINYIN_LOOKUP_KEY: &str = "_pinyin_lookup_key";
+/// 字查音+虎触发键（内部属性：宿主按设置写入 rime 键名；空/缺省 = 关闭）。
+pub const K_CHARACTER_LOOKUP_KEY: &str = "_character_lookup_key";
 
-/// 音查虎前缀字符（宿主写入 [`K_PINYIN_LOOKUP_PREFIX`]；空/缺省 = 关闭）。
+/// 音查虎触发键（解析 [`K_PINYIN_LOOKUP_KEY`] 的 rime 键名；空/非法 = None）。
+pub fn pinyin_lookup_trigger(context: &Context) -> Option<KeyEvent> {
+    trigger_key(context, K_PINYIN_LOOKUP_KEY)
+}
+
+/// 字查音+虎触发键（解析 [`K_CHARACTER_LOOKUP_KEY`] 的 rime 键名；空/非法 = None）。
+pub fn character_lookup_trigger(context: &Context) -> Option<KeyEvent> {
+    trigger_key(context, K_CHARACTER_LOOKUP_KEY)
+}
+
+/// 音查虎组合前缀字符（= 触发键产生的字符；空/缺省 = 关闭）。
 pub fn pinyin_lookup_prefix(context: &Context) -> Option<char> {
-    context
-        .get_property(K_PINYIN_LOOKUP_PREFIX)
-        .and_then(|value| value.chars().next())
+    pinyin_lookup_trigger(context).and_then(|key| key_char(&key))
+}
+
+/// 字查音+虎组合触发字符（= 触发键产生的字符；空/缺省 = 关闭）。
+pub fn character_lookup_key(context: &Context) -> Option<char> {
+    character_lookup_trigger(context).and_then(|key| key_char(&key))
+}
+
+fn trigger_key(context: &Context, property: &str) -> Option<KeyEvent> {
+    let value = context.get_property(property).unwrap_or("");
+    if value.is_empty() {
+        return None;
+    }
+    KeyEvent::from_repr(value)
+}
+
+/// 按键「实际产生的字符」（字符归一；供触发键匹配与单字符判定）。
+/// 兼容前端上报 `grave+Shift` 或 `asciitilde`（US 布局的 `~`）。
+pub fn key_char(key_event: &KeyEvent) -> Option<char> {
+    let code = key_event.keycode;
+    if code == 0x60 {
+        return Some(if key_event.shift() { '~' } else { '`' });
+    }
+    if code == 0x7e {
+        return Some('~');
+    }
+    if code > 0x20 && code < 0x7f {
+        char::from_u32(code as u32)
+    } else {
+        None
+    }
+}
+
+/// 触发键命中：修饰位（Ctrl/Alt/Super）一致且字符归一后相同（Shift 交由字符归一）。
+pub fn key_matches(key_event: &KeyEvent, configured: &KeyEvent) -> bool {
+    let want_modifiers = configured.modifier & (K_CONTROL_MASK | K_ALT_MASK | K_SUPER_MASK);
+    let have_modifiers = key_event.modifier & (K_CONTROL_MASK | K_ALT_MASK | K_SUPER_MASK);
+    want_modifiers == have_modifiers
+        && key_char(key_event).is_some()
+        && key_char(key_event) == key_char(configured)
+}
+
+/// 单字符触发键（无 Ctrl/Alt/Super）产生的字符；带修饰时返回 None
+/// ——「只有单字符快捷键才提供默认可上屏候选」。
+pub fn single_char_trigger(key: &KeyEvent) -> Option<char> {
+    if key.ctrl() || key.alt() || key.super_modifier() {
+        return None;
+    }
+    key_char(key)
 }
 
 /// 选项名（对应参照 `allow_duplicate_single_option`）。
@@ -1258,7 +1317,14 @@ impl CompositionBuilder {
         }
         let seg_input = self.built_input.clone();
         let prefix = pinyin_lookup_prefix(context);
-        calculate_segmentation(&mut context.composition, &seg_input, caret, prefix);
+        let character = character_lookup_key(context);
+        calculate_segmentation(
+            &mut context.composition,
+            &seg_input,
+            caret,
+            prefix,
+            character,
+        );
         translate_segments(decoder, context, state, &seg_input, punct)?;
         Ok(true)
     }
@@ -1303,11 +1369,12 @@ fn calculate_segmentation(
     input: &[u8],
     caret: usize,
     prefix: Option<char>,
+    character: Option<char>,
 ) {
     while !composition.has_finished_segmentation(input) {
         let start = composition.current_start_position();
         // 参照 segmentors 顺序：matcher → abc_segmentor → punct_segmentor → fallback。
-        matcher(composition, input, prefix);
+        matcher(composition, input, prefix, character);
         abc_segmentor(composition, input);
         fallback_segmentor(composition, input);
         if start == composition.current_end_position() {
@@ -1333,12 +1400,28 @@ fn calculate_segmentation(
 
 /// 参照 `Matcher::Proceed`（`recognizer/patterns`）：活跃输入匹配
 /// `^<前缀>[a-z]*'?$` 时，由本段独占剩余输入（标签 [`pinyin_lookup::PINYIN_LOOKUP_TAG`]）。
-fn matcher(composition: &mut Composition, input: &[u8], prefix: Option<char>) {
-    let Some(prefix) = prefix else {
-        return;
-    };
+fn matcher(
+    composition: &mut Composition,
+    input: &[u8],
+    prefix: Option<char>,
+    character: Option<char>,
+) {
     let start = composition.confirmed_position();
     let Some(active) = input.get(start..) else {
+        return;
+    };
+    // 字查音+虎：活跃输入恰为触发字符（单字符段）。
+    if let Some(character) = character {
+        let mut buffer = [0u8; 4];
+        if active == character.encode_utf8(&mut buffer).as_bytes() {
+            while composition.current_start_position() > start {
+                composition.segments.pop();
+            }
+            add_segment(composition, start, input.len(), &[character_lookup::TAG]);
+            return;
+        }
+    }
+    let Some(prefix) = prefix else {
         return;
     };
     if !pinyin_lookup::matches_pattern(active, prefix) {
@@ -1468,7 +1551,48 @@ fn translate_segments(
             segment.selected_index = 0;
             continue;
         }
+        if segment.has_tag(character_lookup::TAG) {
+            // 默认可上屏候选：仅当触发键为**单字符键**（无 Ctrl/Alt/Super）时提供。
+            let candidates =
+                match character_lookup_trigger(context).and_then(|key| single_char_trigger(&key)) {
+                    Some(character) => pinyin_lookup::punct_candidate(
+                        punct.as_deref_mut(),
+                        character,
+                        full_shape,
+                        start,
+                        end,
+                    )
+                    .into_iter()
+                    .collect(),
+                    None => Vec::new(),
+                };
+            let segment = &mut context.composition.segments[index];
+            segment.translated = true;
+            segment.selected_index = 0;
+            segment.candidates = candidates;
+            continue;
+        }
         if segment.has_tag(pinyin_lookup::PINYIN_LOOKUP_TAG) {
+            // 触发键为单字符且输入仅前缀（无编码）时：给出默认可上屏候选（前缀字符）。
+            if start + pinyin_lookup_prefix(context).map_or(0, char::len_utf8) == end
+                && let Some(prefix) = pinyin_lookup_prefix(context)
+                && let Some(character) =
+                    pinyin_lookup_trigger(context).and_then(|key| single_char_trigger(&key))
+                && character == prefix
+                && let Some(candidate) = pinyin_lookup::punct_candidate(
+                    punct.as_deref_mut(),
+                    prefix,
+                    full_shape,
+                    start,
+                    end,
+                )
+            {
+                let segment = &mut context.composition.segments[index];
+                segment.translated = true;
+                segment.selected_index = 0;
+                segment.candidates = vec![candidate];
+                continue;
+            }
             let slice = input[start..end].to_vec();
             let candidates = match prefix {
                 Some(prefix) if pinyin_lookup::matches_pattern(&slice, prefix) => decoder
@@ -2002,9 +2126,46 @@ pub fn processor(
     if key_event.release() {
         return Ok(ProcessorResult::Forward);
     }
-    // 参照处理器链 `recognizer`（位于 speller/标点之前）：音查虎段输入的按键在此被接受，
-    // 否则后续处理器会把它当普通字符/标点处理。
-    if let Some(prefix) = pinyin_lookup_prefix(context)
+    // 触发键（音查虎 / 字查音+虎）：空闲时进入组合、段内再按则退出（同参照的标签语义）。
+    for (trigger, tag, prefix) in [
+        (
+            pinyin_lookup_trigger(context),
+            pinyin_lookup::PINYIN_LOOKUP_TAG,
+            pinyin_lookup_prefix(context),
+        ),
+        (
+            character_lookup_trigger(context),
+            character_lookup::TAG,
+            character_lookup_key(context),
+        ),
+    ] {
+        let (Some(configured), Some(prefix)) = (trigger, prefix) else {
+            continue;
+        };
+        if !key_matches(key_event, &configured) {
+            continue;
+        }
+        let active = context
+            .composition
+            .back()
+            .is_some_and(|segment| segment.has_tag(tag));
+        if active {
+            context.clear();
+            return Ok(ProcessorResult::Consume);
+        }
+        if !context.is_composing() {
+            let mut buffer = [0u8; 4];
+            context.push_input(prefix.encode_utf8(&mut buffer).as_bytes());
+            return Ok(ProcessorResult::Consume);
+        }
+        // 组合中：交由后续处理器（标点等）处理。
+    }
+    // 参照处理器链 `recognizer`（位于 speller/标点之前）：音查虎段内继续接受模式内按键。
+    if context
+        .composition
+        .back()
+        .is_some_and(|segment| segment.has_tag(pinyin_lookup::PINYIN_LOOKUP_TAG))
+        && let Some(prefix) = pinyin_lookup_prefix(context)
         && let Some(ch) = recognizer_char(key_event)
     {
         let mut next = context.input().to_vec();
@@ -2047,6 +2208,14 @@ pub fn processor(
         min_retained: min_retained_raw_length(env.min_retained),
     };
     if let Some(ch) = is_plain_char_key(key_event, repr) {
+        // 字查音+虎查码段：其它普通键先清空组合，随后照常处理该键。
+        if context
+            .composition
+            .back()
+            .is_some_and(|segment| segment.has_tag(character_lookup::TAG))
+        {
+            context.clear();
+        }
         if !context.is_composing()
             && (!state.committed_raw.is_empty()
                 || !state.last_seen_raw.is_empty()

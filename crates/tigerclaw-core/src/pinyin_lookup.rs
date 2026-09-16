@@ -512,8 +512,9 @@ fn emit(
     result
 }
 
-/// 裸前缀的标点候选（参照 `PunctTranslator` 与 `CreatePunctCandidate`）。
-fn punct_candidate(
+/// 裸前缀的标点候选（参照 `PunctTranslator` 与 `CreatePunctCandidate`）；
+/// 字查音+虎的「默认可上屏候选」复用同一实现。
+pub(crate) fn punct_candidate(
     punct: Option<&mut PunctTable>,
     prefix: char,
     full_shape: bool,
