@@ -10,7 +10,7 @@ use flate2::read::GzDecoder;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
-use tigerclaw_core::decode::Decoder;
+use tigerclaw_core::decode::{DecodeLock, Decoder, has_complete_candidate};
 use tigerclaw_core::learning::{Event, LearningIndex};
 use tigerclaw_core::lexicon::{Lexicon, Supplement};
 use tigerclaw_core::ngram::MobileModel;
@@ -88,6 +88,47 @@ fn replay(mut decoder: Decoder, reader: impl BufRead, early: bool) -> usize {
                 });
             }
             decoder.set_learning(LearningIndex::build(&events, now), &mode);
+            records += 1;
+            continue;
+        }
+        if kind == "complete" {
+            // `has_complete_candidate` 用例（证据金样专用；生成器固定 duplicate=1）。
+            let mut parts = rest.split('\t');
+            let input = decode_hex(field(parts.next().expect("input"), "input="));
+            let required = decode_hex(field(parts.next().expect("required"), "required="));
+            let excluded = decode_hex(field(parts.next().expect("excluded"), "excluded="));
+            let group: u8 = field(parts.next().expect("group"), "group=")
+                .parse()
+                .expect("group value");
+            let lock_field = field(parts.next().expect("lock"), "lock=");
+            let expected: u8 = field(parts.next().expect("result"), "result=")
+                .parse()
+                .expect("result value");
+            let lock_pair = if lock_field == "-" {
+                None
+            } else {
+                let (raw, text) = lock_field.split_once(',').expect("lock pair");
+                Some((decode_hex(raw), decode_hex(text)))
+            };
+            let lock = lock_pair.as_ref().map(|(raw, text)| DecodeLock {
+                raw,
+                text,
+                boundaries: "",
+            });
+            let value = has_complete_candidate(
+                decoder.lexicon(),
+                &input,
+                &required,
+                if excluded.is_empty() {
+                    None
+                } else {
+                    Some(excluded.as_str())
+                },
+                group != 0,
+                true,
+                lock.as_ref(),
+            );
+            assert_eq!(value as u8, expected, "complete mismatch for {input:?}");
             records += 1;
             continue;
         }

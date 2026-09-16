@@ -286,7 +286,8 @@ fn run(mut harness: Harness, reader: impl BufRead) -> usize {
                 let before = harness.diffcases.get(fields[3]).cloned();
                 let selected = harness.diffcases.get(fields[4]).cloned();
                 let count: usize = fields[5].parse().expect("diff count");
-                let events = learning::diff(&raw, before.as_ref(), selected.as_ref(), floor, &mode);
+                let events =
+                    learning::diff(&raw, before.as_ref(), selected.as_ref(), floor, &mode, 0.0);
                 assert_eq!(
                     events.len(),
                     count,

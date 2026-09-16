@@ -17,11 +17,14 @@
 | `decode.tsv.gz` | decode 金样（无模型）：`decode`/`result` | 1,980 条 |
 | `decode_model.tsv.gz` | decode 金样（fixture 模型，抽样） | 278 条 |
 | `decode_rank_first.tsv.gz` | decode 金样（fixture 模型 + 关闭单字重码，抽样） | 330 条 |
-| `decode_evidence.tsv.gz` | 早提交证据金样（无模型） | 4,998 条 |
-| `decode_evidence_model.tsv.gz` | 早提交证据金样（fixture 模型，抽样） | 840 条 |
+| `decode_evidence.tsv.gz` | 早提交证据金样（无模型；含 `has_complete_candidate` 的 `complete` 用例） | 11,002 行 |
+| `decode_evidence_model.tsv.gz` | 早提交证据金样（fixture 模型，抽样；同上） | 1,824 行 |
 | `learning.tsv.gz` | 学习金样：`hash`/`score`/`prefix`/`confirmed`/`reward`/`diff`/日志编码 | 10,164 条 |
 | `decode_learning.tsv.gz` | 解码接入学习（无模型） | 1,987 条 |
 | `decode_learning_model.tsv.gz` | 解码接入学习（fixture 模型，抽样） | 358 条 |
+| `key.tsv.gz` | 键名/键事件金样（librime 探针）：`name`/`repr`/`parse`/`modifier` | 5,113 条 |
+| `key_sequence.tsv.gz` | 键序列金样（真 librime 探针，2c）：逐步 `consumed`/输入/光标/提交/候选/高亮 | 10 例 / 36 步 |
+| `key_sequence/` | 键序列夹具码表（探针与 Rust 重放共用） | 1 文件 |
 | `local/`（不入库） | 真实模型抽样金样（224 MB 模型） | 62,777 条 |
 
 ## transcript 格式（TSV，`#` 注释，`-` 表示空串，字符串为 UTF-8 字节十六进制）
@@ -58,6 +61,12 @@ hash <hex text> <value>
 corpus / event / index / confirmed / codes / score / prefix / trim
 chain / node / reward / diffcase / diffpath / diff / diffevent
 journalrecords / journalrecord / journalevents / journalevent
+
+# key（librime 探针）
+name <keyval> <name|->
+repr <keyval> <modifier> <repr>
+parse <repr> <ok|bad> <keycode> <modifier> <repr>
+modifier <index> <name|->
 ```
 
 ## 重新生成
@@ -122,6 +131,12 @@ gzip -9 -n -c /tmp/decode_learning_model.tsv > goldens/decode_learning_model.tsv
 # learning（入库）
 lua tools/gen_learning_golden.lua --reference "$REF" --out /tmp/learning.tsv
 gzip -9 -n -c /tmp/learning.tsv > goldens/learning.tsv.gz
+
+# key（入库；需要 librime 源码头文件与系统 librime）
+bash tools/gen_key_golden.sh /path/to/librime
+
+# key_sequence（入库；需要系统 librime + librime-lua，构建 pin 版隔离环境）
+bash tools/gen_key_sequence_golden.sh
 ```
 
 ## 校验
@@ -143,6 +158,11 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 ## 来源与校验和
 
 - 参照实现：`crrvx/tiger-sentense-rime` @ `f3b3049819b513ba756bbe6c6b6872759c9dc2a9`
+- 键名表来源：librime `src/rime/key_table.cc`（sha256 `2f7c6a8b4f2aa474d700a87bd4bd1baa48a2655cd6ce4d2ba05b768f284d9d78`，librime 1.17.0 固定提交 `33e78140`）；
+  `key_table.rs` 由 `tools/gen_key_table.py` 生成，CI 以同提交重新生成并比对；`key.tsv.gz` 由系统 librime 1.17.0 探针（`tools/key_probe.cpp`）生成，
+  因探针依赖具体 librime 版本，**CI 不重生成该金样**（仅按 Rust 侧重放校验 + 键表生成比对）。
+- 键序列金样：`key_sequence.tsv.gz` 由 `tools/rime_sequence_probe.cpp` 在隔离环境中驱动**真 librime + librime-lua** 与 pin 版 Lua 核心生成
+  （探针头部记录参照提交、`tiger_sentence.lua` sha256 与 librime 版本）；同样**不在 CI 重生成**。数据夹具 `key_sequence/` 入库并与 Rust 重放共用。
 - 参照 Lua 文件（生成时）：
 
 | 文件 | sha256 |
@@ -177,10 +197,13 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 | `decode.tsv.gz` | `997a68e68077da7af63a155a01900e94fbb11b71cb9c064cd3c31eb55415c090` |
 | `decode_model.tsv.gz` | `a543ae32f83b88791b3dbb99f748da8e5add1d26590b096d561eecf532bbcfbb` |
 | `decode_rank_first.tsv.gz` | `ea08e0c2bcc6da841b2b52af189cde82dc4eb054c6dc6552d7167d99517c841e` |
-| `decode_evidence.tsv.gz` | `8d1952082c7cf937d91943786224f8cd55ee9cd92b2bf3892b7073b7861898fd` |
-| `decode_evidence_model.tsv.gz` | `d75c3b093121fed6114f88dcf5ebe10a01c862c42ae31f3d5927d32889388181` |
+| `decode_evidence.tsv.gz` | `357e782cb2e1528e76e9e066fbc2c0dacaf7b77ea8b21f71659769cad4d938ec` |
+| `decode_evidence_model.tsv.gz` | `df4362cf72c5eb7b6a1323c01c97e4445571daf958a911c13a51b4504928fe04` |
 | `learning.tsv.gz` | `fcf843527a6ab075a6158aeebfd6e3a67c3c8aa206779edf23d6f2c181aa6649` |
 | `decode_learning.tsv.gz` | `41a9894d233c32348e42164d4d29fc698c3037741c141ac0b58404094c9e9354` |
 | `decode_learning_model.tsv.gz` | `91e5fe60a515f1cdd11b815a5da68c7f1883ccc6bb80a9e37e45435cfe72f6e0` |
+| `key.tsv.gz` | `e939a077cd0825f7b454a4af300ed50fb6a2f2609c71583525d44f2f8fb3fd33` |
+| `key_sequence.tsv.gz` | `2051872c13a63e209c64c177e3b647c6fd0dabeb788ced46b0af701e36fdb7d9` |
 
 CI 以同一参照提交重生成全部 fixture 金样并与入库内容比对（见 `.github/workflows/ci.yml`）。
+`key.tsv.gz` 与 `key_sequence.tsv.gz` 依赖具体 librime/librime-lua 版本，**CI 不重生成**。

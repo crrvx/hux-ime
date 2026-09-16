@@ -22,6 +22,8 @@ jobs:
     env:
       REFERENCE_REPO: https://github.com/crrvx/tiger-sentense-rime
       REFERENCE_COMMIT: f3b3049819b513ba756bbe6c6b6872759c9dc2a9
+      LIBRIME_REPO: https://github.com/rime/librime
+      LIBRIME_COMMIT: 33e78140250125871856cdc5b42ddc6a5fcd3cd4
     steps:
       - uses: actions/checkout@v4
       - name: Install system Lua
@@ -38,6 +40,17 @@ jobs:
           git -C external/tiger-sentense-rime remote add origin "$REFERENCE_REPO"
           git -C external/tiger-sentense-rime fetch --depth 1 origin "$REFERENCE_COMMIT"
           git -C external/tiger-sentense-rime checkout --detach FETCH_HEAD
+      - name: Fetch librime (key table provenance)
+        run: |
+          git init external/librime
+          git -C external/librime remote add origin "$LIBRIME_REPO"
+          git -C external/librime fetch --depth 1 origin "$LIBRIME_COMMIT"
+          git -C external/librime checkout --detach FETCH_HEAD
+      - name: Verify generated key table
+        run: |
+          python3 tools/gen_key_table.py \
+            --source external/librime/src/rime/key_table.cc --out /tmp/key_table.rs
+          diff /tmp/key_table.rs crates/tigerclaw-core/src/key_table.rs
       - name: Regenerate goldens
         run: |
           lua tools/gen_ngram_golden.lua \

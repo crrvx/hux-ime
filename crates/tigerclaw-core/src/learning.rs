@@ -89,8 +89,10 @@ pub struct DiffItem {
     pub path: Vec<DiffPathNode>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DiffEvent {
+    /// 参照 `diff` 内 `time=os.time()`；由调用方传入（金样不比对）。
+    pub time: f64,
     pub mode: String,
     pub code: String,
     pub text: String,
@@ -751,13 +753,14 @@ pub fn reward(
     (best, potential)
 }
 
-/// 参照 `M.diff`（`time` 字段不在比对范围）。
+/// 参照 `M.diff`（`time` 由调用方传入，金样不比对）。
 pub fn diff(
     raw: &[u8],
     before: Option<&DiffItem>,
     selected: Option<&DiffItem>,
     floor: usize,
     mode: &str,
+    now: f64,
 ) -> Vec<DiffEvent> {
     let (Some(before), Some(selected)) = (before, selected) else {
         return Vec::new();
@@ -783,6 +786,7 @@ pub fn diff(
             {
                 let code = String::from_utf8_lossy(&raw[first..last]).to_ascii_lowercase();
                 result.push(DiffEvent {
+                    time: now,
                     mode: mode.to_string(),
                     code,
                     text,
