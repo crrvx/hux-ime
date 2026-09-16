@@ -1,6 +1,6 @@
 //! 虎整句核心逻辑（Rust 直迁）。
 //!
-//! 参照实现：`tiger-sentense-rime` 仓库的 `lua/`（Lua 5.4，作为差分 oracle）。
+//! 参照实现：`tiger-sentense-rime` 仓库的 `lua/`（Lua，作为差分 oracle）。
 //! 字符串/偏移语义与参照一致：UTF-8 字节串、字节偏移。
 //! 见 `docs/rust-migration.md` 与 `docs/rime-semantics.md`。
 

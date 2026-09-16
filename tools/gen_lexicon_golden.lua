@@ -1,6 +1,6 @@
 -- 生成 lexicon 差分金样 transcript（TSV），供 Rust 侧重放比对。
 --
---   lua5.4 tools/gen_lexicon_golden.lua --reference <repo> --data <dir> --out <tsv> [--mode present|missing]
+--   lua tools/gen_lexicon_golden.lua --reference <repo> --data <dir> --out <tsv> [--mode present|missing]
 --
 -- present 用 --data 目录中的四个数据文件；missing 模拟数据文件缺失（--data 传不存在目录）。
 --
@@ -130,4 +130,4 @@ else
 end
 
 out:close()
-print(string.format('{"mode":"%s","codes":%d,"emitted":%d}', mode, #codes, emitted))
+print(string.format('{"mode":"%s","lua":"%s","codes":%d,"emitted":%d}', mode, _VERSION, #codes, emitted))

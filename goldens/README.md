@@ -1,6 +1,6 @@
 # goldens：差分金样
 
-金样由参照实现（`tiger-sentense-rime` 的 Lua 5.4 核心）生成，Rust 侧逐位重放比对
+金样由参照实现（`tiger-sentense-rime` 的 Lua 核心）生成，Rust 侧逐位重放比对
 （`crates/tigerclaw-core/tests/*_differential.rs`）。
 
 ## 内容
@@ -39,20 +39,20 @@ supp    count=<n> error=<0|1>
 REF=/path/to/tiger-sentense-rime
 
 # ngram fixture（入库）
-lua5.4 tools/gen_ngram_golden.lua --reference "$REF" \
+lua tools/gen_ngram_golden.lua --reference "$REF" \
   --model goldens/ngram_fixture.bin --out /tmp/ngram_fixture.tsv --mode fixture
 gzip -9 -n -c /tmp/ngram_fixture.tsv > goldens/ngram_fixture.tsv.gz
 
 # ngram 真实模型抽样（本地）
-lua5.4 tools/gen_ngram_golden.lua --reference "$REF" \
+lua tools/gen_ngram_golden.lua --reference "$REF" \
   --model ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
   --out goldens/local/ngram_sample.tsv --mode sample
 gzip -9 -n -c goldens/local/ngram_sample.tsv > goldens/local/ngram_sample.tsv.gz
 
 # lexicon（入库）
-lua5.4 tools/gen_lexicon_golden.lua --reference "$REF" \
+lua tools/gen_lexicon_golden.lua --reference "$REF" \
   --data "$PWD/goldens/lexicon" --out /tmp/lexicon.tsv --mode present
-lua5.4 tools/gen_lexicon_golden.lua --reference "$REF" \
+lua tools/gen_lexicon_golden.lua --reference "$REF" \
   --data /tmp/no-such-dir --out /tmp/lexicon_missing.tsv --mode missing
 gzip -9 -n -c /tmp/lexicon.tsv > goldens/lexicon.tsv.gz
 gzip -9 -n -c /tmp/lexicon_missing.tsv > goldens/lexicon_missing.tsv.gz
@@ -65,8 +65,14 @@ cargo test -p tigerclaw-core        # 全部差分（本地 sample 缺失自动�
 
 # 基准（ngram，真实模型 + 本地抽样金样）
 cargo run --release -q --example ngram_bench -- <model.bin> <transcript.tsv>
-lua5.4 tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <transcript.tsv>
+lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <transcript.tsv>
 ```
+
+## Lua 版本
+
+- 一般作业使用 CI 系统提供的 Lua；
+- `golden-lua-latest` 作业使用 Arch 容器当前的 Lua；
+- 生成器摘要 JSON 记录实际运行的 Lua 版本。
 
 ## 来源与校验和
 

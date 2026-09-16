@@ -32,7 +32,7 @@
 
 | 实现 | 加载 | 查询 | 结果校验和 |
 |---|---:|---:|---|
-| Lua 5.4（参照） | 2.3 ms | 1162.9 ms | `0x7fe3970ae1d51e3c` |
+| Lua（参照） | 2.3 ms | 1162.9 ms | `0x7fe3970ae1d51e3c` |
 | Rust（release，mmap） | 0.6 ms | 14.2 ms | `0x7fe3970ae1d51e3c` |
 
 - 查询吞吐约 **82×**；加载约 4×（校验和一致，性能提升不是以行为偏差换来的）
@@ -71,7 +71,7 @@ cargo test -p tigerclaw-core
 # 基准（真实模型 + 本地抽样金样）
 cargo run --release -q --example ngram_bench -- \
   ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin goldens/local/ngram_sample.tsv
-lua5.4 tools/bench_ngram.lua --reference /path/to/tiger-sentense-rime \
+lua tools/bench_ngram.lua --reference /path/to/tiger-sentense-rime \
   --model ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
   --transcript goldens/local/ngram_sample.tsv
 ```

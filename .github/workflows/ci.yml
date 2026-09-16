@@ -16,31 +16,79 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test -p tigerclaw-core
 
-  golden-provenance:
+  # 一般金样校验：使用 runner 系统提供的 Lua（Ubuntu 当前可用的最新 lua 包）。
+  golden:
     runs-on: ubuntu-latest
     env:
       REFERENCE_REPO: https://github.com/crrvx/tiger-sentense-rime
       REFERENCE_COMMIT: f3b3049819b513ba756bbe6c6b6872759c9dc2a9
     steps:
       - uses: actions/checkout@v4
-      - name: Install Lua 5.4
-        run: sudo apt-get update && sudo apt-get install -y lua5.4
+      - name: Install system Lua
+        run: |
+          sudo apt-get update
+          package=$(apt-cache search --names-only '^lua[0-9]+\.[0-9]+$' | awk '{print $1}' | sort -V | tail -n 1)
+          test -n "$package"
+          sudo apt-get install -y "$package"
+          sudo ln -sf "$(command -v "$package")" /usr/local/bin/lua
+          lua -v
       - name: Fetch reference implementation
         run: |
           git init external/tiger-sentense-rime
           git -C external/tiger-sentense-rime remote add origin "$REFERENCE_REPO"
           git -C external/tiger-sentense-rime fetch --depth 1 origin "$REFERENCE_COMMIT"
           git -C external/tiger-sentense-rime checkout --detach FETCH_HEAD
-      - name: Regenerate fixture goldens
+      - name: Regenerate goldens
         run: |
-          lua5.4 tools/gen_ngram_golden.lua \
+          lua tools/gen_ngram_golden.lua \
             --reference external/tiger-sentense-rime \
             --model /tmp/ngram_fixture.bin \
             --out /tmp/ngram_fixture.tsv --mode fixture
-          lua5.4 tools/gen_lexicon_golden.lua \
+          lua tools/gen_lexicon_golden.lua \
             --reference external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --out /tmp/lexicon.tsv --mode present
-          lua5.4 tools/gen_lexicon_golden.lua \
+          lua tools/gen_lexicon_golden.lua \
+            --reference external/tiger-sentense-rime \
+            --data /tmp/no-such-dir --out /tmp/lexicon_missing.tsv --mode missing
+      - name: Compare with committed goldens
+        run: |
+          cmp goldens/ngram_fixture.bin /tmp/ngram_fixture.bin
+          gunzip -c goldens/ngram_fixture.tsv.gz | cmp - /tmp/ngram_fixture.tsv
+          gunzip -c goldens/lexicon.tsv.gz | cmp - /tmp/lexicon.tsv
+          gunzip -c goldens/lexicon_missing.tsv.gz | cmp - /tmp/lexicon_missing.tsv
+
+  # Arch 的系统 lua 即最新版；验证金样在最新 Lua 下同样逐字节一致。
+  # shell: bash 显式设置（容器内默认 shell 不保证是 bash）。
+  golden-lua-latest:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      REFERENCE_REPO: https://github.com/crrvx/tiger-sentense-rime
+      REFERENCE_COMMIT: f3b3049819b513ba756bbe6c6b6872759c9dc2a9
+    steps:
+      - name: Install toolchain
+        run: pacman -Sy --noconfirm git lua gzip
+      - uses: actions/checkout@v4
+      - name: Fetch reference implementation
+        run: |
+          git init external/tiger-sentense-rime
+          git -C external/tiger-sentense-rime remote add origin "$REFERENCE_REPO"
+          git -C external/tiger-sentense-rime fetch --depth 1 origin "$REFERENCE_COMMIT"
+          git -C external/tiger-sentense-rime checkout --detach FETCH_HEAD
+      - name: Regenerate goldens (system lua)
+        run: |
+          lua -v
+          lua tools/gen_ngram_golden.lua \
+            --reference external/tiger-sentense-rime \
+            --model /tmp/ngram_fixture.bin \
+            --out /tmp/ngram_fixture.tsv --mode fixture
+          lua tools/gen_lexicon_golden.lua \
+            --reference external/tiger-sentense-rime \
+            --data "$PWD/goldens/lexicon" --out /tmp/lexicon.tsv --mode present
+          lua tools/gen_lexicon_golden.lua \
             --reference external/tiger-sentense-rime \
             --data /tmp/no-such-dir --out /tmp/lexicon_missing.tsv --mode missing
       - name: Compare with committed goldens
