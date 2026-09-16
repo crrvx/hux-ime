@@ -643,6 +643,13 @@ pub fn submit_early(
     }
 }
 
+/// 参照 `auto_commit_matches_visible_top`：置信度（不含末尾排序先验，如词先验/学习重排）
+/// 只允许提交与**显示的首选候选**一致的前缀；无显示候选（`None`）时不做该限制
+/// （保留不完整尾段合并证据的既有策略）。
+pub fn auto_commit_matches_visible_top(visible_top: Option<&str>, text: &str) -> bool {
+    visible_top.is_none_or(|top| top.starts_with(text))
+}
+
 /// 参照 `try_commit_mature_prefix`：证据成熟则提交选中前缀。
 pub fn try_commit_mature_prefix(
     learning: &mut LearningCommit<'_>,
@@ -650,6 +657,7 @@ pub fn try_commit_mature_prefix(
     state: &mut SentenceState,
     evidence_raw: &[u8],
     min_retained: usize,
+    visible_top: Option<&str>,
     dot_armed: &mut bool,
 ) -> bool {
     let retain = if min_retained > 0 {
@@ -670,6 +678,7 @@ pub fn try_commit_mature_prefix(
             && evidence_raw.len() - tracker.raw_length >= retain
             && tracker.text.len() > state.committed_text.len()
             && tracker.text.starts_with(&state.committed_text)
+            && auto_commit_matches_visible_top(visible_top, &tracker.text)
             && selected
                 .map(|current| tracker_better(tracker, current))
                 .unwrap_or(true)
@@ -770,6 +779,12 @@ pub fn try_early_commit(
         return Ok(false);
     }
     let evidence_raw = full_raw;
+    // 置信度有意不含末尾排序先验；它只能授权「与末尾排名后的显示首选一致」的前缀。
+    // nil（无显示候选）保留不完整尾段合并证据的既有策略。
+    let visible_top = decoded
+        .items
+        .first()
+        .map(|candidate| candidate.text.clone());
 
     if state.last_seen_raw == raw {
         return Ok(try_commit_mature_prefix(
@@ -778,6 +793,7 @@ pub fn try_early_commit(
             state,
             &evidence_raw,
             params.min_retained,
+            visible_top.as_deref(),
             dot_armed,
         ));
     }
@@ -790,11 +806,6 @@ pub fn try_early_commit(
     }
     state.last_seen_raw = raw;
 
-    let accepted_top = decoded
-        .items
-        .first()
-        .filter(|candidate| candidate.supplement_score > 0.0)
-        .map(|candidate| candidate.text.clone());
     let merged_incomplete_tail = decoded.evidence.merged_incomplete_tail;
     let mut qualifying: HashMap<String, &crate::decode::PrefixEvidence> = HashMap::new();
     for prefix in &decoded.evidence.prefixes {
@@ -804,10 +815,7 @@ pub fn try_early_commit(
             && prefix.raw_length > state.committed_raw.len()
             && prefix.text.len() > state.committed_text.len()
             && prefix.text.starts_with(&state.committed_text)
-            && accepted_top
-                .as_deref()
-                .map(|top| top.starts_with(&prefix.text))
-                .unwrap_or(true)
+            && auto_commit_matches_visible_top(visible_top.as_deref(), &prefix.text)
             && (merged_incomplete_tail
                 || decoded
                     .visible_prefixes
@@ -830,6 +838,7 @@ pub fn try_early_commit(
             state,
             &evidence_raw,
             params.min_retained,
+            visible_top.as_deref(),
             dot_armed,
         ));
     }
@@ -862,6 +871,7 @@ pub fn try_early_commit(
         state,
         &evidence_raw,
         params.min_retained,
+        visible_top.as_deref(),
         dot_armed,
     ))
 }
@@ -2781,6 +2791,15 @@ mod tests {
         assert_eq!(trim_segmented_after_raw_prefix("ab", 2), "");
         assert_eq!(trim_segmented_after_raw_prefix("", 3), "");
         assert_eq!(trim_segmented_after_raw_prefix("ab", 0), "ab");
+    }
+
+    /// 参照上游 `test_tiger_sentence_incremental.lua` 新增断言：
+    /// 排名先验（词先验/学习重排）不得授权与显示首选不一致的自动提交前缀。
+    #[test]
+    fn auto_commit_matches_visible_top_guard() {
+        assert!(!auto_commit_matches_visible_top(Some("鼎丁"), "甲乙"));
+        assert!(auto_commit_matches_visible_top(Some("鼎丁"), "鼎"));
+        assert!(auto_commit_matches_visible_top(None, "甲乙"));
     }
 
     #[test]
