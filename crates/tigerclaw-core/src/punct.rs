@@ -184,6 +184,15 @@ punctuator:
     }
 
     #[test]
+    fn shipped_default_symbols_override_slash() {
+        // 发布默认（data/symbols.yaml）：half_shape 的 "/" 提交 "/"（非 、）；full_shape 仍为 ／。
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/symbols.yaml");
+        let mut table = PunctTable::load(&path).expect("load data/symbols.yaml");
+        assert_eq!(table.resolve('/', false), Some("/".to_string()));
+        assert_eq!(table.resolve('/', true), Some("／".to_string()));
+    }
+
+    #[test]
     fn rejects_malformed_documents() {
         assert!(PunctTable::parse("\t\t: [").is_err());
         let empty = PunctTable::parse("other: 1").expect("parse");

@@ -17,7 +17,8 @@ sudo cmake --install build/addon      # /usr/lib/fcitx5/libtigerclaw.so + 两个
 ## 数据目录
 
 默认按 `~/.local/share/fcitx5/tigerclaw` → `/usr/share/fcitx5/tigerclaw` 查找
-（码表四件套、`tiger_sentence.lexical.bin`、`symbols.yaml`、可选 `models/sentence-ngram-mobile.bin`）。
+（码表四件套、`tiger_sentence.lexical.bin`、`symbols.yaml`、可选 `models/sentence-ngram-mobile.bin`）；
+发布默认 `symbols.yaml` 取自参照、覆盖 half_shape 的 `/`（提交 `/` 而非 `、`），见 `data/symbols.yaml`。
 开发可用环境变量覆盖（目录冒号分隔 / 模型路径）：
 
 ```sh

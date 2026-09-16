@@ -1,0 +1,74 @@
+# Tiger Sentence default punctuation
+# encoding: utf-8
+# 虎码整句默认覆盖：half_shape 的 "/" 提交 "/"（参照原表为 、）；full_shape 不变。
+
+config_version: "1.3"
+
+punctuator:
+  full_shape:
+    " ": { commit: "　" }
+    ",": { commit: ， }
+    ".": { commit: 。 }
+    "<": { commit: 《 }
+    ">": { commit: 》 }
+    "/": { commit: ／ }
+    "?": { commit: ？ }
+    ";": { commit: ； }
+    ":": { commit: ： }
+    "'": { pair: [ "‘", "’" ] }
+    '"': { pair: [ "“", "”" ] }
+    "\\": 、
+    "|": { commit: ｜ }
+    "`": ｀
+    "~": ～
+    "!": { commit: ！ }
+    "@": ＠
+    "#": ＃
+    "%": { commit: ％ }
+    "$": { commit: ￥ }
+    "^": { commit: …… }
+    "&": ＆
+    "*": ＊
+    "(": （
+    ")": ）
+    "-": －
+    "_": ——
+    "+": ＋
+    "=": { commit: ＝ }
+    "[": { commit: 【 }
+    "]": { commit: 】 }
+    "{": { commit: "{" }
+    "}": { commit: "}" }
+  half_shape:
+    ",": { commit: ， }
+    ".": { commit: 。 }
+    "<": { commit: 《 }
+    ">": { commit: 》 }
+    "/": { commit: "/" }
+    "?": { commit: ？ }
+    ";": { commit: ； }
+    ":": { commit: ： }
+    "'": { pair: [ "‘", "’" ] }
+    '"': { pair: [ "“", "”" ] }
+    "\\": 、
+    "|": { commit: "|" }
+    "`": { commit: "`" }
+    "~": { commit: "~" }
+    "!": { commit: ！ }
+    "@": "@"
+    "#": "#"
+    "%": { commit: "%" }
+    "$": { commit: ￥ }
+    "^": { commit: …… }
+    "&": "&"
+    "*": "*"
+    "(": （
+    ")": ）
+    "-": "-"
+    "_": ——
+    "+": "+"
+    "=": { commit: "=" }
+    "[": { commit: 【 }
+    "]": { commit: 】 }
+    "{": { commit: "{" }
+    "}": { commit: "}" }
