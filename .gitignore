@@ -1,0 +1,17 @@
+# 构建产物 / cache
+build/
+target/
+__pycache__/
+*.pyc
+
+# 编辑器 / 系统
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+
+# 本地 / 外部 / 临时
+_tmp/
+_external/
+goldens/local/
