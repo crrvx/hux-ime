@@ -32,6 +32,9 @@ pub const K_OPTIONS_ERROR: &str = "tiger_sentence_options_error";
 pub const OPTION_ALLOW_DUPLICATE_SINGLE: &str = "tiger_sentence_allow_duplicate_single";
 /// 候选上限（参照 `candidate_limit`）。
 pub const CANDIDATE_LIMIT: usize = 20;
+
+/// 参照 `max_raw_length`：实时输入上限（超出则不接收普通字符）。
+pub const MAX_RAW_LENGTH: usize = 128;
 /// tracker 键分隔符（参照 `state_separator`）。
 const STATE_SEPARATOR: &str = "\u{1f}";
 const EARLY_COMMIT_MINIMUM_SHARE: f64 = 0.995;
@@ -1180,6 +1183,8 @@ pub struct LiveLearning {
     pub baseline: Option<Selected>,
     pub submitted_raw: Option<String>,
     pub hide_owned: bool,
+    /// 参照 `learned.store and learned.store.db`（K3 学习库就绪后置位）。
+    pub store_ready: bool,
 }
 
 /// 参照 `learning_selection`：按当前段选中项从可见候选中取学习目标。
@@ -1323,6 +1328,414 @@ pub fn learning_submit(
             context: event.context,
         })
         .collect()
+}
+
+// ---------------------------------------------------------------- 处理器
+
+/// 处理器宿主环境（对应参照 `env` 的非会话部分；K3 补内存/词库/选项职责）。
+pub struct ProcessorEnv<'a> {
+    /// 参照 `os.time()`（学习事件时间戳）。
+    pub now: f64,
+    /// 参照 `env._tiger_sentence_dot_armed`（数字后小数点待发）。
+    pub dot_armed: &'a mut bool,
+    /// 参照 `get_min_retained_raw_length(env)` 的配置值。
+    pub min_retained: Option<i64>,
+}
+
+/// 处理器结果：`Consume` 对应参照返回 1（拦截），`Forward` 对应 2（交后续处理器）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ProcessorResult {
+    Consume,
+    Forward,
+}
+
+/// 参照 `processor(key_event, env)`。宿主职责（内存配置、词库懒加载、选项同步、
+/// 学习库存储）由调用方在进入前完成。
+pub fn processor(
+    key_event: &KeyEvent,
+    context: &mut Context,
+    state: &mut SentenceState,
+    decoder: &mut Decoder,
+    live: &mut LiveLearning,
+    env: &mut ProcessorEnv<'_>,
+) -> anyhow::Result<ProcessorResult> {
+    if key_event.release() {
+        return Ok(ProcessorResult::Forward);
+    }
+    let repr = key_event.repr();
+    let repr = repr.as_str();
+    let allow_duplicate_single = set_allow_duplicate_single(context);
+    decoder.set_allow_duplicate_single(allow_duplicate_single);
+    live.submitted_raw = None;
+    // 缓冲空闲时把菜单导航键留给宿主。
+    if !state.buffered_text.is_empty()
+        && live_input(context).is_empty()
+        && matches!(
+            repr,
+            "Tab" | "ISO_Left_Tab" | "Shift+Tab" | "Up" | "Down" | "Page_Up" | "Page_Down"
+        )
+    {
+        return Ok(ProcessorResult::Consume);
+    }
+    if !state.buffered_text.is_empty() && context.caret() < 1 {
+        context.set_caret(1);
+    }
+    if !context.is_composing() {
+        live.pending.clear();
+        live.baseline = None;
+    }
+    // 参照 `_dotAfterDigitArmed`：先取待发值；非修饰键随后消耗它。
+    let dot_armed = *env.dot_armed;
+    if !is_modifier_repr(repr) {
+        *env.dot_armed = false;
+    }
+    let params = EarlyCommitParams {
+        allow_duplicate_single,
+        generation: state.model_generation,
+        min_retained: min_retained_raw_length(env.min_retained),
+    };
+    if let Some(ch) = is_plain_char_key(key_event, repr) {
+        if !context.is_composing()
+            && (!state.committed_raw.is_empty()
+                || !state.last_seen_raw.is_empty()
+                || !state.trackers.is_empty()
+                || state.suspended
+                || state.continuation_after_auto_commit
+                || state.active_lock().is_some()
+                || state.tab_pending)
+        {
+            state.reset(context, false);
+        }
+        // 分号/引号只在组合中作 rank 选择器；空闲时交标点处理器。
+        if !context.is_composing() && (ch == ';' || ch == '\'') {
+            return Ok(ProcessorResult::Forward);
+        }
+        if live_input(context).len() >= MAX_RAW_LENGTH {
+            return Ok(ProcessorResult::Consume);
+        }
+        // 空闲数字直接上屏（全角选项下为全角）。
+        if ch.is_ascii_digit() && !context.is_composing() {
+            if context.get_option("full_shape") {
+                const FULL_SHAPE_DIGITS: [char; 10] =
+                    ['０', '１', '２', '３', '４', '５', '６', '７', '８', '９'];
+                let index = (ch as u8 - b'0') as usize;
+                context.direct_commit(&FULL_SHAPE_DIGITS[index].to_string());
+            } else {
+                context.direct_commit(&ch.to_string());
+            }
+            *env.dot_armed = true;
+            return Ok(ProcessorResult::Consume);
+        }
+        let is_letter = ch.is_ascii_lowercase();
+        let live_before = live_input(context);
+        let caret = input_caret(context);
+        let mut full_before = state.committed_raw.as_bytes().to_vec();
+        full_before.extend_from_slice(&live_before);
+        if caret != live_before.len() {
+            live.pending.clear();
+            live.baseline = None;
+            invalidate_edit_state(
+                context,
+                state,
+                state.committed_raw.len() + caret,
+                full_before.len() + ch.len_utf8(),
+            );
+            context.push_input(ch.to_string().as_bytes());
+            return Ok(ProcessorResult::Consume);
+        }
+        if state.tab_pending && is_letter {
+            let target = context
+                .composition
+                .back()
+                .map(|segment| segment.selected_index)
+                .unwrap_or(0);
+            let lock = state.active_lock().map(|lock| DecodeLock {
+                raw: &lock.raw,
+                text: &lock.text,
+                boundaries: &lock.boundaries,
+            });
+            let raw_text = String::from_utf8_lossy(&full_before).into_owned();
+            let decoded =
+                decoder.decode_with_lock(&raw_text, false, &state.committed_text, lock)?;
+            let mut candidate: Option<Selected> = None;
+            let mut visible = 0usize;
+            for item in &decoded.items {
+                if implicit_rank_allowed(
+                    item,
+                    &full_before,
+                    state.continuation_after_auto_commit,
+                    allow_duplicate_single,
+                ) && item.text.starts_with(&state.committed_text)
+                    && item.text.len() > state.committed_text.len()
+                {
+                    if visible == target {
+                        let (raw_length, diff) = decoder.path_summary(item);
+                        candidate = Some(Selected {
+                            text: item.text.clone(),
+                            raw_length,
+                            diff,
+                        });
+                        break;
+                    }
+                    visible += 1;
+                }
+            }
+            if let Some(candidate) = candidate {
+                if candidate.raw_length > state.committed_raw.len() {
+                    learning_stage(live, state, Some(&candidate), &full_before, None, env.now);
+                    state.tab_pending = false;
+                    let boundaries: String = candidate
+                        .diff
+                        .path
+                        .iter()
+                        .map(|node| format!("{},{};", node.raw_length, node.text_length))
+                        .collect();
+                    let locked_raw =
+                        String::from_utf8_lossy(&full_before[..candidate.raw_length]).into_owned();
+                    state.locks.push(Lock {
+                        raw: locked_raw.clone(),
+                        text: candidate.text.clone(),
+                        boundaries,
+                    });
+                    let commit = if context.get_option(OPTION_EARLY_COMMIT) {
+                        let commit = candidate.text[state.committed_text.len()..].to_string();
+                        state.committed_text = candidate.text.clone();
+                        state.committed_raw = locked_raw;
+                        Some(commit)
+                    } else {
+                        None
+                    };
+                    reset_early_evidence(state);
+                    state.empty_code_pending = None;
+                    state.suspended = false;
+                    state.continuation_after_auto_commit = false;
+                    state.save(context);
+                    if let Some(commit) = commit {
+                        if let Some(text) = submit_early(context, state, &commit) {
+                            context_commit(context, &text);
+                        }
+                    }
+                    let mut restored = full_before[state.committed_raw.len()..].to_vec();
+                    restored.extend_from_slice(ch.to_string().as_bytes());
+                    restore_composition_input(context, &restored);
+                    return Ok(ProcessorResult::Consume);
+                }
+            }
+        }
+        state.tab_pending = false;
+        live.baseline = None;
+        if !is_letter {
+            state.empty_code_pending = None;
+            state.save(context);
+        }
+        context.push_input(ch.to_string().as_bytes());
+        if is_letter
+            && try_empty_code_commit(
+                decoder,
+                context,
+                state,
+                &full_before,
+                ch.to_string().as_bytes(),
+                params,
+            )?
+        {
+            return Ok(ProcessorResult::Consume);
+        }
+        try_early_commit(decoder, context, state, params)?;
+        return Ok(ProcessorResult::Consume);
+    }
+    if !context.is_composing() {
+        if dot_armed
+            && (repr == "period" || repr == "KP_Decimal")
+            && !key_event.shift()
+            && !key_event.ctrl()
+            && !key_event.alt()
+            && !key_event.super_modifier()
+        {
+            context.direct_commit(".");
+            return Ok(ProcessorResult::Consume);
+        }
+        return Ok(ProcessorResult::Forward);
+    }
+    // 缓冲态遇可打印标点：先确认组合，再把原键交标点表。
+    let codepoint = key_event.keycode;
+    if !state.buffered_text.is_empty()
+        && (33..=126).contains(&codepoint)
+        && (codepoint as u8 as char).is_ascii_punctuation()
+        && !key_event.ctrl()
+        && !key_event.alt()
+        && !key_event.super_modifier()
+    {
+        context.confirm_current_selection();
+        return Ok(ProcessorResult::Forward);
+    }
+    if repr == "Return" || repr == "KP_Enter" {
+        live.pending.clear();
+        live.baseline = None;
+        let text = format!(
+            "{}{}",
+            state.buffered_text,
+            String::from_utf8_lossy(&live_input(context))
+        );
+        context.direct_commit(&text);
+        context.clear();
+        state.reset(context, false);
+        return Ok(ProcessorResult::Consume);
+    }
+    if repr == "Escape" {
+        live.pending.clear();
+        live.baseline = None;
+        context.clear();
+        state.reset(context, false);
+        return Ok(ProcessorResult::Consume);
+    }
+    if repr == "BackSpace" || repr == "Delete" {
+        live.pending.clear();
+        live.baseline = None;
+        state.tab_pending = false;
+        reset_early_evidence(state);
+        state.empty_code_pending = None;
+        if !state.buffered_text.is_empty() {
+            let raw = live_input(context);
+            let caret = input_caret(context);
+            if repr == "BackSpace" && raw.is_empty() {
+                let mut letters: Vec<char> = state.buffered_text.chars().collect();
+                let removed = letters.pop();
+                state.buffered_text = letters.into_iter().collect();
+                let removed_length = removed.map(char::len_utf8).unwrap_or(0);
+                let keep = state.committed_text.len().saturating_sub(removed_length);
+                state.committed_text.truncate(keep);
+                if state.buffered_text.is_empty() {
+                    state.reset(context, false);
+                } else {
+                    state.locks = vec![Lock {
+                        raw: state.committed_raw.clone(),
+                        text: state.committed_text.clone(),
+                        boundaries: format!(
+                            "{},{};",
+                            state.committed_raw.len(),
+                            state.committed_text.len()
+                        ),
+                    }];
+                    state.save(context);
+                }
+                restore_composition_input(context, &raw);
+                return Ok(ProcessorResult::Consume);
+            }
+            let first = if repr == "BackSpace" {
+                caret as isize - 1
+            } else {
+                caret as isize
+            };
+            if first < 0 || first >= raw.len() as isize {
+                return Ok(ProcessorResult::Consume);
+            }
+            let first = first as usize;
+            let mut remaining = raw[..first].to_vec();
+            remaining.extend_from_slice(&raw[first + 1..]);
+            invalidate_edit_state(
+                context,
+                state,
+                state.committed_raw.len() + first,
+                state.committed_raw.len() + remaining.len(),
+            );
+            restore_composition_input(context, &remaining);
+            context.set_caret(first + 1);
+            return Ok(ProcessorResult::Consume);
+        }
+        if state.active_lock().is_some() {
+            let raw = live_input(context);
+            let caret = input_caret(context);
+            let first = if repr == "BackSpace" {
+                caret as isize - 1
+            } else {
+                caret as isize
+            };
+            if first < 0 || first >= raw.len() as isize {
+                state.save(context);
+                return Ok(ProcessorResult::Forward);
+            }
+            let first = first as usize;
+            let mut remaining = raw[..first].to_vec();
+            remaining.extend_from_slice(&raw[first + 1..]);
+            invalidate_edit_state(
+                context,
+                state,
+                state.committed_raw.len() + first,
+                state.committed_raw.len() + remaining.len(),
+            );
+            if remaining.is_empty() {
+                context.clear();
+                state.reset(context, false);
+            } else if repr == "BackSpace" {
+                context.pop_input(1);
+            } else {
+                context.delete_input(1);
+            }
+            return Ok(ProcessorResult::Consume);
+        }
+        state.save(context);
+        return Ok(ProcessorResult::Forward);
+    }
+    if repr == "Left" || repr == "Right" || repr == "Home" || repr == "End" {
+        live.pending.clear();
+        live.baseline = None;
+        // 手动光标导航不保留追加证据与待确认 Tab。
+        state.tab_pending = false;
+        reset_early_evidence(state);
+        state.empty_code_pending = None;
+        state.save(context);
+        if !state.buffered_text.is_empty()
+            && (repr == "Home" || (repr == "Left" && input_caret(context) == 0))
+        {
+            context.set_caret(1);
+            return Ok(ProcessorResult::Consume);
+        }
+        return Ok(ProcessorResult::Forward);
+    }
+    if repr == "Tab" || repr == "ISO_Left_Tab" || repr == "Shift+Tab" {
+        if !state.tab_pending && live.store_ready {
+            let selection = learning_selection(decoder, context, state)?;
+            live.baseline = selection.first;
+        }
+        reset_early_evidence(state);
+        state.suspended = true;
+        state.empty_code_pending = None;
+        state.save(context);
+        if cycle_candidate_highlight(context, if repr == "Tab" { 1 } else { -1 }) {
+            state.tab_pending = true;
+            state.save(context);
+            return Ok(ProcessorResult::Consume);
+        }
+        // 菜单不可用时交给 schema 的 Down/Up 绑定与 navigate。
+        return Ok(ProcessorResult::Forward);
+    }
+    if repr == "Up" || repr == "Down" || repr == "Page_Up" || repr == "Page_Down" {
+        reset_early_evidence(state);
+        state.suspended = true;
+        state.empty_code_pending = None;
+        state.save(context);
+        return Ok(ProcessorResult::Forward);
+    }
+    if repr == "space" {
+        if context.has_menu() {
+            let selection = learning_selection(decoder, context, state)?;
+            learning_stage(
+                live,
+                state,
+                selection.selected.as_ref(),
+                &selection.raw,
+                None,
+                env.now,
+            );
+            context.confirm_current_selection();
+        }
+        live.pending.clear();
+        live.baseline = None;
+        state.reset(context, false);
+        return Ok(ProcessorResult::Consume);
+    }
+    Ok(ProcessorResult::Forward)
 }
 
 #[cfg(test)]
@@ -1954,5 +2367,146 @@ mod tests {
         translate(&mut decoder, &context, &state, b"abab", 0, 4, &mut out).expect("translate");
         let texts: Vec<String> = out.iter().map(|candidate| candidate.text.clone()).collect();
         assert!(texts.iter().any(|text| text.contains('疒')), "{texts:?}");
+    }
+
+    fn key_of(repr: &str) -> KeyEvent {
+        KeyEvent::from_repr(repr).expect("key repr")
+    }
+
+    struct Harness {
+        decoder: Decoder,
+        context: Context,
+        state: SentenceState,
+        live: LiveLearning,
+        dot_armed: bool,
+    }
+
+    impl Harness {
+        fn new() -> Self {
+            Self {
+                decoder: lexicon_fixture(),
+                context: Context::new(),
+                state: SentenceState::fresh(1),
+                live: LiveLearning::default(),
+                dot_armed: false,
+            }
+        }
+
+        fn press_event(&mut self, key: &KeyEvent, repr: &str) -> ProcessorResult {
+            let mut env = ProcessorEnv {
+                now: 0.0,
+                dot_armed: &mut self.dot_armed,
+                min_retained: None,
+            };
+            processor(
+                key,
+                repr,
+                &mut self.context,
+                &mut self.state,
+                &mut self.decoder,
+                &mut self.live,
+                &mut env,
+            )
+            .expect("processor")
+        }
+
+        fn press(&mut self, repr: &str) -> ProcessorResult {
+            let key = key_of(repr);
+            self.press_event(&key, repr)
+        }
+
+        fn push_segment(&mut self, input: &[u8], texts: &[&str]) {
+            self.context.set_input(input);
+            let candidates = texts
+                .iter()
+                .map(|text| Candidate::new("sentence", 0, input.len(), text, ""))
+                .collect();
+            self.context.composition.segments.push(Segment {
+                start: 0,
+                end: input.len(),
+                tags: Vec::new(),
+                selected_index: 0,
+                candidates,
+                selected: false,
+            });
+        }
+    }
+
+    #[test]
+    fn processor_idle_keys_and_dot_armed() {
+        let mut h = Harness::new();
+        // 释放事件交宿主
+        let release = KeyEvent::new(
+            crate::key::keycode_by_name("a").expect("a"),
+            crate::key::K_RELEASE_MASK,
+        );
+        assert_eq!(
+            h.press_event(&release, "Release+a"),
+            ProcessorResult::Forward
+        );
+        // 空闲分号/引号交标点处理器
+        assert_eq!(h.press("semicolon"), ProcessorResult::Forward);
+        assert_eq!(h.press("apostrophe"), ProcessorResult::Forward);
+        // 空闲数字直接上屏并置待发
+        assert_eq!(h.press("5"), ProcessorResult::Consume);
+        assert_eq!(h.context.get_commit_text(), "5");
+        assert!(h.dot_armed);
+        // 紧随的句点按 ASCII 小数点上屏
+        assert_eq!(h.press("period"), ProcessorResult::Consume);
+        assert_eq!(h.context.get_commit_text(), ".");
+        assert!(!h.dot_armed);
+        // 无待发状态时句点交宿主
+        assert_eq!(h.press("period"), ProcessorResult::Forward);
+    }
+
+    #[test]
+    fn processor_types_and_commits() {
+        let mut h = Harness::new();
+        assert_eq!(h.press("a"), ProcessorResult::Consume);
+        assert_eq!(h.press("b"), ProcessorResult::Consume);
+        assert_eq!(h.context.input(), b"ab");
+        // 真实会话中组合由 translator 建立；这里手工合成后再走提交/清空分支。
+        h.push_segment(b"ab", &["交"]);
+        // Return：提交「缓冲 + 实时输入」并清空
+        assert_eq!(h.press("Return"), ProcessorResult::Consume);
+        assert_eq!(h.context.get_commit_text(), "ab");
+        assert!(h.context.input().is_empty());
+        // Escape：直接清空
+        h.push_segment(b"a", &["甲"]);
+        assert_eq!(h.press("Escape"), ProcessorResult::Consume);
+        assert!(h.context.input().is_empty());
+        assert!(h.state.committed_raw.is_empty());
+    }
+
+    #[test]
+    fn processor_navigation_and_buffer_guard() {
+        let mut h = Harness::new();
+        // 缓冲空闲：菜单导航键拦给宿主
+        h.state.buffered_text = "交".to_string();
+        assert_eq!(h.press("Tab"), ProcessorResult::Consume);
+        assert_eq!(h.press("Up"), ProcessorResult::Consume);
+        // 无缓冲：Up 交宿主；Tab 无菜单可用时同样交宿主
+        h.state.buffered_text.clear();
+        assert_eq!(h.press("Up"), ProcessorResult::Forward);
+        assert_eq!(h.press("Tab"), ProcessorResult::Forward);
+    }
+
+    #[test]
+    fn processor_space_confirms_and_backspace_edits_locked_input() {
+        let mut h = Harness::new();
+        h.push_segment(b"ab", &["交"]);
+        assert_eq!(h.press("space"), ProcessorResult::Consume);
+        assert!(h.state.committed_raw.is_empty());
+        // 锁分支：退格在锁下走 pop_input
+        h.push_segment(b"ab", &["交"]);
+        h.state.locks.push(Lock {
+            raw: "a".to_string(),
+            text: "交".to_string(),
+            boundaries: "1,3;".to_string(),
+        });
+        h.state.committed_raw = "a".to_string();
+        h.state.committed_text = "交".to_string();
+        assert_eq!(h.press("BackSpace"), ProcessorResult::Consume);
+        assert_eq!(h.context.input(), b"a");
     }
 }
