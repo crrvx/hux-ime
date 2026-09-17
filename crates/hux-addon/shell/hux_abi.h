@@ -74,7 +74,6 @@ typedef struct hux_options {
   int32_t high_freq_limit;
   int32_t pinyin_lookup_sym, pinyin_lookup_states;
   int32_t character_lookup_sym, character_lookup_states;
-  int32_t quick_input_sym, quick_input_states;
 } hux_options;
 
 /* 应用外部配置；返回 1 = 已应用。 */

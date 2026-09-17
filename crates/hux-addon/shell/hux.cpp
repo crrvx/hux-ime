@@ -50,10 +50,6 @@ FCITX_CONFIGURATION(
         this, "CharacterLookupKey", "字查音+虎：查光标左侧汉字的拼音与虎码",
         fcitx::Key(FcitxKey_apostrophe, fcitx::KeyState::Alt),
         fcitx::KeyConstrain(fcitx::KeyConstrainFlag::AllowModifierLess)};
-    fcitx::Option<fcitx::Key, fcitx::KeyConstrain> quickInputKey{
-        this, "QuickInputKey", "快速输入",
-        fcitx::Key(FcitxKey_semicolon),
-        fcitx::KeyConstrain(fcitx::KeyConstrainFlag::AllowModifierLess)};
     fcitx::Option<bool> panelPreedit{this, "PanelPreedit", "候选窗口显示预编辑文本", false};);
 
 class HuxEngine : public fcitx::InputMethodEngine {
@@ -220,7 +216,6 @@ private:
         };
         fillKey(&options.pinyin_lookup_sym, &options.pinyin_lookup_states, config_.pinyinLookupKey.value());
         fillKey(&options.character_lookup_sym, &options.character_lookup_states, config_.characterLookupKey.value());
-        fillKey(&options.quick_input_sym, &options.quick_input_states, config_.quickInputKey.value());
         if (hux_engine_apply_settings(engine_, &options) == 0) {
             FCITX_WARN() << "hux: apply settings failed";
         }

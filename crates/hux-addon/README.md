@@ -42,7 +42,6 @@ ln -sf ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
 |---|---|---|
 | PinyinLookupKey | Alt+`;` | **音查虎**（用拼音查虎码）触发键（⑧-1）|
 | CharacterLookupKey | Alt+`'` | **字查音+虎**（查光标左侧汉字的拼音与虎码）触发键（⑧-2）|
-| QuickInputKey | `;` | 快速输入触发键（按键录入；行为随 ⑨ 数据接线）|
 | EarlyCommit / EarlyCommitToPreedit / AllowDuplicateSingle | 开/关/开 | 早提交三项 |
 | FullShape / AsciiPunct | 关/关 | 全角标点 / ASCII 标点直通 |
 | TabLearning | 开 | Tab 选字写学习库 |
@@ -100,7 +99,7 @@ ln -sf ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
 
 - K3i（配置，Rust 半）：`settings.rs` 配置模型（早提交三项/full_shape/ascii_punct/
   tab_learning/high_freq_limit；合并顺序 options.yaml > 设置 > 内建缺省）；
-  图形配置：C++ `HuxConfig` schema（11 项：引擎 10 + 宿主显示 1）+ `getConfig/setConfig`，
+  图形配置：C++ `HuxConfig` schema（10 项：引擎 9 + 宿主显示 1）+ `getConfig/setConfig`，
   fcitx5-configtool 自动生成设置页（`~/.config/fcitx5/conf/hux.conf`），经 ABI `hux_engine_apply_settings` 生效。
 
 已知限制（后续增量）：每引擎单会话（切换/重置即清空）；候选为展示型（点击不提交）；

@@ -678,8 +678,6 @@ pub struct HuxOptions {
     pub pinyin_lookup_states: i32,
     pub character_lookup_sym: i32,
     pub character_lookup_states: i32,
-    pub quick_input_sym: i32,
-    pub quick_input_states: i32,
 }
 
 /// 应用外部配置（fcitx5 配置界面 → C++ 壳 → 本入口）。返回 1 = 已应用。
@@ -717,7 +715,6 @@ pub unsafe extern "C" fn hux_engine_apply_settings(
             options.character_lookup_sym,
             options.character_lookup_states,
         ),
-        quick_input_key: key_repr(options.quick_input_sym, options.quick_input_states),
     });
     1
 }
@@ -1044,8 +1041,6 @@ mod tests {
             pinyin_lookup_states: 0,
             character_lookup_sym: 0x60,
             character_lookup_states: 1,
-            quick_input_sym: 0x3b,
-            quick_input_states: 0,
         };
         let applied = unsafe { hux_engine_apply_settings(engine, &options) };
         assert_eq!(applied, 1);
@@ -1060,7 +1055,6 @@ mod tests {
         assert_eq!(state.settings.high_freq_limit, 800);
         assert_eq!(state.settings.pinyin_lookup_key, "grave");
         assert_eq!(state.settings.character_lookup_key, "Shift+grave");
-        assert_eq!(state.settings.quick_input_key, "semicolon");
         unsafe { hux_engine_free(engine) };
     }
 
