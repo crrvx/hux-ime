@@ -96,12 +96,19 @@ public:
                                  keyEvent.isRelease() ? 1 : 0);
         context_ = nullptr;
         if (disposition & HUX_KEY_FORWARD_AFTER_COMMIT) {
-            // 已提交且未消费：先让提交送达，再由本层重发按键（与核心
-            // `KeyEventOrderFix` 修法一致），避免前端在 keyEvent 返回后立刻
-            // 转发按键导致「字母先于候选上屏」。
-            keyEvent.filterAndAccept();
-            inputContext->forwardKey(keyEvent.origKey(), keyEvent.isRelease(),
-                                     keyEvent.time());
+            // 布局转换键（如系统 colemak + 方案自定义 us 布局）：交回核心处理——
+            // 核心在 ReservedLast 阶段会提交**转换后**的字符并消费该键；若本层
+            // 自行 forwardKey，客户端会按系统布局重新解释该键，从而得到未经
+            // fcitx5 映射的字符。
+            if (!(keyEvent.forward() &&
+                  keyEvent.rawKey().sym() != keyEvent.origKey().sym())) {
+                // 已提交且未消费：先让提交送达，再由本层重发按键（与核心
+                // `KeyEventOrderFix` 修法一致），避免前端在 keyEvent 返回后立刻
+                // 转发按键导致「字母先于候选上屏」。
+                keyEvent.filterAndAccept();
+                inputContext->forwardKey(keyEvent.rawKey(), keyEvent.isRelease(),
+                                         keyEvent.time());
+            }
         } else if (disposition & HUX_KEY_CONSUMED) {
             keyEvent.filterAndAccept();
         }
