@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com> -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 # hux-addon（K3）
 
 fcitx5 addon：**C++ 薄壳**（`shell/`，只做 fcitx5 接口适配）+ **Rust 逻辑**（`src/`，经 C ABI 调用
@@ -20,34 +23,40 @@ sudo cmake --install build/addon      # /usr/lib/fcitx5/libhux.so + 两个 conf
 
 ## 数据目录
 
-默认按 `~/.local/share/fcitx5/hux` → `/usr/share/fcitx5/hux` 查找（码表四件套、
-`tiger_sentence.lexical.bin`、`tiger_sentence.pinyin.bin.gz`、`symbols.yaml`，以及可选的
-`models/sentence-ngram-mobile.bin`）。开发可用环境变量覆盖（目录冒号分隔 / 模型路径）：
+随包数据在仓库 `data/`（码表四件套、`tiger_sentence.lexical.bin`、`tiger_sentence.pinyin.bin.gz`、
+`symbols.yaml`）；运行时按 `~/.local/share/fcitx5/hux` → `/usr/share/fcitx5/hux` 查找，可选模型另在
+`models/sentence-ngram-mobile.bin` 查找。安装到用户目录：
 
 ```sh
-# 模型示例取自 fcitx5-rime 数据目录（按实际安装位置替换；任意 TCSKNM02 模型均可）
-HUX_DATA_DIRS="goldens/lexicon:data" \
+mkdir -p ~/.local/share/fcitx5/hux/models
+cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
+```
+
+开发可用环境变量覆盖（目录冒号分隔 / 模型路径；`data/` 已含全部随包数据）：
+
+```sh
+HUX_DATA_DIRS="data" \
 HUX_MODEL="$HOME/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin" \
 fcitx5 -r -d
 ```
 
-也可直接铺到用户目录（免环境变量）：
+（`HUX_MODEL` 示例取自 fcitx5-rime 数据目录，按实际安装位置替换；任意 TCSKNM02 模型均可。）
+
+模型（可选）可与 fcitx5-rime **共用同一份**（来源：[Releases › model](https://github.com/lvyww/tiger-sentense-rime/releases/tag/model)）：
+实体放 hux 数据目录，再在 rime 共享目录建软链（rime 的查找顺序为 用户 `models/` → 用户根 → 共享 `models/`）：
 
 ```sh
-mkdir -p ~/.local/share/fcitx5/hux/models
-cp goldens/lexicon/*.txt data/tiger_sentence.lexical.bin data/tiger_sentence.pinyin.bin.gz \
-  ~/.local/share/fcitx5/hux/
-# 若已装 fcitx5-rime，模型可直接软链（示例路径，按实际位置替换）
-ln -sf ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
-  ~/.local/share/fcitx5/hux/models/
+sudo mkdir -p /usr/share/rime-data/models
+sudo ln -s /usr/share/fcitx5/hux/models/sentence-ngram-mobile.bin \
+           /usr/share/rime-data/models/sentence-ngram-mobile.bin
 ```
 
 ## 配置（fcitx5-configtool 设置页）
 
 | 项 | 默认 | 说明 |
 |---|---|---|
-| PinyinLookupKey | Alt+`;` | 音查虎（拼音查虎码）触发键 |
-| CharacterLookupKey | Alt+`'` | 字查音+虎触发键 |
+| PinyinLookupKey | Alt+`:` | 音查虎（拼音查虎码）触发键 |
+| CharacterLookupKey | Alt+`"` | 字查音+虎触发键 |
 | EarlyCommit / EarlyCommitToPreedit / AllowDuplicateSingle | 开/关/开 | 早提交三项 |
 | FullShape / AsciiPunct | 关/关 | 全角标点 / ASCII 标点直通 |
 | TabLearning | 开 | Tab 选字写学习库 |
@@ -63,7 +72,7 @@ ln -sf ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
 默认可上屏候选（触发字符按标点表取半/全角，空格上屏），带修饰键的触发不给默认候选。
 
 - **音查虎**：输入拼音（支持拼写缩写）出虎码候选；预编辑按音节切分（`` `zhongguo `` → `` `zhong guo ``）。
-- **字查音+虎**：取应用侧周边文本（需应用支持，否则上排提示「应用不支持周边文本」）；两排显示光标
+- **字查音+虎**：取应用侧周边文本（应用不可用时查不到内容、两排为空，不做提示）；两排显示光标
   左侧 1 个字——上排（排头「咅」）= 拼音、下排（排头「虍」）= 虎码（多音/多码以 `/` 连接，缺数据 `?`）；
   ←/→/↑/↓ 交应用处理（应用光标随动，本层不消费；查码段不下发预编辑，避免应用端 marked text 锁住光标）；
   Esc / 再次触发 / 其它键退出（打字照常输入）。展示面为输入面板辅助文本条（auxUp/auxDown）。

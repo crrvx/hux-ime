@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 键事件与 rime 键名表，对应 librime `key_event.{h,cc}` 与 `key_table.cc`。
 //!
 //! `repr()`/`Parse` 逐字节复刻 librime 行为；键名表由 `tools/generators/gen_key_table.py`

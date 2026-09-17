@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """音查虎索引生成器（⑧-1）：PY_c.dict.yaml → TCSRV01 紧凑索引。
 
 语义依据（librime 1.17.0 的词典反查；本项目称「音查虎」，见 docs/rust-migration.md）：
@@ -10,7 +13,7 @@
 
 用法：
   tools/generators/gen_pinyin_index.py --source PY_c.dict.yaml --out data/tiger_sentence.pinyin.bin.gz
-  tools/generators/gen_pinyin_index.py --source PY_c.dict.yaml --out ... --manifest docs/PINYIN_INDEX_MANIFEST.json
+  tools/generators/gen_pinyin_index.py --source PY_c.dict.yaml --out ... --manifest /tmp/pinyin.manifest.json
   tools/generators/gen_pinyin_index.py --check --source PY_c.dict.yaml --out ...
 
 二进制布局（小端；`u16/u32` 定长）：
@@ -208,7 +211,7 @@ def main() -> int:
     parser.add_argument("--out", required=True, type=pathlib.Path, help="输出（.gz 结尾则 gzip）")
     parser.add_argument("--manifest", type=pathlib.Path, help="写出/校验 manifest（JSON）")
     parser.add_argument("--check", action="store_true", help="只校验 --out 与 manifest 一致")
-    parser.add_argument("--repo", default="https://github.com/crrvx/tiger-sentense-rime", help="manifest 记录的源仓库地址（URL）")
+    parser.add_argument("--repo", default="https://github.com/lvyww/tiger-sentense-rime", help="manifest 记录的源仓库地址（URL）")
     parser.add_argument("--commit", default="", help="manifest 记录的源提交")
     args = parser.parse_args()
 

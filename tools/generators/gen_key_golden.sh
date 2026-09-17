@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # 生成键金样（只需要系统 librime；另需 pin 版 key_table.cc 以取键值清单）。
 #   tools/generators/gen_key_golden.sh <librime-src>
 #

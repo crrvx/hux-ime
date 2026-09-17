@@ -1,6 +1,9 @@
+<!-- SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com> -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 # AGENTS.md
 
-hux-ime：虎句（tiger-sentense）输入方案从 fcitx5-rime 迁移到 fcitx5 原生实现。
+hux-ime：虎句（`tiger_sentence`）输入方案从 fcitx5-rime 迁移到 fcitx5 原生实现。
 
 ## AI 风格
 1. 中文回答，简明扼要；
@@ -23,10 +26,15 @@ hux-ime：虎句（tiger-sentense）输入方案从 fcitx5-rime 迁移到 fcitx5
 2. 修改完成后交由用户审阅确认；
 3. squash 与历史整理由用户自行执行，AI 不代做。
 
+## 命名
+1. 讲我们：`hux-ime`（简写 `hux`）——crate、addon ID、数据目录、环境变量等工程标识一律用它；
+2. 讲方案/数据/标识：`tiger_sentence`（显示名「虎句」）——数据文件、选项、学习库与金样沿用该标识（与上游 rime 方案互通），保持不变；
+3. 讲上游：`虎爪` = [tigerclaw](https://github.com/lvyww/tigerclaw)（原生），`虎整句`／[tiger-sentense-rime](https://github.com/lvyww/tiger-sentense-rime)（rime 版，即「虎爪-rime」）。
+
 ## 背景与约定
-- 参考实现（Rime 方案 + Lua 核心）：<https://github.com/crrvx/tiger-sentense-rime>
+- 参考实现（Rime 方案 + Lua 核心）：<https://github.com/lvyww/tiger-sentense-rime>
   - 金样生成需本地检出：外部检出统一放仓库内 `external/`（已 gitignore），默认
-    `external/tiger-sentense-rime`（`git clone https://github.com/crrvx/tiger-sentense-rime external/tiger-sentense-rime`）；
+    `external/tiger-sentense-rime`（`git clone https://github.com/lvyww/tiger-sentense-rime external/tiger-sentense-rime`）；
     可用 `HUX_REFERENCE_REPO` / `--reference` / `REF` 覆盖；线上地址即上
   - 主引擎 `lua/tiger_sentence.lua`；学习 `tiger_sentence_learning.lua`；
     n-gram `tiger_sentence_ngram.lua`；缓存 `tiger_sentence_cache.lua`

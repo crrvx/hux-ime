@@ -1,6 +1,9 @@
+<!-- SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com> -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 # goldens：差分金样
 
-金样由参照实现（[`crrvx/tiger-sentense-rime`](https://github.com/crrvx/tiger-sentense-rime) 的 Lua 核心）生成，Rust 侧逐位重放比对
+金样由参照实现（[`lvyww/tiger-sentense-rime`](https://github.com/lvyww/tiger-sentense-rime) 的 Lua 核心）生成，Rust 侧逐位重放比对
 （`crates/hux-core/tests/*_differential.rs`）。
 
 ## 内容
@@ -80,9 +83,9 @@ step <case> <index> <repr> <consumed 0/1> <input> <caret> <commit> <preedit>
 ## 重新生成
 
 ```sh
-# 参照仓库：https://github.com/crrvx/tiger-sentense-rime
+# 参照仓库：https://github.com/lvyww/tiger-sentense-rime
 # 本地检出（金样生成用；命令均在仓库根目录执行；外部检出统一放 external/，已 gitignore）
-git clone https://github.com/crrvx/tiger-sentense-rime external/tiger-sentense-rime
+git clone https://github.com/lvyww/tiger-sentense-rime external/tiger-sentense-rime
 REF=external/tiger-sentense-rime
 
 # ngram fixture（入库）
@@ -182,7 +185,7 @@ lua tools/probes/bench_ngram.lua --reference "$REF" --model <model.bin> --transc
 
 ## 来源与校验和
 
-- **主干**：[`crrvx/tiger-sentense-rime`](https://github.com/crrvx/tiger-sentense-rime) @ `8b615235c17c858e1eca8f1a41fbc74e202f8bbe`（main）。
+- **主干**：[`lvyww/tiger-sentense-rime`](https://github.com/lvyww/tiger-sentense-rime) @ `8b615235c17c858e1eca8f1a41fbc74e202f8bbe`（main）。
 - **音查虎**：`feat/reverse-lookup` @ `898579f833df53f1dec5639d56e685751a8a7f71` + 上述 main **本地合并**
   （上游未合并该分支；`tools/generators/gen_pinyin_lookup_golden.sh` 自建临时 worktree 合并，`PIN`/`BASE` 可覆盖）。
 - **键名表**：librime `src/rime/key_table.cc`（sha256 `2f7c6a8b4f2aa474d700a87bd4bd1baa48a2655cd6ce4d2ba05b768f284d9d78`，固定提交 `33e78140`）；
@@ -190,9 +193,9 @@ lua tools/probes/bench_ngram.lua --reference "$REF" --model <model.bin> --transc
 - **键序列 / 音查虎**：`key_sequence.tsv.gz`、`pinyin_lookup.tsv.gz` 由 `tools/probes/rime_sequence_probe.cpp` 驱动
   **真 librime + librime-lua** 与 pin 版 Lua 核心生成（探针头部记录参照提交与源文件 sha256），**CI 不重生成**；
   夹具入库并与 Rust 重放共用，其中音查虎夹具索引由 `tools/generators/gen_pinyin_index.py` 生成（CI 重生成比对）。
-  真实索引（`data/tiger_sentence.pinyin.bin.gz`）的校验和与来源见
-  [`../docs/PINYIN_INDEX_MANIFEST.json`](../docs/PINYIN_INDEX_MANIFEST.json)，本地复验：
-  `python3 tools/generators/gen_pinyin_index.py --source external/tiger-sentense-rime/PY_c.dict.yaml --out data/tiger_sentence.pinyin.bin.gz --check --manifest docs/PINYIN_INDEX_MANIFEST.json`。
+  真实索引（`data/tiger_sentence.pinyin.bin.gz`，sha256 `18a0931a…`）由同一生成器产出，本地复验可重新生成并比对：
+  `python3 tools/generators/gen_pinyin_index.py --source external/tiger-sentense-rime/PY_c.dict.yaml --out /tmp/pinyin.bin.gz && cmp /tmp/pinyin.bin.gz data/tiger_sentence.pinyin.bin.gz`
+  （参照检出须含 `898579f` 的 `PY_c.dict.yaml`）。
 - **词先验**：`lexical.tsv.gz` 由 `tools/generators/gen_lexical_golden.lua` 以参照 main（词先验模块自 `35a10b9` 起提供）与
   入库位图生成（CC BY 4.0，见 [`../docs/LEXICAL_PRIOR_ATTRIBUTION.md`](../docs/LEXICAL_PRIOR_ATTRIBUTION.md)）；
   **已在 CI 中再生成比对**。
@@ -241,8 +244,8 @@ lua tools/probes/bench_ngram.lua --reference "$REF" --model <model.bin> --transc
 | `decode_learning.tsv.gz` | `41a9894d233c32348e42164d4d29fc698c3037741c141ac0b58404094c9e9354` |
 | `decode_learning_model.tsv.gz` | `8a64e6e3d28b101a57075b03233e62c4b03e8c4a8d2a979399a91a00e2d8e806` |
 | `key.tsv.gz` | `e939a077cd0825f7b454a4af300ed50fb6a2f2609c71583525d44f2f8fb3fd33` |
-| `key_sequence.tsv.gz` | `d67cf237617de2615907c04e43c99bda165a61fd0820013db447c99384c83721` |
-| `pinyin_lookup.tsv.gz` | `6fcea93e7cbc12952d7d0b4a7333a4e824a4a22a08f4a21df37b45fef5a219c4` |
+| `key_sequence.tsv.gz` | `10faace7790c73c3fcb8334b4deff90028dfbfa87694cd5a1fa36db1a6ec0584` |
+| `pinyin_lookup.tsv.gz` | `e2d39ba2344f30d795530b621dbf683d7f55bfb69672875d53a48ca18e839547` |
 | `lexical.tsv.gz` | `5b559b2504e21c69b4f702678a96d2947abfe7d7c26adcd2b25c3d4de761e0c3` |
 
 CI 以同一参照提交重生成全部 fixture 金样并与入库内容比对（见 `.github/workflows/ci.yml`）。

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 学习库（参照 `tiger_sentence_learning.lua` 的 `M.open`/`M.confirm`/`M.refresh_scores`）：
 //! `<user dir>/<name>.userdb/`（LevelDB，键 `e/%010d`、值 = frame 五元组）；
 //! 上限 1 万条 / 16 MiB；`refresh_scores` 60 秒节流。

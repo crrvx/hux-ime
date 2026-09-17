@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 键序列金样（2c）重放：真 librime 探针记录 vs Rust 会话逐步比对。
 //!
 //! 比对字段：`consumed`、输入、光标、提交、候选（按页：数量/文本/注释/高亮）。

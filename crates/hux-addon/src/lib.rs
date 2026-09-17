@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! hux-ime（虎句方案）fcitx5 addon 的 Rust 侧（K3）：C ABI、数据加载与会话装配。
 //!
 //! 分工：`shell/hux.cpp` 只做 fcitx5 接口适配（按键 → 本层；提交/preedit/候选 ← 本层回调），
@@ -282,7 +285,7 @@ impl Engine {
         self.forward_after_commit = false;
         let key = KeyEvent::new(keysym as i32, core_modifiers(states, release));
         // 字查音+虎查码段：←/→/↑/↓ **交应用处理**（应用光标随动），本层不消费也不改动输入；
-        // 提示在应用回传周边文本后的下一次按键（含 release）时刷新。
+        // 两排在应用回传周边文本后的下一次按键（含 release）时刷新。
         if !release
             && self.character_lookup_tagged()
             && matches!(key.repr().as_str(), "Left" | "Right" | "Up" | "Down")
@@ -390,7 +393,9 @@ impl Engine {
             return;
         }
         if !state.valid {
-            state.aux_up = "应用不支持周边文本".to_string();
+            // 周边文本不可用（如终端）：不显示提示——提示能否呈现取决于前端，
+            // 统一清空两排。
+            state.aux_up.clear();
             state.aux_down.clear();
             return;
         }
@@ -1118,12 +1123,12 @@ mod tests {
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data"),
         ];
         let mut engine = Engine::new_with_dirs(host(), dirs, None, None);
-        assert!(engine.key(0x3b, FCITX_ALT, false), "音查虎触发键应被消费");
+        assert!(engine.key(0x3a, FCITX_ALT, false), "音查虎触发键应被消费");
         for code in *b"zho" {
             assert!(engine.key(u32::from(code), 0, false), "音查虎输入应被消费");
         }
         let (preedit, _, candidates, _, _, _) = last_update();
-        assert_eq!(preedit, ";zho〔拼音〕");
+        assert_eq!(preedit, ":zho〔拼音〕");
         assert_eq!(
             candidates,
             vec!["中哦", "中龘", "中欧", "找哦", "兆欧", "找欧"]
@@ -1132,16 +1137,16 @@ mod tests {
         assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "中哦");
         // 音查虎预编辑「按音节分码」：全拼音节之间插空格。
         engine.reset();
-        assert!(engine.key(0x3b, FCITX_ALT, false));
+        assert!(engine.key(0x3a, FCITX_ALT, false));
         for code in *b"zhongguo" {
             assert!(engine.key(u32::from(code), 0, false));
         }
         let (preedit, _, candidates, _, _, _) = last_update();
         assert_eq!(candidates.first().map(String::as_str), Some("中国"));
-        assert_eq!(preedit, ";zhong guo〔拼音〕");
+        assert_eq!(preedit, ":zhong guo〔拼音〕");
     }
 
-    /// 字查音+虎（⑧-2）：默认 Ctrl+~ 进入组合（**带修饰键不给默认候选**）；
+    /// 字查音+虎（⑧-2）：默认 Alt+" 进入组合（**带修饰键不给默认候选**）；
     /// 上排 = 光标左侧 1 字拼音、下排 = 虎码，步长 1；改为单字符键时才给默认可上屏候选。
     #[test]
     fn character_lookup_end_to_end() {
@@ -1155,10 +1160,10 @@ mod tests {
         let mut engine = Engine::new_with_dirs(host(), dirs, None, None);
         // 应用侧周边文本「中欧中兴」，光标在第 2 个字符后（锚点 = 2）。
         engine.set_surrounding(Some("中欧中兴"), 2);
-        // 默认 Alt+'（带修饰）→ 组合无默认候选；上排「咅」、下排「虍」。
-        assert!(engine.key(0x27, FCITX_ALT, false), "Alt+' 应被消费");
+        // 默认 Alt+"（带修饰）→ 组合无默认候选；上排「咅」、下排「虍」。
+        assert!(engine.key(0x22, FCITX_ALT, false), "Alt+\" 应被消费");
         let (preedit, _, candidates, _, up, down) = last_update();
-        assert_eq!(engine.context.input(), b"'");
+        assert_eq!(engine.context.input(), b"\"");
         assert!(preedit.is_empty(), "查码段不下发预编辑：{preedit:?}");
         assert!(
             candidates.is_empty(),
@@ -1166,7 +1171,7 @@ mod tests {
         );
         assert_eq!(up, "咅 ?");
         assert_eq!(down, "虍 nbe/nbeq");
-        // ←/→ 交应用（不消费）；周边文本光标随动后，提示在下一次按键刷新。
+        // ←/→ 交应用（不消费）；周边文本光标随动后，两排在下一次按键刷新。
         assert!(!engine.key(0xff51, 0, false), "Left 应交应用");
         assert!(!engine.key(0xff53, 0, false), "Right 应交应用");
         assert!(!engine.key(0xff52, 0, false), "Up 应交应用");
@@ -1179,9 +1184,9 @@ mod tests {
         // 其它键：退出查码段并照常处理。
         assert!(engine.key(u32::from(b'a'), 0, false), "普通键照常处理");
         assert_eq!(engine.context.input(), b"a");
-        // 音查虎：带修饰键（默认 Alt+;）**不给**默认候选；单字符键（;）才给。
+        // 音查虎：带修饰键（默认 Alt+:）**不给**默认候选；单字符键（;）才给。
         engine.reset();
-        assert!(engine.key(0x3b, FCITX_ALT, false), "Alt+; 应被消费");
+        assert!(engine.key(0x3a, FCITX_ALT, false), "Alt+: 应被消费");
         let (_, _, candidates, _, _, _) = last_update();
         assert!(
             candidates.is_empty(),
@@ -1228,6 +1233,29 @@ mod tests {
         );
         assert!(engine.key(0x20, 0, false), "空格确认候选");
         assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "~");
+    }
+
+    /// 字查音+虎（⑧-2）：周边文本不可用（如终端）时不显示提示，两排均为空。
+    #[test]
+    fn character_lookup_without_surrounding_shows_nothing() {
+        let _guard = serial();
+        UPDATES.lock().unwrap().clear();
+        let dirs = vec![
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/pinyin_lookup"),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+        ];
+        let mut engine = Engine::new_with_dirs(host(), dirs, None, None);
+        engine.set_surrounding(None, 0);
+        assert!(engine.key(0x22, FCITX_ALT, false), "Alt+\" 应被消费");
+        let (_, _, _, _, up, down) = last_update();
+        assert!(up.is_empty(), "周边文本不可用时上排应为空：{up:?}");
+        assert!(down.is_empty(), "周边文本不可用时下排应为空：{down:?}");
+        // 周边文本恢复后，同一查码段在下一次按键刷新出两排。
+        engine.set_surrounding(Some("中欧中兴"), 2);
+        assert!(!engine.key(0xffe1, 0, false), "修饰键不消费（触发刷新）");
+        let (_, _, _, _, up, down) = last_update();
+        assert_eq!(up, "咅 ?");
+        assert_eq!(down, "虍 nbe/nbeq");
     }
 
     /// 预编辑「按词分码」：使用高亮候选的 preedit（`ab cd`），单字不分段（`ab`）。

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Beam 解码（冷路径），对应参照 `decode_full` / `decode` 的去缓存形态。
 //!
 //! 本增量范围：normalize、rank 选择器、资格过滤、beam 扩展、桶聚合、评分与候选发射、

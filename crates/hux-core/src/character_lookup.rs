@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 字查音+虎（⑧-2）：查**光标左侧**汉字的**拼音（上排）与虎码（下排）**。
 //!
 //! 与音查虎同机制：触发键推入组合（本段标签 [`TAG`]）；**仅当触发键为单字符键**时给出

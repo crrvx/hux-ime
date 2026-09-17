@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! addon 配置模型（Rust 半）：外部设置（fcitx5 配置界面 / 测试）与内建缺省。
 //!
 //! 合并顺序照参照 schema 语义：**`tiger_sentence.options.yaml`（user 覆盖） > 本设置 > 内建缺省**；
@@ -42,8 +45,8 @@ impl Default for Settings {
             ascii_punct: false,
             tab_learning: true,
             high_freq_limit: DEFAULT_HIGH_FREQ_LIMIT,
-            pinyin_lookup_key: "Alt+semicolon".to_string(),
-            character_lookup_key: "Alt+apostrophe".to_string(),
+            pinyin_lookup_key: "Alt+colon".to_string(),
+            character_lookup_key: "Alt+quotedbl".to_string(),
         }
     }
 }

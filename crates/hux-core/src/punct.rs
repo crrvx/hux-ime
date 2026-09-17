@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 标点表（librime `punctuator` 等价物）：`symbols.yaml` 的 half/full shape 映射。
 //!
 //! 参照配置：`punctuator/import_preset: symbols`、`digit_separators: ""`（不做数字分隔符）、

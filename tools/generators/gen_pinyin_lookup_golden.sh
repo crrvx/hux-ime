@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # 生成音查虎金样（⑧-1）：参照分支（含 PY_c 音查虎）的 Lua 核心 + 系统 librime + librime-lua。
 # 参照态 = 分支提交 PIN 与主干提交 BASE 的**本地合并**（上游未合并该分支；合并保证
 # 音查虎特性与主干修复（如自动上屏对齐）同时生效；生成器自建临时 worktree，可复现）。
 #
 # 用法：tools/generators/gen_pinyin_lookup_golden.sh [输出文件]
 #   REF  参照仓库本地检出（默认仓库内 external/tiger-sentense-rime，已 gitignore）
-#   REF_URL  写入金样头部的参照仓库线上地址（默认 https://github.com/crrvx/tiger-sentense-rime）
+#   REF_URL  写入金样头部的参照仓库线上地址（默认 https://github.com/lvyww/tiger-sentense-rime）
 #   PIN  音查虎分支提交（默认 898579f833df53f1dec5639d56e685751a8a7f71，含 PY_c 与音查虎接线）
 #   BASE 主干提交（默认 8b615235c17c858e1eca8f1a41fbc74e202f8bbe；与 PIN 合并后生成）
 #   CASES 用例文件（默认 tools/cases/pinyin_lookup_cases.txt）
@@ -17,7 +20,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 REF="${REF:-$ROOT/external/tiger-sentense-rime}"
-REF_URL="${REF_URL:-https://github.com/crrvx/tiger-sentense-rime}"
+REF_URL="${REF_URL:-https://github.com/lvyww/tiger-sentense-rime}"
 PIN="${PIN:-898579f833df53f1dec5639d56e685751a8a7f71}"
 BASE="${BASE:-8b615235c17c858e1eca8f1a41fbc74e202f8bbe}"
 OUT="${1:-$ROOT/goldens/pinyin_lookup.tsv.gz}"

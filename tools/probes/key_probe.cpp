@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // 键金样探针：调用系统 librime 的键名表与 KeyEvent，输出 TSV 供差分测试。
 //
 // 为避免依赖 librime 构建期头文件（build_config.h/boost），此处自声明

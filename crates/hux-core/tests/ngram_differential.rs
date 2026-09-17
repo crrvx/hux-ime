@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 差分测试：重放 Lua 参照实现生成的金样 transcript，逐位比对。
 //!
 //! 金样由 `tools/generators/gen_ngram_golden.lua` 生成：

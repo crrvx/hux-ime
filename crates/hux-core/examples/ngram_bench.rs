@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 与 `tools/probes/bench_ngram.lua` 对齐的基准：加载模型后重放 transcript 中的全部
 //! logp 查询，输出加载/查询耗时与结果位模式校验和（xor）。
 //!

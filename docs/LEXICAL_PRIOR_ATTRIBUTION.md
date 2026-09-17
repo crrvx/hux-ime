@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com> -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 # 紧凑词先验：来源与署名
 
 `data/tiger_sentence.lexical.bin`（TCSLEX01 Bloom filter，150,032 字节，
@@ -21,7 +24,7 @@ sha256 `8dbc884b6cb719d07e4cef153c8048db19a11f8224f75a4ed87853e688a27393`）
 
 ## 变更说明
 
-上游 [`tiger-sentense-rime`](https://github.com/crrvx/tiger-sentense-rime) 所作的变更：只保留虎句码表可编码的 2～4 字条目，
+上游 [`tiger-sentense-rime`](https://github.com/lvyww/tiger-sentense-rime) 所作的变更：只保留虎句码表可编码的 2～4 字条目，
 按上游权重、词长和 Unicode 顺序稳定排序，选取前 50,000 条；随后丢弃词文本和
 权重，仅发布 1,200,000 bit、10 次散列的 TCSLEX01 Bloom filter（估算假阳性率
 约 `2.11e-5`）。
@@ -30,11 +33,12 @@ sha256 `8dbc884b6cb719d07e4cef153c8048db19a11f8224f75a4ed87853e688a27393`）
 一致），仅将其由参照仓库根目录移至 `data/`，并在 Rust 侧实现读取与打分
 （`crates/hux-core/src/lexical.rs`）。转换与移植均不表示上游作者认可本项目。
 
-精确参数与输入/输出摘要见 [`LEXICAL_PRIOR_MANIFEST.json`](LEXICAL_PRIOR_MANIFEST.json)。
+精确摘要：可编码 2–4 字条目 764,132 条 → 前 50,000 条；生成时码表输入 `tiger_sentence.codes.txt`
+sha256 为 `1d3e9b0ce0e4a603be3f220c71acecad846f020e87a52723ecb3814f6b53ac0e`。
 
 ## 复现
 
-取得上述上游版本的源词库后，可在参照检出内用其脚本复现（参数见清单；外部检出统一放本仓库
+取得上述上游版本的源词库后，可在参照检出内用其脚本复现（外部检出统一放本仓库
 `external/`，见 [`../AGENTS.md`](../AGENTS.md)）：
 
 ```sh
@@ -48,12 +52,11 @@ git clone https://github.com/fcxxxz/rime-mohu external/rime-mohu
     --source-license CC-BY-4.0 \
     --codes tiger_sentence.codes.txt \
     --output tiger_sentence.lexical.bin \
-    --manifest docs/LEXICAL_PRIOR_MANIFEST.json
+    --manifest /tmp/lexical.manifest.json
 )
 ```
 
-产物应与本仓库 `data/tiger_sentence.lexical.bin`（sha256 见上）及
-`docs/LEXICAL_PRIOR_MANIFEST.json`（与上游清单逐字节一致）相同。
+产物应与本仓库 `data/tiger_sentence.lexical.bin`（sha256 见上）一致；`--manifest` 输出可留作对拍。
 
 ## 校验
 

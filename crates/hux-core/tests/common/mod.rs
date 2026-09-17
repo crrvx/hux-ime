@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 差分测试共用工具。
 //!
 //! cargo 约定：`tests/` 子目录不构成独立测试目标；各测试文件以 `mod common;` 引入。

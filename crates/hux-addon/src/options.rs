@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 选项持久化（参照 `M.options`）：主文件 `tiger_sentence.options.yaml`，
 //! 缺失键回退 `<user dir>/user.yaml` 的 `var/option/<name>`（只读）；
 //! 保存失败写入属性 `tiger_sentence_options_error`。

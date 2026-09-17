@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 差分测试：重放键金样（由 librime 探针生成），逐条比对。
 //!
 //! 金样 `goldens/key.tsv.gz` 由 `tools/generators/gen_key_golden.sh` 生成

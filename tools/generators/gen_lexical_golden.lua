@@ -1,3 +1,6 @@
+-- SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+-- SPDX-License-Identifier: GPL-3.0-or-later
+
 -- 生成 lexical 金样（TCSLEX01 读取 / Bloom / 最大权词覆盖打分）。
 --
 --   lua tools/generators/gen_lexical_golden.lua --reference <repo> --model <bin> --out <tsv>

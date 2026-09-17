@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2014 RIME Developers
+// SPDX-License-Identifier: BSD-3-Clause
+//
 //! 由 librime `src/rime/key_table.cc` 生成（请勿手改）。
 //!
 //! 生成：`python3 tools/generators/gen_key_table.py --source <librime>/src/rime/key_table.cc --out <此文件>`

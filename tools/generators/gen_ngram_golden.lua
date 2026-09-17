@@ -1,6 +1,9 @@
+-- SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+-- SPDX-License-Identifier: GPL-3.0-or-later
+
 -- 生成 ngram 差分金样 transcript（TSV），供 Rust 侧逐位重放比对。
 --
--- 参照实现来自 tiger-sentense-rime 仓库（https://github.com/crrvx/tiger-sentense-rime）：
+-- 参照实现来自 tiger-sentense-rime 仓库（https://github.com/lvyww/tiger-sentense-rime）：
 --   lua tools/generators/gen_ngram_golden.lua --reference <repo> --model <bin> --out <tsv> [--mode fixture|sample]
 --
 -- 模式：

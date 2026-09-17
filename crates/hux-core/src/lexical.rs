@@ -1,7 +1,9 @@
+// SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 紧凑词先验（TCSLEX01 Bloom filter），对应参照 `lua/tiger_sentence_lexical.lua`。
 //!
-//! 数据来源与许可见 `docs/LEXICAL_PRIOR_ATTRIBUTION.md`（CC BY 4.0）；
-//! 参数与校验和见 `docs/LEXICAL_PRIOR_MANIFEST.json`。
+//! 数据来源、许可（CC BY 4.0）与参数摘要见 `docs/LEXICAL_PRIOR_ATTRIBUTION.md`。
 //! 只用于最终排序（Top-5 重排），不进入 mass/置信度。
 
 use hashbrown::HashMap;

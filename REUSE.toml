@@ -1,0 +1,37 @@
+version = 1
+
+# 上游派生数据、生成物与杂项：不修改文件本体，仅在此标注（REUSE 规范）。
+# 自有源码/脚本/配置/文档的许可在各自文件头（SPDX）声明。
+
+[[annotations]]
+path = [
+    "data/tiger_sentence.char_ranks.txt",
+    "data/tiger_sentence.codes.txt",
+    "data/tiger_sentence.full_code_whitelist.txt",
+    "data/tiger_sentence.supplement.txt",
+    "data/symbols.yaml",
+    "data/tiger_sentence.pinyin.bin.gz",
+]
+SPDX-FileCopyrightText = ["虎整句（tiger-sentense-rime）作者与贡献者", "2026 明雅流风 <crrvx@outlook.com>"]
+SPDX-License-Identifier = "GPL-3.0-only"
+
+[[annotations]]
+path = "data/tiger_sentence.lexical.bin"
+SPDX-FileCopyrightText = "rime-mohu contributors"
+SPDX-License-Identifier = "CC-BY-4.0"
+
+[[annotations]]
+path = "goldens/**"
+SPDX-FileCopyrightText = ["虎整句（tiger-sentense-rime）作者与贡献者", "2026 明雅流风 <crrvx@outlook.com>"]
+SPDX-License-Identifier = "GPL-3.0-only"
+
+[[annotations]]
+path = "goldens/key.tsv.gz"
+precedence = "override"
+SPDX-FileCopyrightText = "2014 RIME Developers"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+[[annotations]]
+path = [".gitignore", "Cargo.lock", "LICENSE"]
+SPDX-FileCopyrightText = "2026 明雅流风 <crrvx@outlook.com>"
+SPDX-License-Identifier = "GPL-3.0-or-later"

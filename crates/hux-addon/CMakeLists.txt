@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 cmake_minimum_required(VERSION 3.20)
 project(hux-addon VERSION 0.1.0 LANGUAGES CXX)
 

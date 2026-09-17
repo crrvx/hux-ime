@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 差分测试：重放 lexical 金样（TCSLEX01 读取 / Bloom / 最大权词覆盖打分）逐位比对。
 //!
 //! 金样由 `tools/generators/gen_lexical_golden.lua` 生成：参照 main ≥ `35a10b9` 的词先验模块 +

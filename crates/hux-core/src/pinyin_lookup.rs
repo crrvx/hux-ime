@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 音查虎（⑧-1）：`tiger_sentence.pinyin.bin[.gz]`（TCSRV01）读取与音查虎翻译。
 //!
 //! 语义对齐 librime 1.17.0 的词典音查虎（`reverse_lookup_translator` + `ReverseLookupFilter`，
