@@ -1,6 +1,6 @@
 # data/
 
-运行时数据（随包安装到 `…/hux/`，K3 打包）。
+运行时数据（随包安装到 `…/hux/`）。
 
 - `tiger_sentence.lexical.bin`：紧凑词先验（TCSLEX01 Bloom filter）。
   来源、许可（CC BY 4.0）与变更说明见
