@@ -53,16 +53,6 @@ int32_t hux_engine_set_surrounding(hux_engine *engine,
                                          const char *text_utf8,
                                          int32_t cursor_chars, int32_t valid);
 
-#ifdef __cplusplus
-}
-#endif
-
-#endif /* HUX_ABI_H_ */
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 /* 外部配置（Rust 侧 Settings 的 C 布局；由壳从 fcitx5 配置读出后传入）。 */
 typedef struct hux_options {
   int32_t early_commit;
@@ -83,3 +73,5 @@ int32_t hux_engine_apply_settings(hux_engine *engine,
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* HUX_ABI_H_ */

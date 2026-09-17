@@ -2,7 +2,7 @@
 
 > 2026-09-16 ｜ 关联：[`rime-semantics.md`](rime-semantics.md)、[`spike-report.md`](spike-report.md)
 
-目标：hux-ime（hux-ime，内部方案虎句/tiger_sentence）迁移为 **fcitx5 原生 Rust 实现**；核心逻辑全量移植，Lua 仅作测试 oracle，无 librime 依赖。
+目标：hux-ime（简写 hux；内部方案虎句/tiger_sentence）迁移为 **fcitx5 原生 Rust 实现**；核心逻辑全量移植，Lua 仅作测试 oracle，无 librime 依赖。
 
 ## 1. 路线
 

@@ -12,5 +12,5 @@
   [`../docs/PINYIN_INDEX_MANIFEST.json`](../docs/PINYIN_INDEX_MANIFEST.json)，
   语义与接线见 [`../docs/rust-migration.md`](../docs/rust-migration.md)。
 - `symbols.yaml`：标点表（`punctuator/half_shape|full_shape`；`{commit}`/标量/`{pair}`）。
-  取自参照 `symbols.yaml`（pin `35a10b9`），仅覆盖一处默认：half_shape 的 `"/"` 提交 `"/"`
+  取自参照 `symbols.yaml`（pin `8b615235`；该文件自 `35a10b9` 以来未变），仅覆盖一处默认：half_shape 的 `"/"` 提交 `"/"`
   （参照原表为 `、`）；full_shape 不变。测试夹具 `goldens/key_sequence/symbols.yaml` 保持参照原样。
