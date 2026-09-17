@@ -174,19 +174,25 @@ private:
                                                                             : fcitx::Text());
         context_->updatePreedit();
 
-        auto candidateList = std::make_unique<fcitx::CommonCandidateList>();
-        for (int32_t index = 0; index < count; ++index) {
-            const char *text =
-                texts != nullptr && texts[index] != nullptr ? texts[index] : "";
-            const char *comment = comments != nullptr && comments[index] != nullptr
-                                      ? comments[index]
-                                      : "";
-            candidateList->append<fcitx::DisplayOnlyCandidateWord>(
-                fcitx::Text(text), fcitx::Text(comment));
-        }
-        // 翻页交由 fcitx5 面板（页大小与引擎一致）：绝对索引 → 全局光标 + 所在页。
-        candidateList->setPageSize(kCandidatePageSize);
-        if (count > 0) {
+        // 候选：无候选时置 `nullptr` 清除（fcitx5 约定）。**不可**留下「存在但为空」的
+        // 列表——其他组件会对它调用 `candidate(0)`（如 fcitx5-table 的
+        // `TableState::keyEvent`），抛 `CommonCandidateList: invalid index` 并 abort。
+        if (count <= 0) {
+            context_->inputPanel().setCandidateList(nullptr);
+        } else {
+            auto candidateList = std::make_unique<fcitx::CommonCandidateList>();
+            for (int32_t index = 0; index < count; ++index) {
+                const char *text =
+                    texts != nullptr && texts[index] != nullptr ? texts[index] : "";
+                const char *comment =
+                    comments != nullptr && comments[index] != nullptr
+                        ? comments[index]
+                        : "";
+                candidateList->append<fcitx::DisplayOnlyCandidateWord>(
+                    fcitx::Text(text), fcitx::Text(comment));
+            }
+            // 翻页交由 fcitx5 面板（页大小与引擎一致）：绝对索引 → 全局光标 + 所在页。
+            candidateList->setPageSize(kCandidatePageSize);
             // 防御：越界不设光标索引。
             const int index = std::min(std::max(selected, 0), count - 1);
             candidateList->setGlobalCursorIndex(index);
@@ -194,6 +200,7 @@ private:
             if (page < candidateList->totalPages()) {
                 candidateList->setPage(page);
             }
+            context_->inputPanel().setCandidateList(std::move(candidateList));
         }
         // 字查音+虎（⑧-2）：两排辅助文本（上排 = 光标左、下排 = 光标右）；空串清除。
         const auto auxText = [](const char *value) {
@@ -201,7 +208,6 @@ private:
         };
         context_->inputPanel().setAuxUp(auxText(auxUp));
         context_->inputPanel().setAuxDown(auxText(auxDown));
-        context_->inputPanel().setCandidateList(std::move(candidateList));
         context_->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
     }
 

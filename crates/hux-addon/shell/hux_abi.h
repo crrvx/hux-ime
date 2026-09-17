@@ -23,6 +23,9 @@ typedef struct hux_engine hux_engine;
  *         fcitx `Text::cursor` 一致）+ 候选数组（文本/注释，各 NUL 结尾）+
  *         候选数 + 当前高亮索引 + 两排辅助文本（auxUp = 字查音+虎上排/光标左、
  *         auxDown = 下排/光标右；UTF-8，NUL 结尾，可为 ""）。
+ *         候选数为 0 时宿主必须清除候选列表（置 `nullptr`）——不得留下
+ *         「存在但为空」的列表：其他组件（如 fcitx5-table）会对它调用
+ *         `candidate(0)` 并抛 `CommonCandidateList: invalid index`。
  */
 typedef struct hux_host {
     void *user;
