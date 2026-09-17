@@ -33,7 +33,7 @@ jobs:
     env:
       REFERENCE_REPO: https://github.com/crrvx/tiger-sentense-rime
       REFERENCE_COMMIT: 8b615235c17c858e1eca8f1a41fbc74e202f8bbe
-      LIBRIME_REPO: https://github.com/rime/librime
+      LIBRIME_RAW: https://raw.githubusercontent.com/rime/librime
       LIBRIME_COMMIT: 33e78140250125871856cdc5b42ddc6a5fcd3cd4
     steps:
       - uses: actions/checkout@v4
@@ -51,12 +51,12 @@ jobs:
           git -C external/tiger-sentense-rime remote add origin "$REFERENCE_REPO"
           git -C external/tiger-sentense-rime fetch --depth 1 origin "$REFERENCE_COMMIT"
           git -C external/tiger-sentense-rime checkout --detach FETCH_HEAD
-      - name: Fetch librime (key table provenance)
+      - name: Fetch librime key_table.cc (key table provenance)
         run: |
-          git init external/librime
-          git -C external/librime remote add origin "$LIBRIME_REPO"
-          git -C external/librime fetch --depth 1 origin "$LIBRIME_COMMIT"
-          git -C external/librime checkout --detach FETCH_HEAD
+          mkdir -p external/librime/src/rime
+          curl -fsSL -o external/librime/src/rime/key_table.cc \
+            "$LIBRIME_RAW/$LIBRIME_COMMIT/src/rime/key_table.cc"
+          echo "2f7c6a8b4f2aa474d700a87bd4bd1baa48a2655cd6ce4d2ba05b768f284d9d78  external/librime/src/rime/key_table.cc" | sha256sum -c -
       - name: Verify generated key table
         run: |
           python3 tools/gen_key_table.py \

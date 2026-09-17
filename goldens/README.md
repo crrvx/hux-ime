@@ -147,10 +147,11 @@ gzip -9 -n -c /tmp/decode_learning_model.tsv > goldens/decode_learning_model.tsv
 lua tools/gen_learning_golden.lua --reference "$REF" --out /tmp/learning.tsv
 gzip -9 -n -c /tmp/learning.tsv > goldens/learning.tsv.gz
 
-# key（入库；需要 librime 源码头文件与系统 librime；源码检出放 external/，pin 与键表来源一致）
-git clone https://github.com/rime/librime external/librime
-git -C external/librime checkout 33e78140250125871856cdc5b42ddc6a5fcd3cd4
-bash tools/gen_key_golden.sh external/librime
+# key（入库；只需要系统 librime；pin 版 key_table.cc 单文件下载即可，无需克隆）
+mkdir -p external/librime/src/rime
+curl -fsSL -o external/librime/src/rime/key_table.cc \
+  https://raw.githubusercontent.com/rime/librime/33e78140250125871856cdc5b42ddc6a5fcd3cd4/src/rime/key_table.cc
+bash tools/gen_key_golden.sh external/librime    # 脚本校验文件 sha 与 key_table.rs 头部一致
 
 # key_sequence（入库；需要系统 librime + librime-lua，构建 pin 版隔离环境）
 bash tools/gen_key_sequence_golden.sh
@@ -185,7 +186,7 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 - **音查虎**：`feat/reverse-lookup` @ `898579f833df53f1dec5639d56e685751a8a7f71` + 上述 main **本地合并**
   （上游未合并该分支；`tools/gen_pinyin_lookup_golden.sh` 自建临时 worktree 合并，`PIN`/`BASE` 可覆盖）。
 - **键名表**：librime `src/rime/key_table.cc`（sha256 `2f7c6a8b4f2aa474d700a87bd4bd1baa48a2655cd6ce4d2ba05b768f284d9d78`，固定提交 `33e78140`）；
-  `key_table.rs` 由 `tools/gen_key_table.py` 生成（CI 重生成比对）；`key.tsv.gz` 由系统 librime 1.17.0 探针生成，**CI 不重生成**。
+  `key_table.rs` 由 `tools/gen_key_table.py` 生成（CI 单文件下载源码后重生成比对）；`key.tsv.gz` 由系统 librime 1.17.0 探针生成，**CI 不重生成**。
 - **键序列 / 音查虎**：`key_sequence.tsv.gz`、`pinyin_lookup.tsv.gz` 由 `tools/rime_sequence_probe.cpp` 驱动
   **真 librime + librime-lua** 与 pin 版 Lua 核心生成（探针头部记录参照提交与源文件 sha256），**CI 不重生成**；
   夹具入库并与 Rust 重放共用，其中音查虎夹具索引由 `tools/gen_pinyin_index.py` 生成（CI 重生成比对）。
