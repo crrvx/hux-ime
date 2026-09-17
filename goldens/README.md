@@ -81,8 +81,9 @@ step <case> <index> <repr> <consumed 0/1> <input> <caret> <commit> <preedit>
 
 ```sh
 # 参照仓库：https://github.com/crrvx/tiger-sentense-rime
-# 本地检出（金样生成用；以下命令均在仓库根目录执行）
-REF=../tiger-sentense-rime
+# 本地检出（金样生成用；命令均在仓库根目录执行；外部检出统一放 external/，已 gitignore）
+git clone https://github.com/crrvx/tiger-sentense-rime external/tiger-sentense-rime
+REF=external/tiger-sentense-rime
 
 # ngram fixture（入库）
 lua tools/gen_ngram_golden.lua --reference "$REF" \
@@ -146,8 +147,10 @@ gzip -9 -n -c /tmp/decode_learning_model.tsv > goldens/decode_learning_model.tsv
 lua tools/gen_learning_golden.lua --reference "$REF" --out /tmp/learning.tsv
 gzip -9 -n -c /tmp/learning.tsv > goldens/learning.tsv.gz
 
-# key（入库；需要 librime 源码头文件与系统 librime）
-bash tools/gen_key_golden.sh /path/to/librime
+# key（入库；需要 librime 源码头文件与系统 librime；源码检出放 external/，pin 与键表来源一致）
+git clone https://github.com/rime/librime external/librime
+git -C external/librime checkout 33e78140250125871856cdc5b42ddc6a5fcd3cd4
+bash tools/gen_key_golden.sh external/librime
 
 # key_sequence（入库；需要系统 librime + librime-lua，构建 pin 版隔离环境）
 bash tools/gen_key_sequence_golden.sh
@@ -188,7 +191,7 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
   夹具入库并与 Rust 重放共用，其中音查虎夹具索引由 `tools/gen_pinyin_index.py` 生成（CI 重生成比对）。
   真实索引（`data/tiger_sentence.pinyin.bin.gz`）的校验和与来源见
   [`../docs/PINYIN_INDEX_MANIFEST.json`](../docs/PINYIN_INDEX_MANIFEST.json)，本地复验：
-  `python3 tools/gen_pinyin_index.py --source <ref>/PY_c.dict.yaml --out data/tiger_sentence.pinyin.bin.gz --check --manifest docs/PINYIN_INDEX_MANIFEST.json`。
+  `python3 tools/gen_pinyin_index.py --source external/tiger-sentense-rime/PY_c.dict.yaml --out data/tiger_sentence.pinyin.bin.gz --check --manifest docs/PINYIN_INDEX_MANIFEST.json`。
 - **词先验**：`lexical.tsv.gz` 由 `tools/gen_lexical_golden.lua` 以参照 main（词先验模块自 `35a10b9` 起提供）与
   入库位图生成（CC BY 4.0，见 [`../docs/LEXICAL_PRIOR_ATTRIBUTION.md`](../docs/LEXICAL_PRIOR_ATTRIBUTION.md)）；
   **已在 CI 中再生成比对**。

@@ -29,7 +29,7 @@ local opts = parse_args({ ... })
 -- 默认参照检出：与仓库同级（相对脚本位置解析，不依赖调用时的 cwd）。
 local script_dir = (arg and arg[0] or ""):match("^(.*)[/\\]") or "."
 local reference = opts.reference or os.getenv("HUX_REFERENCE_REPO")
-    or (script_dir .. "/../../tiger-sentense-rime")
+    or (script_dir .. "/../external/tiger-sentense-rime")
 assert(opts.out, "missing --out")
 
 package.path = reference .. "/lua/?.lua;" .. package.path

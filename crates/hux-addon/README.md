@@ -20,6 +20,7 @@ sudo cmake --install build/addon      # /usr/lib/fcitx5/libhux.so + 两个 conf
 `models/sentence-ngram-mobile.bin`）。开发可用环境变量覆盖（目录冒号分隔 / 模型路径）：
 
 ```sh
+# 模型示例取自 fcitx5-rime 数据目录（按实际安装位置替换；任意 TCSKNM02 模型均可）
 HUX_DATA_DIRS="goldens/lexicon:data" \
 HUX_MODEL="$HOME/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin" \
 fcitx5 -r -d
@@ -31,6 +32,7 @@ fcitx5 -r -d
 mkdir -p ~/.local/share/fcitx5/hux/models
 cp goldens/lexicon/*.txt data/tiger_sentence.lexical.bin data/tiger_sentence.pinyin.bin.gz \
   ~/.local/share/fcitx5/hux/
+# 若已装 fcitx5-rime，模型可直接软链（示例路径，按实际位置替换）
 ln -sf ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
   ~/.local/share/fcitx5/hux/models/
 ```

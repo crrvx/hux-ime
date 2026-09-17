@@ -34,18 +34,26 @@ sha256 `8dbc884b6cb719d07e4cef153c8048db19a11f8224f75a4ed87853e688a27393`）
 
 ## 复现
 
-取得上述上游版本的源词库后，可用上游脚本复现（参数见清单）：
+取得上述上游版本的源词库后，可在参照检出内用其脚本复现（参数见清单；外部检出统一放本仓库
+`external/`，见 [`../AGENTS.md`](../AGENTS.md)）：
 
 ```sh
-python3 tools/build_lexical_prior.py \
-  --source /path/to/rime-mohu/mohu_flypy.base.dict.yaml \
-  --source-repository https://github.com/fcxxxz/rime-mohu \
-  --source-revision 9f43098cefdb450fe8dec0f3069fe8d9999b9d10 \
-  --source-license CC-BY-4.0 \
-  --codes tiger_sentence.codes.txt \
-  --output tiger_sentence.lexical.bin \
-  --manifest docs/LEXICAL_PRIOR_MANIFEST.json
+git clone https://github.com/fcxxxz/rime-mohu external/rime-mohu
+(
+  cd external/tiger-sentense-rime
+  python3 tools/build_lexical_prior.py \
+    --source ../rime-mohu/mohu_flypy.base.dict.yaml \
+    --source-repository https://github.com/fcxxxz/rime-mohu \
+    --source-revision 9f43098cefdb450fe8dec0f3069fe8d9999b9d10 \
+    --source-license CC-BY-4.0 \
+    --codes tiger_sentence.codes.txt \
+    --output tiger_sentence.lexical.bin \
+    --manifest docs/LEXICAL_PRIOR_MANIFEST.json
+)
 ```
+
+产物应与本仓库 `data/tiger_sentence.lexical.bin`（sha256 见上）及
+`docs/LEXICAL_PRIOR_MANIFEST.json`（与上游清单逐字节一致）相同。
 
 ## 校验
 

@@ -25,8 +25,9 @@ hux-ime：虎句（tiger-sentense）输入方案从 fcitx5-rime 迁移到 fcitx5
 
 ## 背景与约定
 - 参考实现（Rime 方案 + Lua 核心）：<https://github.com/crrvx/tiger-sentense-rime>
-  - 金样生成需本地检出：默认取与仓库同级的 `../tiger-sentense-rime`，可用
-    `HUX_REFERENCE_REPO` / `--reference` / `REF` 覆盖；线上地址即上
+  - 金样生成需本地检出：外部检出统一放仓库内 `external/`（已 gitignore），默认
+    `external/tiger-sentense-rime`（`git clone https://github.com/crrvx/tiger-sentense-rime external/tiger-sentense-rime`）；
+    可用 `HUX_REFERENCE_REPO` / `--reference` / `REF` 覆盖；线上地址即上
   - 主引擎 `lua/tiger_sentence.lua`；学习 `tiger_sentence_learning.lua`；
     n-gram `tiger_sentence_ngram.lua`；缓存 `tiger_sentence_cache.lua`
   - 测试 `tools/test_*.lua` + `tools/run_regressions.py`：迁移期作为逐位等价 oracle

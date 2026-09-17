@@ -18,5 +18,5 @@ compile_commands.json
 # 真实模型差分金样（仅本地生成）
 goldens/local/
 
-# CI 内临时克隆的参照仓库
+# 外部检出（参照仓库 / librime / rime-mohu 等；勿入库）
 external/
