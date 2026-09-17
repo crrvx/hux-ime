@@ -87,7 +87,9 @@ docs/                    # 本文档、词先验署名、数据清单
 - **英文模式不实现**（设计取舍）：英文输入交由 fcitx5 切换输入法；大写字母经 `char_handler` 直通（先提交组合）。
 - **提交与按键顺序**：可打印字符的 `char_handler` 在核心语义为「提交组合 + 不消费」（同 librime）；宿主层
   （addon）据此消费该键并以 `forwardKey` 重发，保证客户端先收到提交、后收到按键
-  （与 fcitx5 核心 `KeyEventOrderFix` 修法一致）。
+  （与 fcitx5 核心 `KeyEventOrderFix` 修法一致）。**例外**：布局转换键（核心 `KeyEvent::forward()`，
+  如系统 colemak + 方案 `Layout=us`）不自行转发，交回核心在 `ReservedLast` 提交转换后的字符——
+  否则客户端会按系统布局重新解释该键。
 - **UI 同步**：preedit 取高亮候选的 `preedit`（正常段按词分码，如 `sh ks`；音查虎段按音节，如
   `` `zhong guo ``），光标为字节偏移；高亮不在实况输入末尾时回退「缓冲 + 原始输入」。
 - **反查**：音查虎（`pinyin_lookup.rs`）语义对齐 librime 词典反查——拼写缩写罚 `log 0.5`、全拼可达时
