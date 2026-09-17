@@ -81,20 +81,28 @@ public:
                   fcitx::KeyEvent &keyEvent) override {
         FCITX_UNUSED(entry);
         const auto &key = keyEvent.key();
-        context_ = keyEvent.inputContext();
+        fcitx::InputContext *inputContext = keyEvent.inputContext();
+        context_ = inputContext;
         // 应用侧周边文本（字查音+虎用；应用不支持时 valid=0）。
-        const auto &surrounding = context_->surroundingText();
+        const auto &surrounding = inputContext->surroundingText();
         if (surrounding.isValid()) {
             hux_engine_set_surrounding(engine_, surrounding.text().c_str(),
                                              static_cast<int32_t>(surrounding.cursor()), 1);
         } else {
             hux_engine_set_surrounding(engine_, nullptr, 0, 0);
         }
-        const int consumed =
+        const int32_t disposition =
             hux_engine_key(engine_, key.sym(), key.states().toInteger(),
                                  keyEvent.isRelease() ? 1 : 0);
         context_ = nullptr;
-        if (consumed) {
+        if (disposition & HUX_KEY_FORWARD_AFTER_COMMIT) {
+            // 已提交且未消费：先让提交送达，再由本层重发按键（与核心
+            // `KeyEventOrderFix` 修法一致），避免前端在 keyEvent 返回后立刻
+            // 转发按键导致「字母先于候选上屏」。
+            keyEvent.filterAndAccept();
+            inputContext->forwardKey(keyEvent.origKey(), keyEvent.isRelease(),
+                                     keyEvent.time());
+        } else if (disposition & HUX_KEY_CONSUMED) {
             keyEvent.filterAndAccept();
         }
     }

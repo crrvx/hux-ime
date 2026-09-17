@@ -42,7 +42,16 @@ void hux_engine_reset(hux_engine *engine);
 const char *hux_engine_status(const hux_engine *engine);
 
 /*
- * 处理一次按键：返回 1 = 已消费（宿主不应再处理该键）。
+ * hux_engine_key 返回值位掩码：
+ * HUX_KEY_CONSUMED              已消费（宿主不应再处理该键）。
+ * HUX_KEY_FORWARD_AFTER_COMMIT  已提交且未消费——宿主应消费该键并以 forwardKey 重发，
+ *                               保证客户端先收到提交、后收到按键（对齐核心 KeyEventOrderFix）。
+ */
+#define HUX_KEY_CONSUMED 0x1
+#define HUX_KEY_FORWARD_AFTER_COMMIT 0x2
+
+/*
+ * 处理一次按键：返回位掩码（HUX_KEY_*）。
  * 提交/preedit/候选经宿主回调送出。
  */
 int32_t hux_engine_key(hux_engine *engine, uint32_t keysym,

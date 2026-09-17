@@ -3,6 +3,9 @@
 fcitx5 addon：**C++ 薄壳**（`shell/`，只做 fcitx5 接口适配）+ **Rust 逻辑**（`src/`，经 C ABI 调用
 `hux-core`）。按键 → core（`processor`/`translate`）→ 提交 / preedit / 候选 → fcitx5。
 
+按键语义与参照（librime）一致：组合中的可打印字符（如大写字母）先提交当前组合，再交应用；
+为保证上屏顺序，宿主层会消费该键并以 `forwardKey` 重发——客户端先收到提交、后收到按键。
+
 ## 构建与安装
 
 ```sh

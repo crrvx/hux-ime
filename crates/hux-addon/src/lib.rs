@@ -155,6 +155,9 @@ pub struct Engine {
     /// 当前学习 mode 串与已应用的索引版本。
     learning_mode: String,
     applied_learning: Option<u64>,
+    /// 本次按键「已提交且未消费」：宿主层应消费该键并以 `forwardKey` 重发，
+    /// 保证「提交 → 按键」送达顺序（对齐 fcitx5 核心 `KeyEventOrderFix` 修法）。
+    pub forward_after_commit: bool,
     status: CString,
 }
 
@@ -262,6 +265,7 @@ impl Engine {
             learning_rules,
             learning_mode,
             applied_learning: None,
+            forward_after_commit: false,
             status: CString::new(notes.join("; ")).unwrap_or_default(),
         };
         engine.sync_pinyin_lookup_prefix();
@@ -270,7 +274,12 @@ impl Engine {
     }
 
     /// 处理一次按键：返回是否消费；副作用（提交/preedit/候选）经宿主回调送出。
+    ///
+    /// 提交且未消费（`express_editor` 的 `char_handler = DirectCommit`）时置
+    /// [`Engine::forward_after_commit`]：宿主层据此消费该键并以 `forwardKey` 重发，
+    /// 保证客户端先收到提交、后收到按键。
     fn key(&mut self, keysym: u32, states: u32, release: bool) -> bool {
+        self.forward_after_commit = false;
         let key = KeyEvent::new(keysym as i32, core_modifiers(states, release));
         // 字查音+虎查码段：←/→/↑/↓ **交应用处理**（应用光标随动），本层不消费也不改动输入；
         // 提示在应用回传周边文本后的下一次按键（含 release）时刷新。
@@ -329,9 +338,11 @@ impl Engine {
                 }
             }
         }
+        let committed = !commits.is_empty();
         for text in commits {
             self.host_commit(&text);
         }
+        self.forward_after_commit = !consumed && committed;
         // 学习：核心暂存 → 落库；刷新打分（未组合时，60 秒节流）；应用索引。
         let submitted = std::mem::take(&mut self.live.submitted);
         if !submitted.is_empty() {
@@ -745,7 +756,13 @@ pub unsafe extern "C" fn hux_engine_set_surrounding(
     1
 }
 
-/// 处理一次按键：返回 1 = 已消费。
+/// `hux_engine_key` 返回值位掩码：已消费（宿主不应再处理该键）。
+pub const HUX_KEY_CONSUMED: i32 = 0x1;
+/// `hux_engine_key` 返回值位掩码：已提交且未消费——宿主应消费该键并以 `forwardKey`
+/// 重发（保证客户端先收到提交、后收到按键；对齐 fcitx5 核心 `KeyEventOrderFix` 修法）。
+pub const HUX_KEY_FORWARD_AFTER_COMMIT: i32 = 0x2;
+
+/// 处理一次按键：返回位掩码 [`HUX_KEY_CONSUMED`] / [`HUX_KEY_FORWARD_AFTER_COMMIT`]。
 ///
 /// # Safety
 /// `engine` 须有效（可为空指针）。
@@ -759,7 +776,15 @@ pub unsafe extern "C" fn hux_engine_key(
     let Some(engine) = (unsafe { engine.as_mut() }) else {
         return 0;
     };
-    i32::from(engine.key(keysym, states, release != 0))
+    let consumed = engine.key(keysym, states, release != 0);
+    let mut disposition = 0;
+    if engine.forward_after_commit {
+        disposition |= HUX_KEY_FORWARD_AFTER_COMMIT;
+    }
+    if consumed {
+        disposition |= HUX_KEY_CONSUMED;
+    }
+    disposition
 }
 
 #[cfg(test)]
@@ -991,17 +1016,27 @@ mod tests {
     fn uppercase_letter_commits_composition_first() {
         let _guard = serial();
         // 用户报告：组合中收到大写字母时，应先上屏当前候选（而非把字母插到预编辑之前）。
+        // 核心语义保持「提交 + 不消费」（同 librime）；宿主层据 `forward_after_commit`
+        // 消费该键并以 forwardKey 重发，保证「候选 → 字母」送达顺序。
         COMMITS.lock().unwrap().clear();
         UPDATES.lock().unwrap().clear();
         let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
         assert!(engine.key(u32::from(b'a'), 0, false));
+        assert!(!engine.forward_after_commit, "普通输入不应请求转发");
         assert!(engine.key(u32::from(b'b'), 0, false));
         assert!(
             !engine.key(0x41, FCITX_SHIFT, false),
             "大写字母应交宿主（不消费）"
         );
+        assert!(
+            engine.forward_after_commit,
+            "提交且未消费 → 宿主应消费并重发该键"
+        );
         assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "甲");
         assert!(engine.context.input().is_empty(), "组合已提交并清空");
+        // 空闲大写字母：无提交，不请求转发（前端自行转发）。
+        assert!(!engine.key(0x41, FCITX_SHIFT, false));
+        assert!(!engine.forward_after_commit);
     }
 
     #[test]
@@ -1225,7 +1260,7 @@ mod tests {
         let status = unsafe { hux_engine_status(engine) };
         assert!(!status.is_null());
         let consumed = unsafe { hux_engine_key(engine, u32::from(b'a'), 0, 0) };
-        assert_eq!(consumed, 1);
+        assert_eq!(consumed & HUX_KEY_CONSUMED, HUX_KEY_CONSUMED);
         unsafe { hux_engine_free(engine) };
     }
 }

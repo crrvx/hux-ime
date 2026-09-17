@@ -1,9 +1,6 @@
 # 构建产物
 build/
-build-addon/
 target/
-cmake-build-*/
-compile_commands.json
 
 # 编辑器 / 系统
 .idea/
@@ -13,7 +10,6 @@ compile_commands.json
 .DS_Store
 
 # 本地临时
-*.log
 
 # 真实模型差分金样（仅本地生成）
 goldens/local/

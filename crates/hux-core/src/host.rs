@@ -500,6 +500,7 @@ fn editor(key_event: &KeyEvent, context: &mut Context) -> HostResult {
     }
     // 参照 `Editor::ProcessKeyEvent` 的 char_handler（ExpressEditor = `DirectCommit`）：
     // 可打印字符（>0x20 且 <0x7f，无 Ctrl/Alt/Super）先提交组合，再交宿主。
+    // 宿主层（fcitx5 addon）会据此消费该键并以 `forwardKey` 重发，保证「提交 → 按键」送达顺序。
     if !key_event.ctrl()
         && !key_event.alt()
         && !key_event.super_modifier()
