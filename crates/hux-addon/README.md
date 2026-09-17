@@ -22,7 +22,7 @@ sudo cmake --install build/addon      # /usr/lib/fcitx5/libhux.so + 两个 conf
 开发可用环境变量覆盖（目录冒号分隔 / 模型路径）：
 
 ```sh
-HUX_DATA_DIRS="$PWD/goldens/lexicon:$PWD/data" \
+HUX_DATA_DIRS="goldens/lexicon:data" \
 HUX_MODEL="$HOME/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin" \
 fcitx5 -r -d
 ```

@@ -21,7 +21,7 @@ sha256 `8dbc884b6cb719d07e4cef153c8048db19a11f8224f75a4ed87853e688a27393`）
 
 ## 变更说明
 
-上游 `tiger-sentense-rime` 所作的变更：只保留虎句码表可编码的 2～4 字条目，
+上游 [`tiger-sentense-rime`](https://github.com/crrvx/tiger-sentense-rime) 所作的变更：只保留虎句码表可编码的 2～4 字条目，
 按上游权重、词长和 Unicode 顺序稳定排序，选取前 50,000 条；随后丢弃词文本和
 权重，仅发布 1,200,000 bit、10 次散列的 TCSLEX01 Bloom filter（估算假阳性率
 约 `2.11e-5`）。

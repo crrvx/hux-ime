@@ -71,7 +71,7 @@ cargo test -p hux-core
 # 基准（真实模型 + 本地抽样金样）
 cargo run --release -q --example ngram_bench -- \
   ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin goldens/local/ngram_sample.tsv
-lua tools/bench_ngram.lua --reference /path/to/tiger-sentense-rime \
+lua tools/bench_ngram.lua --reference ../tiger-sentense-rime \
   --model ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
   --transcript goldens/local/ngram_sample.tsv
 ```

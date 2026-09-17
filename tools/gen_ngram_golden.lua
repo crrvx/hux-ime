@@ -1,6 +1,6 @@
 -- 生成 ngram 差分金样 transcript（TSV），供 Rust 侧逐位重放比对。
 --
--- 参照实现来自 tiger-sentense-rime 仓库：
+-- 参照实现来自 tiger-sentense-rime 仓库（https://github.com/crrvx/tiger-sentense-rime）：
 --   lua tools/gen_ngram_golden.lua --reference <repo> --model <bin> --out <tsv> [--mode fixture|sample]
 --
 -- 模式：
@@ -34,7 +34,10 @@ local function parse_args(argv)
 end
 
 local opts = parse_args({ ... })
-local reference = opts.reference or os.getenv("HUX_REFERENCE_REPO") or "../tiger-sentense-rime"
+-- 默认参照检出：与仓库同级（相对脚本位置解析，不依赖调用时的 cwd）。
+local script_dir = (arg and arg[0] or ""):match("^(.*)[/\\]") or "."
+local reference = opts.reference or os.getenv("HUX_REFERENCE_REPO")
+    or (script_dir .. "/../../tiger-sentense-rime")
 assert(opts.model, "missing --model")
 assert(opts.out, "missing --out")
 

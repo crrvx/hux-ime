@@ -1,6 +1,6 @@
 # goldens：差分金样
 
-金样由参照实现（`tiger-sentense-rime` 的 Lua 核心）生成，Rust 侧逐位重放比对
+金样由参照实现（[`crrvx/tiger-sentense-rime`](https://github.com/crrvx/tiger-sentense-rime) 的 Lua 核心）生成，Rust 侧逐位重放比对
 （`crates/hux-core/tests/*_differential.rs`）。
 
 ## 内容
@@ -80,7 +80,9 @@ step <case> <index> <repr> <consumed 0/1> <input> <caret> <commit> <preedit>
 ## 重新生成
 
 ```sh
-REF=/path/to/tiger-sentense-rime
+# 参照仓库：https://github.com/crrvx/tiger-sentense-rime
+# 本地检出（金样生成用；以下命令均在仓库根目录执行）
+REF=../tiger-sentense-rime
 
 # ngram fixture（入库）
 lua tools/gen_ngram_golden.lua --reference "$REF" \
@@ -95,13 +97,13 @@ gzip -9 -n -c goldens/local/ngram_sample.tsv > goldens/local/ngram_sample.tsv.gz
 
 # lexicon（入库）
 lua tools/gen_lexicon_golden.lua --reference "$REF" \
-  --data "$PWD/goldens/lexicon" --out /tmp/lexicon.tsv --mode present
+  --data "goldens/lexicon" --out /tmp/lexicon.tsv --mode present
 lua tools/gen_lexicon_golden.lua --reference "$REF" \
   --data /tmp/no-such-dir --out /tmp/lexicon_missing.tsv --mode missing
 lua tools/gen_lexicon_golden.lua --reference "$REF" \
-  --data "$PWD/goldens/lexicon_variants" --out /tmp/lexicon_variants.tsv --mode present
+  --data "goldens/lexicon_variants" --out /tmp/lexicon_variants.tsv --mode present
 lua tools/gen_lexicon_golden.lua --reference "$REF" \
-  --data "$PWD/goldens/lexicon_codes_only" --out /tmp/lexicon_codes_only.tsv --mode present
+  --data "goldens/lexicon_codes_only" --out /tmp/lexicon_codes_only.tsv --mode present
 gzip -9 -n -c /tmp/lexicon.tsv > goldens/lexicon.tsv.gz
 gzip -9 -n -c /tmp/lexicon_missing.tsv > goldens/lexicon_missing.tsv.gz
 gzip -9 -n -c /tmp/lexicon_variants.tsv > goldens/lexicon_variants.tsv.gz
@@ -109,20 +111,20 @@ gzip -9 -n -c /tmp/lexicon_codes_only.tsv > goldens/lexicon_codes_only.tsv.gz
 
 # decode（入库；模型版对 fixture 抽样）
 lua tools/gen_decode_golden.lua --reference "$REF" \
-  --data "$PWD/goldens/lexicon" --out /tmp/decode.tsv
+  --data "goldens/lexicon" --out /tmp/decode.tsv
 lua tools/gen_decode_golden.lua --reference "$REF" \
-  --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
-  --lexical "$PWD/data/tiger_sentence.lexical.bin" \
+  --data "goldens/lexicon" --model "goldens/ngram_fixture.bin" \
+  --lexical "data/tiger_sentence.lexical.bin" \
   --out /tmp/decode_model.tsv --every 7
 lua tools/gen_decode_golden.lua --reference "$REF" \
-  --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
-  --lexical "$PWD/data/tiger_sentence.lexical.bin" \
+  --data "goldens/lexicon" --model "goldens/ngram_fixture.bin" \
+  --lexical "data/tiger_sentence.lexical.bin" \
   --out /tmp/decode_rank_first.tsv --every 7 --duplicate 0
 lua tools/gen_decode_golden.lua --reference "$REF" \
-  --data "$PWD/goldens/lexicon" --out /tmp/decode_evidence.tsv --early-commit 1 --required 1
+  --data "goldens/lexicon" --out /tmp/decode_evidence.tsv --early-commit 1 --required 1
 lua tools/gen_decode_golden.lua --reference "$REF" \
-  --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
-  --lexical "$PWD/data/tiger_sentence.lexical.bin" \
+  --data "goldens/lexicon" --model "goldens/ngram_fixture.bin" \
+  --lexical "data/tiger_sentence.lexical.bin" \
   --out /tmp/decode_evidence_model.tsv --every 7 --early-commit 1 --required 1
 gzip -9 -n -c /tmp/decode.tsv > goldens/decode.tsv.gz
 gzip -9 -n -c /tmp/decode_model.tsv > goldens/decode_model.tsv.gz
@@ -132,10 +134,10 @@ gzip -9 -n -c /tmp/decode_evidence_model.tsv > goldens/decode_evidence_model.tsv
 
 # decode + 学习（入库）
 lua tools/gen_decode_golden.lua --reference "$REF" \
-  --data "$PWD/goldens/lexicon" --out /tmp/decode_learning.tsv --learning 1
+  --data "goldens/lexicon" --out /tmp/decode_learning.tsv --learning 1
 lua tools/gen_decode_golden.lua --reference "$REF" \
-  --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
-  --lexical "$PWD/data/tiger_sentence.lexical.bin" \
+  --data "goldens/lexicon" --model "goldens/ngram_fixture.bin" \
+  --lexical "data/tiger_sentence.lexical.bin" \
   --out /tmp/decode_learning_model.tsv --every 7 --learning 1
 gzip -9 -n -c /tmp/decode_learning.tsv > goldens/decode_learning.tsv.gz
 gzip -9 -n -c /tmp/decode_learning_model.tsv > goldens/decode_learning_model.tsv.gz
@@ -178,7 +180,7 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 
 ## 来源与校验和
 
-- 参照实现（主干）：`crrvx/tiger-sentense-rime` @ `8b615235c17c858e1eca8f1a41fbc74e202f8bbe`（main；含自动上屏对齐修复）
+- 参照实现（主干）：[`crrvx/tiger-sentense-rime`](https://github.com/crrvx/tiger-sentense-rime) @ `8b615235c17c858e1eca8f1a41fbc74e202f8bbe`（main；含自动上屏对齐修复）
 - 参照实现（音查虎）：`feat/reverse-lookup` @ `898579f833df53f1dec5639d56e685751a8a7f71` **与上述 main 本地合并**
   （上游未合并该分支；生成器 `tools/gen_pinyin_lookup_golden.sh` 自建临时 worktree 合并，`PIN`/`BASE` 可覆盖）
 - 键名表来源：librime `src/rime/key_table.cc`（sha256 `2f7c6a8b4f2aa474d700a87bd4bd1baa48a2655cd6ce4d2ba05b768f284d9d78`，librime 1.17.0 固定提交 `33e78140`）；
@@ -240,8 +242,8 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 | `decode_learning.tsv.gz` | `41a9894d233c32348e42164d4d29fc698c3037741c141ac0b58404094c9e9354` |
 | `decode_learning_model.tsv.gz` | `8a64e6e3d28b101a57075b03233e62c4b03e8c4a8d2a979399a91a00e2d8e806` |
 | `key.tsv.gz` | `e939a077cd0825f7b454a4af300ed50fb6a2f2609c71583525d44f2f8fb3fd33` |
-| `key_sequence.tsv.gz` | `84a9145076252454a1f0af30b55ce9cd9e721062df97336248ff1eff8790d6fc` |
-| `pinyin_lookup.tsv.gz` | `1dab89c503b00b00a278723ea890526ffb9b3deaa0efaa895fd3cf7ae19ebd85` |
+| `key_sequence.tsv.gz` | `d67cf237617de2615907c04e43c99bda165a61fd0820013db447c99384c83721` |
+| `pinyin_lookup.tsv.gz` | `6fcea93e7cbc12952d7d0b4a7333a4e824a4a22a08f4a21df37b45fef5a219c4` |
 | `lexical.tsv.gz` | `5b559b2504e21c69b4f702678a96d2947abfe7d7c26adcd2b25c3d4de761e0c3` |
 
 CI 以同一参照提交重生成全部 fixture 金样并与入库内容比对（见 `.github/workflows/ci.yml`）。
