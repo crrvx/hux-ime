@@ -2,7 +2,7 @@
 """从 librime `src/rime/key_table.cc` 生成 Rust 键名表。
 
     python3 tools/gen_key_table.py --source <librime>/src/rime/key_table.cc \
-        --out crates/tigerclaw-core/src/key_table.rs [--keyvals-out <path>]
+        --out crates/hux-core/src/key_table.rs [--keyvals-out <path>]
 
 --keyvals-out 输出全部键值（每行一个十进制数），供键金样探针使用。
 """

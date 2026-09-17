@@ -16,7 +16,7 @@ local function parse_args(argv)
 end
 
 local opts = parse_args({ ... })
-local reference = opts.reference or os.getenv("TIGERCLAW_REFERENCE_REPO") or "../tiger-sentense-rime"
+local reference = opts.reference or os.getenv("HUX_REFERENCE_REPO") or "../tiger-sentense-rime"
 assert(opts.model and opts.transcript, "missing --model or --transcript")
 
 package.path = reference .. "/lua/?.lua;" .. package.path

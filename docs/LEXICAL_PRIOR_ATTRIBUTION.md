@@ -28,7 +28,7 @@ sha256 `8dbc884b6cb719d07e4cef153c8048db19a11f8224f75a4ed87853e688a27393`）
 
 本仓库（fcitx5 原生 Rust 移植）所作的变更：**数据文件原样沿用**（sha256 与上游
 一致），仅将其由参照仓库根目录移至 `data/`，并在 Rust 侧实现读取与打分
-（`crates/tigerclaw-core/src/lexical.rs`）。转换与移植均不表示上游作者认可本项目。
+（`crates/hux-core/src/lexical.rs`）。转换与移植均不表示上游作者认可本项目。
 
 精确参数与输入/输出摘要见 [`LEXICAL_PRIOR_MANIFEST.json`](LEXICAL_PRIOR_MANIFEST.json)。
 

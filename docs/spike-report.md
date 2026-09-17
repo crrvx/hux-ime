@@ -9,7 +9,7 @@
 
 - 记录构成：29,616 条（另有 1 行注释头，共 29,617 行）= `logp` 18,928 + `obs` 10,676 + `status` 7 + `cfg` 2 + `trim`/`close`/`bytes` 各 1
 - 生成器内以独立 float32 oracle 自检 29,605 项，全部通过
-- Rust 重放（`cargo test -p tigerclaw-core`）：**逐位一致**
+- Rust 重放（`cargo test -p hux-core`）：**逐位一致**
 
 ### 1.2 真实模型抽样（本地金样，不入库）
 
@@ -66,7 +66,7 @@ K1 起把三条纪律固化：
 ## 5. 复跑
 
 ```sh
-cargo test -p tigerclaw-core
+cargo test -p hux-core
 
 # 基准（真实模型 + 本地抽样金样）
 cargo run --release -q --example ngram_bench -- \

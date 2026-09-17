@@ -1,6 +1,6 @@
-# tigerclaw-fcitx5
+# hux-ime
 
-虎爪（Tigerclaw）：虎句输入方案的 fcitx5 原生 Rust 实现（Rust 直迁进行中：K0–K1.5 ✅、K2 核心 ✅、K3 addon 进行中）。
+hux-ime：虎句输入方案的 fcitx5 原生 Rust 实现（Rust 直迁进行中：K0–K1.5 ✅、K2 核心 ✅、K3 addon 进行中）。
 
 | 文档 | 内容 |
 |---|---|
@@ -12,7 +12,7 @@
 ## 开发
 
 ```sh
-cargo test -p tigerclaw-core                        # 逐位差分（fixture；本地抽样缺失自动跳过）
+cargo test -p hux-core                        # 逐位差分（fixture；本地抽样缺失自动跳过）
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all --check
 ```

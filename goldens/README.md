@@ -1,7 +1,7 @@
 # goldens：差分金样
 
 金样由参照实现（`tiger-sentense-rime` 的 Lua 核心）生成，Rust 侧逐位重放比对
-（`crates/tigerclaw-core/tests/*_differential.rs`）。
+（`crates/hux-core/tests/*_differential.rs`）。
 
 ## 内容
 
@@ -163,7 +163,7 @@ gzip -9 -n -c /tmp/lexical.tsv > goldens/lexical.tsv.gz
 ## 校验
 
 ```sh
-cargo test -p tigerclaw-core        # 全部差分（本地 sample 缺失自动跳过）
+cargo test -p hux-core        # 全部差分（本地 sample 缺失自动跳过）
 
 # 基准（ngram，真实模型 + 本地抽样金样）
 cargo run --release -q --example ngram_bench -- <model.bin> <transcript.tsv>

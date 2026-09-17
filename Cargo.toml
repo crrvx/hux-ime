@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/tigerclaw-core", "crates/tigerclaw-addon"]
+members = ["crates/hux-core", "crates/hux-addon"]
 
 [workspace.package]
 version = "0.1.0"

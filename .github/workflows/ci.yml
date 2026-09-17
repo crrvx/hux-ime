@@ -14,7 +14,7 @@ jobs:
           components: rustfmt, clippy
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test -p tigerclaw-core
+      - run: cargo test -p hux-core
       - name: Verify lexical prior data (provenance)
         run: |
           echo "8dbc884b6cb719d07e4cef153c8048db19a11f8224f75a4ed87853e688a27393  data/tiger_sentence.lexical.bin" | sha256sum -c -
@@ -61,7 +61,7 @@ jobs:
         run: |
           python3 tools/gen_key_table.py \
             --source external/librime/src/rime/key_table.cc --out /tmp/key_table.rs
-          diff /tmp/key_table.rs crates/tigerclaw-core/src/key_table.rs
+          diff /tmp/key_table.rs crates/hux-core/src/key_table.rs
       - name: Regenerate goldens
         run: |
           lua tools/gen_ngram_golden.lua \

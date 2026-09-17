@@ -182,6 +182,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "hux-addon"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hashbrown 0.15.5",
+ "hux-core",
+ "rusty-leveldb",
+ "yaml-rust2",
+]
+
+[[package]]
+name = "hux-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "flate2",
+ "hashbrown 0.15.5",
+ "memmap2",
+ "yaml-rust2",
+]
+
+[[package]]
 name = "integer-encoding"
 version = "3.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -326,28 +348,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
-]
-
-[[package]]
-name = "tigerclaw-addon"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "hashbrown 0.15.5",
- "rusty-leveldb",
- "tigerclaw-core",
- "yaml-rust2",
-]
-
-[[package]]
-name = "tigerclaw-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "flate2",
- "hashbrown 0.15.5",
- "memmap2",
- "yaml-rust2",
 ]
 
 [[package]]

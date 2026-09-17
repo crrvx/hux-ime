@@ -2,7 +2,7 @@
 
 > 2026-09-16 ｜ 关联：[`rime-semantics.md`](rime-semantics.md)、[`spike-report.md`](spike-report.md)
 
-目标：虎爪（Tigerclaw，内部方案虎句/tiger_sentence）迁移为 **fcitx5 原生 Rust 实现**；核心逻辑全量移植，Lua 仅作测试 oracle，无 librime 依赖。
+目标：hux-ime（hux-ime，内部方案虎句/tiger_sentence）迁移为 **fcitx5 原生 Rust 实现**；核心逻辑全量移植，Lua 仅作测试 oracle，无 librime 依赖。
 
 ## 1. 路线
 
@@ -22,12 +22,12 @@
 ```
 Cargo.toml                     # workspace
 crates/
-  tigerclaw-core/              # 纯逻辑，无 fcitx5 依赖
+  hux-core/              # 纯逻辑，无 fcitx5 依赖
     src/cache.rs  ngram.rs                        # K0 ✅
     src/lexicon.rs decode.rs learning.rs          # K1 ✅
     src/lexical.rs                                # K1.5（紧凑词先验）
     src/key.rs key_table.rs session.rs interaction.rs   # K2（key 事件/会话/交互）
-  tigerclaw-addon/             # K3：C++ 薄壳（shell/）+ Rust FFI（src/）→ core
+  hux-addon/             # K3：C++ 薄壳（shell/）+ Rust FFI（src/）→ core
 data/                          # 随包数据源（词先验位图，CC BY 4.0）
 goldens/                       # 差分金样（fixture 入库；真实模型抽样本地）
 tools/                         # 金样生成/基准（Lua 参照侧、真 librime 探针）
@@ -52,7 +52,7 @@ docs/
 
 ## 4. 数据与目录
 
-- 用户目录 `~/.local/share/fcitx5/tigerclaw`；共享目录 `/usr/share/fcitx5/tigerclaw`。
+- 用户目录 `~/.local/share/fcitx5/hux`；共享目录 `/usr/share/fcitx5/hux`。
 - 码表（`tiger_sentence.*.txt`）、`models/sentence-ngram-mobile.bin`、`symbols.yaml`、
   PY_c 转换产物（R2）、`tiger_sentence.options.yaml`、学习库 `<hash>.userdb/`（LevelDB 同构）。
 - 仓库内 `data/` 为随包数据源：`symbols.yaml`（标点表；half_shape 的 `/` 提交 `/`，参照原表为 `、`）、
@@ -63,9 +63,9 @@ docs/
 ## 5. fcitx5 集成要点（K3）
 
 - addon 注册（`Category=InputMethod`、`OnDemand`）+ 输入法条目 conf；`InputMethodEngine` 实现。
-- 构建/安装：`cmake -S crates/tigerclaw-addon -B build/addon -DCMAKE_INSTALL_PREFIX=/usr`
-  → `cmake --build` → `cmake --install`；产物 `/usr/lib/fcitx5/libtigerclaw.so` 与
-  `/usr/share/fcitx5/{addon,inputmethod}/tigerclaw.conf`（C++ 薄壳链接 Rust 静态库）。
+- 构建/安装：`cmake -S crates/hux-addon -B build/addon -DCMAKE_INSTALL_PREFIX=/usr`
+  → `cmake --build` → `cmake --install`；产物 `/usr/lib/fcitx5/libhux.so` 与
+  `/usr/share/fcitx5/{addon,inputmethod}/hux.conf`（C++ 薄壳链接 Rust 静态库）。
 - 会话：每引擎单会话（`activate/deactivate/reset` 清空）；组合重建由
   `interaction::CompositionBuilder` 负责（参照 `ConcreteEngine::Compose`：分段输入随光标
   —— `input[..caret]`，caret 处无已确认段且不在末尾时翻译到 caret 后一段；按新旧输入公共
@@ -82,7 +82,7 @@ docs/
   = 解码 `segmented`，如 `sh ks`；音查虎段「按音节分码」= 全拼段后插空格，如 `` `zhong guo ``），
   光标不在实况输入末尾时回退为「缓冲 + 原始输入」。
 - 数据：core `lexicon::data_directories()`（用户 → 共享）与 `candidate_paths()` 探测；
-  addon 加载码表/位图/模型/音查虎索引（开发可用 `TIGERCLAW_DATA_DIRS`/`TIGERCLAW_MODEL` 覆盖）。
+  addon 加载码表/位图/模型/音查虎索引（开发可用 `HUX_DATA_DIRS`/`HUX_MODEL` 覆盖）。
 - 音查虎（⑧-1）：`data/tiger_sentence.pinyin.bin.gz`（TCSRV01，`tools/gen_pinyin_index.py` 自参照
   `PY_c.dict.yaml` 生成；`docs/PINYIN_INDEX_MANIFEST.json` 登记来源与校验和）；语义（拼写缩写/剪枝/
   补全/排序/上限 20）与接线（recognizer/matcher/翻译路由/段提示）见 `docs/rust-migration.md`；
@@ -97,7 +97,7 @@ docs/
 - 配置：addon `Settings`（10 项：早提交三项、full_shape/ascii_punct、tab_learning、high_freq_limit、
   音查虎/字查音+虎键、快速输入键；快捷键用 fcitx5 按键录入控件；未显式提供的项跟随 fcitx5 全局设置）；
   另有仅宿主显示项「候选窗口显示预编辑」（`PanelPreedit`，只作用于 `InputPanel::setPreedit`）
-  与合并顺序（options.yaml > 设置 > 内建缺省）；图形配置：C++ 壳声明 `TigerclawConfig` schema + `getConfig/setConfig`（fcitx5-configtool 生成设置页），经 ABI `tigerclaw_engine_apply_settings` → `Settings::apply_settings`。
+  与合并顺序（options.yaml > 设置 > 内建缺省）；图形配置：C++ 壳声明 `HuxConfig` schema + `getConfig/setConfig`（fcitx5-configtool 生成设置页），经 ABI `hux_engine_apply_settings` → `Settings::apply_settings`。
 - 状态菜单：4 个核心开关（提前上屏、单字重码组句、提前上屏至编码、全角/半角标点）。
 
 ## 6. 测试

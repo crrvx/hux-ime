@@ -29,13 +29,13 @@ local function parse_args(argv)
 end
 
 local opts = parse_args({ ... })
-local reference = opts.reference or os.getenv("TIGERCLAW_REFERENCE_REPO") or "../tiger-sentense-rime"
+local reference = opts.reference or os.getenv("HUX_REFERENCE_REPO") or "../tiger-sentense-rime"
 assert(opts.data, "missing --data")
 assert(opts.out, "missing --out")
 local every = tonumber(opts.every or "1") or 1
 
 local base = os.getenv("TMPDIR") or "/tmp"
-local work = base .. "/tigerclaw-decode-" .. tostring(os.time()) .. "-" ..
+local work = base .. "/hux-decode-" .. tostring(os.time()) .. "-" ..
     tostring(math.floor(os.clock() * 1000000))
 os.execute("rm -rf '" .. work .. "' && mkdir -p '" .. work .. "/models'")
 
