@@ -1,6 +1,6 @@
 //! 键事件与 rime 键名表，对应 librime `key_event.{h,cc}` 与 `key_table.cc`。
 //!
-//! `repr()`/`Parse` 逐字节复刻 librime 行为；键名表由 `tools/gen_key_table.py`
+//! `repr()`/`Parse` 逐字节复刻 librime 行为；键名表由 `tools/generators/gen_key_table.py`
 //! 从 librime 源码生成（见 `key_table.rs` 的来源哈希）。
 
 use crate::key_table::{KEYS_BY_KEYVAL, KEYS_BY_NAME, MODIFIER_NAMES};

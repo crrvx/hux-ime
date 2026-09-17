@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """从 librime `src/rime/key_table.cc` 生成 Rust 键名表。
 
-    python3 tools/gen_key_table.py --source <librime>/src/rime/key_table.cc \
+    python3 tools/generators/gen_key_table.py --source <librime>/src/rime/key_table.cc \
         --out crates/hux-core/src/key_table.rs [--keyvals-out <path>]
 
 --keyvals-out 输出全部键值（每行一个十进制数），供键金样探针使用。
@@ -109,7 +109,7 @@ def main() -> int:
     lines: list[str] = []
     lines.append("//! 由 librime `src/rime/key_table.cc` 生成（请勿手改）。")
     lines.append("//!")
-    lines.append("//! 生成：`python3 tools/gen_key_table.py --source <librime>/src/rime/key_table.cc --out <此文件>`")
+    lines.append("//! 生成：`python3 tools/generators/gen_key_table.py --source <librime>/src/rime/key_table.cc --out <此文件>`")
     lines.append(f"//! 来源：{args.provenance}")
     lines.append(f"//! key_table.cc sha256：`{digest}`")
     lines.append("")

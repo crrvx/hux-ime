@@ -1,6 +1,6 @@
 //! 差分测试：重放 Lua 参照实现生成的金样 transcript，逐位比对。
 //!
-//! 金样由 `tools/gen_ngram_golden.lua` 生成：
+//! 金样由 `tools/generators/gen_ngram_golden.lua` 生成：
 //! * fixture 模式入库（`goldens/ngram_fixture.*`）；
 //! * sample 模式对真实模型抽样，仅本地（`goldens/local/`，不入库；缺失即跳过）。
 

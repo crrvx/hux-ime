@@ -9,9 +9,9 @@
 - 词条按「码（音节 id 序列）」分组，组内按权重降序（稳定；等同 `SortHomophones`）。
 
 用法：
-  tools/gen_pinyin_index.py --source PY_c.dict.yaml --out data/tiger_sentence.pinyin.bin.gz
-  tools/gen_pinyin_index.py --source PY_c.dict.yaml --out ... --manifest docs/PINYIN_INDEX_MANIFEST.json
-  tools/gen_pinyin_index.py --check --source PY_c.dict.yaml --out ...
+  tools/generators/gen_pinyin_index.py --source PY_c.dict.yaml --out data/tiger_sentence.pinyin.bin.gz
+  tools/generators/gen_pinyin_index.py --source PY_c.dict.yaml --out ... --manifest docs/PINYIN_INDEX_MANIFEST.json
+  tools/generators/gen_pinyin_index.py --check --source PY_c.dict.yaml --out ...
 
 二进制布局（小端；`u16/u32` 定长）：
   magic[8] = "TCSRV01\\n"
@@ -244,7 +244,7 @@ def main() -> int:
     if args.manifest:
         manifest = {
             "format": "TCSRV01",
-            "generator": "tools/gen_pinyin_index.py",
+            "generator": "tools/generators/gen_pinyin_index.py",
             "source": {
                 "repo": args.repo,
                 "commit": args.commit,

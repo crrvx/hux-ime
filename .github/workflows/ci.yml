@@ -23,7 +23,7 @@ jobs:
           echo "18a0931a323ad58e1b13e610ec93183297118033d571ae303678613a217dad2a  data/tiger_sentence.pinyin.bin.gz" | sha256sum -c -
       - name: Verify pinyin index fixture (regenerate)
         run: |
-          python3 tools/gen_pinyin_index.py \
+          python3 tools/generators/gen_pinyin_index.py \
             --source goldens/pinyin_lookup/PY_c.dict.yaml --out /tmp/pinyin.bin
           cmp /tmp/pinyin.bin goldens/pinyin_lookup/tiger_sentence.pinyin.bin
 
@@ -59,59 +59,59 @@ jobs:
           echo "2f7c6a8b4f2aa474d700a87bd4bd1baa48a2655cd6ce4d2ba05b768f284d9d78  external/librime/src/rime/key_table.cc" | sha256sum -c -
       - name: Verify generated key table
         run: |
-          python3 tools/gen_key_table.py \
+          python3 tools/generators/gen_key_table.py \
             --source external/librime/src/rime/key_table.cc --out /tmp/key_table.rs
           diff /tmp/key_table.rs crates/hux-core/src/key_table.rs
       - name: Regenerate goldens
         run: |
-          lua tools/gen_ngram_golden.lua \
+          lua tools/generators/gen_ngram_golden.lua \
             --reference external/tiger-sentense-rime \
             --model /tmp/ngram_fixture.bin \
             --out /tmp/ngram_fixture.tsv --mode fixture
-          lua tools/gen_lexicon_golden.lua \
+          lua tools/generators/gen_lexicon_golden.lua \
             --reference external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --out /tmp/lexicon.tsv --mode present
-          lua tools/gen_lexicon_golden.lua \
+          lua tools/generators/gen_lexicon_golden.lua \
             --reference external/tiger-sentense-rime \
             --data /tmp/no-such-dir --out /tmp/lexicon_missing.tsv --mode missing
-          lua tools/gen_lexicon_golden.lua \
+          lua tools/generators/gen_lexicon_golden.lua \
             --reference external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon_variants" --out /tmp/lexicon_variants.tsv --mode present
-          lua tools/gen_lexicon_golden.lua \
+          lua tools/generators/gen_lexicon_golden.lua \
             --reference external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon_codes_only" --out /tmp/lexicon_codes_only.tsv --mode present
-          lua tools/gen_decode_golden.lua \
+          lua tools/generators/gen_decode_golden.lua \
             --reference external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --out /tmp/decode.tsv
-          lua tools/gen_decode_golden.lua \
+          lua tools/generators/gen_decode_golden.lua \
             --reference external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
             --lexical "$PWD/data/tiger_sentence.lexical.bin" \
             --out /tmp/decode_model.tsv --every 7
-          lua tools/gen_decode_golden.lua \
+          lua tools/generators/gen_decode_golden.lua \
             --reference external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
             --lexical "$PWD/data/tiger_sentence.lexical.bin" \
             --out /tmp/decode_rank_first.tsv --every 7 --duplicate 0
-          lua tools/gen_decode_golden.lua \
+          lua tools/generators/gen_decode_golden.lua \
             --reference external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --out /tmp/decode_evidence.tsv --early-commit 1 --required 1
-          lua tools/gen_decode_golden.lua \
+          lua tools/generators/gen_decode_golden.lua \
             --reference external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
             --lexical "$PWD/data/tiger_sentence.lexical.bin" \
             --out /tmp/decode_evidence_model.tsv --every 7 --early-commit 1 --required 1
-          lua tools/gen_learning_golden.lua \
+          lua tools/generators/gen_learning_golden.lua \
             --reference external/tiger-sentense-rime --out /tmp/learning.tsv
-          lua tools/gen_decode_golden.lua \
+          lua tools/generators/gen_decode_golden.lua \
             --reference external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --out /tmp/decode_learning.tsv --learning 1
-          lua tools/gen_decode_golden.lua \
+          lua tools/generators/gen_decode_golden.lua \
             --reference external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
             --lexical "$PWD/data/tiger_sentence.lexical.bin" \
             --out /tmp/decode_learning_model.tsv --every 7 --learning 1
-          lua tools/gen_lexical_golden.lua \
+          lua tools/generators/gen_lexical_golden.lua \
             --reference external/tiger-sentense-rime \
             --model "$PWD/data/tiger_sentence.lexical.bin" --out /tmp/lexical.tsv
       - name: Compare with committed goldens
@@ -156,54 +156,54 @@ jobs:
       - name: Regenerate goldens (system lua)
         run: |
           lua -v
-          lua tools/gen_ngram_golden.lua \
+          lua tools/generators/gen_ngram_golden.lua \
             --reference external/tiger-sentense-rime \
             --model /tmp/ngram_fixture.bin \
             --out /tmp/ngram_fixture.tsv --mode fixture
-          lua tools/gen_lexicon_golden.lua \
+          lua tools/generators/gen_lexicon_golden.lua \
             --reference external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --out /tmp/lexicon.tsv --mode present
-          lua tools/gen_lexicon_golden.lua \
+          lua tools/generators/gen_lexicon_golden.lua \
             --reference external/tiger-sentense-rime \
             --data /tmp/no-such-dir --out /tmp/lexicon_missing.tsv --mode missing
-          lua tools/gen_lexicon_golden.lua \
+          lua tools/generators/gen_lexicon_golden.lua \
             --reference external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon_variants" --out /tmp/lexicon_variants.tsv --mode present
-          lua tools/gen_lexicon_golden.lua \
+          lua tools/generators/gen_lexicon_golden.lua \
             --reference external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon_codes_only" --out /tmp/lexicon_codes_only.tsv --mode present
-          lua tools/gen_decode_golden.lua \
+          lua tools/generators/gen_decode_golden.lua \
             --reference external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --out /tmp/decode.tsv
-          lua tools/gen_decode_golden.lua \
+          lua tools/generators/gen_decode_golden.lua \
             --reference external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
             --lexical "$PWD/data/tiger_sentence.lexical.bin" \
             --out /tmp/decode_model.tsv --every 7
-          lua tools/gen_decode_golden.lua \
+          lua tools/generators/gen_decode_golden.lua \
             --reference external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
             --lexical "$PWD/data/tiger_sentence.lexical.bin" \
             --out /tmp/decode_rank_first.tsv --every 7 --duplicate 0
-          lua tools/gen_decode_golden.lua \
+          lua tools/generators/gen_decode_golden.lua \
             --reference external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --out /tmp/decode_evidence.tsv --early-commit 1 --required 1
-          lua tools/gen_decode_golden.lua \
+          lua tools/generators/gen_decode_golden.lua \
             --reference external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
             --lexical "$PWD/data/tiger_sentence.lexical.bin" \
             --out /tmp/decode_evidence_model.tsv --every 7 --early-commit 1 --required 1
-          lua tools/gen_learning_golden.lua \
+          lua tools/generators/gen_learning_golden.lua \
             --reference external/tiger-sentense-rime --out /tmp/learning.tsv
-          lua tools/gen_decode_golden.lua \
+          lua tools/generators/gen_decode_golden.lua \
             --reference external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --out /tmp/decode_learning.tsv --learning 1
-          lua tools/gen_decode_golden.lua \
+          lua tools/generators/gen_decode_golden.lua \
             --reference external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
             --lexical "$PWD/data/tiger_sentence.lexical.bin" \
             --out /tmp/decode_learning_model.tsv --every 7 --learning 1
-          lua tools/gen_lexical_golden.lua \
+          lua tools/generators/gen_lexical_golden.lua \
             --reference external/tiger-sentense-rime \
             --model "$PWD/data/tiger_sentence.lexical.bin" --out /tmp/lexical.tsv
       - name: Compare with committed goldens

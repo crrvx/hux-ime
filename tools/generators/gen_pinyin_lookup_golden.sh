@@ -3,25 +3,25 @@
 # 参照态 = 分支提交 PIN 与主干提交 BASE 的**本地合并**（上游未合并该分支；合并保证
 # 音查虎特性与主干修复（如自动上屏对齐）同时生效；生成器自建临时 worktree，可复现）。
 #
-# 用法：tools/gen_pinyin_lookup_golden.sh [输出文件]
+# 用法：tools/generators/gen_pinyin_lookup_golden.sh [输出文件]
 #   REF  参照仓库本地检出（默认仓库内 external/tiger-sentense-rime，已 gitignore）
 #   REF_URL  写入金样头部的参照仓库线上地址（默认 https://github.com/crrvx/tiger-sentense-rime）
 #   PIN  音查虎分支提交（默认 898579f833df53f1dec5639d56e685751a8a7f71，含 PY_c 与音查虎接线）
 #   BASE 主干提交（默认 8b615235c17c858e1eca8f1a41fbc74e202f8bbe；与 PIN 合并后生成）
-#   CASES 用例文件（默认 tools/pinyin_lookup_cases.txt）
+#   CASES 用例文件（默认 tools/cases/pinyin_lookup_cases.txt）
 #
 # 夹具（goldens/pinyin_lookup/）：小 PY_c 词典 + 合成码表 + symbols.yaml（pin 同文件）；
-# 同一夹具供 Rust 重放（`tiger_sentence.pinyin.bin` 由 tools/gen_pinyin_index.py 生成）。
+# 同一夹具供 Rust 重放（`tiger_sentence.pinyin.bin` 由 tools/generators/gen_pinyin_index.py 生成）。
 # 金样不在 CI 重生成（探针依赖具体 librime/librime-lua 版本），见 goldens/README.md。
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 REF="${REF:-$ROOT/external/tiger-sentense-rime}"
 REF_URL="${REF_URL:-https://github.com/crrvx/tiger-sentense-rime}"
 PIN="${PIN:-898579f833df53f1dec5639d56e685751a8a7f71}"
 BASE="${BASE:-8b615235c17c858e1eca8f1a41fbc74e202f8bbe}"
 OUT="${1:-$ROOT/goldens/pinyin_lookup.tsv.gz}"
-CASES="${CASES:-$ROOT/tools/pinyin_lookup_cases.txt}"
+CASES="${CASES:-$ROOT/tools/cases/pinyin_lookup_cases.txt}"
 FIXTURE="$ROOT/goldens/pinyin_lookup"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/tiger-pinyin-XXXXXX")"
@@ -51,7 +51,7 @@ cp "$FIXTURE/tiger_sentence.codes.txt" "$user/tiger_sentence.codes.txt"
 cp "$ROOT/goldens/key_sequence/symbols.yaml" "$FIXTURE/symbols.yaml"
 
 # 音查虎索引夹具：由小 PY_c 生成（Rust 重放用）。
-python3 "$ROOT/tools/gen_pinyin_index.py" \
+python3 "$ROOT/tools/generators/gen_pinyin_index.py" \
     --source "$FIXTURE/PY_c.dict.yaml" \
     --out "$FIXTURE/tiger_sentence.pinyin.bin"
 
@@ -75,7 +75,7 @@ YAML
 
 plugin="${LUA_PLUGIN:-/usr/lib/rime-plugins/librime-lua.so}"
 test -f "$plugin"
-g++ -std=c++17 -O2 "$ROOT/tools/rime_sequence_probe.cpp" -lrime -ldl -o "$WORK/probe"
+g++ -std=c++17 -O2 "$ROOT/tools/probes/rime_sequence_probe.cpp" -lrime -ldl -o "$WORK/probe"
 
 lua_sha="$(sha256sum "$WT/lua/tiger_sentence.lua" | cut -d' ' -f1)"
 pyc_sha="$(sha256sum "$FIXTURE/PY_c.dict.yaml" | cut -d' ' -f1)"

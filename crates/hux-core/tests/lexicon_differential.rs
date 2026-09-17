@@ -1,6 +1,6 @@
 //! 差分测试：重放 lexicon 金样 transcript，逐条比对。
 //!
-//! 金样由 `tools/gen_lexicon_golden.lua` 生成：
+//! 金样由 `tools/generators/gen_lexicon_golden.lua` 生成：
 //! * present：`goldens/lexicon/` 数据 + `goldens/lexicon.tsv.gz`；
 //! * missing：数据缺失路径 + `goldens/lexicon_missing.tsv.gz`。
 

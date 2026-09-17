@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
 # 生成键序列金样（2c）：pin 版参照 Lua 核心 + 系统 librime + librime-lua。
 #
-# 用法：tools/gen_key_sequence_golden.sh [输出文件]
+# 用法：tools/generators/gen_key_sequence_golden.sh [输出文件]
 #   REF  参照仓库本地检出（默认仓库内 external/tiger-sentense-rime，已 gitignore）
 #   REF_URL  写入金样头部的参照仓库线上地址（默认 https://github.com/crrvx/tiger-sentense-rime）
 #   PIN  参照固定提交（默认 8b615235c17c858e1eca8f1a41fbc74e202f8bbe，与入库金样一致；见 goldens/README.md）
-#   CASES 用例文件（默认 tools/key_sequence_cases.txt；可指向临时用例做探索）
+#   CASES 用例文件（默认 tools/cases/key_sequence_cases.txt；可指向临时用例做探索）
 #
 # 依赖：git、g++、python3、系统 librime（rime_api.h + librime-lua.so）。
 # 金样不在 CI 重生成（探针依赖具体 librime/librime-lua 版本），见 goldens/README.md。
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 REF="${REF:-$ROOT/external/tiger-sentense-rime}"
 REF_URL="${REF_URL:-https://github.com/crrvx/tiger-sentense-rime}"
 PIN="${PIN:-8b615235c17c858e1eca8f1a41fbc74e202f8bbe}"
 OUT="${1:-$ROOT/goldens/key_sequence.tsv.gz}"
-CASES="${CASES:-$ROOT/tools/key_sequence_cases.txt}"
+CASES="${CASES:-$ROOT/tools/cases/key_sequence_cases.txt}"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/tiger-keyseq-XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
@@ -69,7 +69,7 @@ YAML
 # 探针（系统 librime；librime-lua 插件显式加载）。
 plugin="${LUA_PLUGIN:-/usr/lib/rime-plugins/librime-lua.so}"
 test -f "$plugin"
-g++ -std=c++17 -O2 "$ROOT/tools/rime_sequence_probe.cpp" -lrime -ldl -o "$WORK/probe"
+g++ -std=c++17 -O2 "$ROOT/tools/probes/rime_sequence_probe.cpp" -lrime -ldl -o "$WORK/probe"
 
 lua_sha="$(git -C "$REF" show "$PIN:lua/tiger_sentence.lua" | sha256sum | cut -d' ' -f1)"
 librime_version="$(pkg-config --modversion rime 2>/dev/null || true)"

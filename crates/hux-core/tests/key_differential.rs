@@ -1,7 +1,7 @@
 //! 差分测试：重放键金样（由 librime 探针生成），逐条比对。
 //!
-//! 金样 `goldens/key.tsv.gz` 由 `tools/gen_key_golden.sh` 生成
-//! （系统 librime 1.17.0 + `tools/key_cases.txt`）。
+//! 金样 `goldens/key.tsv.gz` 由 `tools/generators/gen_key_golden.sh` 生成
+//! （系统 librime 1.17.0 + `tools/cases/key_cases.txt`）。
 
 mod common;
 

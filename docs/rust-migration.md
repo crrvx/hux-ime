@@ -30,7 +30,7 @@ crates/hux-core/         # 纯逻辑，无 fcitx5 依赖
 crates/hux-addon/        # K3：C++ 薄壳（shell/）+ Rust FFI（src/）→ core
 data/                    # 随包数据源
 goldens/                 # 差分金样与夹具
-tools/                   # 金样生成器（Lua/Python/Shell）与 librime 探针
+tools/                   # 金样生成器（generators/）、探针与基准（probes/）、探针用例（cases/）
 docs/                    # 本文档、词先验署名、数据清单
 ```
 

@@ -9,7 +9,7 @@
 //!
 //! 金样与数据：`goldens/key_sequence.tsv.gz`、`goldens/key_sequence/`（合成小码表）；
 //! 音查虎（⑧-1）：`goldens/pinyin_lookup.tsv.gz`、`goldens/pinyin_lookup/`（小 PY_c + 音查虎索引夹具）。
-//! 再生成：`tools/gen_key_sequence_golden.sh`、`tools/gen_pinyin_lookup_golden.sh`
+//! 再生成：`tools/generators/gen_key_sequence_golden.sh`、`tools/generators/gen_pinyin_lookup_golden.sh`
 //! （依赖系统 librime + librime-lua）。
 
 mod common;

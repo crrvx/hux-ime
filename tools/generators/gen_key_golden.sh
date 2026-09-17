@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 生成键金样（只需要系统 librime；另需 pin 版 key_table.cc 以取键值清单）。
-#   tools/gen_key_golden.sh <librime-src>
+#   tools/generators/gen_key_golden.sh <librime-src>
 #
 # <librime-src>：含 src/rime/key_table.cc 的目录；单文件下载即可，无需克隆：
 #   mkdir -p external/librime/src/rime
@@ -9,7 +9,7 @@
 #
 # 脚本会校验该文件 sha256 与 crates/hux-core/src/key_table.rs 头部记录一致。
 set -euo pipefail
-root=$(cd "$(dirname "$0")/.." && pwd)
+root=$(cd "$(dirname "$0")/../.." && pwd)
 src=${1:?usage: gen_key_golden.sh <librime-src>}
 key_table_cc="$src/src/rime/key_table.cc"
 work=$(mktemp -d)
@@ -29,13 +29,13 @@ if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
 fi
 
 # 键值清单：全部表内键值 + 若干表外键值（验证 None 路径）。
-python3 "$root/tools/gen_key_table.py" \
+python3 "$root/tools/generators/gen_key_table.py" \
     --source "$key_table_cc" \
     --out /dev/null --keyvals-out "$work/keyvals.txt" >/dev/null
 printf '%s\n' 1 255 4660 >> "$work/keyvals.txt" # 0x1, 0xff, 0x1234
 
-g++ -std=c++17 -O2 "$root/tools/key_probe.cpp" -lrime -o "$work/key_probe"
-"$work/key_probe" "$work/keyvals.txt" "$root/tools/key_cases.txt" > "$work/key.tsv"
+g++ -std=c++17 -O2 "$root/tools/probes/key_probe.cpp" -lrime -o "$work/key_probe"
+"$work/key_probe" "$work/keyvals.txt" "$root/tools/cases/key_cases.txt" > "$work/key.tsv"
 gzip -9 -n -c "$work/key.tsv" > "$root/goldens/key.tsv.gz"
 wc -l "$work/key.tsv"
 sha256sum "$root/goldens/key.tsv.gz"

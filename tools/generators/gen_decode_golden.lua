@@ -1,6 +1,6 @@
 -- 生成 decode 金样（冷路径：include_early_commit=false；未接入学习）。
 --
---   lua tools/gen_decode_golden.lua --reference <repo> --data <dir> --out <tsv> [--model <bin>] [--every N] [--duplicate 0|1] [--early-commit 0|1] [--required 0|1] [--learning 0|1]
+--   lua tools/generators/gen_decode_golden.lua --reference <repo> --data <dir> --out <tsv> [--model <bin>] [--every N] [--duplicate 0|1] [--early-commit 0|1] [--required 0|1] [--learning 0|1]
 --
 -- --required 1：对每 3 个输入追加一次“必需前缀”遍（前缀取该输入首候选的首字符），
 -- 覆盖 build_early_commit_evidence 的 required_text_prefix 过滤路径。
@@ -32,7 +32,7 @@ local opts = parse_args({ ... })
 -- 默认参照检出：与仓库同级（相对脚本位置解析，不依赖调用时的 cwd）。
 local script_dir = (arg and arg[0] or ""):match("^(.*)[/\\]") or "."
 local reference = opts.reference or os.getenv("HUX_REFERENCE_REPO")
-    or (script_dir .. "/../external/tiger-sentense-rime")
+    or (script_dir .. "/../../external/tiger-sentense-rime")
 assert(opts.data, "missing --data")
 assert(opts.out, "missing --out")
 local every = tonumber(opts.every or "1") or 1

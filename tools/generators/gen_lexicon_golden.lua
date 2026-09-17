@@ -1,6 +1,6 @@
 -- 生成 lexicon 差分金样 transcript（TSV），供 Rust 侧重放比对。
 --
---   lua tools/gen_lexicon_golden.lua --reference <repo> --data <dir> --out <tsv> [--mode present|missing]
+--   lua tools/generators/gen_lexicon_golden.lua --reference <repo> --data <dir> --out <tsv> [--mode present|missing]
 --
 -- present 用 --data 目录中的四个数据文件；missing 模拟数据文件缺失（--data 传不存在目录）。
 --
@@ -28,7 +28,7 @@ local opts = parse_args({ ... })
 -- 默认参照检出：与仓库同级（相对脚本位置解析，不依赖调用时的 cwd）。
 local script_dir = (arg and arg[0] or ""):match("^(.*)[/\\]") or "."
 local reference = opts.reference or os.getenv("HUX_REFERENCE_REPO")
-    or (script_dir .. "/../external/tiger-sentense-rime")
+    or (script_dir .. "/../../external/tiger-sentense-rime")
 assert(opts.data, "missing --data")
 assert(opts.out, "missing --out")
 

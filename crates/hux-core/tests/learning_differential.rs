@@ -1,6 +1,6 @@
 //! 差分测试：重放 learning 金样（纯计算部分），逐位比对。
 //!
-//! 金样由 `tools/gen_learning_golden.lua` 生成（`goldens/learning.tsv.gz`）。
+//! 金样由 `tools/generators/gen_learning_golden.lua` 生成（`goldens/learning.tsv.gz`）。
 
 mod common;
 

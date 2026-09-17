@@ -1,6 +1,6 @@
 //! 差分测试：重放 lexical 金样（TCSLEX01 读取 / Bloom / 最大权词覆盖打分）逐位比对。
 //!
-//! 金样由 `tools/gen_lexical_golden.lua` 生成：参照 main ≥ `35a10b9` 的词先验模块 +
+//! 金样由 `tools/generators/gen_lexical_golden.lua` 生成：参照 main ≥ `35a10b9` 的词先验模块 +
 //! 真实位图 `data/tiger_sentence.lexical.bin`；语料取自参照码表（正例）与确定性
 //! 采样（负例），全量记录查询与结果，故重放不依赖任何外部词表。
 

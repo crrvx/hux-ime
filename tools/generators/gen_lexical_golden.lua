@@ -1,6 +1,6 @@
 -- 生成 lexical 金样（TCSLEX01 读取 / Bloom / 最大权词覆盖打分）。
 --
---   lua tools/gen_lexical_golden.lua --reference <repo> --model <bin> --out <tsv>
+--   lua tools/generators/gen_lexical_golden.lua --reference <repo> --model <bin> --out <tsv>
 --
 -- 注意：词先验模块自上游 main `35a10b9` 起提供；`--reference` 需指向该修订或更新。
 --
@@ -28,7 +28,7 @@ local opts = parse_args({ ... })
 -- 默认参照检出：与仓库同级（相对脚本位置解析，不依赖调用时的 cwd）。
 local script_dir = (arg and arg[0] or ""):match("^(.*)[/\\]") or "."
 local reference = opts.reference or os.getenv("HUX_REFERENCE_REPO")
-    or (script_dir .. "/../external/tiger-sentense-rime")
+    or (script_dir .. "/../../external/tiger-sentense-rime")
 assert(opts.model, "missing --model")
 assert(opts.out, "missing --out")
 

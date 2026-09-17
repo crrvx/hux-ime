@@ -1,6 +1,6 @@
 //! 差分测试：重放 decode 金样（冷路径、无学习），逐位比对。
 //!
-//! 金样由 `tools/gen_decode_golden.lua` 生成：
+//! 金样由 `tools/generators/gen_decode_golden.lua` 生成：
 //! * `goldens/decode.tsv.gz`：无模型；
 //! * `goldens/decode_model.tsv.gz`：fixture 模型；
 //! * `goldens/decode_rank_first.tsv.gz`：fixture 模型 + 关闭单字重码；

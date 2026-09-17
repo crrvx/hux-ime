@@ -6,7 +6,7 @@
     "syllables": 426
   },
   "format": "TCSRV01",
-  "generator": "tools/gen_pinyin_index.py",
+  "generator": "tools/generators/gen_pinyin_index.py",
   "output": {
     "bytes": 8054016,
     "file": "data/tiger_sentence.pinyin.bin.gz",

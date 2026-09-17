@@ -7,7 +7,7 @@
 // 文本字段为 UTF-8 字节十六进制，空串为 "-"，候选/注释以 "," 分隔、空为 "-"。
 // repr 支持：单字符可打印键、键名（space/comma/period/.../BackSpace/Left/...）、
 // `<修饰>+<键名>`（Shift/Lock/Control/Alt/Super/Hyper/Meta/Release，如 Release+Shift_L）。
-// 与 tools/gen_key_sequence_golden.sh 配套；探针依赖系统 librime/librime-lua，
+// 与 tools/generators/gen_key_sequence_golden.sh 配套；探针依赖系统 librime/librime-lua，
 // 故金样不在 CI 重生成（同 key.tsv.gz）。
 #include <rime_api.h>
 

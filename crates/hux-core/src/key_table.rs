@@ -1,7 +1,7 @@
 //! 由 librime `src/rime/key_table.cc` 生成（请勿手改）。
 //!
-//! 生成：`python3 tools/gen_key_table.py --source <librime>/src/rime/key_table.cc --out <此文件>`
-//! 来源：librime 1.17.0（系统）/ 源码快照
+//! 生成：`python3 tools/generators/gen_key_table.py --source <librime>/src/rime/key_table.cc --out <此文件>`
+//! 来源：librime
 //! key_table.cc sha256：`2f7c6a8b4f2aa474d700a87bd4bd1baa48a2655cd6ce4d2ba05b768f284d9d78`
 
 /// 修饰位名（索引 = 位号；缺失位为 None）。

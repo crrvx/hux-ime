@@ -3,7 +3,7 @@
 // 为避免依赖 librime 构建期头文件（build_config.h/boost），此处自声明
 // 最小接口；类布局与 `rime/key_event.h` 一致，方法符号由 librime 导出。
 //
-//   g++ -std=c++17 -O2 tools/key_probe.cpp -lrime -o key_probe
+//   g++ -std=c++17 -O2 tools/probes/key_probe.cpp -lrime -o key_probe
 //   key_probe <keyvals.txt> <cases.txt>
 //
 // 记录（tab 分隔）：

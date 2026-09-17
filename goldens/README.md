@@ -86,24 +86,24 @@ git clone https://github.com/crrvx/tiger-sentense-rime external/tiger-sentense-r
 REF=external/tiger-sentense-rime
 
 # ngram fixture（入库）
-lua tools/gen_ngram_golden.lua --reference "$REF" \
+lua tools/generators/gen_ngram_golden.lua --reference "$REF" \
   --model goldens/ngram_fixture.bin --out /tmp/ngram_fixture.tsv --mode fixture
 gzip -9 -n -c /tmp/ngram_fixture.tsv > goldens/ngram_fixture.tsv.gz
 
 # ngram 真实模型抽样（本地）
-lua tools/gen_ngram_golden.lua --reference "$REF" \
+lua tools/generators/gen_ngram_golden.lua --reference "$REF" \
   --model ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
   --out goldens/local/ngram_sample.tsv --mode sample
 gzip -9 -n -c goldens/local/ngram_sample.tsv > goldens/local/ngram_sample.tsv.gz
 
 # lexicon（入库）
-lua tools/gen_lexicon_golden.lua --reference "$REF" \
+lua tools/generators/gen_lexicon_golden.lua --reference "$REF" \
   --data "goldens/lexicon" --out /tmp/lexicon.tsv --mode present
-lua tools/gen_lexicon_golden.lua --reference "$REF" \
+lua tools/generators/gen_lexicon_golden.lua --reference "$REF" \
   --data /tmp/no-such-dir --out /tmp/lexicon_missing.tsv --mode missing
-lua tools/gen_lexicon_golden.lua --reference "$REF" \
+lua tools/generators/gen_lexicon_golden.lua --reference "$REF" \
   --data "goldens/lexicon_variants" --out /tmp/lexicon_variants.tsv --mode present
-lua tools/gen_lexicon_golden.lua --reference "$REF" \
+lua tools/generators/gen_lexicon_golden.lua --reference "$REF" \
   --data "goldens/lexicon_codes_only" --out /tmp/lexicon_codes_only.tsv --mode present
 gzip -9 -n -c /tmp/lexicon.tsv > goldens/lexicon.tsv.gz
 gzip -9 -n -c /tmp/lexicon_missing.tsv > goldens/lexicon_missing.tsv.gz
@@ -111,19 +111,19 @@ gzip -9 -n -c /tmp/lexicon_variants.tsv > goldens/lexicon_variants.tsv.gz
 gzip -9 -n -c /tmp/lexicon_codes_only.tsv > goldens/lexicon_codes_only.tsv.gz
 
 # decode（入库；模型版对 fixture 抽样）
-lua tools/gen_decode_golden.lua --reference "$REF" \
+lua tools/generators/gen_decode_golden.lua --reference "$REF" \
   --data "goldens/lexicon" --out /tmp/decode.tsv
-lua tools/gen_decode_golden.lua --reference "$REF" \
+lua tools/generators/gen_decode_golden.lua --reference "$REF" \
   --data "goldens/lexicon" --model "goldens/ngram_fixture.bin" \
   --lexical "data/tiger_sentence.lexical.bin" \
   --out /tmp/decode_model.tsv --every 7
-lua tools/gen_decode_golden.lua --reference "$REF" \
+lua tools/generators/gen_decode_golden.lua --reference "$REF" \
   --data "goldens/lexicon" --model "goldens/ngram_fixture.bin" \
   --lexical "data/tiger_sentence.lexical.bin" \
   --out /tmp/decode_rank_first.tsv --every 7 --duplicate 0
-lua tools/gen_decode_golden.lua --reference "$REF" \
+lua tools/generators/gen_decode_golden.lua --reference "$REF" \
   --data "goldens/lexicon" --out /tmp/decode_evidence.tsv --early-commit 1 --required 1
-lua tools/gen_decode_golden.lua --reference "$REF" \
+lua tools/generators/gen_decode_golden.lua --reference "$REF" \
   --data "goldens/lexicon" --model "goldens/ngram_fixture.bin" \
   --lexical "data/tiger_sentence.lexical.bin" \
   --out /tmp/decode_evidence_model.tsv --every 7 --early-commit 1 --required 1
@@ -134,9 +134,9 @@ gzip -9 -n -c /tmp/decode_evidence.tsv > goldens/decode_evidence.tsv.gz
 gzip -9 -n -c /tmp/decode_evidence_model.tsv > goldens/decode_evidence_model.tsv.gz
 
 # decode + 学习（入库）
-lua tools/gen_decode_golden.lua --reference "$REF" \
+lua tools/generators/gen_decode_golden.lua --reference "$REF" \
   --data "goldens/lexicon" --out /tmp/decode_learning.tsv --learning 1
-lua tools/gen_decode_golden.lua --reference "$REF" \
+lua tools/generators/gen_decode_golden.lua --reference "$REF" \
   --data "goldens/lexicon" --model "goldens/ngram_fixture.bin" \
   --lexical "data/tiger_sentence.lexical.bin" \
   --out /tmp/decode_learning_model.tsv --every 7 --learning 1
@@ -144,25 +144,25 @@ gzip -9 -n -c /tmp/decode_learning.tsv > goldens/decode_learning.tsv.gz
 gzip -9 -n -c /tmp/decode_learning_model.tsv > goldens/decode_learning_model.tsv.gz
 
 # learning（入库；生成器对 corpora/chains/diffcases 按名排序迭代，输出与 Lua 进程哈希序无关）
-lua tools/gen_learning_golden.lua --reference "$REF" --out /tmp/learning.tsv
+lua tools/generators/gen_learning_golden.lua --reference "$REF" --out /tmp/learning.tsv
 gzip -9 -n -c /tmp/learning.tsv > goldens/learning.tsv.gz
 
 # key（入库；只需要系统 librime；pin 版 key_table.cc 单文件下载即可，无需克隆）
 mkdir -p external/librime/src/rime
 curl -fsSL -o external/librime/src/rime/key_table.cc \
   https://raw.githubusercontent.com/rime/librime/33e78140250125871856cdc5b42ddc6a5fcd3cd4/src/rime/key_table.cc
-bash tools/gen_key_golden.sh external/librime    # 脚本校验文件 sha 与 key_table.rs 头部一致
+bash tools/generators/gen_key_golden.sh external/librime    # 脚本校验文件 sha 与 key_table.rs 头部一致
 
 # key_sequence（入库；需要系统 librime + librime-lua，构建 pin 版隔离环境）
-bash tools/gen_key_sequence_golden.sh
+bash tools/generators/gen_key_sequence_golden.sh
 # 探索新用例时可用 CASES 指向临时用例文件（输出默认仍写入入库文件，建议显式给输出路径）：
-# CASES=/tmp/explore.txt bash tools/gen_key_sequence_golden.sh /tmp/explore.tsv.gz
+# CASES=/tmp/explore.txt bash tools/generators/gen_key_sequence_golden.sh /tmp/explore.tsv.gz
 
 # pinyin_lookup（入库；同上；夹具索引由生成器顺带重建）
-bash tools/gen_pinyin_lookup_golden.sh
+bash tools/generators/gen_pinyin_lookup_golden.sh
 
 # lexical（入库；需要参照的词先验模块与 data/ 位图；CI 已接入）
-lua tools/gen_lexical_golden.lua --reference "$REF" --model data/tiger_sentence.lexical.bin --out /tmp/lexical.tsv
+lua tools/generators/gen_lexical_golden.lua --reference "$REF" --model data/tiger_sentence.lexical.bin --out /tmp/lexical.tsv
 gzip -9 -n -c /tmp/lexical.tsv > goldens/lexical.tsv.gz
 ```
 
@@ -173,7 +173,7 @@ cargo test -p hux-core        # 全部差分（本地 sample 缺失自动跳过�
 
 # 基准（ngram，真实模型 + 本地抽样金样）
 cargo run --release -q --example ngram_bench -- <model.bin> <transcript.tsv>
-lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <transcript.tsv>
+lua tools/probes/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <transcript.tsv>
 ```
 
 ## Lua 版本
@@ -184,16 +184,16 @@ lua tools/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <t
 
 - **主干**：[`crrvx/tiger-sentense-rime`](https://github.com/crrvx/tiger-sentense-rime) @ `8b615235c17c858e1eca8f1a41fbc74e202f8bbe`（main）。
 - **音查虎**：`feat/reverse-lookup` @ `898579f833df53f1dec5639d56e685751a8a7f71` + 上述 main **本地合并**
-  （上游未合并该分支；`tools/gen_pinyin_lookup_golden.sh` 自建临时 worktree 合并，`PIN`/`BASE` 可覆盖）。
+  （上游未合并该分支；`tools/generators/gen_pinyin_lookup_golden.sh` 自建临时 worktree 合并，`PIN`/`BASE` 可覆盖）。
 - **键名表**：librime `src/rime/key_table.cc`（sha256 `2f7c6a8b4f2aa474d700a87bd4bd1baa48a2655cd6ce4d2ba05b768f284d9d78`，固定提交 `33e78140`）；
-  `key_table.rs` 由 `tools/gen_key_table.py` 生成（CI 单文件下载源码后重生成比对）；`key.tsv.gz` 由系统 librime 1.17.0 探针生成，**CI 不重生成**。
-- **键序列 / 音查虎**：`key_sequence.tsv.gz`、`pinyin_lookup.tsv.gz` 由 `tools/rime_sequence_probe.cpp` 驱动
+  `key_table.rs` 由 `tools/generators/gen_key_table.py` 生成（CI 单文件下载源码后重生成比对）；`key.tsv.gz` 由系统 librime 1.17.0 探针生成，**CI 不重生成**。
+- **键序列 / 音查虎**：`key_sequence.tsv.gz`、`pinyin_lookup.tsv.gz` 由 `tools/probes/rime_sequence_probe.cpp` 驱动
   **真 librime + librime-lua** 与 pin 版 Lua 核心生成（探针头部记录参照提交与源文件 sha256），**CI 不重生成**；
-  夹具入库并与 Rust 重放共用，其中音查虎夹具索引由 `tools/gen_pinyin_index.py` 生成（CI 重生成比对）。
+  夹具入库并与 Rust 重放共用，其中音查虎夹具索引由 `tools/generators/gen_pinyin_index.py` 生成（CI 重生成比对）。
   真实索引（`data/tiger_sentence.pinyin.bin.gz`）的校验和与来源见
   [`../docs/PINYIN_INDEX_MANIFEST.json`](../docs/PINYIN_INDEX_MANIFEST.json)，本地复验：
-  `python3 tools/gen_pinyin_index.py --source external/tiger-sentense-rime/PY_c.dict.yaml --out data/tiger_sentence.pinyin.bin.gz --check --manifest docs/PINYIN_INDEX_MANIFEST.json`。
-- **词先验**：`lexical.tsv.gz` 由 `tools/gen_lexical_golden.lua` 以参照 main（词先验模块自 `35a10b9` 起提供）与
+  `python3 tools/generators/gen_pinyin_index.py --source external/tiger-sentense-rime/PY_c.dict.yaml --out data/tiger_sentence.pinyin.bin.gz --check --manifest docs/PINYIN_INDEX_MANIFEST.json`。
+- **词先验**：`lexical.tsv.gz` 由 `tools/generators/gen_lexical_golden.lua` 以参照 main（词先验模块自 `35a10b9` 起提供）与
   入库位图生成（CC BY 4.0，见 [`../docs/LEXICAL_PRIOR_ATTRIBUTION.md`](../docs/LEXICAL_PRIOR_ATTRIBUTION.md)）；
   **已在 CI 中再生成比对**。
 - 参照仓库文件（生成时；`lua/`、`tools/` 均为参照仓库路径）：
