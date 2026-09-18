@@ -32,16 +32,16 @@
   - 官方 · [虎爪](https://github.com/lvyww/tigerclaw)
   - 官方 · [虎爪-rime](https://github.com/lvyww/tiger-sentense-rime)（本方案的参照实现）
   - 社区 · [虎符](https://github.com/LeafHW/hufu-ime-rust)
-  - 社区 · [虎虚](https://github.com/crrvx/hux-ime)（本方案）
+  - 社区 · [虎虚 hux](https://github.com/crrvx/hux-ime)（本方案）
 
 ## 致谢
 
 特别感谢 [B佬（lvyww）](https://github.com/lvyww) 对 **虎码** 的发明！也感谢倾情虎码建设的各位同志！\
-没有同志们这份共同的紧持，就没有如今 **虎码** 在 **虎字、虎词、虎句** 等方案上的一路高歌，推陈出新！
+若没有同志们的鼎力相助，就没有如今 **虎码** 在 **虎字、虎词、虎句** 等方案上的一路高歌，推陈出新！
 
 ## 署名
 
-- 拼音数据 `data/tiger_sentence.pinyin.bin.gz` 取自 [虎码官方秃版小狼毫](https://huma.ysepan.com)。
+- 拼音数据 `data/tiger_sentence.pinyin.bin.gz` 转换自 [虎码官方秃版小狼毫](https://huma.ysepan.com)。
 - 词先验数据 `data/tiger_sentence.lexical.bin`：[CC-BY-4.0](LICENSES/CC-BY-4.0.txt)
   派生自 [rime-mohu](https://github.com/fcxxxz/rime-mohu)；\
   署名见 [`docs/LEXICAL_PRIOR_ATTRIBUTION.md`](docs/LEXICAL_PRIOR_ATTRIBUTION.md)。
@@ -50,6 +50,6 @@
 
 ## 许可证
 
-本项目代码以 **GPL-3.0-or-later** 发布，全文见 [`LICENSE`](LICENSE)。\
-各文件的版权与许可经 SPDX 头 / [`REUSE.toml`](REUSE.toml) 标注（REUSE 规范），许可正文见
-[`LICENSES/`](LICENSES/)。
+本项目代码以 「**GPL-3.0-or-later**」 发布，全文见 [`LICENSE`](LICENSE)。\
+各文件的版权与许可经 SPDX 头 / [`REUSE.toml`](REUSE.toml) 标注（REUSE 规范），
+许可正文见 [`LICENSES/`](LICENSES/)。
