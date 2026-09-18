@@ -63,7 +63,7 @@ sudo ln -s /usr/share/fcitx5/hux/models/sentence-ngram-mobile.bin \
            /usr/share/rime-data/models/sentence-ngram-mobile.bin
 ```
 
-随后在配置工具中添加「hux」（方案：虎句）即可使用。
+随后在配置工具中添加「虎虚」（方案：虎句）即可使用。
 
 ## 使用
 
@@ -80,7 +80,7 @@ sudo ln -s /usr/share/fcitx5/hux/models/sentence-ngram-mobile.bin \
 - 数字直选：`数字键` 直接上屏当页候选、（`0` = 第 10 个）
 - 候选项数：（可配置 1–10）
 
-完整配置项见 [`config.md`](config.md)（可在配置工具的「hux」页修改）。
+完整配置项见 [`config.md`](config.md)（可在配置工具的「虎虚」页修改）。
 
 ### 音反查：拼音 → 虎码 + 字（默认 `Alt`+`:`）
 

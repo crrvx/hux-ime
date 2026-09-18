@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 /*
- * hux-ime（虎句方案）fcitx5 addon 的 C ABI（Rust 侧实现，C++ 薄壳调用）。
+ * hux-ime（虎虚）fcitx5 addon 的 C ABI（Rust 侧实现，C++ 薄壳调用）。
  * 头文件与 `crates/hux-addon/src/lib.rs` 的导出符号一一对应。
  */
 #ifndef HUX_ABI_H_

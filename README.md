@@ -1,16 +1,16 @@
 <!-- SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com> -->
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 
-# hux-ime
+# 虎虚输入法 / hux-ime
 
 **虎句**（`tiger_sentence`）输入方案的 fcitx5 原生 Rust 实现。 \
 计算与交互核心全部为 Rust，不依赖 librime。
 
-本项目的语义、数据与金样均参照 [虎爪-rime](https://github.com/lvyww/tiger-sentense-rime)。
+> 本项目的语义、数据与金样均参照 [虎爪-rime](https://github.com/lvyww/tiger-sentense-rime)。\
+> hux-ime 属于社区方案，出于热爱而作，与上游无隶属关系。
 
-hux-ime 是社区第三方适配，出于热爱而作，与上游无隶属关系。
-
-名称 **hux** = **tux**`linux` + **hu**`虎码`
+- 英文名 —— **hux** =  **hu**`虎码` + **tux**`linux(意指fcitx5方案)`
+- 中文名 —— **虎虚** = **虎**`hux正取2字母` + **虚**`hux倒取2字母`
 
 ## 文档
 
@@ -27,18 +27,12 @@ hux-ime 是社区第三方适配，出于热爱而作，与上游无隶属关系
 
 - 虎码官网：[tiger-code.com](https://www.tiger-code.com)
 - 虎码资源：[huma.ysepan.com](https://huma.ysepan.com)
-
-<br>
-
-- 官方 · [虎娘](https://github.com/lvyww/tigirl)
-- 官方 · [虎爪](https://github.com/lvyww/tigerclaw)
-- 官方 · [虎爪-rime](https://github.com/lvyww/tiger-sentense-rime)（本方案的参照实现，GPL-3.0）
-
-<br>
-
-- 社区 · [虎符](https://github.com/LeafHW/hufu-ime-rust)
-- 社区 · [魔虎音形](https://github.com/fcxxxz/rime-mohu)
-- 社区 · [hux](https://github.com/crrvx/hux-ime)（本方案）
+- 虎句方案：
+  - 官方 · [虎娘](https://github.com/lvyww/tigirl)
+  - 官方 · [虎爪](https://github.com/lvyww/tigerclaw)
+  - 官方 · [虎爪-rime](https://github.com/lvyww/tiger-sentense-rime)（本方案的参照实现）
+  - 社区 · [虎符](https://github.com/LeafHW/hufu-ime-rust)
+  - 社区 · [虎虚](https://github.com/crrvx/hux-ime)（本方案）
 
 ## 致谢
 

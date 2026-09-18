@@ -3,7 +3,7 @@
 
 # 配置项
 
-配置入口：`fcitx5-configtool` → 「hux」页。设置页分「行为」「快捷键」两个分区（与 fcitx5
+配置入口：`fcitx5-configtool` → 「虎虚」页。设置页分「行为」「快捷键」两个分区（与 fcitx5
 全局设置同款；选项详情可悬浮查看），保存写入 `~/.config/fcitx5/conf/hux.conf`。
 
 ## 行为（布尔项在前，值选项在后）

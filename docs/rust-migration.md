@@ -3,7 +3,7 @@
 
 # 设计（K0–K4）
 
-hux-ime：虎句（`tiger_sentence`）输入方案的 fcitx5 原生 Rust 实现。
+hux-ime（虎虚）：虎句（`tiger_sentence`）输入方案的 fcitx5 原生 Rust 实现。
 参照实现（测试 oracle，仅开发/CI 使用）：<https://github.com/lvyww/tiger-sentense-rime>；
 金样清单与复现命令见 [`../goldens/README.md`](../goldens/README.md)。
 
