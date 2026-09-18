@@ -21,12 +21,12 @@ use learning_store::LearningStore;
 use options::OptionsStore;
 use settings::Settings;
 
-use hux_core::character_lookup;
+use hux_core::char_to_sound_shape;
 use hux_core::decode::Decoder;
 use hux_core::host::{self, HostOptions, HostResult};
 use hux_core::interaction::{
-    CompositionBuilder, K_CHARACTER_LOOKUP_KEY, K_PINYIN_LOOKUP_KEY, LiveLearning, ProcessorEnv,
-    ProcessorResult, SentenceState, buffered_text, processor, reset_early_evidence,
+    CompositionBuilder, K_CHAR_TO_SOUND_SHAPE_KEY, K_SOUND_TO_CHAR_SHAPE_KEY, LiveLearning,
+    ProcessorEnv, ProcessorResult, SentenceState, buffered_text, processor, reset_early_evidence,
     set_allow_duplicate_single, update_notifier,
 };
 use hux_core::key::{
@@ -122,9 +122,9 @@ pub(crate) fn wall_clock() -> f64 {
         .unwrap_or(0.0)
 }
 
-/// 字查音+虎（⑧-2）会话态：周边文本（字符制光标）+ 窗口起点 + 已算好的提示。
+/// 字反查（⑧-2）会话态：周边文本（字符制光标）+ 窗口起点 + 已算好的提示。
 #[derive(Default)]
-struct CharacterLookupState {
+struct CharToSoundShapeState {
     valid: bool,
     text: String,
     cursor: usize,
@@ -153,8 +153,8 @@ pub struct Engine {
     punct: Option<PunctTable>,
     /// 学习库（用户目录不可用时为禁用占位）。
     learning: LearningStore,
-    /// 字查音+虎（⑧-2）会话态。
-    character_lookup: CharacterLookupState,
+    /// 字反查（⑧-2）会话态。
+    char_to_sound_shape: CharToSoundShapeState,
     /// 学习规则串（来自码表；用于拼 mode）。
     learning_rules: String,
     /// 当前学习 mode 串与已应用的索引版本。
@@ -268,14 +268,14 @@ impl Engine {
             host_options,
             punct,
             learning,
-            character_lookup: CharacterLookupState::default(),
+            char_to_sound_shape: CharToSoundShapeState::default(),
             learning_rules,
             learning_mode,
             applied_learning: None,
             forward_after_commit: false,
             status: CString::new(notes.join("; ")).unwrap_or_default(),
         };
-        engine.sync_pinyin_lookup_prefix();
+        engine.sync_sound_to_char_shape_prefix();
         engine.push_update();
         engine
     }
@@ -288,10 +288,10 @@ impl Engine {
     fn key(&mut self, keysym: u32, states: u32, release: bool) -> bool {
         self.forward_after_commit = false;
         let key = KeyEvent::new(keysym as i32, core_modifiers(states, release));
-        // 字查音+虎查码段：←/→/↑/↓ **交应用处理**（应用光标随动），本层不消费也不改动输入；
+        // 字反查段：←/→/↑/↓ **交应用处理**（应用光标随动），本层不消费也不改动输入；
         // 两排在应用回传周边文本后的下一次按键（含 release）时刷新。
         if !release
-            && self.character_lookup_tagged()
+            && self.char_to_sound_shape_tagged()
             && matches!(key.repr().as_str(), "Left" | "Right" | "Up" | "Down")
         {
             return false;
@@ -378,25 +378,25 @@ impl Engine {
             eprintln!("hux: rebuild error: {error}");
         }
         update_notifier(&mut self.context, &mut self.state, &mut self.live);
-        self.refresh_character_lookup_aux();
+        self.refresh_char_to_sound_shape_aux();
         self.push_update();
         consumed
     }
 
-    /// 字查音+虎（⑧-2）：查码段内 ←/→ 以 2 字符步长移动锚点（返回 `Some(true)` 消费）。
+    /// 字反查（⑧-2）：查码段内 ←/→ 以 2 字符步长移动锚点（返回 `Some(true)` 消费）。
     /// 进入/退出查码段由 core 处理器负责（触发字符推入/清空组合）。
-    /// 当前组合末段是否为字查音+虎查码段。
-    fn character_lookup_tagged(&self) -> bool {
+    /// 当前组合末段是否为字反查段。
+    fn char_to_sound_shape_tagged(&self) -> bool {
         self.context
             .composition
             .back()
-            .is_some_and(|segment| segment.has_tag(character_lookup::TAG))
+            .is_some_and(|segment| segment.has_tag(char_to_sound_shape::TAG))
     }
 
     /// 重算两排提示（上排 = 光标左侧拼音、下排 = 虎码）；不在查码段则清空。
-    fn refresh_character_lookup_aux(&mut self) {
-        let tagged = self.character_lookup_tagged();
-        let state = &mut self.character_lookup;
+    fn refresh_char_to_sound_shape_aux(&mut self) {
+        let tagged = self.char_to_sound_shape_tagged();
+        let state = &mut self.char_to_sound_shape;
         if !tagged {
             state.aux_up.clear();
             state.aux_down.clear();
@@ -412,7 +412,7 @@ impl Engine {
         let (text, cursor) = (state.text.clone(), state.cursor);
         let (up, down) = self
             .decoder
-            .character_lookup_rows(&text, cursor)
+            .char_to_sound_shape_rows(&text, cursor)
             .unwrap_or_default();
         state.aux_up = up;
         state.aux_down = down;
@@ -420,7 +420,7 @@ impl Engine {
 
     /// 宿主送入应用侧周边文本（字符制光标；`None` = 应用不支持/不可用）。
     pub fn set_surrounding(&mut self, text: Option<&str>, cursor_chars: usize) {
-        let state = &mut self.character_lookup;
+        let state = &mut self.char_to_sound_shape;
         match text {
             Some(text) => {
                 state.valid = true;
@@ -433,14 +433,14 @@ impl Engine {
                 state.cursor = 0;
             }
         }
-        if self.character_lookup_tagged() {
-            self.refresh_character_lookup_aux();
+        if self.char_to_sound_shape_tagged() {
+            self.refresh_char_to_sound_shape_aux();
         }
     }
 
     /// 重置会话（`activate`/`deactivate`/`reset`）。
     fn reset(&mut self) {
-        self.character_lookup = CharacterLookupState::default();
+        self.char_to_sound_shape = CharToSoundShapeState::default();
         self.context.clear();
         self.state.reset(&mut self.context, false);
         self.live.pending.clear();
@@ -471,20 +471,20 @@ impl Engine {
                 self.context.set_option(name, value);
             }
         }
-        self.sync_pinyin_lookup_prefix();
+        self.sync_sound_to_char_shape_prefix();
         self.refresh_learning_mode();
     }
 
     /// 触发键（属性）：把两项触发键的 rime 键名列表（逗号分隔）交给 core（解析/匹配均在 core 内）。
-    fn sync_pinyin_lookup_prefix(&mut self) {
+    fn sync_sound_to_char_shape_prefix(&mut self) {
         for (property, value) in [
             (
-                K_PINYIN_LOOKUP_KEY,
-                self.settings.pinyin_lookup_keys.join(","),
+                K_SOUND_TO_CHAR_SHAPE_KEY,
+                self.settings.sound_to_char_shape_keys.join(","),
             ),
             (
-                K_CHARACTER_LOOKUP_KEY,
-                self.settings.character_lookup_keys.join(","),
+                K_CHAR_TO_SOUND_SHAPE_KEY,
+                self.settings.char_to_sound_shape_keys.join(","),
             ),
         ] {
             if self.context.get_property(property).unwrap_or("") != value {
@@ -545,7 +545,7 @@ impl Engine {
         let live_bytes = self.context.live_input();
         let live = String::from_utf8_lossy(live_bytes).into_owned();
         // 参照 librime `Composition::GetPreedit` + 参照 Lua 的候选 preedit：
-        // 高亮候选的 preedit（「按字分码」，含缓冲前缀与音查虎前缀）始终优先；
+        // 高亮候选的 preedit（「按字分码」，含缓冲前缀与音反查前缀）始终优先；
         // 组合（光标）之后的原始输入原样接在其后——左/右移动时保持按字分码，
         // 光标落在分码文本末尾、原始尾部之前。
         let highlighted = self
@@ -587,7 +587,7 @@ impl Engine {
             let cursor = (prefix_length + self.context.live_caret()).min(text.len());
             (text, cursor)
         };
-        // 参照 `Composition::GetPreedit`：段提示插在光标处（如音查虎段的「〔拼音〕」）。
+        // 参照 `Composition::GetPreedit`：段提示插在光标处（如音反查段的「〔拼音〕」）。
         let prompt = self
             .context
             .composition
@@ -597,9 +597,9 @@ impl Engine {
         if !prompt.is_empty() {
             preedit.insert_str(cursor.min(preedit.len()), &prompt);
         }
-        // 字查音+虎查码段不下发预编辑：避免应用端 marked text 锁住光标（←/→ 无法移动）。
+        // 字反查段不下发预编辑：避免应用端 marked text 锁住光标（←/→ 无法移动）。
         let mut cursor = cursor;
-        if self.character_lookup_tagged() {
+        if self.char_to_sound_shape_tagged() {
             preedit.clear();
             cursor = 0;
         }
@@ -636,8 +636,8 @@ impl Engine {
         let text_pointers: Vec<*const c_char> = texts.iter().map(|text| text.as_ptr()).collect();
         let comment_pointers: Vec<*const c_char> =
             comments.iter().map(|comment| comment.as_ptr()).collect();
-        let aux_up = CString::new(self.character_lookup.aux_up.as_str()).unwrap_or_default();
-        let aux_down = CString::new(self.character_lookup.aux_down.as_str()).unwrap_or_default();
+        let aux_up = CString::new(self.char_to_sound_shape.aux_up.as_str()).unwrap_or_default();
+        let aux_down = CString::new(self.char_to_sound_shape.aux_down.as_str()).unwrap_or_default();
         // SAFETY: 指针数组与 C 串在本调用期间有效；计数与数组长度一致。
         unsafe {
             update(
@@ -727,10 +727,10 @@ pub struct HuxOptions {
     pub ascii_punct: i32,
     pub tab_learning: i32,
     pub high_freq_limit: i32,
-    /// 音查虎触发键（rime 键名，可多项）。
-    pub pinyin_lookup: HuxKeyList,
-    /// 字查音+虎触发键（rime 键名，可多项）。
-    pub character_lookup: HuxKeyList,
+    /// 音反查触发键（rime 键名，可多项）。
+    pub sound_to_char_shape: HuxKeyList,
+    /// 字反查触发键（rime 键名，可多项）。
+    pub char_to_sound_shape: HuxKeyList,
     /// 每页候选个数（1..=10）。
     pub page_size: i32,
     /// 上/下翻页键（rime 键名，可多项）。
@@ -775,8 +775,8 @@ pub unsafe extern "C" fn hux_engine_apply_settings(
         ascii_punct: options.ascii_punct != 0,
         tab_learning: options.tab_learning != 0,
         high_freq_limit: options.high_freq_limit.max(0) as usize,
-        pinyin_lookup_keys: key_reprs(&options.pinyin_lookup),
-        character_lookup_keys: key_reprs(&options.character_lookup),
+        sound_to_char_shape_keys: key_reprs(&options.sound_to_char_shape),
+        char_to_sound_shape_keys: key_reprs(&options.char_to_sound_shape),
         page_size: options.page_size.max(1) as usize,
         page_up_keys: key_reprs(&options.page_up),
         page_down_keys: key_reprs(&options.page_down),
@@ -1011,14 +1011,14 @@ mod tests {
         assert_eq!(COMMITS.lock().unwrap().last().unwrap(), &tenth);
     }
 
-    /// 多项触发键（`KeyList`）：两项均可进入音查虎。
+    /// 多项触发键（`KeyList`）：两项均可进入音反查。
     #[test]
-    fn pinyin_lookup_accepts_multiple_trigger_keys() {
+    fn sound_to_char_shape_accepts_multiple_trigger_keys() {
         let _guard = serial();
         UPDATES.lock().unwrap().clear();
         let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
         engine.apply_settings(Settings {
-            pinyin_lookup_keys: vec!["grave".to_string(), "semicolon".to_string()],
+            sound_to_char_shape_keys: vec!["grave".to_string(), "semicolon".to_string()],
             ..Default::default()
         });
         // 第二绑定（`;`）触发，入段字符为 `;`。
@@ -1276,10 +1276,10 @@ mod tests {
             ascii_punct: 1,
             tab_learning: 0,
             high_freq_limit: 800,
-            // 音查虎：`；`（无修饰）与 Shift+`；`（= `:`）。
-            pinyin_lookup: key_list(&[(0x3b, 0), (0x3a, 0)]),
-            // 字查音+虎：Shift+`（= `~`）。
-            character_lookup: key_list(&[(0x60, 1)]),
+            // 音反查：`；`（无修饰）与 Shift+`；`（= `:`）。
+            sound_to_char_shape: key_list(&[(0x3b, 0), (0x3a, 0)]),
+            // 字反查：Shift+`（= `~`）。
+            char_to_sound_shape: key_list(&[(0x60, 1)]),
             page_size: 7,
             // 翻页：`.` 与 `]`。
             page_up: key_list(&[(0x2c, 0)]),
@@ -1316,10 +1316,10 @@ mod tests {
         assert_eq!(unsafe { hux_engine_apply_settings(engine, &options) }, 1);
         let state = unsafe { &mut *engine };
         assert_eq!(
-            state.settings.pinyin_lookup_keys,
+            state.settings.sound_to_char_shape_keys,
             vec!["semicolon", "colon"]
         );
-        assert_eq!(state.settings.character_lookup_keys, vec!["Shift+grave"]);
+        assert_eq!(state.settings.char_to_sound_shape_keys, vec!["Shift+grave"]);
         unsafe { hux_engine_free(engine) };
     }
 
@@ -1367,20 +1367,20 @@ mod tests {
         assert!(engine.context.input().is_empty());
     }
 
-    /// 音查虎（⑧-1）端到端：设置 → 前缀识别 → 候选/注释 → 预编辑提示 → 空格上屏。
+    /// 音反查（⑧-1）端到端：设置 → 前缀识别 → 候选/注释 → 预编辑提示 → 空格上屏。
     #[test]
-    fn pinyin_lookup_end_to_end() {
+    fn sound_to_char_shape_end_to_end() {
         let _guard = serial();
         COMMITS.lock().unwrap().clear();
         UPDATES.lock().unwrap().clear();
         let dirs = vec![
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/pinyin_lookup"),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/sound_to_char_shape"),
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data"),
         ];
         let mut engine = Engine::new_with_dirs(host(), dirs, None, None);
-        assert!(engine.key(0x3a, FCITX_ALT, false), "音查虎触发键应被消费");
+        assert!(engine.key(0x3a, FCITX_ALT, false), "音反查触发键应被消费");
         for code in *b"zho" {
-            assert!(engine.key(u32::from(code), 0, false), "音查虎输入应被消费");
+            assert!(engine.key(u32::from(code), 0, false), "音反查输入应被消费");
         }
         let (preedit, _, candidates, _, _, _) = last_update();
         assert_eq!(preedit, ":zho〔拼音〕");
@@ -1390,7 +1390,7 @@ mod tests {
         );
         assert!(engine.key(0x20, 0, false));
         assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "中哦");
-        // 音查虎预编辑「按音节分码」：全拼音节之间插空格。
+        // 音反查预编辑「按音节分码」：全拼音节之间插空格。
         engine.reset();
         assert!(engine.key(0x3a, FCITX_ALT, false));
         for code in *b"zhongguo" {
@@ -1401,15 +1401,15 @@ mod tests {
         assert_eq!(preedit, ":zhong guo〔拼音〕");
     }
 
-    /// 字查音+虎（⑧-2）：默认 Alt+" 进入组合（**带修饰键不给默认候选**）；
+    /// 字反查（⑧-2）：默认 Alt+" 进入组合（**带修饰键不给默认候选**）；
     /// 上排 = 光标左侧 1 字拼音、下排 = 虎码，步长 1；改为单字符键时才给默认可上屏候选。
     #[test]
-    fn character_lookup_end_to_end() {
+    fn char_to_sound_shape_end_to_end() {
         let _guard = serial();
         COMMITS.lock().unwrap().clear();
         UPDATES.lock().unwrap().clear();
         let dirs = vec![
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/pinyin_lookup"),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/sound_to_char_shape"),
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data"),
         ];
         let mut engine = Engine::new_with_dirs(host(), dirs, None, None);
@@ -1439,7 +1439,7 @@ mod tests {
         // 其它键：退出查码段并照常处理。
         assert!(engine.key(u32::from(b'a'), 0, false), "普通键照常处理");
         assert_eq!(engine.context.input(), b"a");
-        // 音查虎：带修饰键（默认 Alt+:）**不给**默认候选；单字符键（;）才给。
+        // 音反查：带修饰键（默认 Alt+:）**不给**默认候选；单字符键（;）才给。
         engine.reset();
         assert!(engine.key(0x3a, FCITX_ALT, false), "Alt+: 应被消费");
         let (_, _, candidates, _, _, _) = last_update();
@@ -1449,7 +1449,7 @@ mod tests {
         );
         engine.reset();
         engine.apply_settings(settings::Settings {
-            pinyin_lookup_keys: vec!["semicolon".to_string()],
+            sound_to_char_shape_keys: vec!["semicolon".to_string()],
             ..settings::Settings::default()
         });
         assert!(engine.key(0x3b, 0, false), "; 应被消费");
@@ -1459,24 +1459,24 @@ mod tests {
             candidates.iter().any(|candidate| candidate == "；"),
             "单字符触发键应给默认候选：{candidates:?}"
         );
-        // 音查虎：单字符触发键（`）→ 同样给默认可上屏候选，空格上屏。
+        // 音反查：单字符触发键（`）→ 同样给默认可上屏候选，空格上屏。
         engine.reset();
         engine.apply_settings(settings::Settings {
-            pinyin_lookup_keys: vec!["grave".to_string()],
+            sound_to_char_shape_keys: vec!["grave".to_string()],
             ..settings::Settings::default()
         });
         assert!(engine.key(0x60, 0, false), "` 应被消费");
         let (_, _, candidates, _, _, _) = last_update();
         assert!(
             candidates.iter().any(|candidate| candidate == "`"),
-            "音查虎单字符触发键应给默认候选：{candidates:?}"
+            "音反查单字符触发键应给默认候选：{candidates:?}"
         );
         assert!(engine.key(0x20, 0, false), "空格确认候选");
         assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "`");
         // 单字符触发键（~）→ 提供默认可上屏候选，空格上屏。
         engine.reset();
         engine.apply_settings(settings::Settings {
-            character_lookup_keys: vec!["asciitilde".to_string()],
+            char_to_sound_shape_keys: vec!["asciitilde".to_string()],
             ..settings::Settings::default()
         });
         engine.set_surrounding(Some("中欧中兴"), 2);
@@ -1490,20 +1490,20 @@ mod tests {
         assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "~");
     }
 
-    /// 字查音+虎（⑧-2）夹具目录。
-    fn character_lookup_dirs() -> Vec<PathBuf> {
+    /// 字反查（⑧-2）夹具目录。
+    fn char_to_sound_shape_dirs() -> Vec<PathBuf> {
         vec![
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/pinyin_lookup"),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/sound_to_char_shape"),
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data"),
         ]
     }
 
-    /// 字查音+虎（⑧-2）：周边文本不可用（如终端）时不显示提示，两排均为空。
+    /// 字反查（⑧-2）：周边文本不可用（如终端）时不显示提示，两排均为空。
     #[test]
-    fn character_lookup_without_surrounding_shows_nothing() {
+    fn char_to_sound_shape_without_surrounding_shows_nothing() {
         let _guard = serial();
         UPDATES.lock().unwrap().clear();
-        let mut engine = Engine::new_with_dirs(host(), character_lookup_dirs(), None, None);
+        let mut engine = Engine::new_with_dirs(host(), char_to_sound_shape_dirs(), None, None);
         engine.set_surrounding(None, 0);
         assert!(engine.key(0x22, FCITX_ALT, false), "Alt+\" 应被消费");
         let (_, _, _, _, up, down) = last_update();
@@ -1511,12 +1511,12 @@ mod tests {
         assert!(down.is_empty(), "周边文本不可用时下排应为空：{down:?}");
     }
 
-    /// 字查音+虎（⑧-2）：周边文本恢复后，同一查码段在下一次按键刷新出两排。
+    /// 字反查（⑧-2）：周边文本恢复后，同一查码段在下一次按键刷新出两排。
     #[test]
-    fn character_lookup_refreshes_when_surrounding_available() {
+    fn char_to_sound_shape_refreshes_when_surrounding_available() {
         let _guard = serial();
         UPDATES.lock().unwrap().clear();
-        let mut engine = Engine::new_with_dirs(host(), character_lookup_dirs(), None, None);
+        let mut engine = Engine::new_with_dirs(host(), char_to_sound_shape_dirs(), None, None);
         engine.set_surrounding(None, 0);
         assert!(engine.key(0x22, FCITX_ALT, false), "Alt+\" 应被消费");
         engine.set_surrounding(Some("中欧中兴"), 2);

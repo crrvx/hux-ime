@@ -38,7 +38,7 @@ sudo cmake --install build/addon
 fcitx5 -r -d  # 或以所在发行版的方式重启
 ```
 
-随包数据在仓库 [`data/`](data/README.md)（码表四件套、词先验位图、音查虎索引、标点表），
+随包数据在仓库 [`data/`](data/README.md)（码表四件套、词先验位图、音反查索引、标点表），
 安装到 fcitx5 数据目录：
 
 ```sh
@@ -62,10 +62,10 @@ cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
 
 以上按键与每页个数均可在配置工具的「hux」页修改（分「行为」「快捷键」两区，选项悬浮可见详情；
 快捷键为可多项的 `KeyList`：翻页 `PageUpKey`/`PageDownKey`/`PageSize`；反查触发键
-`PinyinLookupKey`/`CharacterLookupKey`；开启 `DigitSelect` 后 `1`–`9` 直接上屏当前页候选、
+`SoundToCharShapeKey`/`CharToSoundShapeKey`；开启 `DigitSelect` 后 `1`–`9` 直接上屏当前页候选、
 `0` = 第 10 个）。
 
-### 音查虎：拼音 → 虎码（默认 `Alt`+`:`）
+### 音反查：拼音 → 虎码（默认 `Alt`+`:`）
 
 按下触发键后输入拼音（支持拼写缩写），`空格`上屏高亮候选。
 候选即为对应词语，注释显示虎码，预编辑按音节切分：
@@ -74,7 +74,7 @@ cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
 Alt+:  zhongguo   →   :zhong guo〔拼音〕   候选：中国 …
 ```
 
-### 字查音+虎：查光标左侧汉字的音与码（默认 `Alt`+`"`）
+### 字反查：查光标左侧汉字的音与码（默认 `Alt`+`"`）
 
 按下触发键后，输入面板显示光标左侧 1 个字的信息：
 上排拼音（排头「**咅**」）、下排虎码（排头「**虍**」）

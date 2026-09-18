@@ -12,14 +12,14 @@
 //! - `read_locks` 采用严格整数解析：非法帧一律返回空表（参照的 `tonumber`
 //!   对空白/浮点更宽容，但属性数据只由本实现写出，实际不会出现该差异）。
 
-use crate::character_lookup;
+use crate::char_to_sound_shape;
 use crate::decode::{DecodeLock, Decoder, Evaluated, Evidence};
 use crate::key::{K_ALT_MASK, K_CONTROL_MASK, K_SUPER_MASK, KeyEvent};
 use crate::learning::{self, DiffEvent, DiffItem, DiffPathNode, Event};
 use crate::lexicon::Lexicon;
-use crate::pinyin_lookup;
 use crate::punct::PunctTable;
 use crate::session::{Candidate, Composition, Context, Segment};
+use crate::sound_to_char_shape;
 use hashbrown::HashMap;
 
 /// 属性键（对应参照 `state_keys` 与 `M.options` 中的属性名）。
@@ -33,29 +33,29 @@ pub const K_PROPOSAL_LEGACY: &str = "tiger_sentence_proposal";
 pub const K_STABLE_LEGACY: &str = "tiger_sentence_stable";
 pub const K_EVIDENCE_RAW_LEGACY: &str = "tiger_sentence_evidence_raw";
 pub const K_OPTIONS_ERROR: &str = "tiger_sentence_options_error";
-/// 音查虎触发键（内部属性：宿主按设置写入逗号分隔的 rime 键名；空/缺省 = 关闭）。
-pub const K_PINYIN_LOOKUP_KEY: &str = "_pinyin_lookup_key";
-/// 字查音+虎触发键（内部属性：宿主按设置写入逗号分隔的 rime 键名；空/缺省 = 关闭）。
-pub const K_CHARACTER_LOOKUP_KEY: &str = "_character_lookup_key";
+/// 音反查触发键（内部属性：宿主按设置写入逗号分隔的 rime 键名；空/缺省 = 关闭）。
+pub const K_SOUND_TO_CHAR_SHAPE_KEY: &str = "_sound_to_char_shape_key";
+/// 字反查触发键（内部属性：宿主按设置写入逗号分隔的 rime 键名；空/缺省 = 关闭）。
+pub const K_CHAR_TO_SOUND_SHAPE_KEY: &str = "_char_to_sound_shape_key";
 
-/// 音查虎触发键列表（解析 [`K_PINYIN_LOOKUP_KEY`]；空/非法项忽略）。
-pub fn pinyin_lookup_triggers(context: &Context) -> Vec<KeyEvent> {
-    trigger_keys(context, K_PINYIN_LOOKUP_KEY)
+/// 音反查触发键列表（解析 [`K_SOUND_TO_CHAR_SHAPE_KEY`]；空/非法项忽略）。
+pub fn sound_to_char_shape_triggers(context: &Context) -> Vec<KeyEvent> {
+    trigger_keys(context, K_SOUND_TO_CHAR_SHAPE_KEY)
 }
 
-/// 字查音+虎触发键列表（解析 [`K_CHARACTER_LOOKUP_KEY`]；空/非法项忽略）。
-pub fn character_lookup_triggers(context: &Context) -> Vec<KeyEvent> {
-    trigger_keys(context, K_CHARACTER_LOOKUP_KEY)
+/// 字反查触发键列表（解析 [`K_CHAR_TO_SOUND_SHAPE_KEY`]；空/非法项忽略）。
+pub fn char_to_sound_shape_triggers(context: &Context) -> Vec<KeyEvent> {
+    trigger_keys(context, K_CHAR_TO_SOUND_SHAPE_KEY)
 }
 
-/// 音查虎组合前缀字符集合（= 各触发键产生的字符，去重保序）。
-pub fn pinyin_lookup_prefixes(context: &Context) -> Vec<char> {
-    trigger_chars(&pinyin_lookup_triggers(context))
+/// 音反查组合前缀字符集合（= 各触发键产生的字符，去重保序）。
+pub fn sound_to_char_shape_prefixes(context: &Context) -> Vec<char> {
+    trigger_chars(&sound_to_char_shape_triggers(context))
 }
 
-/// 字查音+虎组合触发字符集合（= 各触发键产生的字符，去重保序）。
-pub fn character_lookup_keys(context: &Context) -> Vec<char> {
-    trigger_chars(&character_lookup_triggers(context))
+/// 字反查组合触发字符集合（= 各触发键产生的字符，去重保序）。
+pub fn char_to_sound_shape_keys(context: &Context) -> Vec<char> {
+    trigger_chars(&char_to_sound_shape_triggers(context))
 }
 
 /// 解析属性中的 rime 键名列表（逗号分隔；空/非法项忽略）。
@@ -473,7 +473,7 @@ pub fn is_plain_char_key(key_event: &KeyEvent, repr: &str) -> Option<char> {
     None
 }
 
-/// 参照 `Recognizer::ProcessKeyEvent`：可被音查虎模式接受的字符（`ch > 0x20 && ch < 0x80`，
+/// 参照 `Recognizer::ProcessKeyEvent`：可被音反查模式接受的字符（`ch > 0x20 && ch < 0x80`，
 /// 排除 Ctrl/Alt/Super；空格由 `use_space=false` 排除）。
 fn recognizer_char(key_event: &KeyEvent) -> Option<char> {
     if key_event.ctrl() || key_event.alt() || key_event.super_modifier() {
@@ -1167,7 +1167,7 @@ pub fn trim_segmented_after_raw_prefix(segmented: &str, raw_prefix_length: usize
     }
 }
 
-/// 码注释（上游音查虎件；当前 pin 的 main 未含，K3 音查虎接线用）：单字显示全部编码（源序），词组逐字 `字:码组`。
+/// 码注释（上游音反查件；当前 pin 的 main 未含，K3 音反查接线用）：单字显示全部编码（源序），词组逐字 `字:码组`。
 pub fn code_comment(lexicon: &Lexicon, text: &str) -> Option<String> {
     if !lexicon.built {
         return None;
@@ -1206,7 +1206,7 @@ pub fn translate(
     out: &mut Vec<Candidate>,
 ) -> anyhow::Result<()> {
     if input.first() == Some(&b'`') {
-        return Ok(()); // 音查虎段（` 前缀）由 `pinyin_lookup` 模块处理，本翻译不产出候选
+        return Ok(()); // 音反查段（` 前缀）由 `sound_to_char_shape` 模块处理，本翻译不产出候选
     }
     let allow_duplicate_single = set_allow_duplicate_single(context);
     decoder.set_allow_duplicate_single(allow_duplicate_single);
@@ -1341,8 +1341,8 @@ impl CompositionBuilder {
             self.apply_reset(context, &input);
         }
         let seg_input = self.built_input.clone();
-        let prefixes = pinyin_lookup_prefixes(context);
-        let characters = character_lookup_keys(context);
+        let prefixes = sound_to_char_shape_prefixes(context);
+        let characters = char_to_sound_shape_keys(context);
         calculate_segmentation(
             &mut context.composition,
             &seg_input,
@@ -1424,20 +1424,20 @@ fn calculate_segmentation(
 }
 
 /// 参照 `Matcher::Proceed`（`recognizer/patterns`）：活跃输入匹配
-/// `^<前缀>[a-z]*'?$` 时，由本段独占剩余输入（标签 [`pinyin_lookup::PINYIN_LOOKUP_TAG`]）。
+/// `^<前缀>[a-z]*'?$` 时，由本段独占剩余输入（标签 [`sound_to_char_shape::SOUND_TO_CHAR_SHAPE_TAG`]）。
 fn matcher(composition: &mut Composition, input: &[u8], prefixes: &[char], characters: &[char]) {
     let start = composition.confirmed_position();
     let Some(active) = input.get(start..) else {
         return;
     };
-    // 字查音+虎：活跃输入恰为一个触发字符（单字符段）。
+    // 字反查：活跃输入恰为一个触发字符（单字符段）。
     for character in characters {
         let mut buffer = [0u8; 4];
         if active == character.encode_utf8(&mut buffer).as_bytes() {
             while composition.current_start_position() > start {
                 composition.segments.pop();
             }
-            add_segment(composition, start, input.len(), &[character_lookup::TAG]);
+            add_segment(composition, start, input.len(), &[char_to_sound_shape::TAG]);
             return;
         }
     }
@@ -1446,7 +1446,7 @@ fn matcher(composition: &mut Composition, input: &[u8], prefixes: &[char], chara
     }
     if !prefixes
         .iter()
-        .any(|prefix| pinyin_lookup::matches_pattern(active, *prefix))
+        .any(|prefix| sound_to_char_shape::matches_pattern(active, *prefix))
     {
         return;
     }
@@ -1466,7 +1466,7 @@ fn matcher(composition: &mut Composition, input: &[u8], prefixes: &[char], chara
         composition,
         start,
         input.len(),
-        &[pinyin_lookup::PINYIN_LOOKUP_TAG],
+        &[sound_to_char_shape::SOUND_TO_CHAR_SHAPE_TAG],
     );
 }
 
@@ -1559,7 +1559,7 @@ fn translate_segments(
     input: &[u8],
     mut punct: Option<&mut PunctTable>,
 ) -> anyhow::Result<()> {
-    let prefixes = pinyin_lookup_prefixes(context);
+    let prefixes = sound_to_char_shape_prefixes(context);
     let full_shape = context.get_option("full_shape");
     for index in 0..context.composition.segments.len() {
         let segment = &context.composition.segments[index];
@@ -1574,15 +1574,15 @@ fn translate_segments(
             segment.selected_index = 0;
             continue;
         }
-        if segment.has_tag(character_lookup::TAG) {
+        if segment.has_tag(char_to_sound_shape::TAG) {
             // 默认可上屏候选：仅当触发字符来自**单字符键**（无 Ctrl/Alt/Super）时提供。
             let pressed = single_char(&input[start..end]);
             let candidates = match pressed.filter(|character| {
-                character_lookup_triggers(context)
+                char_to_sound_shape_triggers(context)
                     .iter()
                     .any(|key| single_char_trigger(key) == Some(*character))
             }) {
-                Some(character) => pinyin_lookup::punct_candidate(
+                Some(character) => sound_to_char_shape::punct_candidate(
                     punct.as_deref_mut(),
                     character,
                     full_shape,
@@ -1599,16 +1599,16 @@ fn translate_segments(
             segment.candidates = candidates;
             continue;
         }
-        if segment.has_tag(pinyin_lookup::PINYIN_LOOKUP_TAG) {
+        if segment.has_tag(sound_to_char_shape::SOUND_TO_CHAR_SHAPE_TAG) {
             // 裸前缀（无编码）：默认可上屏候选**仅当触发字符来自单字符键**时提供；带修饰键无候选。
             let pressed = single_char(&input[start..end]);
             if pressed.is_some_and(|character| prefixes.contains(&character)) {
                 let candidates = match pressed.filter(|character| {
-                    pinyin_lookup_triggers(context)
+                    sound_to_char_shape_triggers(context)
                         .iter()
                         .any(|key| single_char_trigger(key) == Some(*character))
                 }) {
-                    Some(character) => pinyin_lookup::punct_candidate(
+                    Some(character) => sound_to_char_shape::punct_candidate(
                         punct.as_deref_mut(),
                         character,
                         full_shape,
@@ -1628,9 +1628,9 @@ fn translate_segments(
             let slice = input[start..end].to_vec();
             let candidates = match prefixes
                 .iter()
-                .find(|prefix| pinyin_lookup::matches_pattern(&slice, **prefix))
+                .find(|prefix| sound_to_char_shape::matches_pattern(&slice, **prefix))
             {
-                Some(prefix) => decoder.pinyin_candidates(
+                Some(prefix) => decoder.sound_to_char_shape_candidates(
                     &slice,
                     *prefix,
                     start,
@@ -1647,7 +1647,7 @@ fn translate_segments(
                 .iter()
                 .any(|prefix| slice.first() == Some(&(*prefix as u8)))
             {
-                pinyin_lookup::PINYIN_LOOKUP_TIPS.to_string()
+                sound_to_char_shape::SOUND_TO_CHAR_SHAPE_TIPS.to_string()
             } else {
                 String::new()
             };
@@ -1701,7 +1701,7 @@ pub fn buffer_filter(candidates: &[Candidate], buffered: bool) -> Vec<Candidate>
         .collect()
 }
 
-/// 码注释过滤器（同上；K3 音查虎接线用）：音查虎段候选写入虎码注释。
+/// 码注释过滤器（同上；K3 音反查接线用）：音反查段候选写入虎码注释。
 pub fn code_comment_filter(candidates: &mut [Candidate], active: bool, lexicon: &Lexicon) {
     if !active {
         return;
@@ -2226,13 +2226,16 @@ pub fn processor(
     if key_event.release() {
         return Ok(ProcessorResult::Forward);
     }
-    // 触发键（音查虎 / 字查音+虎）：空闲时进入组合、段内再按则退出（同参照的标签语义）。
+    // 触发键（音反查 / 字反查）：空闲时进入组合、段内再按则退出（同参照的标签语义）。
     for (triggers, tag) in [
         (
-            pinyin_lookup_triggers(context),
-            pinyin_lookup::PINYIN_LOOKUP_TAG,
+            sound_to_char_shape_triggers(context),
+            sound_to_char_shape::SOUND_TO_CHAR_SHAPE_TAG,
         ),
-        (character_lookup_triggers(context), character_lookup::TAG),
+        (
+            char_to_sound_shape_triggers(context),
+            char_to_sound_shape::TAG,
+        ),
     ] {
         let Some(configured) = triggers
             .iter()
@@ -2259,19 +2262,19 @@ pub fn processor(
         }
         // 组合中：交由后续处理器（标点等）处理。
     }
-    // 参照处理器链 `recognizer`（位于 speller/标点之前）：音查虎段内继续接受模式内按键。
+    // 参照处理器链 `recognizer`（位于 speller/标点之前）：音反查段内继续接受模式内按键。
     if context
         .composition
         .back()
-        .is_some_and(|segment| segment.has_tag(pinyin_lookup::PINYIN_LOOKUP_TAG))
+        .is_some_and(|segment| segment.has_tag(sound_to_char_shape::SOUND_TO_CHAR_SHAPE_TAG))
         && let Some(ch) = recognizer_char(key_event)
     {
-        let prefixes = pinyin_lookup_prefixes(context);
+        let prefixes = sound_to_char_shape_prefixes(context);
         let mut next = context.input().to_vec();
         next.push(ch as u8);
         if prefixes
             .iter()
-            .any(|prefix| pinyin_lookup::matches_pattern(&next, *prefix))
+            .any(|prefix| sound_to_char_shape::matches_pattern(&next, *prefix))
         {
             context.push_input(&[ch as u8]);
             return Ok(ProcessorResult::Consume);
@@ -2310,11 +2313,11 @@ pub fn processor(
         min_retained: min_retained_raw_length(env.min_retained),
     };
     if let Some(ch) = is_plain_char_key(key_event, repr) {
-        // 字查音+虎查码段：其它普通键先清空组合，随后照常处理该键。
+        // 字反查段：其它普通键先清空组合，随后照常处理该键。
         if context
             .composition
             .back()
-            .is_some_and(|segment| segment.has_tag(character_lookup::TAG))
+            .is_some_and(|segment| segment.has_tag(char_to_sound_shape::TAG))
         {
             context.clear();
         }
@@ -3210,7 +3213,7 @@ mod tests {
         let mut decoder = Decoder::new(lexicon, supplement, None);
         let context = Context::new();
         let state = SentenceState::fresh(1);
-        // 音查虎段（` 前缀）由 `pinyin_lookup` 模块处理，translator 不产出候选。
+        // 音反查段（` 前缀）由 `sound_to_char_shape` 模块处理，translator 不产出候选。
         let mut out = Vec::new();
         translate(&mut decoder, &context, &state, b"`ni", 0, 3, &mut out).expect("translate");
         assert!(out.is_empty());
@@ -3964,12 +3967,12 @@ mod tests {
         assert_eq!(h.context.last_commit_text(), "候9");
     }
 
-    /// 多项触发键（`KeyList`）：任一配置键都可进入音查虎，入段字符取命中键的字符。
+    /// 多项触发键（`KeyList`）：任一配置键都可进入音反查，入段字符取命中键的字符。
     #[test]
-    fn processor_pinyin_lookup_accepts_multiple_triggers() {
+    fn processor_sound_to_char_shape_accepts_multiple_triggers() {
         let mut h = Harness::new();
         h.context
-            .set_property(K_PINYIN_LOOKUP_KEY, "grave,semicolon");
+            .set_property(K_SOUND_TO_CHAR_SHAPE_KEY, "grave,semicolon");
         assert_eq!(h.press("semicolon"), ProcessorResult::Consume);
         assert_eq!(h.context.input(), b";");
         h.context.clear();

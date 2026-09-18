@@ -71,8 +71,8 @@ sudo ln -s /usr/share/fcitx5/hux/models/sentence-ngram-mobile.bin \
 
 | 项 | 默认 | 说明 |
 |---|---|---|
-| PinyinLookupKey | Alt+`:` | 音查虎（拼音查虎码）触发键 |
-| CharacterLookupKey | Alt+`"` | 字查音+虎触发键 |
+| SoundToCharShapeKey | Alt+`:` | 音反查（拼音 → 虎码）触发键 |
+| CharToSoundShapeKey | Alt+`"` | 字反查触发键 |
 | PageUpKey / PageDownKey | `-` / `=` | 翻页键（上：翻页中生效；下：有候选时生效）|
 
 快捷键为 fcitx5 `KeyList`（配置工具与「全局设置」同款，可配置多项；`AllowModifierLess`
@@ -81,11 +81,11 @@ sudo ln -s /usr/share/fcitx5/hux/models/sentence-ngram-mobile.bin \
 
 ## 反查
 
-音查虎与字查音+虎同机制：触发键推入组合；**仅当触发键为单字符键**（无 Ctrl/Alt/Super）时给出
+音反查与字反查同机制：触发键推入组合；**仅当触发键为单字符键**（无 Ctrl/Alt/Super）时给出
 默认可上屏候选（触发字符按标点表取半/全角，空格上屏），带修饰键的触发不给默认候选。
 
-- **音查虎**：输入拼音（支持拼写缩写）出虎码候选；预编辑按音节切分（`` `zhongguo `` → `` `zhong guo ``）。
-- **字查音+虎**：取应用侧周边文本（应用不可用时查不到内容、两排为空，不做提示）；两排显示光标
+- **音反查**：输入拼音（支持拼写缩写）出虎码候选；预编辑按音节切分（`` `zhongguo `` → `` `zhong guo ``）。
+- **字反查**：取应用侧周边文本（应用不可用时查不到内容、两排为空，不做提示）；两排显示光标
   左侧 1 个字——上排（排头「咅」）= 拼音、下排（排头「虍」）= 虎码（多音/多码以 `/` 连接，缺数据 `?`）；
   ←/→/↑/↓ 交应用处理（应用光标随动，本层不消费；查码段不下发预编辑，避免应用端 marked text 锁住光标）；
   Esc / 再次触发 / 其它键退出（打字照常输入）。展示面为输入面板辅助文本条（auxUp/auxDown）。

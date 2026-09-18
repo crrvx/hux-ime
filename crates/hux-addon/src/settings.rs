@@ -32,9 +32,9 @@ pub struct Settings {
     pub tab_learning: bool,
     /// 高频字过滤上限（参照 `tiger_sentence/high_freq_limit`；创建词库时生效）。
     pub high_freq_limit: usize,
-    /// 音查虎（拼音查虎码）/ 字查音+虎（查光标处汉字的音与虎码）触发键（rime 键名，可多项）。
-    pub pinyin_lookup_keys: Vec<String>,
-    pub character_lookup_keys: Vec<String>,
+    /// 音反查（拼音反查码）/ 字反查（查光标处汉字的音与虎码）触发键（rime 键名，可多项）。
+    pub sound_to_char_shape_keys: Vec<String>,
+    pub char_to_sound_shape_keys: Vec<String>,
     /// 每页候选个数（参照 `menu/page_size`；上限 [`MAX_PAGE_SIZE`]）。
     pub page_size: usize,
     /// 上/下翻页键（rime 键名，可多项；缺省对应参照 `key_binder` 的 `-`/`=`）。
@@ -54,8 +54,8 @@ impl Default for Settings {
             ascii_punct: false,
             tab_learning: true,
             high_freq_limit: DEFAULT_HIGH_FREQ_LIMIT,
-            pinyin_lookup_keys: vec!["Alt+colon".to_string()],
-            character_lookup_keys: vec!["Alt+quotedbl".to_string()],
+            sound_to_char_shape_keys: vec!["Alt+colon".to_string()],
+            char_to_sound_shape_keys: vec!["Alt+quotedbl".to_string()],
             page_size: DEFAULT_PAGE_SIZE,
             page_up_keys: vec!["minus".to_string()],
             page_down_keys: vec!["equal".to_string()],
@@ -132,9 +132,12 @@ mod tests {
         assert_eq!(settings.page_size, DEFAULT_PAGE_SIZE);
         assert_eq!(settings.page_up_keys, vec!["minus".to_string()]);
         assert_eq!(settings.page_down_keys, vec!["equal".to_string()]);
-        assert_eq!(settings.pinyin_lookup_keys, vec!["Alt+colon".to_string()]);
         assert_eq!(
-            settings.character_lookup_keys,
+            settings.sound_to_char_shape_keys,
+            vec!["Alt+colon".to_string()]
+        );
+        assert_eq!(
+            settings.char_to_sound_shape_keys,
             vec!["Alt+quotedbl".to_string()]
         );
         assert!(!settings.digit_select);

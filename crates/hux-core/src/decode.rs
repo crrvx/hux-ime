@@ -241,8 +241,8 @@ pub struct Decoder {
     ranking_prior: RankingPriorParameters,
     lexical: Option<LexicalModel>,
     lexical_load_error: Option<String>,
-    /// 音查虎索引（懒加载；缺文件时为 `None`）。
-    pinyin: Option<crate::pinyin_lookup::PinyinIndex>,
+    /// 音反查索引（懒加载；缺文件时为 `None`）。
+    pinyin: Option<crate::sound_to_char_shape::SoundToCharShapeIndex>,
     pinyin_checked: bool,
     pinyin_load_error: Option<String>,
 }
@@ -288,27 +288,31 @@ impl Decoder {
         }
     }
 
-    /// 音查虎索引（首次访问时按数据目录懒加载）。
-    pub fn pinyin_index(&mut self) -> Option<&crate::pinyin_lookup::PinyinIndex> {
+    /// 音反查索引（首次访问时按数据目录懒加载）。
+    pub fn pinyin_index(&mut self) -> Option<&crate::sound_to_char_shape::SoundToCharShapeIndex> {
         if !self.pinyin_checked {
             self.pinyin_checked = true;
-            let (index, error) = crate::pinyin_lookup::load_first(self.lexicon.dirs());
+            let (index, error) = crate::sound_to_char_shape::load_first(self.lexicon.dirs());
             self.pinyin = index;
             self.pinyin_load_error = error;
         }
         self.pinyin.as_ref()
     }
 
-    /// 音查虎索引载入错误（有文件但无效时记录）。
+    /// 音反查索引载入错误（有文件但无效时记录）。
     pub fn pinyin_load_error(&self) -> Option<&str> {
         self.pinyin_load_error.as_deref()
     }
 
-    /// 字查音+虎两排提示（上排 = 光标左侧拼音、下排 = 虎码；懒加载索引，缺索引返回 `None`）。
-    pub fn character_lookup_rows(&mut self, text: &str, anchor: usize) -> Option<(String, String)> {
+    /// 字反查两排提示（上排 = 光标左侧拼音、下排 = 虎码；懒加载索引，缺索引返回 `None`）。
+    pub fn char_to_sound_shape_rows(
+        &mut self,
+        text: &str,
+        anchor: usize,
+    ) -> Option<(String, String)> {
         self.pinyin_index();
         let index = self.pinyin.as_ref()?;
-        Some(crate::character_lookup::rows(
+        Some(crate::char_to_sound_shape::rows(
             index,
             &self.lexicon,
             text,
@@ -316,8 +320,8 @@ impl Decoder {
         ))
     }
 
-    /// 音查虎候选（含虎码注释过滤；上限 [`crate::pinyin_lookup::CANDIDATE_LIMIT`]）。
-    pub fn pinyin_candidates(
+    /// 音反查候选（含虎码注释过滤；上限 [`crate::sound_to_char_shape::CANDIDATE_LIMIT`]）。
+    pub fn sound_to_char_shape_candidates(
         &mut self,
         input: &[u8],
         prefix: char,
@@ -330,7 +334,7 @@ impl Decoder {
         let Some(index) = self.pinyin.as_ref() else {
             return Vec::new();
         };
-        crate::pinyin_lookup::translate(
+        crate::sound_to_char_shape::translate(
             index,
             &self.lexicon,
             input,
@@ -339,7 +343,7 @@ impl Decoder {
             end,
             punct,
             full_shape,
-            crate::pinyin_lookup::CANDIDATE_LIMIT,
+            crate::sound_to_char_shape::CANDIDATE_LIMIT,
         )
     }
 

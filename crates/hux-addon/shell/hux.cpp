@@ -134,10 +134,10 @@ FCITX_CONFIGURATION(
 FCITX_CONFIGURATION(
     HuxHotkeyConfig,
     fcitx::KeyListOptionWithAnnotation<fcitx::ToolTipAnnotation>
-        pinyinLookupKeys{{
+        soundToCharShapeKeys{{
             .parent = this,
-            .path{"PinyinLookupKey"},
-            .description{"音查虎触发键"},
+            .path{"SoundToCharShapeKey"},
+            .description{"音反查触发"},
             .defaultValue = fcitx::KeyList{
                 fcitx::Key(FcitxKey_colon, fcitx::KeyState::Alt)},
             .constrain = fcitx::KeyListConstrain(
@@ -145,10 +145,10 @@ FCITX_CONFIGURATION(
             .annotation{"可多项。按下后输入拼音（支持拼写缩写），候选为对应词语、"
                         "注释显示虎码。"}}};
     fcitx::KeyListOptionWithAnnotation<fcitx::ToolTipAnnotation>
-        characterLookupKeys{{
+        charToSoundShapeKeys{{
             .parent = this,
-            .path{"CharacterLookupKey"},
-            .description{"字查音+虎触发键"},
+            .path{"CharToSoundShapeKey"},
+            .description{"字反查触发"},
             .defaultValue = fcitx::KeyList{
                 fcitx::Key(FcitxKey_quotedbl, fcitx::KeyState::Alt)},
             .constrain = fcitx::KeyListConstrain(
@@ -158,7 +158,7 @@ FCITX_CONFIGURATION(
     fcitx::KeyListOptionWithAnnotation<fcitx::ToolTipAnnotation> pageUpKeys{{
         .parent = this,
         .path{"PageUpKey"},
-        .description{"上翻页键"},
+        .description{"上翻页"},
         .defaultValue = fcitx::KeyList{
             fcitx::Key(FcitxKey_minus, fcitx::KeyState::NoState)},
         .constrain =
@@ -167,7 +167,7 @@ FCITX_CONFIGURATION(
     fcitx::KeyListOptionWithAnnotation<fcitx::ToolTipAnnotation> pageDownKeys{{
         .parent = this,
         .path{"PageDownKey"},
-        .description{"下翻页键"},
+        .description{"下翻页"},
         .defaultValue = fcitx::KeyList{
             fcitx::Key(FcitxKey_equal, fcitx::KeyState::NoState)},
         .constrain =
@@ -212,7 +212,7 @@ public:
         const auto &key = keyEvent.key();
         fcitx::InputContext *inputContext = keyEvent.inputContext();
         context_ = inputContext;
-        // 应用侧周边文本（字查音+虎用；应用不支持时 valid=0）。
+        // 应用侧周边文本（字反查用；应用不支持时 valid=0）。
         const auto &surrounding = inputContext->surroundingText();
         if (surrounding.isValid()) {
             hux_engine_set_surrounding(engine_, surrounding.text().c_str(),
@@ -344,7 +344,7 @@ private:
             }
             context_->inputPanel().setCandidateList(std::move(candidateList));
         }
-        // 字查音+虎（⑧-2）：两排辅助文本（上排 = 光标左、下排 = 光标右）；空串清除。
+        // 字反查（⑧-2）：两排辅助文本（上排 = 光标左、下排 = 光标右）；空串清除。
         const auto auxText = [](const char *value) {
             return value != nullptr && *value != '\0' ? fcitx::Text(value) : fcitx::Text();
         };
@@ -370,9 +370,9 @@ private:
         options.ascii_punct = behavior.asciiPunct.value() ? 1 : 0;
         options.tab_learning = behavior.tabLearning.value() ? 1 : 0;
         options.high_freq_limit = behavior.highFreqLimit.value();
-        fillKeyList(&options.pinyin_lookup, hotkeys.pinyinLookupKeys.value());
-        fillKeyList(&options.character_lookup,
-                    hotkeys.characterLookupKeys.value());
+        fillKeyList(&options.sound_to_char_shape, hotkeys.soundToCharShapeKeys.value());
+        fillKeyList(&options.char_to_sound_shape,
+                    hotkeys.charToSoundShapeKeys.value());
         options.page_size = behavior.pageSize.value();
         fillKeyList(&options.page_up, hotkeys.pageUpKeys.value());
         fillKeyList(&options.page_down, hotkeys.pageDownKeys.value());

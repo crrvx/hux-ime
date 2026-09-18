@@ -2,18 +2,18 @@
 # SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-# 生成音查虎金样（⑧-1）：参照分支（含 PY_c 音查虎）的 Lua 核心 + 系统 librime + librime-lua。
+# 生成音反查金样（⑧-1）：参照分支（含 PY_c 音反查）的 Lua 核心 + 系统 librime + librime-lua。
 # 参照态 = 分支提交 PIN 与主干提交 BASE 的**本地合并**（上游未合并该分支；合并保证
-# 音查虎特性与主干修复（如自动上屏对齐）同时生效；生成器自建临时 worktree，可复现）。
+# 音反查特性与主干修复（如自动上屏对齐）同时生效；生成器自建临时 worktree，可复现）。
 #
-# 用法：tools/generators/gen_pinyin_lookup_golden.sh [输出文件]
+# 用法：tools/generators/gen_sound_to_char_shape_golden.sh [输出文件]
 #   REF  参照仓库本地检出（默认仓库内 external/tiger-sentense-rime，已 gitignore）
 #   REF_URL  写入金样头部的参照仓库线上地址（默认 https://github.com/lvyww/tiger-sentense-rime）
-#   PIN  音查虎分支提交（默认 898579f833df53f1dec5639d56e685751a8a7f71，含 PY_c 与音查虎接线）
+#   PIN  音反查分支提交（默认 898579f833df53f1dec5639d56e685751a8a7f71，含 PY_c 与音反查接线）
 #   BASE 主干提交（默认 8b615235c17c858e1eca8f1a41fbc74e202f8bbe；与 PIN 合并后生成）
-#   CASES 用例文件（默认 tools/cases/pinyin_lookup_cases.txt）
+#   CASES 用例文件（默认 tools/cases/sound_to_char_shape_cases.txt）
 #
-# 夹具（goldens/pinyin_lookup/）：小 PY_c 词典 + 合成码表 + symbols.yaml（pin 同文件）；
+# 夹具（goldens/sound_to_char_shape/）：小 PY_c 词典 + 合成码表 + symbols.yaml（pin 同文件）；
 # 同一夹具供 Rust 重放（`tiger_sentence.pinyin.bin` 由 tools/generators/gen_pinyin_index.py 生成）。
 # 金样不在 CI 重生成（探针依赖具体 librime/librime-lua 版本），见 goldens/README.md。
 set -euo pipefail
@@ -23,9 +23,9 @@ REF="${REF:-$ROOT/external/tiger-sentense-rime}"
 REF_URL="${REF_URL:-https://github.com/lvyww/tiger-sentense-rime}"
 PIN="${PIN:-898579f833df53f1dec5639d56e685751a8a7f71}"
 BASE="${BASE:-8b615235c17c858e1eca8f1a41fbc74e202f8bbe}"
-OUT="${1:-$ROOT/goldens/pinyin_lookup.tsv.gz}"
-CASES="${CASES:-$ROOT/tools/cases/pinyin_lookup_cases.txt}"
-FIXTURE="$ROOT/goldens/pinyin_lookup"
+OUT="${1:-$ROOT/goldens/sound_to_char_shape.tsv.gz}"
+CASES="${CASES:-$ROOT/tools/cases/sound_to_char_shape_cases.txt}"
+FIXTURE="$ROOT/goldens/sound_to_char_shape"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/tiger-pinyin-XXXXXX")"
 WT="$WORK/ref"
@@ -53,7 +53,7 @@ cp "$FIXTURE/PY_c.dict.yaml" "$user/PY_c.dict.yaml"
 cp "$FIXTURE/tiger_sentence.codes.txt" "$user/tiger_sentence.codes.txt"
 cp "$ROOT/goldens/key_sequence/symbols.yaml" "$FIXTURE/symbols.yaml"
 
-# 音查虎索引夹具：由小 PY_c 生成（Rust 重放用）。
+# 音反查索引夹具：由小 PY_c 生成（Rust 重放用）。
 python3 "$ROOT/tools/generators/gen_pinyin_index.py" \
     --source "$FIXTURE/PY_c.dict.yaml" \
     --out "$FIXTURE/tiger_sentence.pinyin.bin"

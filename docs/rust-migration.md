@@ -15,7 +15,7 @@ hux-ime：虎句（`tiger_sentence`）输入方案的 fcitx5 原生 Rust 实现�
 | K1 | 计算核：lexicon、beam 解码、早提交证据、learning | ✅ 快照差分全绿 |
 | K1.5 | 上游追平：紧凑排序先验（TCSLEX01）、锁播种修复 | ✅ |
 | K2 | 交互引擎：键事件/键表、会话、交互层、宿主链 | ✅ 键序列金样一致 |
-| K3 | fcitx5 addon：注册与候选、编辑语义、标点、音查虎、字查音+虎、配置与学习库 | 进行中（打包与状态菜单待做） |
+| K3 | fcitx5 addon：注册与候选、编辑语义、标点、音反查、字反查、配置与学习库 | 进行中（打包与状态菜单待做） |
 | K4 | 验收与打包 | 待做 |
 
 - **移植纪律**：计算部分机械翻译（浮点按位模式比较）；交互部分按行为契约自由设计。
@@ -29,7 +29,7 @@ crates/hux-core/         # 纯逻辑，无 fcitx5 依赖
   lexicon.rs  decode.rs  learning.rs     # K1：码表、beam 解码、Tab 学习
   lexical.rs                             # K1.5：紧凑词先验 TCSLEX01
   key.rs  key_table.rs  session.rs  interaction.rs  host.rs   # K2：键事件、会话、交互层、宿主链
-  pinyin_lookup.rs  character_lookup.rs  # 反查：音查虎、字查音+虎
+  sound_to_char_shape.rs  char_to_sound_shape.rs  # 反查：音反查、字反查
 crates/hux-addon/        # K3：C++ 薄壳（shell/）+ Rust FFI（src/）→ core
 data/                    # 随包数据源
 goldens/                 # 差分金样与夹具
@@ -50,7 +50,7 @@ docs/                    # 本文档、词先验署名
 | `lua/tiger_sentence_lexical.lua` | `lexical.rs`（TCSLEX01） | 词先验金样 |
 | `lua/tiger_sentence.lua`（processor/translator/filter/选项） | `key.rs` + `session.rs` + `interaction.rs` | 键序列金样 |
 | librime `key_event`/`key_table` | `key.rs` + `key_table.rs`（由源码生成） | 键金样（真 librime 探针） |
-| librime `reverse_lookup_translator` | `pinyin_lookup.rs`（TCSRV01） | 音查虎金样 |
+| librime `reverse_lookup_translator` | `sound_to_char_shape.rs`（TCSRV01） | 音反查金样 |
 | librime 宿主链 | `host.rs`（含 `punct.rs`） | 键序列金样 |
 
 ## 4. 数据与目录
@@ -61,7 +61,7 @@ docs/                    # 本文档、词先验署名
   `models/sentence-ngram-mobile.bin`（TCSKNM02）、`symbols.yaml`、`tiger_sentence.lexical.bin`（TCSLEX01）、
   `tiger_sentence.pinyin.bin.gz`（TCSRV01）、`tiger_sentence.options.yaml`、学习库 `<hash>.userdb/`（LevelDB 同构）。
 - 仓库 `data/`：发布默认 `symbols.yaml`（仅覆盖 half_shape 的 `/` 提交 `/`）、词先验位图（CC BY 4.0，
-  署名见 [`LEXICAL_PRIOR_ATTRIBUTION.md`](LEXICAL_PRIOR_ATTRIBUTION.md)）、音查虎索引；
+  署名见 [`LEXICAL_PRIOR_ATTRIBUTION.md`](LEXICAL_PRIOR_ATTRIBUTION.md)）、音反查索引；
   详见 [`../data/README.md`](../data/README.md)。
 
 ## 5. fcitx5 集成要点
@@ -93,11 +93,11 @@ docs/                    # 本文档、词先验署名
   如系统 colemak + 方案 `Layout=us`）不自行转发，交回核心在 `ReservedLast` 提交转换后的字符——
   否则客户端会按系统布局重新解释该键。
 - **UI 同步**：preedit 参照 librime `Composition::GetPreedit`——高亮候选的 `preedit`（正常段按词
-  分码，如 `sh ks`；音查虎段按音节，如 `` `zhong guo ``）优先，组合之后的原始输入原样接在其后
+  分码，如 `sh ks`；音反查段按音节，如 `` `zhong guo ``）优先，组合之后的原始输入原样接在其后
   （左右移动光标时保持分码，如 `` ab cd `` + 尾部 `ja` → `` ab cdja ``）；无高亮候选时回退
   「缓冲 + 原始输入」；光标为字节偏移。
-- **反查**：音查虎（`pinyin_lookup.rs`）语义对齐 librime 词典反查——拼写缩写罚 `log 0.5`、全拼可达时
-  缩写路径剪枝、补全罚 `log 0.05`、排序 = 可信度 + `ln(权重)`、上限 20；字查音+虎（`character_lookup.rs`）
+- **反查**：音反查（`sound_to_char_shape.rs`）语义对齐 librime 词典反查——拼写缩写罚 `log 0.5`、全拼可达时
+  缩写路径剪枝、补全罚 `log 0.05`、排序 = 可信度 + `ln(权重)`、上限 20；字反查（`char_to_sound_shape.rs`）
   取光标左侧 1 字，上排拼音（排头「咅」）、下排虎码（排头「虍」）。两者触发键可配置，**仅单字符触发键**
   给默认可上屏候选。详见 [`../crates/hux-addon/README.md`](../crates/hux-addon/README.md)。
 - **学习**：提交点通知器内建于核心路径（`confirm_selection`、自动上屏）；宿主排空

@@ -33,8 +33,8 @@ jobs:
       - name: Verify pinyin index fixture (regenerate)
         run: |
           python3 tools/generators/gen_pinyin_index.py \
-            --source goldens/pinyin_lookup/PY_c.dict.yaml --out /tmp/pinyin.bin
-          cmp /tmp/pinyin.bin goldens/pinyin_lookup/tiger_sentence.pinyin.bin
+            --source goldens/sound_to_char_shape/PY_c.dict.yaml --out /tmp/pinyin.bin
+          cmp /tmp/pinyin.bin goldens/sound_to_char_shape/tiger_sentence.pinyin.bin
 
   # 一般金样校验：使用 runner 系统提供的 Lua（Ubuntu 当前可用的最新 lua 包）。
   golden:

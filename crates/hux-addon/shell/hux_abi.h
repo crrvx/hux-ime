@@ -24,7 +24,7 @@ typedef struct hux_engine hux_engine;
  * commit: 上屏文本（UTF-8，NUL 结尾）。
  * update: UI 状态快照——preedit（UTF-8，NUL 结尾）+ 光标（字节偏移，与
  *         fcitx `Text::cursor` 一致）+ 候选数组（文本/注释，各 NUL 结尾）+
- *         候选数 + 当前高亮索引 + 两排辅助文本（auxUp = 字查音+虎上排/光标左、
+ *         候选数 + 当前高亮索引 + 两排辅助文本（auxUp = 字反查上排/光标左、
  *         auxDown = 下排/光标右；UTF-8，NUL 结尾，可为 ""）。
  *         候选数为 0 时宿主必须清除候选列表（置 `nullptr`）——不得留下
  *         「存在但为空」的列表：其他组件（如 fcitx5-table）会对它调用
@@ -87,8 +87,8 @@ typedef struct hux_options {
   int32_t ascii_punct;
   int32_t tab_learning;
   int32_t high_freq_limit;
-  hux_key_list pinyin_lookup;
-  hux_key_list character_lookup;
+  hux_key_list sound_to_char_shape;
+  hux_key_list char_to_sound_shape;
   int32_t page_size;
   hux_key_list page_up;
   hux_key_list page_down;
