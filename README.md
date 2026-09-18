@@ -3,6 +3,8 @@
 虎句（`tiger_sentence`）输入方案的 fcitx5 原生 Rust 实现。计算与交互核心全部为 Rust，不依赖
 librime（参照实现仅用于差分测试）。当前处于 K3（fcitx5 addon）收尾阶段，K4 验收待做。
 
+名称 `hux` = `tux`(linux) + `hu`(虎码)
+
 ## 文档
 
 | 文档 | 内容 |
