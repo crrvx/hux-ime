@@ -541,10 +541,12 @@ impl Engine {
             return;
         };
         let buffered = buffered_text(&self.context);
-        let live = String::from_utf8_lossy(self.context.live_input()).into_owned();
+        let live_bytes = self.context.live_input();
+        let live = String::from_utf8_lossy(live_bytes).into_owned();
         // 参照 librime `Composition::GetPreedit` + 参照 Lua 的候选 preedit：
-        // 高亮候选的 preedit（「按词分码」，含缓冲前缀与音查虎前缀）优先；
-        // 光标不在实况输入末尾时回退「缓冲 + 实况输入」，保证字节光标与字符串一致。
+        // 高亮候选的 preedit（「按字分码」，含缓冲前缀与音查虎前缀）始终优先；
+        // 组合（光标）之后的原始输入原样接在其后——左/右移动时保持按字分码，
+        // 光标落在分码文本末尾、原始尾部之前。
         let highlighted = self
             .context
             .composition
@@ -552,11 +554,24 @@ impl Engine {
             .and_then(|segment| segment.selected_candidate())
             .map(|candidate| candidate.preedit.clone())
             .unwrap_or_default();
-        let caret_at_end = self.context.live_caret() >= self.context.live_input().len();
-        let (mut preedit, cursor) = if !highlighted.is_empty() && caret_at_end {
+        let (mut preedit, cursor) = if !highlighted.is_empty() {
             let cursor = highlighted.len();
-            (highlighted, cursor)
+            // 末段 `end` 为组合输入（含缓冲 `~` 标记）的字节位；换算到实况输入。
+            let marker =
+                usize::from(!buffered.is_empty() && self.context.input().first() == Some(&b'~'));
+            let composed_end = self
+                .context
+                .composition
+                .back()
+                .map(|segment| segment.end)
+                .unwrap_or(0)
+                .saturating_sub(marker)
+                .min(live_bytes.len());
+            let mut text = highlighted;
+            text.push_str(&String::from_utf8_lossy(&live_bytes[composed_end..]));
+            (text, cursor)
         } else {
+            // 无高亮候选（如未翻译段）：回退「缓冲 + 实况输入」，光标按字节对应。
             let mut text = String::new();
             text.push_str(&buffered);
             if !buffered.is_empty() && !live.is_empty() {
@@ -1422,6 +1437,35 @@ mod tests {
         let (preedit, cursor, _, _, _, _) = last_update();
         assert_eq!(preedit, "ab");
         assert_eq!(cursor, 2);
+    }
+
+    /// 按字分码：左右移动光标时保持分码显示，组合之后的原始尾部接在其后。
+    #[test]
+    fn preedit_keeps_segmented_codes_while_moving_caret() {
+        let _guard = serial();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        for code in *b"abcdja" {
+            engine.key(u32::from(code), 0, false);
+        }
+        // 末尾：整段按词分码（ab cd ja）。
+        let (preedit, cursor, candidates, _, _, _) = last_update();
+        assert_eq!(preedit, "ab cd ja");
+        assert_eq!(cursor, 8);
+        assert!(!candidates.is_empty());
+        // ←×2：组合重建为 `abcd`（分码 `ab cd`），光标之后接上原始尾部 `ja`。
+        assert!(engine.key(0xff51, 0, false));
+        assert!(engine.key(0xff51, 0, false));
+        let (preedit, cursor, candidates, _, _, _) = last_update();
+        assert_eq!(preedit, "ab cdja");
+        assert_eq!(cursor, 5);
+        assert!(!candidates.is_empty(), "前缀 `abcd` 应有候选");
+        // →×2：回到末尾，恢复整段分码。
+        assert!(engine.key(0xff53, 0, false));
+        assert!(engine.key(0xff53, 0, false));
+        let (preedit, cursor, _, _, _, _) = last_update();
+        assert_eq!(preedit, "ab cd ja");
+        assert_eq!(cursor, 8);
     }
 
     #[test]

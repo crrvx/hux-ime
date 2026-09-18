@@ -92,8 +92,10 @@ docs/                    # 本文档、词先验署名
   （与 fcitx5 核心 `KeyEventOrderFix` 修法一致）。**例外**：布局转换键（核心 `KeyEvent::forward()`，
   如系统 colemak + 方案 `Layout=us`）不自行转发，交回核心在 `ReservedLast` 提交转换后的字符——
   否则客户端会按系统布局重新解释该键。
-- **UI 同步**：preedit 取高亮候选的 `preedit`（正常段按词分码，如 `sh ks`；音查虎段按音节，如
-  `` `zhong guo ``），光标为字节偏移；高亮不在实况输入末尾时回退「缓冲 + 原始输入」。
+- **UI 同步**：preedit 参照 librime `Composition::GetPreedit`——高亮候选的 `preedit`（正常段按词
+  分码，如 `sh ks`；音查虎段按音节，如 `` `zhong guo ``）优先，组合之后的原始输入原样接在其后
+  （左右移动光标时保持分码，如 `` ab cd `` + 尾部 `ja` → `` ab cdja ``）；无高亮候选时回退
+  「缓冲 + 原始输入」；光标为字节偏移。
 - **反查**：音查虎（`pinyin_lookup.rs`）语义对齐 librime 词典反查——拼写缩写罚 `log 0.5`、全拼可达时
   缩写路径剪枝、补全罚 `log 0.05`、排序 = 可信度 + `ln(权重)`、上限 20；字查音+虎（`character_lookup.rs`）
   取光标左侧 1 字，上排拼音（排头「咅」）、下排虎码（排头「虍」）。两者触发键可配置，**仅单字符触发键**
