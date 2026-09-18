@@ -1318,7 +1318,7 @@ mod tests {
         assert_eq!(engine.sessions[&second].context.input(), b"ja");
     }
 
-    /// 失焦/切换/重置统一语义：直接丢弃组合（不提交），面板清空。
+    /// 重置直接丢弃组合（不提交），面板清空；失焦的提交由核心/前端处理（不在本层）。
     #[test]
     fn reset_discards_composition_without_commit() {
         let _guard = serial();

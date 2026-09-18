@@ -76,9 +76,8 @@ docs/                    # 本文档、词先验署名
   构建/安装与依赖见 [`usage.md`](usage.md)。产物：`/usr/lib/fcitx5/libhux.so`、
   `/usr/share/fcitx5/{addon,inputmethod}/hux.conf`。
 - **会话**：每输入上下文一个（fcitx5 `InputContextProperty`；组合/候选/学习暂存隔离，选项为引擎级
-  并同步到全部会话）；失焦/切换输入法/重置统一**直接丢弃**组合（不提交）：客户端预编辑整段标记
-  `DontCommit`，核心失焦提交与 Wayland v1 前端的协议 commit 串均为空（显示不受影响）；上游默认在
-  切换输入法时提交候选/预编辑，本实现取丢弃契约。组合重建由
+  并同步到全部会话）；失焦时由 fcitx5 核心/前端以预编辑原文提交客户端预编辑（fcitx5 惯例，不保留组合）；
+  切换输入法/重置由本层直接丢弃（不提交；上游默认在切换时提交候选/预编辑，本实现取丢弃）。组合重建由
   `interaction::CompositionBuilder` 按参照 `ConcreteEngine::Compose` 语义（`input[..caret]`、
   按公共前缀增量保留段、提交后旧段不复用）。
 - **宿主语义**（core `host.rs`，`processor` 返回 Forward 后执行）：
