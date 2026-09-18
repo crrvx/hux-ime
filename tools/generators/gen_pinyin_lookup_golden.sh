@@ -5,7 +5,7 @@
 #
 # 用法：tools/generators/gen_pinyin_lookup_golden.sh [输出文件]
 #   REF  参照仓库本地检出（默认仓库内 external/tiger-sentense-rime，已 gitignore）
-#   REF_URL  写入金样头部的参照仓库线上地址（默认 https://github.com/crrvx/tiger-sentense-rime）
+#   REF_URL  写入金样头部的参照仓库线上地址（默认 https://github.com/lvyww/tiger-sentense-rime）
 #   PIN  音查虎分支提交（默认 898579f833df53f1dec5639d56e685751a8a7f71，含 PY_c 与音查虎接线）
 #   BASE 主干提交（默认 8b615235c17c858e1eca8f1a41fbc74e202f8bbe；与 PIN 合并后生成）
 #   CASES 用例文件（默认 tools/cases/pinyin_lookup_cases.txt）
@@ -17,7 +17,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 REF="${REF:-$ROOT/external/tiger-sentense-rime}"
-REF_URL="${REF_URL:-https://github.com/crrvx/tiger-sentense-rime}"
+REF_URL="${REF_URL:-https://github.com/lvyww/tiger-sentense-rime}"
 PIN="${PIN:-898579f833df53f1dec5639d56e685751a8a7f71}"
 BASE="${BASE:-8b615235c17c858e1eca8f1a41fbc74e202f8bbe}"
 OUT="${1:-$ROOT/goldens/pinyin_lookup.tsv.gz}"

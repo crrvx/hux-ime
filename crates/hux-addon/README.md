@@ -42,6 +42,15 @@ ln -sf ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
   ~/.local/share/fcitx5/hux/models/
 ```
 
+模型（可选）可与 fcitx5-rime **共用同一份**（来源：[Releases › model](https://github.com/lvyww/tiger-sentense-rime/releases/tag/model)）：
+实体放 hux 数据目录，再在 rime 共享目录建软链（rime 的查找顺序为 用户 `models/` → 用户根 → 共享 `models/`）：
+
+```sh
+sudo mkdir -p /usr/share/rime-data/models
+sudo ln -s /usr/share/fcitx5/hux/models/sentence-ngram-mobile.bin \
+           /usr/share/rime-data/models/sentence-ngram-mobile.bin
+```
+
 ## 配置（fcitx5-configtool 设置页）
 
 | 项 | 默认 | 说明 |

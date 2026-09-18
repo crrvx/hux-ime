@@ -31,7 +31,7 @@ jobs:
   golden:
     runs-on: ubuntu-latest
     env:
-      REFERENCE_REPO: https://github.com/crrvx/tiger-sentense-rime
+      REFERENCE_REPO: https://github.com/lvyww/tiger-sentense-rime
       REFERENCE_COMMIT: 8b615235c17c858e1eca8f1a41fbc74e202f8bbe
       LIBRIME_RAW: https://raw.githubusercontent.com/rime/librime
       LIBRIME_COMMIT: 33e78140250125871856cdc5b42ddc6a5fcd3cd4
@@ -141,7 +141,7 @@ jobs:
       run:
         shell: bash
     env:
-      REFERENCE_REPO: https://github.com/crrvx/tiger-sentense-rime
+      REFERENCE_REPO: https://github.com/lvyww/tiger-sentense-rime
       REFERENCE_COMMIT: 8b615235c17c858e1eca8f1a41fbc74e202f8bbe
     steps:
       - name: Install toolchain

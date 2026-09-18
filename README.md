@@ -34,21 +34,23 @@ fcitx5 -r -d  # 或以所在发行版的方式重启
 ```
 
 安装后需在 fcitx5 数据目录准备随包数据（码表、词先验位图、音查虎索引，可选 n-gram 模型——来源
-[Releases › model](https://github.com/lvyww/tiger-sentense-rime/releases/tag/model)），
-并在配置工具中添加「hux」；数据放置方式详见 [`crates/hux-addon/README.md`](crates/hux-addon/README.md)。
+[Releases › model](https://github.com/lvyww/tiger-sentense-rime/releases/tag/model)；可与 fcitx5-rime
+共用同一份），并在配置工具中添加「hux」；数据放置方式详见
+[`crates/hux-addon/README.md`](crates/hux-addon/README.md)。
 
 ## 致谢
 
 感谢以 [B佬（lvyww）](https://github.com/lvyww) 为首的一众维护者对虎码的支持。
 
-- 参考项目（本方案的参照实现，GPL-3.0）：[tiger-sentense-rime](https://github.com/lvyww/tiger-sentense-rime)
 - 虎码官网：[tiger-code.com](https://www.tiger-code.com)
 
-其他推荐方案：
+虎码主流方案汇总：
 
-- 官方 · [虎娘输入法](https://github.com/lvyww/tigirl)
-- 官方 · [虎爪输入法](https://github.com/lvyww/tigerclaw)
-- 社区 · [虎符输入法](https://github.com/LeafHW/hufu-ime-rust)
+- 官方 · [虎娘](https://github.com/lvyww/tigirl)
+- 官方 · [虎爪](https://github.com/lvyww/tigerclaw)
+- 官方 · [虎爪-rime](https://github.com/lvyww/tiger-sentense-rime)（本方案的参照实现，GPL-3.0）
+- 社区 · [虎符](https://github.com/LeafHW/hufu-ime-rust)
+- 社区 · [魔虎音形](https://github.com/fcxxxz/rime-mohu)
 
 ## 许可与署名
 

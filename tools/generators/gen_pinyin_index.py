@@ -208,7 +208,7 @@ def main() -> int:
     parser.add_argument("--out", required=True, type=pathlib.Path, help="输出（.gz 结尾则 gzip）")
     parser.add_argument("--manifest", type=pathlib.Path, help="写出/校验 manifest（JSON）")
     parser.add_argument("--check", action="store_true", help="只校验 --out 与 manifest 一致")
-    parser.add_argument("--repo", default="https://github.com/crrvx/tiger-sentense-rime", help="manifest 记录的源仓库地址（URL）")
+    parser.add_argument("--repo", default="https://github.com/lvyww/tiger-sentense-rime", help="manifest 记录的源仓库地址（URL）")
     parser.add_argument("--commit", default="", help="manifest 记录的源提交")
     args = parser.parse_args()
 
