@@ -346,9 +346,9 @@ public:
     void deactivate(const fcitx::InputMethodEntry &entry,
                     fcitx::InputContextEvent &event) override {
         FCITX_UNUSED(entry);
-        // 失焦/切换输入法/重置统一：直接丢弃当前组合（不提交）。上游默认在切换输入法时
-        // 提交候选/预编辑，本实现取「丢弃」契约；fcitx5 核心也会在失焦时提交客户端预编辑，
-        // 保留组合会在恢复后重复上屏。
+        // 失焦/切换输入法/重置统一：直接丢弃当前组合（不提交）。客户端预编辑带
+        // `DontCommit`（见 applyUpdate），核心失焦提交与前端协议 commit 串均为空；
+        // 上游默认在切换输入法时提交候选/预编辑，本实现有意取「丢弃」契约。
         resetSession(event);
     }
 
@@ -464,8 +464,18 @@ private:
             config_.behavior->panelPreedit.value() ? preeditText
                                                    : fcitx::Text());
         // 客户端内联预编辑：跟随 fcitx5 全局预编辑设置（`isPreeditEnabled`）。
-        context_->inputPanel().setClientPreedit(context_->isPreeditEnabled() ? preeditText
-                                                                            : fcitx::Text());
+        // 整段标记 `DontCommit`（核心对密码框同款做法）：核心失焦提交与 Wayland v1
+        // 前端的协议 commit 串都取 `toStringForCommit()`，标记后为空——契约「失焦/切换/
+        // 重置直接丢弃组合」由此成立，而显示不受影响。
+        fcitx::Text clientPreedit;
+        if (context_->isPreeditEnabled() && !preeditString.empty()) {
+            clientPreedit.append(preeditString, fcitx::TextFormatFlag::DontCommit);
+            if (cursor >= 0 &&
+                static_cast<size_t>(cursor) <= preeditString.size()) {
+                clientPreedit.setCursor(cursor);
+            }
+        }
+        context_->inputPanel().setClientPreedit(clientPreedit);
         context_->updatePreedit();
 
         // 候选：无候选时置 `nullptr` 清除（fcitx5 约定）。**不可**留下「存在但为空」的
