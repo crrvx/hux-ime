@@ -58,10 +58,11 @@ cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
 `=`/`-` 或 `PgDn`/`PgUp` 翻页，
 `回车`提交原文，`Esc` 取消。
 
-> 每页 5 个候选项
+> 每页 5 个候选项（可配置 1–10）
 
 以上按键与每页个数均可在配置工具的「hux」页修改（翻页 `PageUpKey`/`PageDownKey`/`PageSize`；
-反查触发键 `PinyinLookupKey`/`CharacterLookupKey`）。
+反查触发键 `PinyinLookupKey`/`CharacterLookupKey`；开启 `DigitSelect` 后 `1`–`9` 直接上屏
+当前页候选、`0` = 第 10 个）。
 
 ### 音查虎：拼音 → 虎码（默认 `Alt`+`:`）
 

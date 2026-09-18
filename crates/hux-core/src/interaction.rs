@@ -2110,6 +2110,10 @@ pub struct ProcessorEnv<'a> {
     pub dot_armed: &'a mut bool,
     /// 参照 `get_min_retained_raw_length(env)` 的配置值。
     pub min_retained: Option<i64>,
+    /// 每页候选个数（addon 设置；数字直选按页定位）。
+    pub page_size: usize,
+    /// 数字直选（addon 扩展，默认关）：菜单可见时数字直接上屏当前页候选（1–9；0=10）。
+    pub digit_select: bool,
 }
 
 /// 处理器结果：`Consume` 对应参照返回 1（拦截），`Forward` 对应 2（交后续处理器）。
@@ -2117,6 +2121,66 @@ pub struct ProcessorEnv<'a> {
 pub enum ProcessorResult {
     Consume,
     Forward,
+}
+
+/// 数字直选位置（0-based）：`1`–`9` → `0`–`8`，`0` → `9`（第 10 个）。
+fn digit_page_position(ch: char) -> Option<usize> {
+    match ch {
+        '1'..='9' => Some(ch as usize - '1' as usize),
+        '0' => Some(9),
+        _ => None,
+    }
+}
+
+/// 数字直选（`DigitSelect`，addon 扩展）：选择当前页第 `position`（0-based）个候选，
+/// 走与 `space` 相同的确认/学习链并直接上屏；候选不在页内时不消费（交回普通数字处理）。
+fn select_page_candidate(
+    decoder: &mut Decoder,
+    context: &mut Context,
+    state: &mut SentenceState,
+    live: &mut LiveLearning,
+    now: f64,
+    page_size: usize,
+    position: usize,
+) -> anyhow::Result<bool> {
+    let page_size = page_size.max(1);
+    if position >= page_size {
+        return Ok(false);
+    }
+    let index = {
+        let Some(segment) = context.composition.back() else {
+            return Ok(false);
+        };
+        let page_start = (segment.selected_index / page_size) * page_size;
+        let index = page_start + position;
+        if index >= segment.prepare(index + 1) {
+            return Ok(false);
+        }
+        index
+    };
+    context.highlight(index);
+    let selection = learning_selection(decoder, context, state)?;
+    learning_stage(
+        live,
+        state,
+        selection.selected.as_ref(),
+        &selection.raw,
+        None,
+        now,
+    );
+    confirm_selection(
+        Some(&mut LearningCommit {
+            decoder: &mut *decoder,
+            live: &mut *live,
+            now,
+        }),
+        context,
+        state,
+    );
+    live.pending.clear();
+    live.baseline = None;
+    state.reset(context, false);
+    Ok(true)
 }
 
 /// 参照 `processor(key_event, env)`。宿主职责（内存配置、词库懒加载、选项同步、
@@ -2238,6 +2302,23 @@ pub fn processor(
             return Ok(ProcessorResult::Forward);
         }
         if live_input(context).len() >= MAX_RAW_LENGTH {
+            return Ok(ProcessorResult::Consume);
+        }
+        // 数字直选（`DigitSelect`；addon 扩展）：菜单可见时直接上屏当前页候选。
+        if env.digit_select
+            && ch.is_ascii_digit()
+            && context.has_menu()
+            && let Some(position) = digit_page_position(ch)
+            && select_page_candidate(
+                decoder,
+                context,
+                state,
+                live,
+                env.now,
+                env.page_size,
+                position,
+            )?
+        {
             return Ok(ProcessorResult::Consume);
         }
         // 空闲数字直接上屏（全角选项下为全角）。
@@ -3538,6 +3619,8 @@ mod tests {
         state: SentenceState,
         live: LiveLearning,
         dot_armed: bool,
+        page_size: usize,
+        digit_select: bool,
     }
 
     impl Harness {
@@ -3548,6 +3631,8 @@ mod tests {
                 state: SentenceState::fresh(1),
                 live: LiveLearning::default(),
                 dot_armed: false,
+                page_size: 5,
+                digit_select: false,
             }
         }
 
@@ -3556,6 +3641,8 @@ mod tests {
                 now: 0.0,
                 dot_armed: &mut self.dot_armed,
                 min_retained: None,
+                page_size: self.page_size,
+                digit_select: self.digit_select,
             };
             processor(
                 key,
@@ -3792,6 +3879,57 @@ mod tests {
         h.push_segment(b"ab", &["交"]);
         assert_eq!(h.press("space"), ProcessorResult::Consume);
         assert!(h.state.committed_raw.is_empty());
+    }
+
+    /// 数字直选（`DigitSelect`）：菜单可见时按页位置直接上屏（1–9；0=10）。
+    #[test]
+    fn processor_digit_select_commits_page_candidate() {
+        let mut h = Harness::new();
+        h.digit_select = true;
+        h.context.set_option("_auto_commit", true);
+        h.push_segment(b"ab", &["交", "疒"]);
+        assert!(h.context.has_menu());
+        assert_eq!(h.press("2"), ProcessorResult::Consume);
+        assert_eq!(h.context.last_commit_text(), "疒");
+        assert!(h.context.input().is_empty());
+    }
+
+    /// 数字直选默认关：数字仍作为编码字符（选重后缀）。
+    #[test]
+    fn processor_digit_select_off_keeps_rank_suffix() {
+        let mut h = Harness::new();
+        h.context.set_option("_auto_commit", true);
+        h.push_segment(b"ab", &["交", "疒"]);
+        assert_eq!(h.press("2"), ProcessorResult::Consume);
+        assert_eq!(h.context.last_commit_text(), "");
+        assert_eq!(h.context.input(), b"ab2");
+    }
+
+    /// 数字直选：页内没有该位置时不消费（交回普通数字处理）。
+    #[test]
+    fn processor_digit_select_out_of_page_falls_through() {
+        let mut h = Harness::new();
+        h.digit_select = true;
+        h.context.set_option("_auto_commit", true);
+        h.push_segment(b"ab", &["交", "疒"]);
+        // 页大小 5：`0`（第 10 个）不在页内 → 作为编码后缀进入输入。
+        assert_eq!(h.press("0"), ProcessorResult::Consume);
+        assert_eq!(h.context.last_commit_text(), "");
+        assert_eq!(h.context.input(), b"ab0");
+    }
+
+    /// 数字直选：页大小 10 时 `0` 上屏当前页第 10 个候选。
+    #[test]
+    fn processor_digit_select_zero_picks_tenth_on_ten_page() {
+        let mut h = Harness::new();
+        h.digit_select = true;
+        h.page_size = 10;
+        h.context.set_option("_auto_commit", true);
+        let texts: Vec<String> = (0..12).map(|index| format!("候{index}")).collect();
+        let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+        h.push_segment(b"ab", &refs);
+        assert_eq!(h.press("0"), ProcessorResult::Consume);
+        assert_eq!(h.context.last_commit_text(), "候9");
     }
 
     #[test]

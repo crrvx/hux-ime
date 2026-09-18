@@ -21,6 +21,8 @@ use crate::session::Context;
 
 /// 参照 schema `menu/page_size`。
 pub const DEFAULT_PAGE_SIZE: usize = 5;
+/// 页大小上限（配置 `PageSize` 1–10；数字直选 `0`=第 10 个）。
+pub const MAX_PAGE_SIZE: usize = 10;
 
 /// 宿主可配置项（addon 设置注入）：每页候选个数与上/下翻页键。
 ///

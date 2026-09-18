@@ -158,6 +158,8 @@ fn replay(
             now: 0.0,
             dot_armed: &mut dot_armed,
             min_retained: None,
+            page_size,
+            digit_select: false,
         };
         let result = processor(
             &key,

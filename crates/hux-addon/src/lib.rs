@@ -302,6 +302,8 @@ impl Engine {
                 now,
                 dot_armed: &mut self.dot_armed,
                 min_retained: self.min_retained,
+                page_size: self.host_options.page_size,
+                digit_select: self.settings.digit_select,
             };
             processor(
                 &key,
@@ -724,6 +726,8 @@ pub struct HuxOptions {
     pub page_up_states: i32,
     pub page_down_sym: i32,
     pub page_down_states: i32,
+    /// 数字直选（1–9；0=10）。
+    pub digit_select: i32,
 }
 
 /// 应用外部配置（fcitx5 配置界面 → C++ 壳 → 本入口）。返回 1 = 已应用。
@@ -764,6 +768,7 @@ pub unsafe extern "C" fn hux_engine_apply_settings(
         page_size: options.page_size.max(1) as usize,
         page_up_key: key_repr(options.page_up_sym, options.page_up_states),
         page_down_key: key_repr(options.page_down_sym, options.page_down_states),
+        digit_select: options.digit_select != 0,
     });
     1
 }
@@ -970,6 +975,63 @@ mod tests {
         assert!(engine.key(0x20, 0, false)); // space
         assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "甲");
         assert!(engine.context.input().is_empty());
+    }
+
+    /// 数字直选（`DigitSelect`）：菜单可见时 1–9 直接上屏当前页候选，0=第 10 个。
+    #[test]
+    fn digit_select_commits_page_candidate() {
+        let _guard = serial();
+        COMMITS.lock().unwrap().clear();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        engine.apply_settings(Settings {
+            digit_select: true,
+            page_size: 10,
+            ..Default::default()
+        });
+        for code in *b"ja" {
+            engine.key(u32::from(code), 0, false);
+        }
+        let (_, _, candidates, _, _, _) = last_update();
+        assert!(candidates.len() >= 10, "夹具 ja 应有至少 10 个候选");
+        let tenth = candidates[9].clone();
+        assert!(engine.key(u32::from(b'0'), 0, false), "0 应被消费");
+        assert_eq!(COMMITS.lock().unwrap().last().unwrap(), &tenth);
+    }
+
+    /// 数字直选默认关：数字仍是编码字符（选重后缀），不直接上屏。
+    #[test]
+    fn digit_select_off_keeps_rank_suffix() {
+        let _guard = serial();
+        COMMITS.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        for code in *b"ja" {
+            engine.key(u32::from(code), 0, false);
+        }
+        assert!(engine.key(u32::from(b'2'), 0, false));
+        assert!(
+            COMMITS.lock().unwrap().is_empty(),
+            "默认关：数字不应直接上屏"
+        );
+        assert!(engine.context.input().ends_with(b"2"));
+    }
+
+    /// 数字直选：页大小 5 时 `0`（第 10 个）不在页内，按普通数字输入处理。
+    #[test]
+    fn digit_select_out_of_page_falls_through() {
+        let _guard = serial();
+        COMMITS.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        engine.apply_settings(Settings {
+            digit_select: true,
+            ..Default::default()
+        });
+        for code in *b"ja" {
+            engine.key(u32::from(code), 0, false);
+        }
+        assert!(engine.key(u32::from(b'0'), 0, false));
+        assert!(COMMITS.lock().unwrap().is_empty(), "页外数字不应直接上屏");
+        assert!(engine.context.input().ends_with(b"0"));
     }
 
     #[test]
@@ -1183,6 +1245,7 @@ mod tests {
             page_up_states: 0,
             page_down_sym: 0x2e,
             page_down_states: 0,
+            digit_select: 1,
         }
     }
 
@@ -1229,6 +1292,7 @@ mod tests {
         assert_eq!(state.settings.page_size, 7);
         assert_eq!(state.settings.page_up_key, "comma");
         assert_eq!(state.settings.page_down_key, "period");
+        assert!(state.settings.digit_select);
         assert_eq!(state.host_options.page_size, 7);
         assert_eq!(
             state.host_options.page_up,

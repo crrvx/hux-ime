@@ -82,6 +82,7 @@ typedef struct hux_options {
   int32_t page_size;
   int32_t page_up_sym, page_up_states;
   int32_t page_down_sym, page_down_states;
+  int32_t digit_select;
 } hux_options;
 
 /* 应用外部配置；返回 1 = 已应用。 */

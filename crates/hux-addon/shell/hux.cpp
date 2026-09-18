@@ -29,9 +29,19 @@ namespace {
 
 /// 注意：`CommonCandidateList::setCursorIndex` 是**页内索引**（越界抛异常），
 /// 绝对索引必须用 `setGlobalCursorIndex` + `setPage`；页大小来自配置 `PageSize`。
-/// 页大小范围与 core `interaction::CANDIDATE_LIMIT` 一致。
+/// 页大小范围与 core `host::MAX_PAGE_SIZE` 一致（数字直选 0=第 10 个）。
 constexpr int kPageSizeMin = 1;
-constexpr int kPageSizeMax = 20;
+constexpr int kPageSizeMax = 10;
+
+/// 数字直选键序（1–9、0=第 10 个）：候选面板序号显示用。
+const fcitx::KeyList &digitSelectionKeys() {
+    static const fcitx::KeyList keys = {
+        fcitx::Key(FcitxKey_1), fcitx::Key(FcitxKey_2), fcitx::Key(FcitxKey_3),
+        fcitx::Key(FcitxKey_4), fcitx::Key(FcitxKey_5), fcitx::Key(FcitxKey_6),
+        fcitx::Key(FcitxKey_7), fcitx::Key(FcitxKey_8), fcitx::Key(FcitxKey_9),
+        fcitx::Key(FcitxKey_0)};
+    return keys;
+}
 
 /// 配置 schema：fcitx5-configtool 依据它自动生成设置页（fcitx://config/addon/hux）。
 FCITX_CONFIGURATION(
@@ -68,6 +78,8 @@ FCITX_CONFIGURATION(
         this, "PageDownKey", "下翻页键（有候选时生效）",
         fcitx::Key(FcitxKey_equal, fcitx::KeyState::NoState),
         fcitx::KeyConstrain(fcitx::KeyConstrainFlag::AllowModifierLess)};
+    fcitx::Option<bool> digitSelect{
+        this, "DigitSelect", "数字键直接选当前页候选（1–9；0=第 10 个）", false};
     fcitx::Option<bool> panelPreedit{this, "PanelPreedit", "候选窗口显示预编辑文本", false};);
 
 class HuxEngine : public fcitx::InputMethodEngine {
@@ -216,6 +228,10 @@ private:
                 candidateList->append<fcitx::DisplayOnlyCandidateWord>(
                     fcitx::Text(text), fcitx::Text(comment));
             }
+            // 数字直选：面板显示 1–9 / 0 序号（与引擎页内定位一致）。
+            if (config_.digitSelect.value()) {
+                candidateList->setSelectionKey(digitSelectionKeys());
+            }
             // 翻页交由 fcitx5 面板（页大小与引擎一致）：绝对索引 → 全局光标 + 所在页。
             candidateList->setPageSize(
                 std::clamp(config_.pageSize.value(), kPageSizeMin, kPageSizeMax));
@@ -259,6 +275,7 @@ private:
         options.page_size = config_.pageSize.value();
         fillKey(&options.page_up_sym, &options.page_up_states, config_.pageUpKey.value());
         fillKey(&options.page_down_sym, &options.page_down_states, config_.pageDownKey.value());
+        options.digit_select = config_.digitSelect.value() ? 1 : 0;
         if (hux_engine_apply_settings(engine_, &options) == 0) {
             FCITX_WARN() << "hux: apply settings failed";
         }
