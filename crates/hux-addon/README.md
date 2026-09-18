@@ -57,6 +57,8 @@ sudo ln -s /usr/share/fcitx5/hux/models/sentence-ngram-mobile.bin \
 |---|---|---|
 | PinyinLookupKey | Alt+`:` | 音查虎（拼音查虎码）触发键 |
 | CharacterLookupKey | Alt+`"` | 字查音+虎触发键 |
+| PageSize | 5 | 候选列表每页候选个数（1–20）|
+| PageUpKey / PageDownKey | `-` / `=` | 翻页键（上：翻页中生效；下：有候选时生效）|
 | EarlyCommit / EarlyCommitToPreedit / AllowDuplicateSingle | 开/关/开 | 早提交三项 |
 | FullShape / AsciiPunct | 关/关 | 全角标点 / ASCII 标点直通 |
 | TabLearning | 开 | Tab 选字写学习库 |

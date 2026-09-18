@@ -23,7 +23,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use hux_core::decode::Decoder;
-use hux_core::host::{HostResult, process_key as host_process_key};
+use hux_core::host::{HostOptions, HostResult, process_key as host_process_key};
 use hux_core::interaction::{
     CompositionBuilder, K_PINYIN_LOOKUP_KEY, LiveLearning, OPTION_EARLY_COMMIT,
     OPTION_EARLY_COMMIT_TO_PREEDIT, ProcessorEnv, ProcessorResult, SentenceState, processor,
@@ -172,7 +172,15 @@ fn replay(
         let consumed = match result {
             ProcessorResult::Consume => true,
             ProcessorResult::Forward => {
-                host_process_key(&key, &mut context, punct.as_mut()) == HostResult::Consumed
+                host_process_key(
+                    &key,
+                    &mut context,
+                    punct.as_mut(),
+                    &HostOptions {
+                        page_size,
+                        ..HostOptions::default()
+                    },
+                ) == HostResult::Consumed
             }
         };
         // 事件泵：提交与选项事件。

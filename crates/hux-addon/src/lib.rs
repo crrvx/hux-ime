@@ -23,7 +23,7 @@ use settings::Settings;
 
 use hux_core::character_lookup;
 use hux_core::decode::Decoder;
-use hux_core::host::{self, HostResult};
+use hux_core::host::{self, HostOptions, HostResult};
 use hux_core::interaction::{
     CompositionBuilder, K_CHARACTER_LOOKUP_KEY, K_PINYIN_LOOKUP_KEY, LiveLearning, ProcessorEnv,
     ProcessorResult, SentenceState, buffered_text, processor, reset_early_evidence,
@@ -147,6 +147,8 @@ pub struct Engine {
     options: Option<OptionsStore>,
     /// 外部配置（fcitx5 配置界面 / 测试；默认 = 内建缺省）。
     settings: Settings,
+    /// 宿主选项（翻页键/页大小；由 `settings` 派生，避免每次按键解析键名）。
+    host_options: HostOptions,
     /// 标点表（`symbols.yaml`；缺失时标点交宿主）。
     punct: Option<PunctTable>,
     /// 学习库（用户目录不可用时为禁用占位）。
@@ -189,6 +191,7 @@ impl Engine {
                 .join(":")
         )];
         let settings = Settings::default();
+        let host_options = settings.host_options();
         let lexicon = Lexicon::load(&dirs, settings.high_freq_limit);
         notes.push(format!("lexicon: {}", lexicon.data_status().canonical()));
         let learning_rules = lexicon.learning_rules.clone();
@@ -262,6 +265,7 @@ impl Engine {
             builder: CompositionBuilder::default(),
             options,
             settings,
+            host_options,
             punct,
             learning,
             character_lookup: CharacterLookupState::default(),
@@ -312,8 +316,12 @@ impl Engine {
             Ok(ProcessorResult::Consume) => true,
             // 参照链：处理器未消费的键交宿主等价物（selector/navigator/express_editor 等）。
             Ok(ProcessorResult::Forward) => {
-                host::process_key(&key, &mut self.context, self.punct.as_mut())
-                    == HostResult::Consumed
+                host::process_key(
+                    &key,
+                    &mut self.context,
+                    self.punct.as_mut(),
+                    &self.host_options,
+                ) == HostResult::Consumed
             }
             Err(error) => {
                 eprintln!("hux: processor error: {error}");
@@ -454,6 +462,7 @@ impl Engine {
     /// 应用外部配置（fcitx5 配置界面 / 测试）：选项类即时生效；`high_freq_limit` 需重启。
     pub fn apply_settings(&mut self, settings: Settings) {
         self.settings = settings;
+        self.host_options = self.settings.host_options();
         let defaults = self.settings.option_defaults();
         for (name, value) in defaults {
             if self.context.get_option(name) != value {
@@ -694,6 +703,12 @@ pub struct HuxOptions {
     pub pinyin_lookup_states: i32,
     pub character_lookup_sym: i32,
     pub character_lookup_states: i32,
+    /// 每页候选个数（1..=候选上限）。
+    pub page_size: i32,
+    pub page_up_sym: i32,
+    pub page_up_states: i32,
+    pub page_down_sym: i32,
+    pub page_down_states: i32,
 }
 
 /// 应用外部配置（fcitx5 配置界面 → C++ 壳 → 本入口）。返回 1 = 已应用。
@@ -731,6 +746,9 @@ pub unsafe extern "C" fn hux_engine_apply_settings(
             options.character_lookup_sym,
             options.character_lookup_states,
         ),
+        page_size: options.page_size.max(1) as usize,
+        page_up_key: key_repr(options.page_up_sym, options.page_up_states),
+        page_down_key: key_repr(options.page_down_sym, options.page_down_states),
     });
     1
 }
@@ -1081,6 +1099,11 @@ mod tests {
             pinyin_lookup_states: 0,
             character_lookup_sym: 0x60,
             character_lookup_states: 1,
+            page_size: 7,
+            page_up_sym: 0x2c,
+            page_up_states: 0,
+            page_down_sym: 0x2e,
+            page_down_states: 0,
         };
         let applied = unsafe { hux_engine_apply_settings(engine, &options) };
         assert_eq!(applied, 1);
@@ -1095,6 +1118,14 @@ mod tests {
         assert_eq!(state.settings.high_freq_limit, 800);
         assert_eq!(state.settings.pinyin_lookup_key, "grave");
         assert_eq!(state.settings.character_lookup_key, "Shift+grave");
+        assert_eq!(state.settings.page_size, 7);
+        assert_eq!(state.settings.page_up_key, "comma");
+        assert_eq!(state.settings.page_down_key, "period");
+        assert_eq!(state.host_options.page_size, 7);
+        assert_eq!(
+            state.host_options.page_up,
+            KeyEvent::from_repr("comma").unwrap()
+        );
         unsafe { hux_engine_free(engine) };
     }
 

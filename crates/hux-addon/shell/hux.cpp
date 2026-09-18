@@ -20,6 +20,7 @@
 #include <fcitx-utils/log.h>
 
 #include <algorithm>
+#include <algorithm>
 #include <memory>
 #include <string>
 
@@ -27,10 +28,11 @@
 
 namespace {
 
-/// 候选页大小（与 core `host::DEFAULT_PAGE_SIZE` 一致；参照 schema `menu/page_size: 5`）。
 /// 注意：`CommonCandidateList::setCursorIndex` 是**页内索引**（越界抛异常），
-/// 绝对索引必须用 `setGlobalCursorIndex` + `setPage`。
-constexpr int kCandidatePageSize = 5;
+/// 绝对索引必须用 `setGlobalCursorIndex` + `setPage`；页大小来自配置 `PageSize`。
+/// 页大小范围与 core `interaction::CANDIDATE_LIMIT` 一致。
+constexpr int kPageSizeMin = 1;
+constexpr int kPageSizeMax = 20;
 
 /// 配置 schema：fcitx5-configtool 依据它自动生成设置页（fcitx://config/addon/hux）。
 FCITX_CONFIGURATION(
@@ -52,6 +54,20 @@ FCITX_CONFIGURATION(
     fcitx::Option<fcitx::Key, fcitx::KeyConstrain> characterLookupKey{
         this, "CharacterLookupKey", "字查音+虎：查光标左侧汉字的拼音与虎码",
         fcitx::Key(FcitxKey_quotedbl, fcitx::KeyState::Alt),
+        fcitx::KeyConstrain(fcitx::KeyConstrainFlag::AllowModifierLess)};
+    fcitx::Option<int, fcitx::IntConstrain> pageSize{
+        this,
+        "PageSize",
+        "候选列表每页候选个数",
+        5,
+        fcitx::IntConstrain(kPageSizeMin, kPageSizeMax)};
+    fcitx::Option<fcitx::Key, fcitx::KeyConstrain> pageUpKey{
+        this, "PageUpKey", "上翻页键（翻页中生效）",
+        fcitx::Key(FcitxKey_minus, fcitx::KeyState::NoState),
+        fcitx::KeyConstrain(fcitx::KeyConstrainFlag::AllowModifierLess)};
+    fcitx::Option<fcitx::Key, fcitx::KeyConstrain> pageDownKey{
+        this, "PageDownKey", "下翻页键（有候选时生效）",
+        fcitx::Key(FcitxKey_equal, fcitx::KeyState::NoState),
         fcitx::KeyConstrain(fcitx::KeyConstrainFlag::AllowModifierLess)};
     fcitx::Option<bool> panelPreedit{this, "PanelPreedit", "候选窗口显示预编辑文本", false};);
 
@@ -202,7 +218,8 @@ private:
                     fcitx::Text(text), fcitx::Text(comment));
             }
             // 翻页交由 fcitx5 面板（页大小与引擎一致）：绝对索引 → 全局光标 + 所在页。
-            candidateList->setPageSize(kCandidatePageSize);
+            candidateList->setPageSize(
+                std::clamp(config_.pageSize.value(), kPageSizeMin, kPageSizeMax));
             // 防御：越界不设光标索引。
             const int index = std::min(std::max(selected, 0), count - 1);
             candidateList->setGlobalCursorIndex(index);
@@ -240,6 +257,9 @@ private:
         };
         fillKey(&options.pinyin_lookup_sym, &options.pinyin_lookup_states, config_.pinyinLookupKey.value());
         fillKey(&options.character_lookup_sym, &options.character_lookup_states, config_.characterLookupKey.value());
+        options.page_size = config_.pageSize.value();
+        fillKey(&options.page_up_sym, &options.page_up_states, config_.pageUpKey.value());
+        fillKey(&options.page_down_sym, &options.page_down_states, config_.pageDownKey.value());
         if (hux_engine_apply_settings(engine_, &options) == 0) {
             FCITX_WARN() << "hux: apply settings failed";
         }

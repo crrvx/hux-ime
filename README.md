@@ -60,7 +60,8 @@ cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
 
 > 每页 5 个候选项
 
-两个反查助手如下，可在配置工具的「hux」页修改（`PinyinLookupKey`/`CharacterLookupKey`）。
+以上按键与每页个数均可在配置工具的「hux」页修改（翻页 `PageUpKey`/`PageDownKey`/`PageSize`；
+反查触发键 `PinyinLookupKey`/`CharacterLookupKey`）。
 
 ### 音查虎：拼音 → 虎码（默认 `Alt`+`:`）
 

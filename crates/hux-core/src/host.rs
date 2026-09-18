@@ -6,7 +6,8 @@
 //!
 //! 映射依据（pin `33e78140` / 参照 schema）：
 //! - 菜单布局 `Horizontal | Stacked`（未设 `_vertical`/`_linear`/`_horizontal`）；
-//! - `menu/page_size: 5`（`page_down_cycle` 缺省 false）；
+//! - `menu/page_size: 5`（`page_down_cycle` 缺省 false）；页大小与翻页键可由 addon 经
+//!   [`HostOptions`] 配置（缺省同参照：`-`（paging）→ Page_Up、`=`（has_menu）→ Page_Down）；
 //! - `key_binder/bindings`：`Tab` → Down、`Shift+Tab` → Up（`when: has_menu`）。
 //!
 //! 简化（有金样覆盖的部分一律按真值实现）：
@@ -21,6 +22,30 @@ use crate::session::Context;
 /// 参照 schema `menu/page_size`。
 pub const DEFAULT_PAGE_SIZE: usize = 5;
 
+/// 宿主可配置项（addon 设置注入）：每页候选个数与上/下翻页键。
+///
+/// 缺省即参照 schema：`menu/page_size: 5`、`-`（`when: paging`）→ Page_Up、
+/// `=`（`when: has_menu`）→ Page_Down；Page_Up/Page_Down 等导航键不随此变化。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HostOptions {
+    /// 每页候选个数（≥ 1；须与宿主候选面板一致）。
+    pub page_size: usize,
+    /// 上翻页键：组合末段带 `paging` 标签时生效。
+    pub page_up: KeyEvent,
+    /// 下翻页键：菜单可用（`has_menu`）时生效。
+    pub page_down: KeyEvent,
+}
+
+impl Default for HostOptions {
+    fn default() -> Self {
+        Self {
+            page_size: DEFAULT_PAGE_SIZE,
+            page_up: KeyEvent::from_repr("minus").expect("minus"),
+            page_down: KeyEvent::from_repr("equal").expect("equal"),
+        }
+    }
+}
+
 /// 宿主处理结果：`Consumed` 对应参照链返回 `kAccepted`（吞键）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HostResult {
@@ -34,12 +59,13 @@ pub fn process_key(
     key_event: &KeyEvent,
     context: &mut Context,
     punct: Option<&mut PunctTable>,
+    options: &HostOptions,
 ) -> HostResult {
     if key_event.release() {
         return HostResult::Forward;
     }
     // 依序执行，前一处理器吞键则不再继续（参照引擎的处理器链）。
-    let mut result = key_binder(key_event, context);
+    let mut result = key_binder(key_event, context, options);
     if result == HostResult::Consumed {
         return result;
     }
@@ -47,7 +73,7 @@ pub fn process_key(
     if result == HostResult::Consumed {
         return result;
     }
-    result = selector(key_event, context);
+    result = selector(key_event, context, options);
     if result == HostResult::Consumed {
         return result;
     }
@@ -99,28 +125,30 @@ fn punctuator(
 
 // ---------------------------------------------------------------- key_binder
 
-/// 参照 `KeyBinder::ProcessKeyEvent`：schema 的四条绑定（Tab/Shift+Tab/minus/equal）；
+/// 参照 `KeyBinder::ProcessKeyEvent`：Tab/Shift+Tab 固定，翻页键取 [`HostOptions`]；
 /// 条件为 `has_menu`（非 ascii_mode）与 `paging`（末段带 `paging` 标签，由 selector 翻页时置位）。
-fn key_binder(key_event: &KeyEvent, context: &mut Context) -> HostResult {
+fn key_binder(key_event: &KeyEvent, context: &mut Context, options: &HostOptions) -> HostResult {
     if context.get_option("ascii_mode") {
         return HostResult::Forward;
     }
     let repr = key_event.repr();
-    if repr.as_str() == "minus"
+    if repr == options.page_up.repr()
         && context
             .composition
             .back()
             .is_some_and(|segment| segment.has_tag("paging"))
     {
-        return selector_action(SelectorAction::PreviousPage, context);
+        return selector_action(SelectorAction::PreviousPage, context, options);
     }
     if !context.has_menu() {
         return HostResult::Forward;
     }
+    if repr == options.page_down.repr() {
+        return selector_action(SelectorAction::NextPage, context, options);
+    }
     match repr.as_str() {
-        "Tab" => selector_action(SelectorAction::NextCandidate, context),
-        "Shift+Tab" => selector_action(SelectorAction::PreviousCandidate, context),
-        "equal" => selector_action(SelectorAction::NextPage, context),
+        "Tab" => selector_action(SelectorAction::NextCandidate, context, options),
+        "Shift+Tab" => selector_action(SelectorAction::PreviousCandidate, context, options),
         _ => HostResult::Forward,
     }
 }
@@ -155,7 +183,7 @@ impl SelectorAction {
 }
 
 /// 参照 `Selector::ProcessKeyEvent`：组合/菜单前置条件 + keymap。
-fn selector(key_event: &KeyEvent, context: &mut Context) -> HostResult {
+fn selector(key_event: &KeyEvent, context: &mut Context, options: &HostOptions) -> HostResult {
     if key_event.alt() || key_event.super_modifier() {
         return HostResult::Forward;
     }
@@ -173,12 +201,16 @@ fn selector(key_event: &KeyEvent, context: &mut Context) -> HostResult {
     if !segment.translated || segment.has_tag("raw") {
         return HostResult::Forward;
     }
-    selector_action(action, context)
+    selector_action(action, context, options)
 }
 
 /// 参照 `Selector` 各动作（返回值即 `kAccepted`/`kNoop`）。
-fn selector_action(action: SelectorAction, context: &mut Context) -> HostResult {
-    let page_size = DEFAULT_PAGE_SIZE;
+fn selector_action(
+    action: SelectorAction,
+    context: &mut Context,
+    options: &HostOptions,
+) -> HostResult {
+    let page_size = options.page_size.max(1);
     let linear = context.get_option("_linear") || context.get_option("_horizontal");
     let caret_at_end = context.caret() >= context.input().len();
     let consumed = match action {
@@ -270,7 +302,7 @@ fn selector_action(action: SelectorAction, context: &mut Context) -> HostResult 
             if context.caret() < context.input().len() {
                 false // navigator should handle this
             } else {
-                selector_action(SelectorAction::Home, context) == HostResult::Consumed
+                selector_action(SelectorAction::Home, context, options) == HostResult::Consumed
             }
         }
     };
@@ -629,8 +661,12 @@ mod tests {
     }
 
     fn press(context: &mut Context, repr: &str) -> HostResult {
+        press_with(context, repr, &HostOptions::default())
+    }
+
+    fn press_with(context: &mut Context, repr: &str, options: &HostOptions) -> HostResult {
         let key = KeyEvent::from_repr(repr).expect("key repr");
-        process_key(&key, context, None)
+        process_key(&key, context, None, options)
     }
 
     #[test]
@@ -638,12 +674,18 @@ mod tests {
         // 组合中收到大写字母：先提交组合（保证上屏顺序），按键交宿主。
         let mut context = context_with_menu(&["甲", "乙"], 0);
         let upper = KeyEvent::from_repr("A").expect("key");
-        assert_eq!(process_key(&upper, &mut context, None), HostResult::Forward);
+        assert_eq!(
+            process_key(&upper, &mut context, None, &HostOptions::default()),
+            HostResult::Forward
+        );
         assert_eq!(context.last_commit_text(), "甲");
         assert!(context.input().is_empty());
         // 空闲：不提交也不消费
         let mut context = Context::new();
-        assert_eq!(process_key(&upper, &mut context, None), HostResult::Forward);
+        assert_eq!(
+            process_key(&upper, &mut context, None, &HostOptions::default()),
+            HostResult::Forward
+        );
         assert_eq!(context.last_commit_text(), "");
     }
 
@@ -657,14 +699,24 @@ mod tests {
         let mut context = Context::new();
         let comma = KeyEvent::from_repr("comma").expect("key");
         assert_eq!(
-            process_key(&comma, &mut context, Some(&mut table)),
+            process_key(
+                &comma,
+                &mut context,
+                Some(&mut table),
+                &HostOptions::default()
+            ),
             HostResult::Consumed
         );
         assert_eq!(context.last_commit_text(), "，");
         // 组合中：组合文本 + 标点一并提交并清空
         let mut context = context_with_menu(&["甲", "乙"], 0);
         assert_eq!(
-            process_key(&comma, &mut context, Some(&mut table)),
+            process_key(
+                &comma,
+                &mut context,
+                Some(&mut table),
+                &HostOptions::default()
+            ),
             HostResult::Consumed
         );
         assert_eq!(context.last_commit_text(), "甲，");
@@ -673,12 +725,22 @@ mod tests {
         let mut context = Context::new();
         let apostrophe = KeyEvent::from_repr("apostrophe").expect("key");
         assert_eq!(
-            process_key(&apostrophe, &mut context, Some(&mut table)),
+            process_key(
+                &apostrophe,
+                &mut context,
+                Some(&mut table),
+                &HostOptions::default()
+            ),
             HostResult::Consumed
         );
         assert_eq!(context.last_commit_text(), "‘");
         assert_eq!(
-            process_key(&apostrophe, &mut context, Some(&mut table)),
+            process_key(
+                &apostrophe,
+                &mut context,
+                Some(&mut table),
+                &HostOptions::default()
+            ),
             HostResult::Consumed
         );
         assert_eq!(context.last_commit_text(), "’");
@@ -686,11 +748,19 @@ mod tests {
         let mut context = Context::new();
         let space = KeyEvent::from_repr("space").expect("key");
         assert_eq!(
-            process_key(&space, &mut context, Some(&mut table)),
+            process_key(
+                &space,
+                &mut context,
+                Some(&mut table),
+                &HostOptions::default()
+            ),
             HostResult::Forward
         );
         // 无表：不消费
-        assert_eq!(process_key(&comma, &mut context, None), HostResult::Forward);
+        assert_eq!(
+            process_key(&comma, &mut context, None, &HostOptions::default()),
+            HostResult::Forward
+        );
     }
 
     #[test]
@@ -719,6 +789,50 @@ mod tests {
         let mut small = context_with_menu(&["甲", "乙"], 0);
         assert_eq!(press(&mut small, "Page_Down"), HostResult::Consumed);
         assert_eq!(small.composition.back().unwrap().selected_index, 0);
+    }
+
+    #[test]
+    fn selector_respects_host_options() {
+        // 自定义翻页键（`,`/`.`）与页大小（2）。
+        let options = HostOptions {
+            page_size: 2,
+            page_up: KeyEvent::from_repr("comma").expect("key"),
+            page_down: KeyEvent::from_repr("period").expect("key"),
+        };
+        let mut context = context_with_menu(&["a", "b", "c", "d", "e", "f"], 0);
+        assert_eq!(
+            press_with(&mut context, "period", &options),
+            HostResult::Consumed
+        );
+        assert_eq!(context.composition.back().unwrap().selected_index, 2);
+        assert_eq!(
+            press_with(&mut context, "comma", &options),
+            HostResult::Consumed
+        );
+        assert_eq!(context.composition.back().unwrap().selected_index, 0);
+        // 缺省翻页键此时不再翻页（`=` 交宿主链；用新组合验证，避免前一步副作用）。
+        let mut fresh = context_with_menu(&["a", "b", "c", "d", "e", "f"], 0);
+        assert_eq!(
+            press_with(&mut fresh, "equal", &options),
+            HostResult::Forward
+        );
+        // 页大小同样作用于导航键（Page_Down 走 selector keymap）。
+        assert_eq!(
+            press_with(&mut context, "Page_Down", &options),
+            HostResult::Consumed
+        );
+        assert_eq!(context.composition.back().unwrap().selected_index, 2);
+        // 页大小 1：Page_Down 前进 1 项（新组合，隔离前一步）。
+        let one = HostOptions {
+            page_size: 1,
+            ..options
+        };
+        let mut single = context_with_menu(&["a", "b", "c", "d", "e", "f"], 0);
+        assert_eq!(
+            press_with(&mut single, "Page_Down", &one),
+            HostResult::Consumed
+        );
+        assert_eq!(single.composition.back().unwrap().selected_index, 1);
     }
 
     #[test]

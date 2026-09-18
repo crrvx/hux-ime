@@ -81,7 +81,7 @@ docs/                    # 本文档、词先验署名
   | 组件 | 行为要点 |
   |---|---|
   | `key_binder` | `Tab`→Down、`Shift+Tab`→Up（`when: has_menu`） |
-  | `selector` | 菜单导航与翻页（`page_size: 5`；`-`(paging)→Page_Up、`=`(has_menu)→Page_Down）、Home/End |
+  | `selector` | 菜单导航与翻页（`page_size` 与 `-`(paging)→Page_Up/`=`(has_menu)→Page_Down 可由配置覆盖）、Home/End |
   | `navigator` | 字节光标移动；Ctrl(+Shift)+Left/Right 按音节跳；Home/End 到组合起点/末尾 |
   | `express_editor` | space 确认/提交、BackSpace 撤销编辑、Delete 删光标处、Return 提交原文、Escape 取消；可打印字符先提交组合再交宿主 |
   | `punctuator` | 单键可打印 ASCII 查 `symbols.yaml`；组合中提交「组合文本 + 标点」；`{pair}` 交替 |
@@ -102,7 +102,7 @@ docs/                    # 本文档、词先验署名
   `LiveLearning::submitted` 落库并在 `store_ready` 后生效；存储
   `<user>/tiger_sentence_learning_<hash(schema_id)>.userdb/`（1 万条 / 16 MiB，60 秒节流刷新）。
 - **选项与配置**：`tiger_sentence.options.yaml`（主）+ legacy `user.yaml` 的 `var/option/*`（只读回退）；
-  合并顺序 **options.yaml > 设置 > 内建缺省**；图形配置由 C++ `HuxConfig` schema 生成（引擎 9 项 +
+  合并顺序 **options.yaml > 设置 > 内建缺省**；图形配置由 C++ `HuxConfig` schema 生成（引擎 12 项 +
   宿主显示项 `PanelPreedit`），经 `hux_engine_apply_settings` 应用；状态菜单 4 项核心开关待接线。
 
 ## 6. 测试

@@ -8,9 +8,12 @@
 //! `full_shape`/`ascii_punct` 直接作为会话初始选项，`tab_learning` 门控学习 mode（`false` → 空串 = 不学习，
 //! 对照参照 `prepare_learning` 的 `enabled`），`high_freq_limit` 在创建词库时生效（修改需重启）。
 
+use hux_core::host::{DEFAULT_PAGE_SIZE, HostOptions};
 use hux_core::interaction::{
-    OPTION_ALLOW_DUPLICATE_SINGLE, OPTION_EARLY_COMMIT, OPTION_EARLY_COMMIT_TO_PREEDIT,
+    CANDIDATE_LIMIT, OPTION_ALLOW_DUPLICATE_SINGLE, OPTION_EARLY_COMMIT,
+    OPTION_EARLY_COMMIT_TO_PREEDIT,
 };
+use hux_core::key::KeyEvent;
 use hux_core::lexicon::DEFAULT_HIGH_FREQ_LIMIT;
 
 /// 虎句方案引擎设置（与参照 schema / fcitx5 配置界面一一对应）。
@@ -33,6 +36,11 @@ pub struct Settings {
     /// 音查虎（拼音查虎码）/ 字查音+虎（查光标处汉字的音与虎码）触发键（rime 键名）。
     pub pinyin_lookup_key: String,
     pub character_lookup_key: String,
+    /// 每页候选个数（参照 `menu/page_size`）。
+    pub page_size: usize,
+    /// 上/下翻页键（rime 键名；缺省对应参照 `key_binder` 的 `-`/`=`）。
+    pub page_up_key: String,
+    pub page_down_key: String,
 }
 
 impl Default for Settings {
@@ -47,6 +55,9 @@ impl Default for Settings {
             high_freq_limit: DEFAULT_HIGH_FREQ_LIMIT,
             pinyin_lookup_key: "Alt+colon".to_string(),
             character_lookup_key: "Alt+quotedbl".to_string(),
+            page_size: DEFAULT_PAGE_SIZE,
+            page_up_key: "minus".to_string(),
+            page_down_key: "equal".to_string(),
         }
     }
 }
@@ -85,6 +96,20 @@ impl Settings {
             self.high_freq_limit
         )
     }
+
+    /// 宿主选项（翻页键与页大小）：键名解析失败回退参照缺省；页大小钳制到 `1..=CANDIDATE_LIMIT`。
+    pub fn host_options(&self) -> HostOptions {
+        let parse = |repr: &str, fallback: &str| {
+            KeyEvent::from_repr(repr)
+                .or_else(|| KeyEvent::from_repr(fallback))
+                .expect("fallback key repr")
+        };
+        HostOptions {
+            page_size: self.page_size.clamp(1, CANDIDATE_LIMIT),
+            page_up: parse(&self.page_up_key, "minus"),
+            page_down: parse(&self.page_down_key, "equal"),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -101,6 +126,33 @@ mod tests {
         assert!(!settings.ascii_punct);
         assert!(settings.tab_learning);
         assert_eq!(settings.high_freq_limit, DEFAULT_HIGH_FREQ_LIMIT);
+        assert_eq!(settings.page_size, DEFAULT_PAGE_SIZE);
+        assert_eq!(settings.page_up_key, "minus");
+        assert_eq!(settings.page_down_key, "equal");
+    }
+
+    #[test]
+    fn host_options_parse_and_clamp() {
+        let settings = Settings {
+            page_size: 0,
+            page_up_key: "comma".to_string(),
+            page_down_key: String::new(),
+            ..Default::default()
+        };
+        let options = settings.host_options();
+        assert_eq!(options.page_size, 1, "页大小下限为 1");
+        assert_eq!(options.page_up, KeyEvent::from_repr("comma").unwrap());
+        assert_eq!(
+            options.page_down,
+            KeyEvent::from_repr("equal").unwrap(),
+            "空键名回退参照缺省"
+        );
+        let big = Settings {
+            page_size: 999,
+            ..Default::default()
+        }
+        .host_options();
+        assert_eq!(big.page_size, CANDIDATE_LIMIT, "页大小上限为候选上限");
     }
 
     #[test]
