@@ -98,6 +98,20 @@ FCITX_CONFIGURATION(
         .description{"Tab 选字写入学习库"},
         .defaultValue = true,
         .annotation{"用 Tab 选字时记录学习事件，参与后续候选排序。"}}};
+    fcitx::OptionWithAnnotation<bool, fcitx::ToolTipAnnotation> digitSelect{{
+        .parent = this,
+        .path{"DigitSelect"},
+        .description{"数字直选"},
+        .defaultValue = false,
+        .annotation{"开启后菜单可见时 `1`–`9` 直接上屏当前页候选、`0` = 第 10 个；"
+                    "关闭时数字仍作编码选重后缀。"}}};
+    fcitx::OptionWithAnnotation<bool, fcitx::ToolTipAnnotation> panelPreedit{{
+        .parent = this,
+        .path{"PanelPreedit"},
+        .description{"候选窗口显示预编辑"},
+        .defaultValue = false,
+        .annotation{"仅宿主显示项，不经引擎：候选窗口是否显示预编辑文本。"}}};
+    // 值选项（`int` 等）列在布尔选项之后。
     fcitx::Option<int, fcitx::IntConstrain, fcitx::DefaultMarshaller<int>,
                   fcitx::ToolTipAnnotation>
         highFreqLimit{{
@@ -115,20 +129,7 @@ FCITX_CONFIGURATION(
             .description{"每页候选个数"},
             .defaultValue = 5,
             .constrain = fcitx::IntConstrain(kPageSizeMin, kPageSizeMax),
-            .annotation{"候选列表每页个数（1–10）；数字直选 `0` 对应第 10 个。"}}};
-    fcitx::OptionWithAnnotation<bool, fcitx::ToolTipAnnotation> digitSelect{{
-        .parent = this,
-        .path{"DigitSelect"},
-        .description{"数字直选"},
-        .defaultValue = false,
-        .annotation{"开启后菜单可见时 `1`–`9` 直接上屏当前页候选、`0` = 第 10 个；"
-                    "关闭时数字仍作编码选重后缀。"}}};
-    fcitx::OptionWithAnnotation<bool, fcitx::ToolTipAnnotation> panelPreedit{{
-        .parent = this,
-        .path{"PanelPreedit"},
-        .description{"候选窗口显示预编辑"},
-        .defaultValue = false,
-        .annotation{"仅宿主显示项，不经引擎：候选窗口是否显示预编辑文本。"}}};);
+            .annotation{"候选列表每页个数（1–10）；数字直选 `0` 对应第 10 个。"}}};);
 
 /// 快捷键设置（配置页「快捷键」分区；`KeyList` 可多项，与全局设置同款）。
 FCITX_CONFIGURATION(
@@ -137,7 +138,7 @@ FCITX_CONFIGURATION(
         soundToCharShapeKeys{{
             .parent = this,
             .path{"SoundToCharShapeKey"},
-            .description{"音反查触发"},
+            .description{"音反查"},
             .defaultValue = fcitx::KeyList{
                 fcitx::Key(FcitxKey_colon, fcitx::KeyState::Alt)},
             .constrain = fcitx::KeyListConstrain(
@@ -148,7 +149,7 @@ FCITX_CONFIGURATION(
         charToSoundShapeKeys{{
             .parent = this,
             .path{"CharToSoundShapeKey"},
-            .description{"字反查触发"},
+            .description{"字反查"},
             .defaultValue = fcitx::KeyList{
                 fcitx::Key(FcitxKey_quotedbl, fcitx::KeyState::Alt)},
             .constrain = fcitx::KeyListConstrain(
