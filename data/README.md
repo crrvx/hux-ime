@@ -2,6 +2,10 @@
 
 运行时数据（随包安装到 `…/hux/`）。
 
+- 码表四件套 `tiger_sentence.{codes,char_ranks,full_code_whitelist,supplement}.txt`：取自上游
+  [`tiger-sentense-rime`](https://github.com/lvyww/tiger-sentense-rime)（GPL-3.0），与测试夹具
+  `goldens/lexicon/` 同内容（`supplement.txt` 仅注释中的方案名由「虎整句」改为「虎句」；
+  各文件 sha256 见 [`../goldens/README.md`](../goldens/README.md) 的夹具表）。
 - `tiger_sentence.lexical.bin`：紧凑词先验（TCSLEX01 Bloom filter）。
   来源、许可（CC BY 4.0）与变更说明见
   [`../docs/LEXICAL_PRIOR_ATTRIBUTION.md`](../docs/LEXICAL_PRIOR_ATTRIBUTION.md)，

@@ -20,27 +20,24 @@ sudo cmake --install build/addon      # /usr/lib/fcitx5/libhux.so + 两个 conf
 
 ## 数据目录
 
-默认按 `~/.local/share/fcitx5/hux` → `/usr/share/fcitx5/hux` 查找（码表四件套、
-`tiger_sentence.lexical.bin`、`tiger_sentence.pinyin.bin.gz`、`symbols.yaml`，以及可选的
-`models/sentence-ngram-mobile.bin`）。开发可用环境变量覆盖（目录冒号分隔 / 模型路径）：
+随包数据在仓库 `data/`（码表四件套、`tiger_sentence.lexical.bin`、`tiger_sentence.pinyin.bin.gz`、
+`symbols.yaml`）；运行时按 `~/.local/share/fcitx5/hux` → `/usr/share/fcitx5/hux` 查找，可选模型另在
+`models/sentence-ngram-mobile.bin` 查找。安装到用户目录：
 
 ```sh
-# 模型示例取自 fcitx5-rime 数据目录（按实际安装位置替换；任意 TCSKNM02 模型均可）
-HUX_DATA_DIRS="goldens/lexicon:data" \
+mkdir -p ~/.local/share/fcitx5/hux/models
+cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
+```
+
+开发可用环境变量覆盖（目录冒号分隔 / 模型路径；`data/` 已含全部随包数据）：
+
+```sh
+HUX_DATA_DIRS="data" \
 HUX_MODEL="$HOME/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin" \
 fcitx5 -r -d
 ```
 
-也可直接铺到用户目录（免环境变量）：
-
-```sh
-mkdir -p ~/.local/share/fcitx5/hux/models
-cp goldens/lexicon/*.txt data/tiger_sentence.lexical.bin data/tiger_sentence.pinyin.bin.gz \
-  ~/.local/share/fcitx5/hux/
-# 若已装 fcitx5-rime，模型可直接软链（示例路径，按实际位置替换）
-ln -sf ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
-  ~/.local/share/fcitx5/hux/models/
-```
+（`HUX_MODEL` 示例取自 fcitx5-rime 数据目录，按实际安装位置替换；任意 TCSKNM02 模型均可。）
 
 模型（可选）可与 fcitx5-rime **共用同一份**（来源：[Releases › model](https://github.com/lvyww/tiger-sentense-rime/releases/tag/model)）：
 实体放 hux 数据目录，再在 rime 共享目录建软链（rime 的查找顺序为 用户 `models/` → 用户根 → 共享 `models/`）：

@@ -1,7 +1,7 @@
 # hux-ime
 
 虎句（`tiger_sentence`）输入方案的 fcitx5 原生 Rust 实现。计算与交互核心全部为 Rust，不依赖
-librime（参照实现仅用于差分测试）。当前处于 K3（fcitx5 addon）收尾阶段，K4 验收待做。
+librime。
 
 名称 `hux` = `tux`(linux) + `hu`(虎码)
 
@@ -35,9 +35,16 @@ sudo cmake --install build/addon
 fcitx5 -r -d  # 或以所在发行版的方式重启
 ```
 
-安装后需在 fcitx5 数据目录准备随包数据（码表、词先验位图、音查虎索引，可选 n-gram 模型——来源
-[Releases › model](https://github.com/lvyww/tiger-sentense-rime/releases/tag/model)；可与 fcitx5-rime
-共用同一份），并在配置工具中添加「hux」；数据放置方式详见
+随包数据在仓库 [`data/`](data/README.md)（码表四件套、词先验位图、音查虎索引、标点表），安装到
+fcitx5 数据目录：
+
+```sh
+mkdir -p ~/.local/share/fcitx5/hux/models
+cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
+```
+
+可选 n-gram 模型不随包（来源 [Releases › model](https://github.com/lvyww/tiger-sentense-rime/releases/tag/model)，
+可与 fcitx5-rime 共用同一份）；随后在配置工具中添加「hux」，细节见
 [`crates/hux-addon/README.md`](crates/hux-addon/README.md)。
 
 ## 致谢
@@ -57,6 +64,8 @@ fcitx5 -r -d  # 或以所在发行版的方式重启
 ## 许可与署名
 
 - 代码：GPL-3.0-or-later，见 [`LICENSE`](LICENSE)。
+- 码表数据 `data/tiger_sentence.{codes,char_ranks,full_code_whitelist,supplement}.txt`：取自上游
+  [tiger-sentense-rime](https://github.com/lvyww/tiger-sentense-rime)（GPL-3.0）。
 - 词先验数据 `data/tiger_sentence.lexical.bin`：**CC BY 4.0**（派生自
   [rime-mohu](https://github.com/fcxxxz/rime-mohu)）；署名见
   [`docs/LEXICAL_PRIOR_ATTRIBUTION.md`](docs/LEXICAL_PRIOR_ATTRIBUTION.md)，许可正文见
