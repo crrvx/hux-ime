@@ -102,7 +102,7 @@ FCITX_CONFIGURATION(
         .parent = this,
         .path{"DigitSelect"},
         .description{"数字直选"},
-        .defaultValue = false,
+        .defaultValue = true,
         .annotation{"开启后菜单可见时 `1`–`9` 直接上屏当前页候选、`0` = 第 10 个；"
                     "关闭时数字仍作编码选重后缀。"}}};
     fcitx::OptionWithAnnotation<bool, fcitx::ToolTipAnnotation> panelPreedit{{

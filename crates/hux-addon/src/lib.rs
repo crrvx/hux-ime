@@ -1043,19 +1043,23 @@ mod tests {
         assert!(engine.key(0x60, 0, false), "` 应被消费");
         assert_eq!(engine.context.input(), b"`");
     }
-    /// 数字直选默认关：数字仍是编码字符（选重后缀），不直接上屏。
+    /// 数字直选关闭时：数字仍是编码字符（选重后缀），不直接上屏。
     #[test]
     fn digit_select_off_keeps_rank_suffix() {
         let _guard = serial();
         COMMITS.lock().unwrap().clear();
         let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        engine.apply_settings(Settings {
+            digit_select: false,
+            ..Default::default()
+        });
         for code in *b"ja" {
             engine.key(u32::from(code), 0, false);
         }
         assert!(engine.key(u32::from(b'2'), 0, false));
         assert!(
             COMMITS.lock().unwrap().is_empty(),
-            "默认关：数字不应直接上屏"
+            "关闭时：数字不应直接上屏"
         );
         assert!(engine.context.input().ends_with(b"2"));
     }

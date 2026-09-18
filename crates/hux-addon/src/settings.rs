@@ -40,7 +40,7 @@ pub struct Settings {
     /// 上/下翻页键（rime 键名，可多项；缺省对应参照 `key_binder` 的 `-`/`=`）。
     pub page_up_keys: Vec<String>,
     pub page_down_keys: Vec<String>,
-    /// 数字直选（addon 扩展，默认关）：菜单可见时数字直接上屏当前页候选（1–9；0=10）。
+    /// 数字直选（addon 扩展，默认开）：菜单可见时数字直接上屏当前页候选（1–9；0=10）。
     pub digit_select: bool,
 }
 
@@ -59,7 +59,7 @@ impl Default for Settings {
             page_size: DEFAULT_PAGE_SIZE,
             page_up_keys: vec!["minus".to_string(), "bracketleft".to_string()],
             page_down_keys: vec!["equal".to_string(), "bracketright".to_string()],
-            digit_select: false,
+            digit_select: true,
         }
     }
 }
@@ -146,7 +146,7 @@ mod tests {
             settings.char_to_sound_shape_keys,
             vec!["Alt+quotedbl".to_string()]
         );
-        assert!(!settings.digit_select);
+        assert!(settings.digit_select);
     }
 
     #[test]
