@@ -31,7 +31,7 @@ crates/hux-addon/        # K3：C++ 薄壳（shell/）+ Rust FFI（src/）→ co
 data/                    # 随包数据源
 goldens/                 # 差分金样与夹具
 tools/                   # 金样生成器（generators/）、探针与基准（probes/）、探针用例（cases/）
-docs/                    # 本文档、词先验署名、数据清单
+docs/                    # 本文档、词先验署名
 ```
 
 依赖方向：`addon → core`；core 不依赖 fcitx5、不依赖 Lua。
@@ -58,9 +58,8 @@ docs/                    # 本文档、词先验署名、数据清单
   `models/sentence-ngram-mobile.bin`（TCSKNM02）、`symbols.yaml`、`tiger_sentence.lexical.bin`（TCSLEX01）、
   `tiger_sentence.pinyin.bin.gz`（TCSRV01）、`tiger_sentence.options.yaml`、学习库 `<hash>.userdb/`（LevelDB 同构）。
 - 仓库 `data/`：发布默认 `symbols.yaml`（仅覆盖 half_shape 的 `/` 提交 `/`）、词先验位图（CC BY 4.0，
-  署名见 [`LEXICAL_PRIOR_ATTRIBUTION.md`](LEXICAL_PRIOR_ATTRIBUTION.md)，参数见
-  [`LEXICAL_PRIOR_MANIFEST.json`](LEXICAL_PRIOR_MANIFEST.json)）、音查虎索引（清单见
-  [`PINYIN_INDEX_MANIFEST.json`](PINYIN_INDEX_MANIFEST.json)）；详见 [`../data/README.md`](../data/README.md)。
+  署名见 [`LEXICAL_PRIOR_ATTRIBUTION.md`](LEXICAL_PRIOR_ATTRIBUTION.md)）、音查虎索引；
+  详见 [`../data/README.md`](../data/README.md)。
 
 ## 5. fcitx5 集成要点
 

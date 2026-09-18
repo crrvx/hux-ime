@@ -10,7 +10,7 @@
 
 用法：
   tools/generators/gen_pinyin_index.py --source PY_c.dict.yaml --out data/tiger_sentence.pinyin.bin.gz
-  tools/generators/gen_pinyin_index.py --source PY_c.dict.yaml --out ... --manifest docs/PINYIN_INDEX_MANIFEST.json
+  tools/generators/gen_pinyin_index.py --source PY_c.dict.yaml --out ... --manifest /tmp/pinyin.manifest.json
   tools/generators/gen_pinyin_index.py --check --source PY_c.dict.yaml --out ...
 
 二进制布局（小端；`u16/u32` 定长）：
