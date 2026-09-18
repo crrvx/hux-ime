@@ -132,53 +132,75 @@ mod tests {
     }
 
     #[test]
-    fn host_options_parse_and_clamp() {
-        let settings = Settings {
+    fn host_options_clamp_page_size() {
+        let low = Settings {
             page_size: 0,
+            ..Default::default()
+        }
+        .host_options();
+        assert_eq!(low.page_size, 1, "页大小下限为 1");
+        let high = Settings {
+            page_size: 999,
+            ..Default::default()
+        }
+        .host_options();
+        assert_eq!(high.page_size, CANDIDATE_LIMIT, "页大小上限为候选上限");
+    }
+
+    #[test]
+    fn host_options_fall_back_to_default_keys() {
+        let options = Settings {
             page_up_key: "comma".to_string(),
             page_down_key: String::new(),
             ..Default::default()
-        };
-        let options = settings.host_options();
-        assert_eq!(options.page_size, 1, "页大小下限为 1");
+        }
+        .host_options();
         assert_eq!(options.page_up, KeyEvent::from_repr("comma").unwrap());
         assert_eq!(
             options.page_down,
             KeyEvent::from_repr("equal").unwrap(),
             "空键名回退参照缺省"
         );
-        let big = Settings {
-            page_size: 999,
-            ..Default::default()
-        }
-        .host_options();
-        assert_eq!(big.page_size, CANDIDATE_LIMIT, "页大小上限为候选上限");
     }
 
     #[test]
-    fn option_defaults_and_learning_mode() {
+    fn option_defaults_follow_settings() {
         let settings = Settings {
             full_shape: true,
-            tab_learning: false,
-            high_freq_limit: 100,
             ..Default::default()
         };
         let defaults = settings.option_defaults();
         assert!(defaults.contains(&("full_shape", true)));
         assert!(defaults.contains(&(OPTION_EARLY_COMMIT, true)));
-        assert_eq!(settings.learning_mode("abc", 1), "");
-        let store_defaults = settings.store_defaults();
+    }
+
+    #[test]
+    fn store_defaults_cover_early_commit_options() {
+        let store_defaults = Settings::default().store_defaults();
         assert_eq!(
             store_defaults.get(OPTION_EARLY_COMMIT_TO_PREEDIT),
             Some(&false)
         );
         assert_eq!(store_defaults.len(), 3);
-        let with_learning = Settings {
+    }
+
+    #[test]
+    fn learning_mode_disabled_when_tab_learning_off() {
+        let settings = Settings {
+            tab_learning: false,
+            ..Default::default()
+        };
+        assert_eq!(settings.learning_mode("abc", 1), "");
+    }
+
+    #[test]
+    fn learning_mode_encodes_rules_limit_and_duplicate() {
+        let settings = Settings {
             high_freq_limit: 100,
             ..Default::default()
         };
         assert_eq!(
-            with_learning.learning_mode("abc", 1),
+            settings.learning_mode("abc", 1),
             "sentence-v1|rules=abc|optimal=100|dup=1"
         );
     }

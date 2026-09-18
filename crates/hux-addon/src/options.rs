@@ -177,8 +177,8 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_reads_writes_and_syncs() {
-        let dir = temp_dir("roundtrip");
+    fn load_applies_stored_options() {
+        let dir = temp_dir("load");
         std::fs::write(
             dir.join(OPTIONS_FILE),
             "options:\n  tiger_sentence_early_commit: false\n  some_other_option: true\ncustom: 1\n",
@@ -188,6 +188,20 @@ mod tests {
         let mut context = Context::new();
         store.sync(&mut context);
         assert!(!context.get_option("tiger_sentence_early_commit"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn observe_saves_user_change() {
+        let dir = temp_dir("observe");
+        std::fs::write(
+            dir.join(OPTIONS_FILE),
+            "options:\n  tiger_sentence_early_commit: false\n",
+        )
+        .expect("write");
+        let mut store = OptionsStore::load(&dir);
+        let mut context = Context::new();
+        store.sync(&mut context);
         drain_option_events(&mut store, &mut context);
         // 用户改动 → 记录并保存
         context.set_option("tiger_sentence_early_commit", true);
@@ -200,7 +214,24 @@ mod tests {
         );
         let text = std::fs::read_to_string(dir.join(OPTIONS_FILE)).expect("read");
         assert!(text.contains("tiger_sentence_early_commit: true"), "{text}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn save_preserves_unknown_keys() {
+        let dir = temp_dir("preserve");
+        std::fs::write(
+            dir.join(OPTIONS_FILE),
+            "options:\n  some_other_option: true\ncustom: 1\n",
+        )
+        .expect("write");
+        let mut store = OptionsStore::load(&dir);
+        let mut context = Context::new();
+        store.sync(&mut context);
+        context.set_option("tiger_sentence_early_commit", true);
+        store.observe(&mut context, "tiger_sentence_early_commit");
         // 未知键（`options:` 内与其他顶层键）原样保留
+        let text = std::fs::read_to_string(dir.join(OPTIONS_FILE)).expect("read");
         assert!(text.contains("some_other_option: true"), "{text}");
         assert!(text.contains("custom: 1"), "{text}");
         std::fs::remove_dir_all(&dir).ok();

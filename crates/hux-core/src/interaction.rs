@@ -2639,22 +2639,30 @@ mod tests {
         assert_eq!(loaded[0].text, "甲");
         assert_eq!(loaded[0].boundaries, "2,3;");
         assert_eq!(state.locks[0].text, "甲");
+    }
+
+    #[test]
+    fn locks_round_trip_with_empty_raw() {
         // 空字段同样可往返（0: 帧）。
-        let (mut context2, mut state2) = (Context::new(), SentenceState::fresh(1));
-        state2.locks.push(Lock {
+        let (mut context, mut state) = (Context::new(), SentenceState::fresh(1));
+        state.locks.push(Lock {
             raw: String::new(),
             text: "甲".to_string(),
             boundaries: "0,3;".to_string(),
         });
-        state2.save(&mut context2);
-        assert_eq!(read_locks(&context2), state2.locks);
-        // 畸形数据返回空列表。
-        context2.set_property(K_LOCKS, "9:ab");
-        assert!(read_locks(&context2).is_empty());
+        state.save(&mut context);
+        assert_eq!(read_locks(&context), state.locks);
     }
 
     #[test]
-    fn committed_property_and_buffered_plumbing() {
+    fn read_locks_rejects_malformed_framing() {
+        let mut context = Context::new();
+        context.set_property(K_LOCKS, "9:ab");
+        assert!(read_locks(&context).is_empty());
+    }
+
+    #[test]
+    fn committed_property_parses_or_empties() {
         assert_eq!(
             parse_committed_property("ab\t甲"),
             ("ab".to_string(), "甲".to_string())
@@ -2663,6 +2671,10 @@ mod tests {
             parse_committed_property("no-tab"),
             (String::new(), String::new())
         );
+    }
+
+    #[test]
+    fn buffered_property_derives_live_input_and_caret() {
         let mut context = Context::new();
         set_property_if_changed(&mut context, K_BUFFERED, "甲");
         context.set_input(b"~ab");
@@ -2708,7 +2720,7 @@ mod tests {
     }
 
     #[test]
-    fn plain_char_and_modifier_detection() {
+    fn plain_char_key_accepts_printable_chars() {
         let key = KeyEvent::new(0x61, 0);
         assert_eq!(is_plain_char_key(&key, "a"), Some('a'));
         assert_eq!(is_plain_char_key(&key, "semicolon"), Some(';'));
@@ -2719,6 +2731,10 @@ mod tests {
         assert_eq!(is_plain_char_key(&key, "space"), None);
         let ctrl = KeyEvent::new(0x61, crate::key::K_CONTROL_MASK);
         assert_eq!(is_plain_char_key(&ctrl, "a"), None);
+    }
+
+    #[test]
+    fn is_modifier_repr_matches_modifier_prefixes() {
         assert!(is_modifier_repr("Shift_L"));
         assert!(is_modifier_repr("ISO_Level3_Shift"));
         assert!(is_modifier_repr("Mode_switch"));
@@ -2728,11 +2744,15 @@ mod tests {
     }
 
     #[test]
-    fn digit_detection_and_retention() {
+    fn ends_with_digit_detects_digit_tail() {
         assert!(ends_with_digit("甲1"));
         assert!(ends_with_digit("甲１"));
         assert!(!ends_with_digit("甲"));
         assert!(!ends_with_digit(""));
+    }
+
+    #[test]
+    fn min_retained_raw_length_clamps() {
         assert_eq!(min_retained_raw_length(Some(3)), 3);
         assert_eq!(min_retained_raw_length(Some(-1)), 0);
         assert_eq!(min_retained_raw_length(None), 0);
@@ -2814,16 +2834,21 @@ mod tests {
     }
 
     #[test]
-    fn early_commit_helpers() {
-        // has_selection_suffix
+    fn has_selection_suffix_detects_selectors() {
         assert!(has_selection_suffix(b"ab1"));
         assert!(has_selection_suffix(b"ab;"));
         assert!(has_selection_suffix(b"ab'"));
         assert!(!has_selection_suffix(b"abc"));
-        // common_text_prefix
+    }
+
+    #[test]
+    fn common_text_prefix_returns_shared_prefix() {
         assert_eq!(common_text_prefix("甲乙丙", "甲乙丁"), "甲乙");
         assert_eq!(common_text_prefix("甲", "乙"), "");
-        // tracker_better：字符数优先，其次份额，最后短边界
+    }
+
+    #[test]
+    fn tracker_better_prefers_chars_share_then_short_boundary() {
         let base = Tracker {
             text: "甲".to_string(),
             text_char_count: 1,
@@ -2833,6 +2858,7 @@ mod tests {
             gap_count: 0,
             last_share: 0.9,
         };
+        // 字符数优先，其次份额，最后短边界
         let mut longer = base.clone();
         longer.text = "甲乙".to_string();
         longer.text_char_count = 2;
@@ -2845,8 +2871,7 @@ mod tests {
         assert!(tracker_better(&shorter_boundary, &base));
     }
 
-    #[test]
-    fn prefix_evidence_retention_and_contradiction() {
+    fn prefix_evidence() -> crate::decode::Evidence {
         use crate::decode::{Evidence, PrefixEvidence};
         let prefix = |text: &str, raw: usize, share: f64| PrefixEvidence {
             text: text.to_string(),
@@ -2856,7 +2881,7 @@ mod tests {
             boundary_closed: share >= 0.99999,
             text_char_count: text.chars().count(),
         };
-        let evidence = Evidence {
+        Evidence {
             prefixes: vec![prefix("甲", 2, 0.5), prefix("甲乙", 2, 0.3)],
             by_boundary: [(
                 2usize,
@@ -2873,52 +2898,49 @@ mod tests {
             merged_incomplete_tail: false,
             neutral_low_confidence: false,
             confidence_truncated: false,
-        };
+        }
+    }
+
+    fn tracker(text: &str, share: f64) -> Tracker {
+        Tracker {
+            text: text.to_string(),
+            text_char_count: text.chars().count(),
+            raw_length: 2,
+            evidence_count: 1,
+            strong_count: 0,
+            gap_count: 0,
+            last_share: share,
+        }
+    }
+
+    #[test]
+    fn prefix_contradicted_detects_higher_share_stem() {
+        let evidence = prefix_evidence();
         // "甲乙" 与同名 tracker 不矛盾；含更高份额的异名共享词干前缀则矛盾。
-        let tracker = Tracker {
-            text: "甲乙".to_string(),
-            text_char_count: 2,
-            raw_length: 2,
-            evidence_count: 1,
-            strong_count: 0,
-            gap_count: 0,
-            last_share: 0.3,
-        };
-        assert!(!prefix_contradicted(&tracker, &evidence));
-        let other = Tracker {
-            text: "甲丙".to_string(),
-            text_char_count: 2,
-            raw_length: 2,
-            evidence_count: 1,
-            strong_count: 0,
-            gap_count: 0,
-            last_share: 0.2,
-        };
-        assert!(prefix_contradicted(&other, &evidence));
-        // retain：缺失或矛盾时丢弃，保留时 gap+1 且最多 3 次
+        assert!(!prefix_contradicted(&tracker("甲乙", 0.3), &evidence));
+        assert!(prefix_contradicted(&tracker("甲丙", 0.2), &evidence));
+    }
+
+    #[test]
+    fn retain_trackers_drops_missing_or_contradicted() {
+        let evidence = prefix_evidence();
+        // 缺失或矛盾时丢弃
         let mut trackers = HashMap::new();
-        trackers.insert("keep".to_string(), other.clone());
-        trackers.insert(
-            "gone".to_string(),
-            Tracker {
-                text: "不存在".to_string(),
-                ..other.clone()
-            },
-        );
+        trackers.insert("keep".to_string(), tracker("甲丙", 0.2));
+        trackers.insert("gone".to_string(), tracker("不存在", 0.2));
         let retained = retain_trackers_without_counting(&trackers, &evidence);
         assert!(retained.is_empty());
-        let mut stable = tracker.clone();
+        // gap_count 超过上限（3）应丢弃
+        let mut stable = tracker("甲乙", 0.3);
         stable.gap_count = 3;
-        stable.last_share = 0.3;
         let mut map = HashMap::new();
-        map.insert("stable".to_string(), stable.clone());
+        map.insert("stable".to_string(), stable);
         let retained = retain_trackers_without_counting(&map, &evidence);
         assert!(retained.is_empty(), "gap_count 超过上限应丢弃");
     }
 
-    #[test]
-    fn implicit_rank_and_submit_early() {
-        let candidate = Evaluated {
+    fn evaluated_candidate() -> Evaluated {
+        Evaluated {
             text: "甲乙".to_string(),
             score: 0.0,
             confidence_score: 0.0,
@@ -2932,12 +2954,20 @@ mod tests {
             segmented: String::new(),
             previous_raw_length: 2,
             previous_text: Some("甲".to_string()),
-        };
+        }
+    }
+
+    #[test]
+    fn implicit_rank_allowed_gates_by_suffix_and_duplicate() {
+        let candidate = evaluated_candidate();
         assert!(implicit_rank_allowed(&candidate, b"ab", false, true));
         assert!(!implicit_rank_allowed(&candidate, b"ab", true, false));
         assert!(implicit_rank_allowed(&candidate, b"ab", true, true));
         assert!(implicit_rank_allowed(&candidate, b"ab1", true, false));
+    }
 
+    #[test]
+    fn submit_early_commits_or_buffers() {
         let mut context = Context::new();
         let mut state = SentenceState::fresh(1);
         state.committed_raw = "ab".to_string();
@@ -3009,7 +3039,7 @@ mod tests {
     }
 
     #[test]
-    fn translate_smoke() {
+    fn translate_produces_sentence_candidates() {
         let dir =
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
         let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
@@ -3022,6 +3052,16 @@ mod tests {
         assert!(!out.is_empty());
         assert!(out.iter().all(|candidate| candidate.kind == "sentence"));
         assert!(out.iter().all(|candidate| !candidate.text.is_empty()));
+    }
+
+    #[test]
+    fn translate_emits_buffered_candidate() {
+        let dir =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
+        let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
+        let supplement = crate::lexicon::Supplement::load_default(Some(&dir));
+        let mut decoder = Decoder::new(lexicon, supplement, None);
+        let context = Context::new();
         // 缓冲态：`~` 标记 + 单锁 → buffered 快捷候选
         let mut buffered_state = SentenceState::fresh(1);
         buffered_state.buffered_text = "甲".to_string();
@@ -3032,7 +3072,7 @@ mod tests {
             text: "甲".to_string(),
             boundaries: "2,3;".to_string(),
         });
-        let mut buffered_out = Vec::new();
+        let mut out = Vec::new();
         translate(
             &mut decoder,
             &context,
@@ -3040,16 +3080,16 @@ mod tests {
             b"~",
             0,
             1,
-            &mut buffered_out,
+            &mut out,
         )
         .expect("translate buffered");
-        assert_eq!(buffered_out.len(), 1);
-        assert_eq!(buffered_out[0].kind, "sentence_buffered");
-        assert_eq!(buffered_out[0].preedit, "甲");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].kind, "sentence_buffered");
+        assert_eq!(out[0].preedit, "甲");
     }
 
     #[test]
-    fn translate_guards() {
+    fn translate_skips_lookup_segments() {
         let dir =
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
         let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
@@ -3061,9 +3101,19 @@ mod tests {
         let mut out = Vec::new();
         translate(&mut decoder, &context, &state, b"`ni", 0, 3, &mut out).expect("translate");
         assert!(out.is_empty());
-        // 缓冲态下非零起点（后续段）不翻译。
+    }
+
+    #[test]
+    fn translate_requires_buffer_marker() {
+        let dir =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
+        let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
+        let supplement = crate::lexicon::Supplement::load_default(Some(&dir));
+        let mut decoder = Decoder::new(lexicon, supplement, None);
+        let context = Context::new();
         let mut buffered_state = SentenceState::fresh(1);
         buffered_state.buffered_text = "甲".to_string();
+        // 缓冲态下非零起点（后续段）不翻译。
         let mut out = Vec::new();
         translate(
             &mut decoder,
@@ -3160,18 +3210,27 @@ mod tests {
         }
     }
 
-    #[test]
-    fn learning_stage_pends_and_submit_consumes() {
-        let mode = "sentence-v1|rules=|optimal=1500|dup=1";
-        let baseline = selected_item("交交");
-        let selected = selected_item("交疒");
+    fn learning_state() -> SentenceState {
         let mut state = SentenceState::fresh(1);
         state.committed_raw = "ab".to_string();
         state.committed_text = "交".to_string();
-        let mut live = LiveLearning {
+        state
+    }
+
+    fn learning_live(mode: &str) -> LiveLearning {
+        LiveLearning {
             mode: mode.to_string(),
             ..LiveLearning::default()
-        };
+        }
+    }
+
+    #[test]
+    fn learning_stage_pends_event_with_offsets() {
+        let mode = "sentence-v1|rules=|optimal=1500|dup=1";
+        let baseline = selected_item("交交");
+        let selected = selected_item("交疒");
+        let state = learning_state();
+        let mut live = learning_live(mode);
         // 非 Tab 流程：baseline 取 submitted_first（首个可见候选）
         learning_stage(
             &mut live,
@@ -3188,6 +3247,23 @@ mod tests {
         assert_eq!(live.pending[0].raw_start, 2);
         assert_eq!(live.pending[0].text_start, 3);
         assert!(live.baseline.is_none());
+    }
+
+    #[test]
+    fn learning_submit_accepts_matching_and_drops_mismatch() {
+        let mode = "sentence-v1|rules=|optimal=1500|dup=1";
+        let baseline = selected_item("交交");
+        let selected = selected_item("交疒");
+        let state = learning_state();
+        let mut live = learning_live(mode);
+        learning_stage(
+            &mut live,
+            &state,
+            Some(&selected),
+            b"abab",
+            Some(&baseline),
+            100.0,
+        );
         // 提交匹配 → 接受事件并无条件清空 pending
         let accepted = learning_submit(&mut live, Some(&selected), "交疒", "交疒");
         assert_eq!(accepted.len(), 1);
@@ -3232,19 +3308,33 @@ mod tests {
         assert!(live.baseline.is_some());
     }
 
+    fn rebuild(
+        builder: &mut CompositionBuilder,
+        decoder: &mut Decoder,
+        context: &mut Context,
+        state: &SentenceState,
+        invalidated: bool,
+    ) -> bool {
+        builder
+            .rebuild(decoder, context, state, invalidated, None)
+            .expect("rebuild")
+    }
+
     #[test]
-    fn composition_builder_preserves_segments_and_tracks_caret() {
+    fn composition_builder_preserves_unchanged_segment() {
         let mut decoder = lexicon_fixture();
         let mut context = Context::new();
         let state = SentenceState::fresh(1);
         let mut builder = CompositionBuilder::default();
         // 首次：建立组合（段存在即可，候选数取决于夹具表）
         context.push_input(b"ab");
-        assert!(
-            builder
-                .rebuild(&mut decoder, &mut context, &state, false, None)
-                .expect("rebuild")
-        );
+        assert!(rebuild(
+            &mut builder,
+            &mut decoder,
+            &mut context,
+            &state,
+            false
+        ));
         let segment = context.composition.back().expect("segment");
         assert_eq!(segment.end, 2);
         assert!(segment.translated);
@@ -3260,43 +3350,59 @@ mod tests {
             .back_mut()
             .expect("segment")
             .selected_index = 1;
-        builder
-            .rebuild(&mut decoder, &mut context, &state, false, None)
-            .expect("rebuild");
+        rebuild(&mut builder, &mut decoder, &mut context, &state, false);
         let segment = context.composition.back().expect("segment");
         assert!(segment.has_tag("marker"));
         assert_eq!(segment.selected_index, 1);
+    }
+
+    #[test]
+    fn composition_builder_rebuilds_on_invalidation_or_input_change() {
+        let mut decoder = lexicon_fixture();
+        let mut context = Context::new();
+        let state = SentenceState::fresh(1);
+        let mut builder = CompositionBuilder::default();
+        context.push_input(b"ab");
+        rebuild(&mut builder, &mut decoder, &mut context, &state, false);
+        context
+            .composition
+            .back_mut()
+            .expect("segment")
+            .tags
+            .push("marker".to_string());
         // 提交失效：段重建（标记与高亮消失）
-        builder
-            .rebuild(&mut decoder, &mut context, &state, true, None)
-            .expect("rebuild");
+        rebuild(&mut builder, &mut decoder, &mut context, &state, true);
         let segment = context.composition.back().expect("segment");
         assert!(!segment.has_tag("marker"));
         assert_eq!(segment.selected_index, 0);
         // 输入变化：重建（更长的段覆盖旧段）
         context.push_input(b"c");
-        builder
-            .rebuild(&mut decoder, &mut context, &state, false, None)
-            .expect("rebuild");
-        assert_eq!(context.composition.back().expect("segment").end, 3);
-        // 光标移入输入中间：组合只覆盖 caret 前缀（参照 Compose 语义）
-        context.set_caret(1);
-        builder
-            .rebuild(&mut decoder, &mut context, &state, false, None)
-            .expect("rebuild");
-        assert_eq!(context.composition.back().expect("segment").end, 1);
-        // 光标移回末尾：重新覆盖完整输入
-        context.set_caret(3);
-        builder
-            .rebuild(&mut decoder, &mut context, &state, false, None)
-            .expect("rebuild");
+        rebuild(&mut builder, &mut decoder, &mut context, &state, false);
         assert_eq!(context.composition.back().expect("segment").end, 3);
     }
 
     #[test]
-    fn learning_commit_gates_and_dedups() {
+    fn composition_builder_follows_caret_prefix() {
         let mut decoder = lexicon_fixture();
         let mut context = Context::new();
+        let state = SentenceState::fresh(1);
+        let mut builder = CompositionBuilder::default();
+        context.push_input(b"abc");
+        rebuild(&mut builder, &mut decoder, &mut context, &state, false);
+        // 光标移入输入中间：组合只覆盖 caret 前缀（参照 Compose 语义）
+        context.set_caret(1);
+        rebuild(&mut builder, &mut decoder, &mut context, &state, false);
+        assert_eq!(context.composition.back().expect("segment").end, 1);
+        // 光标移回末尾：重新覆盖完整输入
+        context.set_caret(3);
+        rebuild(&mut builder, &mut decoder, &mut context, &state, false);
+        assert_eq!(context.composition.back().expect("segment").end, 3);
+    }
+
+    #[test]
+    fn learning_commit_requires_mode_and_input() {
+        let mut decoder = lexicon_fixture();
+        let context = Context::new();
         let state = SentenceState::fresh(1);
         let mut live = LiveLearning::default();
         // 未就绪 / 无 mode：不记录
@@ -3307,6 +3413,18 @@ mod tests {
         // raw 为空：不记录
         learning_commit(&mut decoder, &context, &state, &mut live, 0.0, "x");
         assert!(live.submitted_raw.is_none());
+    }
+
+    #[test]
+    fn learning_commit_dedups_same_raw() {
+        let mut decoder = lexicon_fixture();
+        let mut context = Context::new();
+        let state = SentenceState::fresh(1);
+        let mut live = LiveLearning {
+            mode: "m".to_string(),
+            store_ready: true,
+            ..LiveLearning::default()
+        };
         // raw 非空：记录 submitted_raw；同 raw 再次调用被去重
         context.push_input(b"ab");
         learning_commit(&mut decoder, &context, &state, &mut live, 0.0, "x");
@@ -3350,15 +3468,14 @@ mod tests {
     }
 
     #[test]
-    fn learning_stage_keeps_tab_baseline_until_used() {
-        let mode = "m";
+    fn learning_stage_prefers_live_baseline_on_tab() {
         let baseline = selected_item("交交");
         let selected = selected_item("交疒");
         let mut state = SentenceState::fresh(1);
         state.tab_pending = true;
         let mut live = LiveLearning {
-            mode: mode.to_string(),
-            baseline: Some(baseline.clone()),
+            mode: "m".to_string(),
+            baseline: Some(baseline),
             ..LiveLearning::default()
         };
         // Tab 流程使用 live.baseline（而非 submitted_first）
@@ -3373,6 +3490,13 @@ mod tests {
         assert_eq!(live.pending.len(), 1);
         assert_eq!(live.pending[0].text, "疒");
         assert!(live.baseline.is_none());
+    }
+
+    #[test]
+    fn learning_stage_skips_without_mode() {
+        let baseline = selected_item("交交");
+        let selected = selected_item("交疒");
+        let state = SentenceState::fresh(1);
         // mode 为空 → 不暂存
         let mut idle = LiveLearning::default();
         learning_stage(
@@ -3469,7 +3593,7 @@ mod tests {
     }
 
     #[test]
-    fn processor_idle_keys_and_dot_armed() {
+    fn processor_forwards_release_and_idle_punct() {
         let mut h = Harness::new();
         // 释放事件交宿主
         let release = KeyEvent::new(
@@ -3480,6 +3604,11 @@ mod tests {
         // 空闲分号/引号交标点处理器
         assert_eq!(h.press("semicolon"), ProcessorResult::Forward);
         assert_eq!(h.press("apostrophe"), ProcessorResult::Forward);
+    }
+
+    #[test]
+    fn processor_commits_idle_digit_and_arms_dot() {
+        let mut h = Harness::new();
         // 空闲数字直接上屏并置待发
         assert_eq!(h.press("5"), ProcessorResult::Consume);
         assert_eq!(h.context.last_commit_text(), "5");
@@ -3493,7 +3622,7 @@ mod tests {
     }
 
     #[test]
-    fn processor_types_and_commits() {
+    fn processor_return_commits_buffer_and_input() {
         let mut h = Harness::new();
         assert_eq!(h.press("a"), ProcessorResult::Consume);
         assert_eq!(h.press("b"), ProcessorResult::Consume);
@@ -3504,8 +3633,13 @@ mod tests {
         assert_eq!(h.press("Return"), ProcessorResult::Consume);
         assert_eq!(h.context.last_commit_text(), "ab");
         assert!(h.context.input().is_empty());
-        // Escape：直接清空
+    }
+
+    #[test]
+    fn processor_escape_clears_composition() {
+        let mut h = Harness::new();
         h.push_segment(b"a", &["甲"]);
+        // Escape：直接清空
         assert_eq!(h.press("Escape"), ProcessorResult::Consume);
         assert!(h.context.input().is_empty());
         assert!(h.state.committed_raw.is_empty());
@@ -3524,22 +3658,43 @@ mod tests {
     }
 
     #[test]
-    fn options_sync_and_observe() {
+    fn options_sync_applies_defaults() {
         let mut context = Context::new();
         let mut options = Options::new(option_defaults());
         options.sync(&mut context);
         assert!(context.get_option("tiger_sentence_early_commit"));
         assert!(context.get_option("tiger_sentence_allow_duplicate_single"));
         assert!(!context.get_option("tiger_sentence_early_commit_to_preedit"));
+    }
+
+    #[test]
+    fn options_observe_ignores_synced_writes() {
+        let mut context = Context::new();
+        let mut options = Options::new(option_defaults());
+        options.sync(&mut context);
         // sync 自身写入的选项事件不计为用户改动（参照 live.syncing 抑制）
         assert!(!options.observe(&context, "tiger_sentence_early_commit"));
         assert_eq!(options.revision, 0);
+    }
+
+    #[test]
+    fn options_observe_records_user_change_once() {
+        let mut context = Context::new();
+        let mut options = Options::new(option_defaults());
+        options.sync(&mut context);
         // 用户改选项 → observe 记录并请求持久化；重复观察不再请求
         context.set_option("tiger_sentence_early_commit_to_preedit", true);
         assert!(options.observe(&context, "tiger_sentence_early_commit_to_preedit"));
         assert_eq!(options.revision, 1);
         assert!(!options.observe(&context, "tiger_sentence_early_commit_to_preedit"));
         assert!(!options.observe(&context, "other_option"));
+    }
+
+    #[test]
+    fn options_sync_prefers_persisted_values() {
+        let mut context = Context::new();
+        let mut options = Options::new(option_defaults());
+        options.sync(&mut context);
         // 持久化值优先于 schema 缺省
         options
             .values
@@ -3549,20 +3704,29 @@ mod tests {
         assert!(!context.get_option("tiger_sentence_early_commit"));
     }
 
-    #[test]
-    fn confirm_selection_commits_and_merges_buffer() {
-        let mut context = Context::new();
-        context.set_input(b"ab");
-        context.composition.segments.push(Segment {
+    fn segment_with_candidate(candidate: Candidate) -> Segment {
+        Segment {
             start: 0,
             end: 2,
             tags: Vec::new(),
             prompt: String::new(),
             selected_index: 0,
-            candidates: vec![Candidate::new("sentence", 0, 2, "甲", "")],
+            candidates: vec![candidate],
             selected: false,
             translated: true,
-        });
+        }
+    }
+
+    #[test]
+    fn confirm_selection_honors_auto_commit() {
+        let mut context = Context::new();
+        context.set_input(b"ab");
+        context
+            .composition
+            .segments
+            .push(segment_with_candidate(Candidate::new(
+                "sentence", 0, 2, "甲", "",
+            )));
         // `_auto_commit` 关闭：只标记选中，不提交（对应 librime 的 Forward 分支）
         confirm_selection(None, &mut context, &mut SentenceState::fresh(1));
         assert!(context.composition.back().unwrap().selected);
@@ -3572,21 +3736,25 @@ mod tests {
         confirm_selection(None, &mut context, &mut SentenceState::fresh(1));
         assert_eq!(context.last_commit_text(), "甲");
         assert!(context.input().is_empty());
-        // 缓冲候选：提交前并入缓冲前缀
+    }
+
+    #[test]
+    fn confirm_selection_merges_buffered_prefix() {
         let mut context = Context::new();
         context.set_option("_auto_commit", true);
         set_property_if_changed(&mut context, K_BUFFERED, "乙");
         context.set_input(b"~c");
-        context.composition.segments.push(Segment {
-            start: 0,
-            end: 2,
-            tags: Vec::new(),
-            prompt: String::new(),
-            selected_index: 0,
-            candidates: vec![Candidate::new("sentence_buffered", 0, 2, "c", "")],
-            selected: false,
-            translated: true,
-        });
+        context
+            .composition
+            .segments
+            .push(segment_with_candidate(Candidate::new(
+                "sentence_buffered",
+                0,
+                2,
+                "c",
+                "",
+            )));
+        // 缓冲候选：提交前并入缓冲前缀
         confirm_selection(None, &mut context, &mut SentenceState::fresh(1));
         assert_eq!(context.last_commit_text(), "乙c");
     }
@@ -3602,24 +3770,33 @@ mod tests {
     }
 
     #[test]
-    fn processor_navigation_and_buffer_guard() {
+    fn processor_guards_menu_navigation_while_buffered() {
         let mut h = Harness::new();
         // 缓冲空闲：菜单导航键拦给宿主
         h.state.buffered_text = "交".to_string();
         assert_eq!(h.press("Tab"), ProcessorResult::Consume);
         assert_eq!(h.press("Up"), ProcessorResult::Consume);
+    }
+
+    #[test]
+    fn processor_forwards_navigation_without_menu() {
+        let mut h = Harness::new();
         // 无缓冲：Up 交宿主；Tab 无菜单可用时同样交宿主
-        h.state.buffered_text.clear();
         assert_eq!(h.press("Up"), ProcessorResult::Forward);
         assert_eq!(h.press("Tab"), ProcessorResult::Forward);
     }
 
     #[test]
-    fn processor_space_confirms_and_backspace_edits_locked_input() {
+    fn processor_space_confirms_candidate() {
         let mut h = Harness::new();
         h.push_segment(b"ab", &["交"]);
         assert_eq!(h.press("space"), ProcessorResult::Consume);
         assert!(h.state.committed_raw.is_empty());
+    }
+
+    #[test]
+    fn processor_backspace_pops_locked_input() {
+        let mut h = Harness::new();
         // 锁分支：退格在锁下走 pop_input
         h.push_segment(b"ab", &["交"]);
         h.state.locks.push(Lock {

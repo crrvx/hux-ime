@@ -903,14 +903,12 @@ mod tests {
     }
 
     #[test]
-    fn engine_wires_learning_store() {
+    fn engine_enables_learning_store() {
         let _guard = serial();
         let dir = temp_user_dir("learning");
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, Some(dir.clone()));
+        let engine = Engine::new_with_dirs(host(), fixture_dirs(), None, Some(dir.clone()));
         assert!(engine.live.store_ready, "用户目录可用时学习库应就绪");
         assert!(engine.live.mode.starts_with("sentence-v1|rules="));
-        engine.key(u32::from(b'a'), 0, false);
-        assert!(engine.applied_learning.is_some(), "按键后应已应用学习索引");
         assert!(
             dir.join(format!(
                 "{}.userdb",
@@ -922,32 +920,61 @@ mod tests {
     }
 
     #[test]
-    fn types_composition_and_commits_with_fixture() {
+    fn engine_applies_learning_after_key() {
         let _guard = serial();
-        COMMITS.lock().unwrap().clear();
+        let dir = temp_user_dir("learning-apply");
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, Some(dir.clone()));
+        engine.key(u32::from(b'a'), 0, false);
+        assert!(engine.applied_learning.is_some(), "按键后应已应用学习索引");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn typing_shows_preedit_and_candidates() {
+        let _guard = serial();
         UPDATES.lock().unwrap().clear();
         let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
-        // 「甲/乙」共用码 ab：输入两个键后出现候选，space 确认并提交。
+        // 「甲/乙」共用码 ab：输入两个键后出现候选。
         assert!(engine.key(u32::from(b'a'), 0, false));
         assert!(engine.key(u32::from(b'b'), 0, false));
         assert_eq!(engine.context.input(), b"ab");
-        let (preedit, cursor, candidates, selected, _, _) =
-            UPDATES.lock().unwrap().last().cloned().expect("update");
+        let (preedit, cursor, candidates, selected, _, _) = last_update();
         assert_eq!(preedit, "ab");
         assert_eq!(cursor, 2);
         assert_eq!(candidates, vec!["甲".to_string(), "乙".to_string()]);
         assert_eq!(selected, 0);
+    }
+
+    #[test]
+    fn space_commits_highlighted_candidate() {
+        let _guard = serial();
+        COMMITS.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        assert!(engine.key(u32::from(b'a'), 0, false));
+        assert!(engine.key(u32::from(b'b'), 0, false));
         assert!(engine.key(0x20, 0, false)); // space
         assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "甲");
         assert!(engine.context.input().is_empty());
     }
 
     #[test]
-    fn modifiers_and_release_pass_through() {
+    fn modified_keys_pass_through() {
         let _guard = serial();
         let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
         assert!(!engine.key(u32::from(b'a'), FCITX_CTRL, false)); // Ctrl+a 交宿主
-        assert!(!engine.key(u32::from(b'a'), 0, true)); // release 交宿主
+    }
+
+    #[test]
+    fn key_releases_pass_through() {
+        let _guard = serial();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        assert!(!engine.key(u32::from(b'a'), 0, true));
+    }
+
+    #[test]
+    fn idle_return_passes_through() {
+        let _guard = serial();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
         assert!(!engine.key(0xff0d, 0, false)); // Return 空闲交宿主
     }
 
@@ -968,17 +995,12 @@ mod tests {
     }
 
     #[test]
-    fn composing_editing_keys_update_panel_and_are_consumed() {
+    fn composing_left_right_move_caret_and_toggle_candidates() {
         let _guard = serial();
-        COMMITS.lock().unwrap().clear();
         UPDATES.lock().unwrap().clear();
         let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
         assert!(engine.key(u32::from(b'a'), 0, false));
         assert!(engine.key(u32::from(b'b'), 0, false));
-        let (preedit, cursor, candidates, _, _, _) = last_update();
-        assert_eq!(preedit, "ab");
-        assert_eq!(cursor, 2);
-        assert_eq!(candidates, vec!["甲".to_string(), "乙".to_string()]);
         // ←：光标左移；组合按 caret 前缀重建（候选清空）
         assert!(engine.key(0xff51, 0, false), "组合中 Left 应被消费");
         let (preedit, cursor, candidates, _, _, _) = last_update();
@@ -990,6 +1012,15 @@ mod tests {
         let (_, cursor, candidates, _, _, _) = last_update();
         assert_eq!(cursor, 2);
         assert_eq!(candidates, vec!["甲".to_string(), "乙".to_string()]);
+    }
+
+    #[test]
+    fn composing_up_down_move_highlight() {
+        let _guard = serial();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        assert!(engine.key(u32::from(b'a'), 0, false));
+        assert!(engine.key(u32::from(b'b'), 0, false));
         // ↓：高亮下移；↑ 到首项
         assert!(engine.key(0xff54, 0, false));
         let (_, _, _, selected, _, _) = last_update();
@@ -997,46 +1028,71 @@ mod tests {
         assert!(engine.key(0xff52, 0, false));
         let (_, _, _, selected, _, _) = last_update();
         assert_eq!(selected, 0);
+    }
+
+    #[test]
+    fn composing_backspace_deletes_input_and_clears_composition() {
+        let _guard = serial();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        assert!(engine.key(u32::from(b'a'), 0, false));
+        assert!(engine.key(u32::from(b'b'), 0, false));
         // 退格：删除输入
         assert!(engine.key(0xff08, 0, false));
         let (preedit, cursor, candidates, _, _, _) = last_update();
         assert_eq!(preedit, "a");
         assert_eq!(cursor, 1);
         assert!(candidates.is_empty());
-        // 再退格清空组合；此后交宿主
+        // 再退格清空组合
         assert!(engine.key(0xff08, 0, false));
         let (preedit, _, candidates, _, _, _) = last_update();
         assert!(preedit.is_empty());
         assert!(candidates.is_empty());
-        assert!(!engine.key(0xff08, 0, false), "空闲 BackSpace 交宿主");
     }
 
     #[test]
-    fn punctuation_commits_via_table() {
+    fn punctuation_commits_when_idle() {
         let _guard = serial();
         COMMITS.lock().unwrap().clear();
-        UPDATES.lock().unwrap().clear();
         let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
-        // 空闲：标点直提交（symbols.yaml half_shape："." → 。）
+        // symbols.yaml half_shape："." → 。
         assert!(engine.key(0x2e, 0, false), "period 应被消费");
         assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "。");
-        // 组合中：当前候选 + 标点一并提交并清空
+    }
+
+    #[test]
+    fn punctuation_appends_to_composition() {
+        let _guard = serial();
+        COMMITS.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
         assert!(engine.key(u32::from(b'a'), 0, false));
         assert!(engine.key(u32::from(b'b'), 0, false));
         assert!(engine.key(0x2c, 0, false), "comma 应被消费");
         assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "甲，");
         assert!(engine.context.input().is_empty());
-        // pair 交替（apostrophe：'‘' / '’'）
-        assert!(engine.key(0x27, 0, false));
-        assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "‘");
-        assert!(engine.key(0x27, 0, false));
-        assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "’");
-        // 半角空格未映射：交宿主
+    }
+
+    #[test]
+    fn punctuation_pair_alternates() {
+        let _guard = serial();
+        COMMITS.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        // apostrophe：'‘' / '’'
+        for text in ["‘", "’"] {
+            assert!(engine.key(0x27, 0, false));
+            assert_eq!(COMMITS.lock().unwrap().last().unwrap(), text);
+        }
+    }
+
+    #[test]
+    fn punctuation_passes_unmapped_space() {
+        let _guard = serial();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
         assert!(!engine.key(0x20, 0, false), "空闲空格交宿主");
     }
 
     #[test]
-    fn uppercase_letter_commits_composition_first() {
+    fn uppercase_commits_composition_and_requests_forward() {
         let _guard = serial();
         // 用户报告：组合中收到大写字母时，应先上屏当前候选（而非把字母插到预编辑之前）。
         // 核心语义保持「提交 + 不消费」（同 librime）；宿主层据 `forward_after_commit`
@@ -1057,37 +1113,45 @@ mod tests {
         );
         assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "甲");
         assert!(engine.context.input().is_empty(), "组合已提交并清空");
-        // 空闲大写字母：无提交，不请求转发（前端自行转发）。
+    }
+
+    #[test]
+    fn idle_uppercase_does_not_request_forward() {
+        let _guard = serial();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
         assert!(!engine.key(0x41, FCITX_SHIFT, false));
         assert!(!engine.forward_after_commit);
     }
 
     #[test]
-    fn apply_settings_switches_options_and_learning() {
+    fn apply_settings_switches_context_options() {
         let _guard = serial();
         let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
-        let settings = Settings {
+        engine.apply_settings(Settings {
             full_shape: true,
             ascii_punct: true,
-            tab_learning: false,
-            high_freq_limit: 100,
             ..Default::default()
-        };
-        engine.apply_settings(settings);
+        });
         assert!(engine.context.get_option("full_shape"));
         assert!(engine.context.get_option("ascii_punct"));
+    }
+
+    #[test]
+    fn apply_settings_disables_learning_mode() {
+        let _guard = serial();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        engine.apply_settings(Settings {
+            tab_learning: false,
+            ..Default::default()
+        });
         assert!(
             engine.live.mode.is_empty(),
             "关闭 Tab 学习 → 学习 mode 为空"
         );
     }
 
-    #[test]
-    fn ffi_apply_settings_roundtrip() {
-        let _guard = serial();
-        let engine = unsafe { hux_engine_new(std::ptr::null()) };
-        assert!(!engine.is_null());
-        let options = HuxOptions {
+    fn ffi_options() -> HuxOptions {
+        HuxOptions {
             early_commit: 0,
             early_commit_to_preedit: 1,
             allow_duplicate_single: 1,
@@ -1104,9 +1168,16 @@ mod tests {
             page_up_states: 0,
             page_down_sym: 0x2e,
             page_down_states: 0,
-        };
-        let applied = unsafe { hux_engine_apply_settings(engine, &options) };
-        assert_eq!(applied, 1);
+        }
+    }
+
+    #[test]
+    fn ffi_apply_settings_maps_engine_options() {
+        let _guard = serial();
+        let engine = unsafe { hux_engine_new(std::ptr::null()) };
+        assert!(!engine.is_null());
+        let options = ffi_options();
+        assert_eq!(unsafe { hux_engine_apply_settings(engine, &options) }, 1);
         let state = unsafe { &mut *engine };
         assert!(!state.settings.early_commit);
         assert!(state.context.get_option("full_shape"));
@@ -1116,8 +1187,30 @@ mod tests {
             "tab_learning=0 → 学习 mode 为空"
         );
         assert_eq!(state.settings.high_freq_limit, 800);
+        unsafe { hux_engine_free(engine) };
+    }
+
+    #[test]
+    fn ffi_apply_settings_maps_lookup_keys() {
+        let _guard = serial();
+        let engine = unsafe { hux_engine_new(std::ptr::null()) };
+        assert!(!engine.is_null());
+        let options = ffi_options();
+        assert_eq!(unsafe { hux_engine_apply_settings(engine, &options) }, 1);
+        let state = unsafe { &mut *engine };
         assert_eq!(state.settings.pinyin_lookup_key, "grave");
         assert_eq!(state.settings.character_lookup_key, "Shift+grave");
+        unsafe { hux_engine_free(engine) };
+    }
+
+    #[test]
+    fn ffi_apply_settings_maps_page_options() {
+        let _guard = serial();
+        let engine = unsafe { hux_engine_new(std::ptr::null()) };
+        assert!(!engine.is_null());
+        let options = ffi_options();
+        assert_eq!(unsafe { hux_engine_apply_settings(engine, &options) }, 1);
+        let state = unsafe { &mut *engine };
         assert_eq!(state.settings.page_size, 7);
         assert_eq!(state.settings.page_up_key, "comma");
         assert_eq!(state.settings.page_down_key, "period");
@@ -1266,22 +1359,35 @@ mod tests {
         assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "~");
     }
 
+    /// 字查音+虎（⑧-2）夹具目录。
+    fn character_lookup_dirs() -> Vec<PathBuf> {
+        vec![
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/pinyin_lookup"),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+        ]
+    }
+
     /// 字查音+虎（⑧-2）：周边文本不可用（如终端）时不显示提示，两排均为空。
     #[test]
     fn character_lookup_without_surrounding_shows_nothing() {
         let _guard = serial();
         UPDATES.lock().unwrap().clear();
-        let dirs = vec![
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/pinyin_lookup"),
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data"),
-        ];
-        let mut engine = Engine::new_with_dirs(host(), dirs, None, None);
+        let mut engine = Engine::new_with_dirs(host(), character_lookup_dirs(), None, None);
         engine.set_surrounding(None, 0);
         assert!(engine.key(0x22, FCITX_ALT, false), "Alt+\" 应被消费");
         let (_, _, _, _, up, down) = last_update();
         assert!(up.is_empty(), "周边文本不可用时上排应为空：{up:?}");
         assert!(down.is_empty(), "周边文本不可用时下排应为空：{down:?}");
-        // 周边文本恢复后，同一查码段在下一次按键刷新出两排。
+    }
+
+    /// 字查音+虎（⑧-2）：周边文本恢复后，同一查码段在下一次按键刷新出两排。
+    #[test]
+    fn character_lookup_refreshes_when_surrounding_available() {
+        let _guard = serial();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), character_lookup_dirs(), None, None);
+        engine.set_surrounding(None, 0);
+        assert!(engine.key(0x22, FCITX_ALT, false), "Alt+\" 应被消费");
         engine.set_surrounding(Some("中欧中兴"), 2);
         assert!(!engine.key(0xffe1, 0, false), "修饰键不消费（触发刷新）");
         let (_, _, _, _, up, down) = last_update();
@@ -1289,9 +1395,9 @@ mod tests {
         assert_eq!(down, "虍 nbe/nbeq");
     }
 
-    /// 预编辑「按词分码」：使用高亮候选的 preedit（`ab cd`），单字不分段（`ab`）。
+    /// 预编辑「按词分码」：使用高亮候选的 preedit（`ab cd`）。
     #[test]
-    fn preedit_uses_segmented_codes() {
+    fn preedit_segments_word_codes() {
         let _guard = serial();
         UPDATES.lock().unwrap().clear();
         let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
@@ -1302,7 +1408,14 @@ mod tests {
         assert!(!candidates.is_empty(), "abcd 应有候选");
         assert_eq!(preedit, "ab cd");
         assert_eq!(cursor, 5);
-        engine.reset();
+    }
+
+    /// 预编辑：单字不分段（`ab`）。
+    #[test]
+    fn preedit_single_char_is_unsegmented() {
+        let _guard = serial();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
         for code in *b"ab" {
             engine.key(u32::from(code), 0, false);
         }

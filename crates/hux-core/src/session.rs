@@ -480,7 +480,7 @@ mod tests {
     }
 
     #[test]
-    fn pop_and_delete_reject_out_of_range() {
+    fn pop_input_rejects_out_of_range() {
         let mut context = Context::new();
         context.push_input(b"ab");
         context.set_caret(1);
@@ -488,16 +488,22 @@ mod tests {
         assert_eq!(context.input(), b"ab");
         assert!(context.pop_input(1));
         assert_eq!(context.input(), b"b");
+    }
+
+    #[test]
+    fn delete_input_rejects_out_of_range() {
+        let mut context = Context::new();
+        context.push_input(b"ab");
         context.set_caret(1);
         assert!(!context.delete_input(2)); // 超出末尾：不改动
-        assert_eq!(context.input(), b"b");
+        assert_eq!(context.input(), b"ab");
         context.drain_events();
         assert!(context.delete_input(0)); // 0 长度：触发更新并返回 true
         assert_eq!(context.drain_events(), vec![Event::Update]);
     }
 
     #[test]
-    fn commit_text_uses_candidates_and_appends_tail() {
+    fn commit_text_uses_candidate_without_selected_flag() {
         // 未标记 selected 的段同样按选中候选取文本（librime 语义）
         let mut context = Context::new();
         context.set_input(b"abcd");
@@ -508,6 +514,10 @@ mod tests {
             ..Segment::default()
         });
         assert_eq!(context.composition.commit_text(context.input()), "甲cd");
+    }
+
+    #[test]
+    fn commit_text_appends_uncovered_input() {
         // 无候选段取输入切片；末尾未被覆盖的输入追加
         let mut context = Context::new();
         context.set_input(b"abcd");
@@ -556,7 +566,11 @@ mod tests {
         assert!(!context.highlight(1));
         assert!(context.highlight(99));
         assert_eq!(context.composition.back().unwrap().selected_index, 2);
-        context.drain_events();
+    }
+
+    #[test]
+    fn set_option_notifies_unconditionally() {
+        let mut context = Context::new();
         context.set_option("t", true);
         assert_eq!(context.drain_events(), vec![Event::Option("t".to_string())]);
         // 参照 `Context::set_option` 无条件通知：同值再设仍触发。
@@ -623,7 +637,17 @@ mod tests {
     }
 
     #[test]
-    fn confirm_and_commit_produce_text_and_clear() {
+    fn confirm_current_selection_accepts_highlight() {
+        let mut context = context_with_menu(&["甲", "乙"]);
+        context.highlight(1);
+        assert!(context.confirm_current_selection());
+        let segment = context.composition.back().unwrap();
+        assert_eq!(segment.selected_index, 1);
+        assert!(segment.selected);
+    }
+
+    #[test]
+    fn commit_emits_text_and_clears() {
         let mut context = context_with_menu(&["甲", "乙"]);
         context.highlight(1);
         assert!(context.confirm_current_selection());

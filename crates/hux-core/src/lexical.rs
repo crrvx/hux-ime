@@ -209,13 +209,18 @@ mod tests {
     }
 
     #[test]
-    fn header_validation_and_queries() {
+    fn header_fields_are_parsed() {
         let model = synthetic(&["甲乙", "甲乙丙"], 8192, 4);
         assert_eq!(model.bit_count, 8192);
         assert_eq!(model.hash_count, 4);
         assert_eq!(model.entry_count, 2);
         assert_eq!(model.minimum_length, 2);
         assert_eq!(model.maximum_length, 4);
+    }
+
+    #[test]
+    fn contains_honors_length_gate() {
+        let model = synthetic(&["甲乙", "甲乙丙"], 8192, 4);
         assert!(model.contains("甲乙"));
         assert!(model.contains("甲乙丙"));
         assert!(!model.contains("甲"));
@@ -230,10 +235,18 @@ mod tests {
             }
         }
         assert_eq!(model.contains_bits("甲"), bit_hit);
+    }
+
+    #[test]
+    fn score_sums_unoverlapping_words() {
+        let model = synthetic(&["甲乙", "甲乙丙"], 8192, 4);
         // score：两个不重叠词 = 1.0 + 1.2
         assert!((model.score("甲乙甲乙丙") - 2.2).abs() < 1e-12);
         assert_eq!(model.score(""), 0.0);
-        // 头部拒绝
+    }
+
+    #[test]
+    fn parse_rejects_bad_headers() {
         assert!(parse(MAGIC.to_vec(), PathBuf::from("x")).is_err());
         let mut bad = Vec::new();
         bad.extend_from_slice(MAGIC);
@@ -243,7 +256,7 @@ mod tests {
     }
 
     #[test]
-    fn score_cache_matches_uncached_and_length_gate() {
+    fn score_with_cache_matches_uncached() {
         let model = synthetic(&["甲乙", "甲乙丙"], 8192, 4);
         let text = "甲乙甲甲乙丙";
         let mut cache = HashMap::new();
@@ -253,10 +266,6 @@ mod tests {
             model.score(text).to_bits()
         );
         assert!(cache.contains_key("甲乙"));
-        // 词长门：1 字与 5 字恒 false，位图查询与门控结果解耦
-        assert!(!model.contains("甲"));
-        assert!(!model.contains("甲乙丙丁戊"));
-        let _ = model.contains_bits("甲");
     }
 
     #[test]

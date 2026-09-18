@@ -20,7 +20,6 @@
 #include <fcitx-utils/log.h>
 
 #include <algorithm>
-#include <algorithm>
 #include <memory>
 #include <string>
 

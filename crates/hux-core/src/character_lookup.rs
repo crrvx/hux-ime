@@ -65,13 +65,17 @@ mod tests {
         PinyinIndex::load(&path).expect("fixture index")
     }
 
-    #[test]
-    fn rows_show_left_char_with_head_marks() {
+    fn fixture() -> (PinyinIndex, Lexicon) {
         let lexicon = Lexicon::load(
             &[PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/pinyin_lookup")],
             0,
         );
-        let index = index();
+        (index(), lexicon)
+    }
+
+    #[test]
+    fn rows_show_pinyin_and_code_for_left_char() {
+        let (index, lexicon) = fixture();
         // 夹具 PY_c 无单字「欧」（仅出现在词条里）→ 音为 ?；码表有「欧」→ nbe/nbeq。
         let (pinyin_row, code_row) = rows(&index, &lexicon, "中欧中兴", 2);
         assert_eq!(pinyin_row, "咅 ?");
@@ -79,14 +83,29 @@ mod tests {
         let (pinyin_row, code_row) = rows(&index, &lexicon, "中欧中兴", 1);
         assert_eq!(pinyin_row, "咅 zhong");
         assert_eq!(code_row, "虍 d/dg/dgs");
+    }
+
+    #[test]
+    fn rows_are_empty_at_start() {
+        let (index, lexicon) = fixture();
         let (pinyin_row, code_row) = rows(&index, &lexicon, "中欧中兴", 0);
         assert_eq!(pinyin_row, "咅 ");
         assert_eq!(code_row, "虍 ");
+    }
+
+    #[test]
+    fn rows_treat_whitespace_as_position() {
+        let (index, lexicon) = fixture();
         // 空白跳过显示、仍占位置（按字符计数）。
-        let (pinyin_row, _) = rows(&index, &lexicon, "中 欧兴", 3);
-        assert_eq!(pinyin_row, "咅 ?");
-        let (pinyin_row, _) = rows(&index, &lexicon, "中 欧兴", 4);
-        assert_eq!(pinyin_row, "咅 ?");
+        for cursor in [3, 4] {
+            let (pinyin_row, _) = rows(&index, &lexicon, "中 欧兴", cursor);
+            assert_eq!(pinyin_row, "咅 ?");
+        }
+    }
+
+    #[test]
+    fn rows_use_question_mark_when_data_missing() {
+        let (index, lexicon) = fixture();
         // 码表/词典都缺 → 音码皆 ?。
         let (pinyin_row, code_row) = rows(&index, &lexicon, "龘", 1);
         assert_eq!(pinyin_row, "咅 ?");

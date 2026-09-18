@@ -868,9 +868,13 @@ mod tests {
     }
 
     #[test]
-    fn utf8_validation_and_static() {
+    fn chars_validates_utf8_tags() {
         assert!(chars("甲乙").is_some());
         assert!(chars("\u{fffd}").is_some());
+    }
+
+    #[test]
+    fn static_text_constrains_tags() {
         assert!(!static_text(""));
         assert!(static_text("甲"));
         assert!(!static_text(&"甲".repeat(17)));
@@ -879,9 +883,13 @@ mod tests {
     }
 
     #[test]
-    fn frame_roundtrip_and_rejects() {
+    fn frame_roundtrip() {
         let values = vec!["1".to_string(), "ab".to_string(), String::new()];
         assert_eq!(unframe(&frame(&values)), Some(values));
+    }
+
+    #[test]
+    fn unframe_rejects_bad_input() {
         assert_eq!(unframe("5:abc"), None);
         assert_eq!(unframe("8193:ab"), None);
         assert_eq!(unframe("ab"), None);

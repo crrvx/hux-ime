@@ -665,10 +665,15 @@ mod tests {
     }
 
     #[test]
-    fn fixture_index_lookup_matches_reference() {
+    fn fixture_index_reports_counts() {
         let index = fixture_index();
         assert_eq!(index.syllable_count(), 14);
         assert_eq!(index.entry_count(), 22);
+    }
+
+    #[test]
+    fn translate_matches_abbrev_and_pruning_candidates() {
+        let index = fixture_index();
         let lexicon = Lexicon::load(&[], 0);
         let texts = |input: &[u8]| -> Vec<String> {
             translate(
@@ -692,7 +697,15 @@ mod tests {
             ["中哦", "中龘", "中欧", "找哦", "兆欧", "找欧"]
         );
         assert_eq!(texts(b"`zhou"), ["周", "轴"]);
-        // 预编辑「按音节分码」：全拼段之后插空格；缩写段与后续合并。
+        assert_eq!(texts(b"`zhong"), ["中", "重", "种", "钟", "垚"]);
+        assert!(texts(b"`zhon").is_empty());
+        assert!(texts(b"`zuo").is_empty());
+    }
+
+    #[test]
+    fn translate_segments_preedit_by_syllable() {
+        let index = fixture_index();
+        let lexicon = Lexicon::load(&[], 0);
         let preedits = |input: &[u8]| -> Vec<String> {
             translate(
                 &index,
@@ -709,12 +722,10 @@ mod tests {
             .map(|candidate| candidate.preedit)
             .collect()
         };
+        // 预编辑「按音节分码」：全拼段之后插空格；缩写段与后续合并。
         assert_eq!(preedits(b"`zhong")[0], "`zhong");
         assert_eq!(preedits(b"`zhongguo")[0], "`zhong guo");
         assert_eq!(preedits(b"`zhongg")[0], "`zhong g");
         assert_eq!(preedits(b"`zho")[0], "`zho");
-        assert_eq!(texts(b"`zhong"), ["中", "重", "种", "钟", "垚"]);
-        assert!(texts(b"`zhon").is_empty());
-        assert!(texts(b"`zuo").is_empty());
     }
 }
