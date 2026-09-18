@@ -127,23 +127,20 @@ fn punctuator(
 
 // ---------------------------------------------------------------- key_binder
 
-/// 参照 `KeyBinder::ProcessKeyEvent`：Tab/Shift+Tab 固定，翻页键取 [`HostOptions`]；
-/// 条件为 `has_menu`（非 ascii_mode）与 `paging`（末段带 `paging` 标签，由 selector 翻页时置位）。
+/// 参照 `KeyBinder::ProcessKeyEvent`：Tab/Shift+Tab 固定，翻页键取 [`HostOptions`]。
+/// 条件为 `has_menu`（非 ascii_mode）——上/下翻页键均有候选时生效并消费（参照仅当上翻页键
+/// 带 `paging` 标签时绑定；此处放宽，避免其落作标点/输入）。
 fn key_binder(key_event: &KeyEvent, context: &mut Context, options: &HostOptions) -> HostResult {
     if context.get_option("ascii_mode") {
         return HostResult::Forward;
     }
     let repr = key_event.repr();
-    if options.page_up_keys.iter().any(|key| key.repr() == repr)
-        && context
-            .composition
-            .back()
-            .is_some_and(|segment| segment.has_tag("paging"))
-    {
-        return selector_action(SelectorAction::PreviousPage, context, options);
-    }
     if !context.has_menu() {
         return HostResult::Forward;
+    }
+    if options.page_up_keys.iter().any(|key| key.repr() == repr) {
+        // 上翻页键：有候选即消费（首屏不动作也算消费，不再落作标点/输入）。
+        return selector_action(SelectorAction::PreviousPage, context, options);
     }
     if options.page_down_keys.iter().any(|key| key.repr() == repr) {
         return selector_action(SelectorAction::NextPage, context, options);
@@ -315,7 +312,7 @@ fn selector_action(
     }
 }
 
-/// 参照 `comp.back().tags.insert("paging")`（使 key_binder 的翻页键绑定生效）。
+/// 参照 `comp.back().tags.insert("paging")`（保留参照状态；上翻页键现按 `has_menu` 消费）。
 fn mark_paging(context: &mut Context) {
     if let Some(segment) = context.composition.back_mut()
         && !segment.has_tag("paging")
@@ -865,6 +862,17 @@ mod tests {
             HostResult::Consumed
         );
         assert_eq!(selected(&single), 1);
+    }
+
+    #[test]
+    fn selector_consumes_page_up_when_menu_visible() {
+        // 首屏（未翻页）上翻页键也应被消费，不再落到标点/输入。
+        let mut context = context_with_menu(&["a", "b", "c", "d", "e", "f"], 0);
+        assert_eq!(press(&mut context, "minus"), HostResult::Consumed);
+        assert_eq!(selected(&context), 0);
+        // 无菜单：不消费（交宿主）。
+        let mut idle = Context::new();
+        assert_eq!(press(&mut idle, "minus"), HostResult::Forward);
     }
 
     #[test]

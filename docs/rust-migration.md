@@ -81,7 +81,7 @@ docs/                    # 本文档、词先验署名
   | 组件 | 行为要点 |
   |---|---|
   | `key_binder` | `Tab`→Down、`Shift+Tab`→Up（`when: has_menu`） |
-  | `selector` | 菜单导航与翻页（`page_size` 与 `-`(paging)→Page_Up/`=`(has_menu)→Page_Down 可由配置覆盖）、Home/End |
+  | `selector` | 菜单导航与翻页（`page_size` 与上/下翻页键可由配置覆盖，默认 `-`/`[` → Page_Up、`=`/`]` → Page_Down，均有候选时生效）、Home/End |
   | `navigator` | 字节光标移动；Ctrl(+Shift)+Left/Right 按音节跳；Home/End 到组合起点/末尾 |
   | `express_editor` | space 确认/提交、BackSpace 撤销编辑、Delete 删光标处、Return 提交原文、Escape 取消；可打印字符先提交组合再交宿主 |
   | `punctuator` | 单键可打印 ASCII 查 `symbols.yaml`；组合中提交「组合文本 + 标点」；`{pair}` 交替 |

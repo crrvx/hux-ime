@@ -73,7 +73,7 @@ sudo ln -s /usr/share/fcitx5/hux/models/sentence-ngram-mobile.bin \
 |---|---|---|
 | SoundToCharShapeKey | Alt+`:` | 音反查（拼音 → 虎码）|
 | CharToSoundShapeKey | Alt+`"` | 字反查（光标左侧汉字的拼音与虎码）|
-| PageUpKey / PageDownKey | `-` / `=` | 翻页（上：翻页中生效；下：有候选时生效）|
+| PageUpKey / PageDownKey | `-`、`[` / `=`、`]` | 翻页（有候选时生效）|
 
 快捷键为 fcitx5 `KeyList`（配置工具与「全局设置」同款，可配置多项；`AllowModifierLess`
 允许 `` ` ``、`;` 等无修饰键）。

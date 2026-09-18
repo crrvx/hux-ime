@@ -989,6 +989,20 @@ mod tests {
         assert!(engine.context.input().is_empty());
     }
 
+    /// 上翻页键：候选菜单可见即消费（首屏也不落作标点/输入）。
+    #[test]
+    fn page_up_is_consumed_with_menu() {
+        let _guard = serial();
+        COMMITS.lock().unwrap().clear();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        for code in *b"ja" {
+            engine.key(u32::from(code), 0, false);
+        }
+        assert!(engine.key(0x2d, 0, false), "- 菜单可见时应被消费");
+        assert!(COMMITS.lock().unwrap().is_empty(), "不应作为标点/输入上屏");
+    }
+
     /// 数字直选（`DigitSelect`）：菜单可见时 1–9 直接上屏当前页候选，0=第 10 个。
     #[test]
     fn digit_select_commits_page_candidate() {

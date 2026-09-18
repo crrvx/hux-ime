@@ -57,8 +57,8 @@ impl Default for Settings {
             sound_to_char_shape_keys: vec!["Alt+colon".to_string()],
             char_to_sound_shape_keys: vec!["Alt+quotedbl".to_string()],
             page_size: DEFAULT_PAGE_SIZE,
-            page_up_keys: vec!["minus".to_string()],
-            page_down_keys: vec!["equal".to_string()],
+            page_up_keys: vec!["minus".to_string(), "bracketleft".to_string()],
+            page_down_keys: vec!["equal".to_string(), "bracketright".to_string()],
             digit_select: false,
         }
     }
@@ -130,8 +130,14 @@ mod tests {
         assert!(settings.tab_learning);
         assert_eq!(settings.high_freq_limit, DEFAULT_HIGH_FREQ_LIMIT);
         assert_eq!(settings.page_size, DEFAULT_PAGE_SIZE);
-        assert_eq!(settings.page_up_keys, vec!["minus".to_string()]);
-        assert_eq!(settings.page_down_keys, vec!["equal".to_string()]);
+        assert_eq!(
+            settings.page_up_keys,
+            vec!["minus".to_string(), "bracketleft".to_string()]
+        );
+        assert_eq!(
+            settings.page_down_keys,
+            vec!["equal".to_string(), "bracketright".to_string()]
+        );
         assert_eq!(
             settings.sound_to_char_shape_keys,
             vec!["Alt+colon".to_string()]

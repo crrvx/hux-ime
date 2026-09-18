@@ -161,19 +161,21 @@ FCITX_CONFIGURATION(
         .path{"PageUpKey"},
         .description{"上翻页"},
         .defaultValue = fcitx::KeyList{
-            fcitx::Key(FcitxKey_minus, fcitx::KeyState::NoState)},
+            fcitx::Key(FcitxKey_minus, fcitx::KeyState::NoState),
+            fcitx::Key(FcitxKey_bracketleft, fcitx::KeyState::NoState)},
         .constrain =
             fcitx::KeyListConstrain(fcitx::KeyConstrainFlag::AllowModifierLess),
-        .annotation{"可多项。已翻页后生效；Page_Up 键始终可用。"}}};
+        .annotation{"可多项。有候选时生效（首屏不动）；Page_Up 键始终可用。"}}};
     fcitx::KeyListOptionWithAnnotation<fcitx::ToolTipAnnotation> pageDownKeys{{
         .parent = this,
         .path{"PageDownKey"},
         .description{"下翻页"},
         .defaultValue = fcitx::KeyList{
-            fcitx::Key(FcitxKey_equal, fcitx::KeyState::NoState)},
+            fcitx::Key(FcitxKey_equal, fcitx::KeyState::NoState),
+            fcitx::Key(FcitxKey_bracketright, fcitx::KeyState::NoState)},
         .constrain =
             fcitx::KeyListConstrain(fcitx::KeyConstrainFlag::AllowModifierLess),
-        .annotation{"可多项。有候选菜单时生效；Page_Down 键始终可用。"}}};);
+        .annotation{"可多项。有候选时生效；Page_Down 键始终可用。"}}};);
 
 /// 配置 schema：fcitx5-configtool 依据它自动生成设置页（fcitx://config/addon/hux）；
 /// 分区结构参照全局设置（`Option<SubConfig>` → 分组标题，选项带悬浮说明）。

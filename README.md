@@ -55,7 +55,7 @@ cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
 方案：虎句（`tiger_sentence`）。
 
 `空格`上屏高亮、`Tab`/`Shift+Tab` 移动高亮，
-`=`/`-` 或 `PgDn`/`PgUp` 翻页，
+`=`/`-`（或 `[`/`]`）或 `PgDn`/`PgUp` 翻页，
 `回车`提交原文，`Esc` 取消。
 
 > 每页 5 个候选项（可配置 1–10）
