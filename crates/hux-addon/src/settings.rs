@@ -42,8 +42,8 @@ impl Default for Settings {
             ascii_punct: false,
             tab_learning: true,
             high_freq_limit: DEFAULT_HIGH_FREQ_LIMIT,
-            pinyin_lookup_key: "Alt+semicolon".to_string(),
-            character_lookup_key: "Alt+apostrophe".to_string(),
+            pinyin_lookup_key: "Alt+colon".to_string(),
+            character_lookup_key: "Alt+quotedbl".to_string(),
         }
     }
 }

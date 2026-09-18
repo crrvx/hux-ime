@@ -59,16 +59,16 @@ cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
 
 两个反查助手如下，可在配置工具的「hux」页修改（`PinyinLookupKey`/`CharacterLookupKey`）。
 
-### 音查虎：拼音 → 虎码（默认 `Alt`+`;`）
+### 音查虎：拼音 → 虎码（默认 `Alt`+`:`）
 
 按下触发键后输入拼音（支持拼写缩写），候选即为对应词语，注释显示虎码；预编辑按音节切分，
 空格上屏高亮候选：
 
 ```
-Alt+;  zhongguo   →   ;zhong guo〔拼音〕   候选：中国 …
+Alt+:  zhongguo   →   :zhong guo〔拼音〕   候选：中国 …
 ```
 
-### 字查音+虎：查光标左侧汉字的音与码（默认 `Alt`+`'`）
+### 字查音+虎：查光标左侧汉字的音与码（默认 `Alt`+`"`）
 
 按下触发键后，输入面板显示光标左侧 1 个字的信息：
 上排拼音（排头「**咅**」）、下排虎码（排头「**虍**」）

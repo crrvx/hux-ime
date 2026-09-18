@@ -44,11 +44,11 @@ FCITX_CONFIGURATION(
     // 无修饰键（配置工具的按键录制会报「不满足约束」）。
     fcitx::Option<fcitx::Key, fcitx::KeyConstrain> pinyinLookupKey{
         this, "PinyinLookupKey", "音查虎：用拼音查虎码",
-        fcitx::Key(FcitxKey_semicolon, fcitx::KeyState::Alt),
+        fcitx::Key(FcitxKey_colon, fcitx::KeyState::Alt),
         fcitx::KeyConstrain(fcitx::KeyConstrainFlag::AllowModifierLess)};
     fcitx::Option<fcitx::Key, fcitx::KeyConstrain> characterLookupKey{
         this, "CharacterLookupKey", "字查音+虎：查光标左侧汉字的拼音与虎码",
-        fcitx::Key(FcitxKey_apostrophe, fcitx::KeyState::Alt),
+        fcitx::Key(FcitxKey_quotedbl, fcitx::KeyState::Alt),
         fcitx::KeyConstrain(fcitx::KeyConstrainFlag::AllowModifierLess)};
     fcitx::Option<bool> panelPreedit{this, "PanelPreedit", "候选窗口显示预编辑文本", false};);
 
