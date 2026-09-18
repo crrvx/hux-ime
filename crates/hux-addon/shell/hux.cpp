@@ -346,8 +346,9 @@ public:
     void deactivate(const fcitx::InputMethodEntry &entry,
                     fcitx::InputContextEvent &event) override {
         FCITX_UNUSED(entry);
-        // 参照（fcitx5-rime）：失焦/切换输入法即清空组合——fcitx5 核心会在失焦时
-        // 提交客户端预编辑，保留组合会在恢复时重复上屏。
+        // 失焦/切换输入法/重置统一：直接丢弃当前组合（不提交）。上游默认在切换输入法时
+        // 提交候选/预编辑，本实现取「丢弃」契约；fcitx5 核心也会在失焦时提交客户端预编辑，
+        // 保留组合会在恢复后重复上屏。
         resetSession(event);
     }
 

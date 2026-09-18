@@ -76,9 +76,10 @@ docs/                    # 本文档、词先验署名
   构建/安装与依赖见 [`usage.md`](usage.md)。产物：`/usr/lib/fcitx5/libhux.so`、
   `/usr/share/fcitx5/{addon,inputmethod}/hux.conf`。
 - **会话**：每输入上下文一个（fcitx5 `InputContextProperty`；组合/候选/学习暂存隔离，选项为引擎级
-  并同步到全部会话）；`deactivate/reset` 清空（fcitx5 核心会在失焦时提交客户端预编辑，不保留组合
-  以免恢复后重复上屏）。组合重建由 `interaction::CompositionBuilder` 按参照 `ConcreteEngine::Compose`
-  语义（`input[..caret]`、按公共前缀增量保留段、提交后旧段不复用）。
+  并同步到全部会话）；失焦/切换输入法/重置统一**直接丢弃**组合（不提交；上游默认在切换输入法时提交
+  候选/预编辑，本实现取丢弃契约，fcitx5 核心也会在失焦时提交客户端预编辑）。组合重建由
+  `interaction::CompositionBuilder` 按参照 `ConcreteEngine::Compose` 语义（`input[..caret]`、
+  按公共前缀增量保留段、提交后旧段不复用）。
 - **宿主语义**（core `host.rs`，`processor` 返回 Forward 后执行）：
 
   | 组件 | 行为要点 |

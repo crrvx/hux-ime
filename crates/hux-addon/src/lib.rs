@@ -562,6 +562,8 @@ impl Engine {
     }
 
     fn reset_in(&mut self, session: &mut Session) {
+        // 契约：重置即丢弃——先清掉未派发的事件（含可能的提交），避免下次按键补上屏。
+        session.context.drain_events();
         session.char_to_sound_shape = CharToSoundShapeState::default();
         session.context.clear();
         session.state.reset(&mut session.context, false);
@@ -1314,6 +1316,26 @@ mod tests {
         assert!(engine.key(first, 0x20, 0, false));
         assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "甲");
         assert_eq!(engine.sessions[&second].context.input(), b"ja");
+    }
+
+    /// 失焦/切换/重置统一语义：直接丢弃组合（不提交），面板清空。
+    #[test]
+    fn reset_discards_composition_without_commit() {
+        let _guard = serial();
+        COMMITS.lock().unwrap().clear();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let session = engine.session_new();
+        for code in *b"ab" {
+            assert!(engine.key(session, u32::from(code), 0, false));
+        }
+        engine.reset(session);
+        assert!(COMMITS.lock().unwrap().is_empty(), "重置不应提交组合");
+        assert!(engine.sessions[&session].context.input().is_empty());
+        let (preedit, _, candidates, _, aux_up, aux_down) = last_update();
+        assert!(preedit.is_empty(), "预编辑应清空");
+        assert!(candidates.is_empty(), "候选应清空");
+        assert!(aux_up.is_empty() && aux_down.is_empty(), "辅助两排应清空");
     }
 
     /// 会话释放：销毁后按键与点击被忽略。
