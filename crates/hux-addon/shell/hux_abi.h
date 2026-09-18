@@ -68,6 +68,16 @@ int32_t hux_engine_set_surrounding(hux_engine *engine,
                                          const char *text_utf8,
                                          int32_t cursor_chars, int32_t valid);
 
+/* 键位列表上限（与 Rust `HUX_MAX_KEYS` 一致）。 */
+#define HUX_MAX_KEYS 8
+
+/* 键位列表（fcitx5 KeyList → C ABI；`sym == 0` 的项忽略）。 */
+typedef struct hux_key_list {
+  int32_t count;
+  int32_t sym[HUX_MAX_KEYS];
+  int32_t states[HUX_MAX_KEYS];
+} hux_key_list;
+
 /* 外部配置（Rust 侧 Settings 的 C 布局；由壳从 fcitx5 配置读出后传入）。 */
 typedef struct hux_options {
   int32_t early_commit;
@@ -77,11 +87,11 @@ typedef struct hux_options {
   int32_t ascii_punct;
   int32_t tab_learning;
   int32_t high_freq_limit;
-  int32_t pinyin_lookup_sym, pinyin_lookup_states;
-  int32_t character_lookup_sym, character_lookup_states;
+  hux_key_list pinyin_lookup;
+  hux_key_list character_lookup;
   int32_t page_size;
-  int32_t page_up_sym, page_up_states;
-  int32_t page_down_sym, page_down_states;
+  hux_key_list page_up;
+  hux_key_list page_down;
   int32_t digit_select;
 } hux_options;
 

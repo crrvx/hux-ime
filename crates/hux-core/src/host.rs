@@ -24,26 +24,26 @@ pub const DEFAULT_PAGE_SIZE: usize = 5;
 /// 页大小上限（配置 `PageSize` 1–10；数字直选 `0`=第 10 个）。
 pub const MAX_PAGE_SIZE: usize = 10;
 
-/// 宿主可配置项（addon 设置注入）：每页候选个数与上/下翻页键。
+/// 宿主可配置项（addon 设置注入）：每页候选个数与上/下翻页键（可多项）。
 ///
 /// 缺省即参照 schema：`menu/page_size: 5`、`-`（`when: paging`）→ Page_Up、
 /// `=`（`when: has_menu`）→ Page_Down；Page_Up/Page_Down 等导航键不随此变化。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostOptions {
     /// 每页候选个数（≥ 1；须与宿主候选面板一致）。
     pub page_size: usize,
-    /// 上翻页键：组合末段带 `paging` 标签时生效。
-    pub page_up: KeyEvent,
-    /// 下翻页键：菜单可用（`has_menu`）时生效。
-    pub page_down: KeyEvent,
+    /// 上翻页键列表：组合末段带 `paging` 标签时生效。
+    pub page_up_keys: Vec<KeyEvent>,
+    /// 下翻页键列表：菜单可用（`has_menu`）时生效。
+    pub page_down_keys: Vec<KeyEvent>,
 }
 
 impl Default for HostOptions {
     fn default() -> Self {
         Self {
             page_size: DEFAULT_PAGE_SIZE,
-            page_up: KeyEvent::from_repr("minus").expect("minus"),
-            page_down: KeyEvent::from_repr("equal").expect("equal"),
+            page_up_keys: vec![KeyEvent::from_repr("minus").expect("minus")],
+            page_down_keys: vec![KeyEvent::from_repr("equal").expect("equal")],
         }
     }
 }
@@ -134,7 +134,7 @@ fn key_binder(key_event: &KeyEvent, context: &mut Context, options: &HostOptions
         return HostResult::Forward;
     }
     let repr = key_event.repr();
-    if repr == options.page_up.repr()
+    if options.page_up_keys.iter().any(|key| key.repr() == repr)
         && context
             .composition
             .back()
@@ -145,7 +145,7 @@ fn key_binder(key_event: &KeyEvent, context: &mut Context, options: &HostOptions
     if !context.has_menu() {
         return HostResult::Forward;
     }
-    if repr == options.page_down.repr() {
+    if options.page_down_keys.iter().any(|key| key.repr() == repr) {
         return selector_action(SelectorAction::NextPage, context, options);
     }
     match repr.as_str() {
@@ -687,8 +687,8 @@ mod tests {
     fn custom_page_options(page_size: usize) -> HostOptions {
         HostOptions {
             page_size,
-            page_up: KeyEvent::from_repr("comma").expect("key"),
-            page_down: KeyEvent::from_repr("period").expect("key"),
+            page_up_keys: vec![KeyEvent::from_repr("comma").expect("key")],
+            page_down_keys: vec![KeyEvent::from_repr("period").expect("key")],
         }
     }
 
@@ -865,6 +865,39 @@ mod tests {
             HostResult::Consumed
         );
         assert_eq!(selected(&single), 1);
+    }
+
+    #[test]
+    fn selector_accepts_multiple_page_keys() {
+        let options = HostOptions {
+            page_size: 2,
+            page_up_keys: vec![
+                KeyEvent::from_repr("comma").expect("key"),
+                KeyEvent::from_repr("bracketleft").expect("key"),
+            ],
+            page_down_keys: vec![
+                KeyEvent::from_repr("period").expect("key"),
+                KeyEvent::from_repr("bracketright").expect("key"),
+            ],
+        };
+        let mut context = context_with_menu(&["a", "b", "c", "d", "e", "f"], 0);
+        assert_eq!(
+            press_with(&mut context, "period", &options),
+            HostResult::Consumed
+        );
+        assert_eq!(selected(&context), 2);
+        // 第二绑定：`]` 同样下翻一页
+        assert_eq!(
+            press_with(&mut context, "bracketright", &options),
+            HostResult::Consumed
+        );
+        assert_eq!(selected(&context), 4);
+        // 第二绑定：`[` 上翻一页
+        assert_eq!(
+            press_with(&mut context, "bracketleft", &options),
+            HostResult::Consumed
+        );
+        assert_eq!(selected(&context), 2);
     }
 
     #[test]

@@ -32,14 +32,14 @@ pub struct Settings {
     pub tab_learning: bool,
     /// 高频字过滤上限（参照 `tiger_sentence/high_freq_limit`；创建词库时生效）。
     pub high_freq_limit: usize,
-    /// 音查虎（拼音查虎码）/ 字查音+虎（查光标处汉字的音与虎码）触发键（rime 键名）。
-    pub pinyin_lookup_key: String,
-    pub character_lookup_key: String,
+    /// 音查虎（拼音查虎码）/ 字查音+虎（查光标处汉字的音与虎码）触发键（rime 键名，可多项）。
+    pub pinyin_lookup_keys: Vec<String>,
+    pub character_lookup_keys: Vec<String>,
     /// 每页候选个数（参照 `menu/page_size`；上限 [`MAX_PAGE_SIZE`]）。
     pub page_size: usize,
-    /// 上/下翻页键（rime 键名；缺省对应参照 `key_binder` 的 `-`/`=`）。
-    pub page_up_key: String,
-    pub page_down_key: String,
+    /// 上/下翻页键（rime 键名，可多项；缺省对应参照 `key_binder` 的 `-`/`=`）。
+    pub page_up_keys: Vec<String>,
+    pub page_down_keys: Vec<String>,
     /// 数字直选（addon 扩展，默认关）：菜单可见时数字直接上屏当前页候选（1–9；0=10）。
     pub digit_select: bool,
 }
@@ -54,11 +54,11 @@ impl Default for Settings {
             ascii_punct: false,
             tab_learning: true,
             high_freq_limit: DEFAULT_HIGH_FREQ_LIMIT,
-            pinyin_lookup_key: "Alt+colon".to_string(),
-            character_lookup_key: "Alt+quotedbl".to_string(),
+            pinyin_lookup_keys: vec!["Alt+colon".to_string()],
+            character_lookup_keys: vec!["Alt+quotedbl".to_string()],
             page_size: DEFAULT_PAGE_SIZE,
-            page_up_key: "minus".to_string(),
-            page_down_key: "equal".to_string(),
+            page_up_keys: vec!["minus".to_string()],
+            page_down_keys: vec!["equal".to_string()],
             digit_select: false,
         }
     }
@@ -99,17 +99,18 @@ impl Settings {
         )
     }
 
-    /// 宿主选项（翻页键与页大小）：键名解析失败回退参照缺省；页大小钳制到 `1..=MAX_PAGE_SIZE`。
+    /// 宿主选项（翻页键与页大小）：键名解析失败项忽略；页大小钳制到 `1..=MAX_PAGE_SIZE`。
     pub fn host_options(&self) -> HostOptions {
-        let parse = |repr: &str, fallback: &str| {
-            KeyEvent::from_repr(repr)
-                .or_else(|| KeyEvent::from_repr(fallback))
-                .expect("fallback key repr")
+        let parse = |reprs: &[String]| -> Vec<KeyEvent> {
+            reprs
+                .iter()
+                .filter_map(|repr| KeyEvent::from_repr(repr))
+                .collect()
         };
         HostOptions {
             page_size: self.page_size.clamp(1, MAX_PAGE_SIZE),
-            page_up: parse(&self.page_up_key, "minus"),
-            page_down: parse(&self.page_down_key, "equal"),
+            page_up_keys: parse(&self.page_up_keys),
+            page_down_keys: parse(&self.page_down_keys),
         }
     }
 }
@@ -129,8 +130,13 @@ mod tests {
         assert!(settings.tab_learning);
         assert_eq!(settings.high_freq_limit, DEFAULT_HIGH_FREQ_LIMIT);
         assert_eq!(settings.page_size, DEFAULT_PAGE_SIZE);
-        assert_eq!(settings.page_up_key, "minus");
-        assert_eq!(settings.page_down_key, "equal");
+        assert_eq!(settings.page_up_keys, vec!["minus".to_string()]);
+        assert_eq!(settings.page_down_keys, vec!["equal".to_string()]);
+        assert_eq!(settings.pinyin_lookup_keys, vec!["Alt+colon".to_string()]);
+        assert_eq!(
+            settings.character_lookup_keys,
+            vec!["Alt+quotedbl".to_string()]
+        );
         assert!(!settings.digit_select);
     }
 
@@ -151,19 +157,18 @@ mod tests {
     }
 
     #[test]
-    fn host_options_fall_back_to_default_keys() {
+    fn host_options_parse_keys_ignores_invalid() {
         let options = Settings {
-            page_up_key: "comma".to_string(),
-            page_down_key: String::new(),
+            page_up_keys: vec!["comma".to_string(), "not-a-key".to_string()],
+            page_down_keys: Vec::new(),
             ..Default::default()
         }
         .host_options();
-        assert_eq!(options.page_up, KeyEvent::from_repr("comma").unwrap());
         assert_eq!(
-            options.page_down,
-            KeyEvent::from_repr("equal").unwrap(),
-            "空键名回退参照缺省"
+            options.page_up_keys,
+            vec![KeyEvent::from_repr("comma").unwrap()]
         );
+        assert!(options.page_down_keys.is_empty(), "空列表 = 不绑定翻页键");
     }
 
     #[test]

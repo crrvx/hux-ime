@@ -43,6 +43,20 @@ const fcitx::KeyList &digitSelectionKeys() {
     return keys;
 }
 
+/// fcitx5 `KeyList` → C ABI 键位列表（超出上限的项忽略）。
+void fillKeyList(hux_key_list *dest, const fcitx::KeyList &keys) {
+    dest->count = 0;
+    for (const fcitx::Key &key : keys) {
+        if (dest->count >= HUX_MAX_KEYS) {
+            break;
+        }
+        dest->sym[dest->count] = static_cast<int32_t>(key.sym());
+        dest->states[dest->count] =
+            static_cast<int32_t>(key.states().toInteger());
+        ++dest->count;
+    }
+}
+
 /// 配置 schema：fcitx5-configtool 依据它自动生成设置页（fcitx://config/addon/hux）。
 FCITX_CONFIGURATION(
     HuxConfig,
@@ -54,30 +68,34 @@ FCITX_CONFIGURATION(
     fcitx::Option<bool> tabLearning{this, "TabLearning", "Tab 选字写入学习库", true};
     fcitx::Option<int, fcitx::IntConstrain> highFreqLimit{
         this, "HighFreqLimit", "高频字过滤上限（重启生效）", 1500, fcitx::IntConstrain(0, 20000)};
-    // 单键选项须显式放宽「允许无修饰键」：默认 KeyConstrain 会拒绝 ` / ; 这类
-    // 无修饰键（配置工具的按键录制会报「不满足约束」）。
-    fcitx::Option<fcitx::Key, fcitx::KeyConstrain> pinyinLookupKey{
-        this, "PinyinLookupKey", "音查虎：用拼音查虎码",
-        fcitx::Key(FcitxKey_colon, fcitx::KeyState::Alt),
-        fcitx::KeyConstrain(fcitx::KeyConstrainFlag::AllowModifierLess)};
-    fcitx::Option<fcitx::Key, fcitx::KeyConstrain> characterLookupKey{
-        this, "CharacterLookupKey", "字查音+虎：查光标左侧汉字的拼音与虎码",
-        fcitx::Key(FcitxKey_quotedbl, fcitx::KeyState::Alt),
-        fcitx::KeyConstrain(fcitx::KeyConstrainFlag::AllowModifierLess)};
+    // 快捷键为 fcitx5 `KeyList`（可多项，配置工具与全局设置同款）；须显式放宽
+    // 「允许无修饰键」：默认约束会拒绝 ` / ; 这类无修饰键。
+    fcitx::Option<fcitx::KeyList, fcitx::ListConstrain<fcitx::KeyConstrain>>
+        pinyinLookupKeys{
+            this, "PinyinLookupKey", "音查虎：用拼音查虎码（可多项）",
+            fcitx::KeyList{fcitx::Key(FcitxKey_colon, fcitx::KeyState::Alt)},
+            fcitx::KeyListConstrain(fcitx::KeyConstrainFlag::AllowModifierLess)};
+    fcitx::Option<fcitx::KeyList, fcitx::ListConstrain<fcitx::KeyConstrain>>
+        characterLookupKeys{
+            this, "CharacterLookupKey", "字查音+虎：查光标左侧汉字的拼音与虎码（可多项）",
+            fcitx::KeyList{fcitx::Key(FcitxKey_quotedbl, fcitx::KeyState::Alt)},
+            fcitx::KeyListConstrain(fcitx::KeyConstrainFlag::AllowModifierLess)};
     fcitx::Option<int, fcitx::IntConstrain> pageSize{
         this,
         "PageSize",
         "候选列表每页候选个数",
         5,
         fcitx::IntConstrain(kPageSizeMin, kPageSizeMax)};
-    fcitx::Option<fcitx::Key, fcitx::KeyConstrain> pageUpKey{
-        this, "PageUpKey", "上翻页键（翻页中生效）",
-        fcitx::Key(FcitxKey_minus, fcitx::KeyState::NoState),
-        fcitx::KeyConstrain(fcitx::KeyConstrainFlag::AllowModifierLess)};
-    fcitx::Option<fcitx::Key, fcitx::KeyConstrain> pageDownKey{
-        this, "PageDownKey", "下翻页键（有候选时生效）",
-        fcitx::Key(FcitxKey_equal, fcitx::KeyState::NoState),
-        fcitx::KeyConstrain(fcitx::KeyConstrainFlag::AllowModifierLess)};
+    fcitx::Option<fcitx::KeyList, fcitx::ListConstrain<fcitx::KeyConstrain>>
+        pageUpKeys{
+            this, "PageUpKey", "上翻页键（翻页中生效；可多项）",
+            fcitx::KeyList{fcitx::Key(FcitxKey_minus, fcitx::KeyState::NoState)},
+            fcitx::KeyListConstrain(fcitx::KeyConstrainFlag::AllowModifierLess)};
+    fcitx::Option<fcitx::KeyList, fcitx::ListConstrain<fcitx::KeyConstrain>>
+        pageDownKeys{
+            this, "PageDownKey", "下翻页键（有候选时生效；可多项）",
+            fcitx::KeyList{fcitx::Key(FcitxKey_equal, fcitx::KeyState::NoState)},
+            fcitx::KeyListConstrain(fcitx::KeyConstrainFlag::AllowModifierLess)};
     fcitx::Option<bool> digitSelect{
         this, "DigitSelect", "数字键直接选当前页候选（1–9；0=第 10 个）", false};
     fcitx::Option<bool> panelPreedit{this, "PanelPreedit", "候选窗口显示预编辑文本", false};);
@@ -266,15 +284,12 @@ private:
         options.ascii_punct = config_.asciiPunct.value() ? 1 : 0;
         options.tab_learning = config_.tabLearning.value() ? 1 : 0;
         options.high_freq_limit = config_.highFreqLimit.value();
-        const auto fillKey = [](int32_t *sym, int32_t *states, const fcitx::Key &key) {
-            *sym = static_cast<int32_t>(key.sym());
-            *states = static_cast<int32_t>(key.states().toInteger());
-        };
-        fillKey(&options.pinyin_lookup_sym, &options.pinyin_lookup_states, config_.pinyinLookupKey.value());
-        fillKey(&options.character_lookup_sym, &options.character_lookup_states, config_.characterLookupKey.value());
+        fillKeyList(&options.pinyin_lookup, config_.pinyinLookupKeys.value());
+        fillKeyList(&options.character_lookup,
+                    config_.characterLookupKeys.value());
         options.page_size = config_.pageSize.value();
-        fillKey(&options.page_up_sym, &options.page_up_states, config_.pageUpKey.value());
-        fillKey(&options.page_down_sym, &options.page_down_states, config_.pageDownKey.value());
+        fillKeyList(&options.page_up, config_.pageUpKeys.value());
+        fillKeyList(&options.page_down, config_.pageDownKeys.value());
         options.digit_select = config_.digitSelect.value() ? 1 : 0;
         if (hux_engine_apply_settings(engine_, &options) == 0) {
             FCITX_WARN() << "hux: apply settings failed";

@@ -475,21 +475,20 @@ impl Engine {
         self.refresh_learning_mode();
     }
 
-    /// 查找键（属性）：音查虎前缀（可打印 ASCII 且无修饰）与字查音+虎触发字符。
-    /// 查找键（属性）：把两项触发键的 rime 键名交给 core（解析/匹配均在 core 内）。
+    /// 触发键（属性）：把两项触发键的 rime 键名列表（逗号分隔）交给 core（解析/匹配均在 core 内）。
     fn sync_pinyin_lookup_prefix(&mut self) {
         for (property, value) in [
             (
                 K_PINYIN_LOOKUP_KEY,
-                self.settings.pinyin_lookup_key.as_str(),
+                self.settings.pinyin_lookup_keys.join(","),
             ),
             (
                 K_CHARACTER_LOOKUP_KEY,
-                self.settings.character_lookup_key.as_str(),
+                self.settings.character_lookup_keys.join(","),
             ),
         ] {
             if self.context.get_property(property).unwrap_or("") != value {
-                self.context.set_property(property, value);
+                self.context.set_property(property, &value);
             }
         }
     }
@@ -705,6 +704,18 @@ pub unsafe extern "C" fn hux_engine_status(engine: *const Engine) -> *const c_ch
     }
 }
 
+/// 键位列表上限（与 `shell/hux_abi.h` 的 `HUX_MAX_KEYS` 一致）。
+pub const HUX_MAX_KEYS: usize = 8;
+
+/// 键位列表（fcitx5 `KeyList` → C ABI；`sym == 0` 的项忽略）。
+#[derive(Clone, Copy, Debug, Default)]
+#[repr(C)]
+pub struct HuxKeyList {
+    pub count: i32,
+    pub sym: [i32; HUX_MAX_KEYS],
+    pub states: [i32; HUX_MAX_KEYS],
+}
+
 /// 外部配置（C ABI 布局；与 `shell/hux_abi.h` 一致）。
 #[derive(Clone, Copy, Debug, Default)]
 #[repr(C)]
@@ -716,16 +727,15 @@ pub struct HuxOptions {
     pub ascii_punct: i32,
     pub tab_learning: i32,
     pub high_freq_limit: i32,
-    pub pinyin_lookup_sym: i32,
-    pub pinyin_lookup_states: i32,
-    pub character_lookup_sym: i32,
-    pub character_lookup_states: i32,
-    /// 每页候选个数（1..=候选上限）。
+    /// 音查虎触发键（rime 键名，可多项）。
+    pub pinyin_lookup: HuxKeyList,
+    /// 字查音+虎触发键（rime 键名，可多项）。
+    pub character_lookup: HuxKeyList,
+    /// 每页候选个数（1..=10）。
     pub page_size: i32,
-    pub page_up_sym: i32,
-    pub page_up_states: i32,
-    pub page_down_sym: i32,
-    pub page_down_states: i32,
+    /// 上/下翻页键（rime 键名，可多项）。
+    pub page_up: HuxKeyList,
+    pub page_down: HuxKeyList,
     /// 数字直选（1–9；0=10）。
     pub digit_select: i32,
 }
@@ -745,12 +755,17 @@ pub unsafe extern "C" fn hux_engine_apply_settings(
     let Some(options) = (unsafe { options.as_ref() }) else {
         return 0;
     };
-    // fcitx5 按键（keysym + 状态位）→ rime 键名；未设（sym=0）为空串。
-    let key_repr = |sym: i32, states: i32| -> String {
-        if sym == 0 {
-            return String::new();
-        }
-        KeyEvent::new(sym, core_modifiers(states as u32, false)).repr()
+    // fcitx5 按键列表（keysym + 状态位）→ rime 键名列表；`sym=0` 项忽略。
+    let key_reprs = |list: &HuxKeyList| -> Vec<String> {
+        (0..HUX_MAX_KEYS)
+            .take(list.count.clamp(0, HUX_MAX_KEYS as i32) as usize)
+            .filter_map(|index| {
+                let sym = list.sym[index];
+                (sym != 0).then(|| {
+                    KeyEvent::new(sym, core_modifiers(list.states[index] as u32, false)).repr()
+                })
+            })
+            .collect()
     };
     engine.apply_settings(Settings {
         early_commit: options.early_commit != 0,
@@ -760,14 +775,11 @@ pub unsafe extern "C" fn hux_engine_apply_settings(
         ascii_punct: options.ascii_punct != 0,
         tab_learning: options.tab_learning != 0,
         high_freq_limit: options.high_freq_limit.max(0) as usize,
-        pinyin_lookup_key: key_repr(options.pinyin_lookup_sym, options.pinyin_lookup_states),
-        character_lookup_key: key_repr(
-            options.character_lookup_sym,
-            options.character_lookup_states,
-        ),
+        pinyin_lookup_keys: key_reprs(&options.pinyin_lookup),
+        character_lookup_keys: key_reprs(&options.character_lookup),
         page_size: options.page_size.max(1) as usize,
-        page_up_key: key_repr(options.page_up_sym, options.page_up_states),
-        page_down_key: key_repr(options.page_down_sym, options.page_down_states),
+        page_up_keys: key_reprs(&options.page_up),
+        page_down_keys: key_reprs(&options.page_down),
         digit_select: options.digit_select != 0,
     });
     1
@@ -999,6 +1011,24 @@ mod tests {
         assert_eq!(COMMITS.lock().unwrap().last().unwrap(), &tenth);
     }
 
+    /// 多项触发键（`KeyList`）：两项均可进入音查虎。
+    #[test]
+    fn pinyin_lookup_accepts_multiple_trigger_keys() {
+        let _guard = serial();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        engine.apply_settings(Settings {
+            pinyin_lookup_keys: vec!["grave".to_string(), "semicolon".to_string()],
+            ..Default::default()
+        });
+        // 第二绑定（`;`）触发，入段字符为 `;`。
+        assert!(engine.key(0x3b, 0, false), "; 应被消费");
+        assert_eq!(engine.context.input(), b";");
+        engine.reset();
+        // 第一绑定（`` ` ``）触发，入段字符为 `` ` ``。
+        assert!(engine.key(0x60, 0, false), "` 应被消费");
+        assert_eq!(engine.context.input(), b"`");
+    }
     /// 数字直选默认关：数字仍是编码字符（选重后缀），不直接上屏。
     #[test]
     fn digit_select_off_keeps_rank_suffix() {
@@ -1227,6 +1257,16 @@ mod tests {
         );
     }
 
+    fn key_list(keys: &[(i32, i32)]) -> HuxKeyList {
+        let mut list = HuxKeyList::default();
+        for (index, (sym, states)) in keys.iter().enumerate().take(HUX_MAX_KEYS) {
+            list.sym[index] = *sym;
+            list.states[index] = *states;
+        }
+        list.count = keys.len().min(HUX_MAX_KEYS) as i32;
+        list
+    }
+
     fn ffi_options() -> HuxOptions {
         HuxOptions {
             early_commit: 0,
@@ -1236,15 +1276,14 @@ mod tests {
             ascii_punct: 1,
             tab_learning: 0,
             high_freq_limit: 800,
-            pinyin_lookup_sym: 0x60,
-            pinyin_lookup_states: 0,
-            character_lookup_sym: 0x60,
-            character_lookup_states: 1,
+            // 音查虎：`；`（无修饰）与 Shift+`；`（= `:`）。
+            pinyin_lookup: key_list(&[(0x3b, 0), (0x3a, 0)]),
+            // 字查音+虎：Shift+`（= `~`）。
+            character_lookup: key_list(&[(0x60, 1)]),
             page_size: 7,
-            page_up_sym: 0x2c,
-            page_up_states: 0,
-            page_down_sym: 0x2e,
-            page_down_states: 0,
+            // 翻页：`.` 与 `]`。
+            page_up: key_list(&[(0x2c, 0)]),
+            page_down: key_list(&[(0x2e, 0), (0x5d, 0)]),
             digit_select: 1,
         }
     }
@@ -1276,8 +1315,11 @@ mod tests {
         let options = ffi_options();
         assert_eq!(unsafe { hux_engine_apply_settings(engine, &options) }, 1);
         let state = unsafe { &mut *engine };
-        assert_eq!(state.settings.pinyin_lookup_key, "grave");
-        assert_eq!(state.settings.character_lookup_key, "Shift+grave");
+        assert_eq!(
+            state.settings.pinyin_lookup_keys,
+            vec!["semicolon", "colon"]
+        );
+        assert_eq!(state.settings.character_lookup_keys, vec!["Shift+grave"]);
         unsafe { hux_engine_free(engine) };
     }
 
@@ -1290,13 +1332,23 @@ mod tests {
         assert_eq!(unsafe { hux_engine_apply_settings(engine, &options) }, 1);
         let state = unsafe { &mut *engine };
         assert_eq!(state.settings.page_size, 7);
-        assert_eq!(state.settings.page_up_key, "comma");
-        assert_eq!(state.settings.page_down_key, "period");
+        assert_eq!(state.settings.page_up_keys, vec!["comma"]);
+        assert_eq!(
+            state.settings.page_down_keys,
+            vec!["period", "bracketright"]
+        );
         assert!(state.settings.digit_select);
         assert_eq!(state.host_options.page_size, 7);
         assert_eq!(
-            state.host_options.page_up,
-            KeyEvent::from_repr("comma").unwrap()
+            state.host_options.page_up_keys,
+            vec![KeyEvent::from_repr("comma").unwrap()]
+        );
+        assert_eq!(
+            state.host_options.page_down_keys,
+            vec![
+                KeyEvent::from_repr("period").unwrap(),
+                KeyEvent::from_repr("bracketright").unwrap()
+            ]
         );
         unsafe { hux_engine_free(engine) };
     }
@@ -1397,7 +1449,7 @@ mod tests {
         );
         engine.reset();
         engine.apply_settings(settings::Settings {
-            pinyin_lookup_key: "semicolon".to_string(),
+            pinyin_lookup_keys: vec!["semicolon".to_string()],
             ..settings::Settings::default()
         });
         assert!(engine.key(0x3b, 0, false), "; 应被消费");
@@ -1410,7 +1462,7 @@ mod tests {
         // 音查虎：单字符触发键（`）→ 同样给默认可上屏候选，空格上屏。
         engine.reset();
         engine.apply_settings(settings::Settings {
-            pinyin_lookup_key: "grave".to_string(),
+            pinyin_lookup_keys: vec!["grave".to_string()],
             ..settings::Settings::default()
         });
         assert!(engine.key(0x60, 0, false), "` 应被消费");
@@ -1424,7 +1476,7 @@ mod tests {
         // 单字符触发键（~）→ 提供默认可上屏候选，空格上屏。
         engine.reset();
         engine.apply_settings(settings::Settings {
-            character_lookup_key: "asciitilde".to_string(),
+            character_lookup_keys: vec!["asciitilde".to_string()],
             ..settings::Settings::default()
         });
         engine.set_surrounding(Some("中欧中兴"), 2);

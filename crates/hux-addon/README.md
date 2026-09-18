@@ -55,10 +55,10 @@ sudo ln -s /usr/share/fcitx5/hux/models/sentence-ngram-mobile.bin \
 
 | 项 | 默认 | 说明 |
 |---|---|---|
-| PinyinLookupKey | Alt+`:` | 音查虎（拼音查虎码）触发键 |
-| CharacterLookupKey | Alt+`"` | 字查音+虎触发键 |
+| PinyinLookupKey | Alt+`:` | 音查虎（拼音查虎码）触发键（可多项）|
+| CharacterLookupKey | Alt+`"` | 字查音+虎触发键（可多项）|
 | PageSize | 5 | 候选列表每页候选个数（1–10）|
-| PageUpKey / PageDownKey | `-` / `=` | 翻页键（上：翻页中生效；下：有候选时生效）|
+| PageUpKey / PageDownKey | `-` / `=` | 翻页键（上：翻页中生效；下：有候选时生效；均可多项）|
 | DigitSelect | 关 | 数字直选：`1`–`9` 直接上屏当前页候选，`0`=第 10 个；默认关时数字仍作编码选重后缀 |
 | EarlyCommit / EarlyCommitToPreedit / AllowDuplicateSingle | 开/关/开 | 早提交三项 |
 | FullShape / AsciiPunct | 关/关 | 全角标点 / ASCII 标点直通 |
@@ -66,7 +66,8 @@ sudo ln -s /usr/share/fcitx5/hux/models/sentence-ngram-mobile.bin \
 | HighFreqLimit | 1500 | 高频字过滤上限（重启生效）|
 | PanelPreedit | 关 | 候选窗口显示预编辑文本（仅宿主显示项，不经引擎）|
 
-快捷键用 fcitx5 原生按键录入控件（`KeyConstrain(AllowModifierLess)`，允许 `` ` ``、`;` 等无修饰键）。
+快捷键为 fcitx5 `KeyList`（配置工具与「全局设置」同款，可配置多项；`AllowModifierLess`
+允许 `` ` ``、`;` 等无修饰键）。
 未显式提供的项跟随 fcitx5 全局设置（候选列表方向、客户端内联预编辑）。
 
 ## 反查
