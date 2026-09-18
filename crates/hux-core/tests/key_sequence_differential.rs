@@ -176,11 +176,13 @@ fn replay(
                 host_process_key(
                     &key,
                     &mut context,
+                    &state,
                     punct.as_mut(),
                     &HostOptions {
                         page_size,
                         ..HostOptions::default()
                     },
+                    None,
                 ) == HostResult::Consumed
             }
         };

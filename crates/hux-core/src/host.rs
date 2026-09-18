@@ -15,6 +15,7 @@
 //!   `Ctrl/Shift+Left|Right` 直接跳到首/尾）；标点段与词组 spans 见 ⑦；
 //! - `speller`/`punctuator` 属 ⑦；`editor/char_handler`（Printables 直接提交）同。
 
+use crate::interaction::{LearningCommit, SentenceState, learning_commit};
 use crate::key::{K_CONTROL_MASK, K_SHIFT_MASK, KeyEvent};
 use crate::punct::PunctTable;
 use crate::session::Context;
@@ -36,6 +37,8 @@ pub struct HostOptions {
     pub page_up_keys: Vec<KeyEvent>,
     /// 下翻页键列表：菜单可用（`has_menu`）时生效。
     pub page_down_keys: Vec<KeyEvent>,
+    /// 翻页循环（参照 `menu/page_down_cycle`，默认关）：末页再翻回首页、首页向上翻到末页。
+    pub page_cycle: bool,
 }
 
 impl Default for HostOptions {
@@ -44,6 +47,7 @@ impl Default for HostOptions {
             page_size: DEFAULT_PAGE_SIZE,
             page_up_keys: vec![KeyEvent::from_repr("minus").expect("minus")],
             page_down_keys: vec![KeyEvent::from_repr("equal").expect("equal")],
+            page_cycle: false,
         }
     }
 }
@@ -57,21 +61,27 @@ pub enum HostResult {
 
 /// 参照处理器链（`key_binder` → `speller` → `punctuator` → `selector` → `navigator`
 /// → `express_editor`；`speller` 由 core `processor` 承担，见 ⑦）。
+///
+/// `learning`（可空）供宿主链的提交点记录学习——对应 librime `Context::Commit()`
+/// 内、清空组合前的 `commit_notifier`（`Editor::DirectCommit` 等原生处理器由此落学习）。
 pub fn process_key(
     key_event: &KeyEvent,
     context: &mut Context,
+    state: &SentenceState,
     punct: Option<&mut PunctTable>,
     options: &HostOptions,
+    learning: Option<&mut LearningCommit<'_>>,
 ) -> HostResult {
     if key_event.release() {
         return HostResult::Forward;
     }
+    let mut learning = learning;
     // 依序执行，前一处理器吞键则不再继续（参照引擎的处理器链）。
     let mut result = key_binder(key_event, context, options);
     if result == HostResult::Consumed {
         return result;
     }
-    result = punctuator(key_event, context, punct);
+    result = punctuator(key_event, context, state, punct, &mut learning);
     if result == HostResult::Consumed {
         return result;
     }
@@ -83,7 +93,28 @@ pub fn process_key(
     if result == HostResult::Consumed {
         return result;
     }
-    editor(key_event, context)
+    editor(key_event, context, state, &mut learning)
+}
+
+/// 宿主链提交点学习（对应 librime `Context::Commit()` 的通知器：组合仍完整时记录）；
+/// `learning` 为 `None` 时 no-op。
+fn commit_notifier(
+    learning: &mut Option<&mut LearningCommit<'_>>,
+    context: &Context,
+    state: &SentenceState,
+    commit_text: &str,
+) {
+    let Some(learning) = learning.as_deref_mut() else {
+        return;
+    };
+    learning_commit(
+        learning.decoder,
+        context,
+        state,
+        learning.live,
+        learning.now,
+        commit_text,
+    );
 }
 
 // ---------------------------------------------------------------- punctuator
@@ -96,7 +127,9 @@ pub fn process_key(
 fn punctuator(
     key_event: &KeyEvent,
     context: &mut Context,
+    state: &SentenceState,
     punct: Option<&mut PunctTable>,
+    learning: &mut Option<&mut LearningCommit<'_>>,
 ) -> HostResult {
     let Some(table) = punct else {
         return HostResult::Forward;
@@ -120,6 +153,7 @@ fn punctuator(
         return HostResult::Forward;
     };
     let commit = format!("{}{}", context.get_commit_text(), text);
+    commit_notifier(learning, context, state, &commit);
     context.clear();
     context.direct_commit(&commit);
     HostResult::Consumed
@@ -250,14 +284,23 @@ fn selector_action(
             }
         }
         SelectorAction::PreviousPage => {
-            if context.composition.segments.is_empty() {
-                false
+            let Some(segment) = context.composition.back() else {
+                return HostResult::Forward;
+            };
+            if !segment.translated {
+                return HostResult::Forward;
+            }
+            let selected = segment.selected_index;
+            if selected < page_size {
+                // 已在首页：默认停在首页（吞键）；开启循环则回到末页。
+                if options.page_cycle {
+                    let total = segment.prepare(usize::MAX);
+                    let last_page_start = total.saturating_sub(1) / page_size * page_size;
+                    context.highlight(last_page_start);
+                    mark_paging(context);
+                }
+                true
             } else {
-                let selected = context
-                    .composition
-                    .back()
-                    .map(|segment| segment.selected_index)
-                    .unwrap_or(0);
                 let index = selected.saturating_sub(page_size);
                 context.highlight(index);
                 mark_paging(context);
@@ -275,7 +318,12 @@ fn selector_action(
             let page_start = (index / page_size) * page_size;
             let candidate_count = segment.prepare(page_start + page_size);
             if candidate_count <= page_start {
-                true // page_down_cycle 缺省 false：吞键不循环
+                // 已在末页：默认吞键不循环；开启循环则回到首页。
+                if options.page_cycle {
+                    context.highlight(0);
+                    mark_paging(context);
+                }
+                true
             } else {
                 let index = if index >= candidate_count {
                     candidate_count - 1
@@ -493,8 +541,13 @@ fn go_to_end(context: &mut Context) {
 /// Return/space/Escape 在组合中已被 core `processor` 消费，此处为完整的兜底实现；
 /// 可打印字符按 `char_handler`（ExpressEditor = `DirectCommit`）处理：
 /// **先提交当前组合**（保证上屏顺序），按键交宿主。
-/// 学习链：参照经 commit 通知器记录；本实现该提交未接学习（宿主自发提交见 K4 清理项）。
-fn editor(key_event: &KeyEvent, context: &mut Context) -> HostResult {
+/// 学习链：提交点经 [`commit_notifier`] 记录（对应参照 librime 的提交通知器）。
+fn editor(
+    key_event: &KeyEvent,
+    context: &mut Context,
+    state: &SentenceState,
+    learning: &mut Option<&mut LearningCommit<'_>>,
+) -> HostResult {
     if !context.is_composing() {
         return HostResult::Forward;
     }
@@ -502,6 +555,8 @@ fn editor(key_event: &KeyEvent, context: &mut Context) -> HostResult {
         (0x20, 0) => {
             // Confirm：`confirm_current_selection() || commit()`
             if !confirm(context) {
+                let commit_text = context.get_commit_text();
+                commit_notifier(learning, context, state, &commit_text);
                 context.commit();
             }
             true
@@ -515,6 +570,8 @@ fn editor(key_event: &KeyEvent, context: &mut Context) -> HostResult {
             true
         }
         (0xff0d, 0) => {
+            let commit_text = context.get_commit_text();
+            commit_notifier(learning, context, state, &commit_text);
             context.commit();
             true
         }
@@ -541,6 +598,8 @@ fn editor(key_event: &KeyEvent, context: &mut Context) -> HostResult {
         && key_event.keycode > 0x20
         && key_event.keycode < 0x7f
     {
+        let commit_text = context.get_commit_text();
+        commit_notifier(learning, context, state, &commit_text);
         context.commit();
     }
     HostResult::Forward
@@ -666,7 +725,14 @@ mod tests {
         options: &HostOptions,
     ) -> HostResult {
         let key = KeyEvent::from_repr(repr).expect("key repr");
-        process_key(&key, context, punct, options)
+        process_key(
+            &key,
+            context,
+            &SentenceState::fresh(1),
+            punct,
+            options,
+            None,
+        )
     }
 
     fn press(context: &mut Context, repr: &str) -> HostResult {
@@ -686,6 +752,7 @@ mod tests {
             page_size,
             page_up_keys: vec![KeyEvent::from_repr("comma").expect("key")],
             page_down_keys: vec![KeyEvent::from_repr("period").expect("key")],
+            page_cycle: false,
         }
     }
 
@@ -822,6 +889,57 @@ mod tests {
         assert_eq!(selected(&small), 0);
     }
 
+    /// 翻页循环（`page_cycle`）：末页再下回首页、首页向上翻到末页。
+    #[test]
+    fn selector_page_cycle_wraps_at_ends() {
+        let mut options = custom_page_options(2);
+        options.page_cycle = true;
+        let mut context = context_with_menu(&["a", "b", "c", "d", "e"], 0);
+        assert_eq!(
+            press_with(&mut context, "period", &options),
+            HostResult::Consumed
+        );
+        assert_eq!(selected(&context), 2);
+        assert_eq!(
+            press_with(&mut context, "period", &options),
+            HostResult::Consumed
+        );
+        assert_eq!(selected(&context), 4);
+        // 末页再下 → 首页。
+        assert_eq!(
+            press_with(&mut context, "period", &options),
+            HostResult::Consumed
+        );
+        assert_eq!(selected(&context), 0);
+        // 首页再上 → 末页起点。
+        assert_eq!(
+            press_with(&mut context, "comma", &options),
+            HostResult::Consumed
+        );
+        assert_eq!(selected(&context), 4);
+    }
+
+    /// 默认不循环：末页/首页翻页只吞键、不动。
+    #[test]
+    fn selector_page_does_not_wrap_by_default() {
+        let options = custom_page_options(2);
+        let mut context = context_with_menu(&["a", "b", "c", "d", "e"], 0);
+        for expected in [2, 4, 4] {
+            assert_eq!(
+                press_with(&mut context, "period", &options),
+                HostResult::Consumed
+            );
+            assert_eq!(selected(&context), expected);
+        }
+        for expected in [2, 0, 0] {
+            assert_eq!(
+                press_with(&mut context, "comma", &options),
+                HostResult::Consumed
+            );
+            assert_eq!(selected(&context), expected);
+        }
+    }
+
     #[test]
     fn selector_uses_configured_page_keys() {
         let options = custom_page_options(2);
@@ -887,6 +1005,7 @@ mod tests {
                 KeyEvent::from_repr("period").expect("key"),
                 KeyEvent::from_repr("bracketright").expect("key"),
             ],
+            page_cycle: false,
         };
         let mut context = context_with_menu(&["a", "b", "c", "d", "e", "f"], 0);
         assert_eq!(

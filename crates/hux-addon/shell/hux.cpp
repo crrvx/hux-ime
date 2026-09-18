@@ -3,8 +3,10 @@
 
 // hux-ime（虎虚）fcitx5 addon 的 C++ 薄壳：只做 fcitx5 接口适配，逻辑在 Rust（libhux_addon）。
 #include <fcitx-config/configuration.h>
+#include <fcitx-config/enum.h>
 #include <fcitx-config/option.h>
 #include <fcitx-config/iniparser.h>
+#include <fcitx-utils/i18n.h>
 #include <fcitx/action.h>
 #include <fcitx/addonfactory.h>
 #include <fcitx/addoninstance.h>
@@ -63,6 +65,33 @@ void fillKeyList(hux_key_list *dest, const fcitx::KeyList &keys) {
     }
 }
 
+/// 候选排列（参照 `style` 语义；默认跟随 fcitx5 全局「候选竖排」设置）。
+enum class HuxCandidateLayout { FollowGlobal, Horizontal, Vertical };
+FCITX_CONFIG_ENUM_NAME(HuxCandidateLayout, "跟随全局", "横排", "竖排");
+FCITX_CONFIG_ENUM_I18N_ANNOTATION(HuxCandidateLayout, "跟随全局", "横排", "竖排");
+
+/// 预编辑内容。
+enum class HuxPreeditMode { CandidateCode, RawInput, Hidden };
+FCITX_CONFIG_ENUM_NAME(HuxPreeditMode, "候选分码", "原始输入", "不显示");
+FCITX_CONFIG_ENUM_I18N_ANNOTATION(HuxPreeditMode, "候选分码", "原始输入", "不显示");
+
+/// 枚举注解 + 悬浮说明（`EnumI18n` 与 `Tooltip` 并存）。
+template <typename EnumAnnotation>
+struct EnumAnnotationWithTooltip : EnumAnnotation {
+    explicit EnumAnnotationWithTooltip(std::string tooltip)
+        : tooltip_(std::move(tooltip)) {}
+
+    bool skipDescription() const { return false; }
+    bool skipSave() const { return false; }
+    void dumpDescription(fcitx::RawConfig &config) const {
+        EnumAnnotation::dumpDescription(config);
+        config.setValueByPath("Tooltip", tooltip_);
+    }
+
+private:
+    std::string tooltip_;
+};
+
 /// 行为设置（配置页「行为」分区）。
 FCITX_CONFIGURATION(
     HuxBehaviorConfig,
@@ -111,6 +140,12 @@ FCITX_CONFIGURATION(
         .defaultValue = true,
         .annotation{"开启后菜单可见时 `1`–`9` 直接上屏当前页候选、`0` = 第 10 个；"
                     "关闭时数字仍作编码选重后缀。"}}};
+    fcitx::OptionWithAnnotation<bool, fcitx::ToolTipAnnotation> pageCycle{{
+        .parent = this,
+        .path{"PageCycle"},
+        .description{"翻页循环"},
+        .defaultValue = false,
+        .annotation{"候选翻页在末页再翻回首页、首页向上翻到末页。"}}};
     fcitx::OptionWithAnnotation<bool, fcitx::ToolTipAnnotation> panelPreedit{{
         .parent = this,
         .path{"PanelPreedit"},
@@ -135,7 +170,36 @@ FCITX_CONFIGURATION(
             .description{"每页候选个数"},
             .defaultValue = 5,
             .constrain = fcitx::IntConstrain(kPageSizeMin, kPageSizeMax),
-            .annotation{"候选列表每页个数（1–10）；数字直选 `0` 对应第 10 个。"}}};);
+            .annotation{"候选列表每页个数（1–10）；数字直选 `0` 对应第 10 个。"}}};
+    fcitx::OptionWithAnnotation<
+        HuxCandidateLayout,
+        EnumAnnotationWithTooltip<HuxCandidateLayoutI18NAnnotation>>
+        candidateLayout{{
+            .parent = this,
+            .path{"CandidateLayout"},
+            .description{"候选排列"},
+            .defaultValue = HuxCandidateLayout::FollowGlobal,
+            .annotation{"跟随全局：候选窗排列随 fcitx5 全局「候选竖排」；"
+                        "横排：↑↓ 选字、←→ 移动；竖排：←→ 选字、↑↓ 移动。"}}};
+    fcitx::OptionWithAnnotation<HuxPreeditMode,
+                                EnumAnnotationWithTooltip<HuxPreeditModeI18NAnnotation>>
+        preeditMode{{
+            .parent = this,
+            .path{"PreeditMode"},
+            .description{"预编辑内容"},
+            .defaultValue = HuxPreeditMode::CandidateCode,
+            .annotation{"候选分码：按词分段显示（如 `ab cd`）；原始输入：按输入原文；"
+                        "不显示：仅候选与注释。"}}};
+    fcitx::Option<int, fcitx::IntConstrain, fcitx::DefaultMarshaller<int>,
+                  fcitx::ToolTipAnnotation>
+        minRetainedRawLength{{
+            .parent = this,
+            .path{"MinRetainedRawLength"},
+            .description{"提前上屏最短保留码数"},
+            .defaultValue = 0,
+            .constrain = fcitx::IntConstrain(0, 20),
+            .annotation{"提前上屏与空码上屏共用的最短保留编码数；0 = 不额外限制"
+                        "（概率型早提交仍不少于 3）。"}}};);
 
 /// 快捷键设置（配置页「快捷键」分区；`KeyList` 可多项，与全局设置同款）。
 FCITX_CONFIGURATION(
@@ -223,9 +287,46 @@ private:
     std::string label_;
 };
 
+class HuxEngine;
+
+/// 每输入上下文会话（fcitx5 `InputContextProperty`）：持引擎侧会话 id，销毁时释放。
+/// 组合/候选/学习暂存按会话隔离，互不干扰。
+class HuxSession : public fcitx::InputContextProperty {
+public:
+    HuxSession(hux_engine *engine, uint64_t id) : engine_(engine), id_(id) {}
+
+    ~HuxSession() override { hux_engine_session_free(engine_, id_); }
+
+    uint64_t id() const { return id_; }
+
+private:
+    hux_engine *engine_;
+    uint64_t id_;
+};
+
+/// 面板候选：点击（`select`）按全局索引选中并上屏（与空格相同的确认/学习链）。
+class HuxCandidateWord : public fcitx::CandidateWord {
+public:
+    HuxCandidateWord(fcitx::Text text, fcitx::Text comment, HuxEngine *owner,
+                     int32_t index)
+        : CandidateWord(std::move(text)), owner_(owner), index_(index) {
+        setComment(std::move(comment));
+    }
+
+    void select(fcitx::InputContext *inputContext) const override;
+
+private:
+    HuxEngine *owner_;
+    int32_t index_;
+};
+
 class HuxEngine : public fcitx::InputMethodEngine {
 public:
-    explicit HuxEngine(fcitx::Instance *instance) : instance_(instance) {
+    explicit HuxEngine(fcitx::Instance *instance)
+        : instance_(instance),
+          sessionFactory_([this](fcitx::InputContext & /*unused*/) {
+              return new HuxSession(engine_, hux_engine_session_new(engine_));
+          }) {
         fcitx::readAsIni(config_, "conf/hux.conf");
         hux_host host = {};
         host.user = this;
@@ -235,10 +336,17 @@ public:
         if (const char *status = hux_engine_status(engine_)) {
             FCITX_INFO() << "hux: " << status;
         }
+        // 每输入上下文一个会话（现存的与后续新建的都会经工厂创建）。
+        instance_->inputContextManager().registerProperty("huxSession",
+                                                          &sessionFactory_);
         applyConfig();
         setupStatusMenu();
     }
-    ~HuxEngine() override { hux_engine_free(engine_); }
+    ~HuxEngine() override {
+        // 先注销并销毁全部会话（属性析构回调 `hux_engine_session_free`），再释放引擎。
+        sessionFactory_.unregister();
+        hux_engine_free(engine_);
+    }
 
     /// 配置 schema（fcitx5-configtool 生成设置页；保存到 ~/.config/fcitx5/conf/hux.conf）。
     const fcitx::Configuration *getConfig() const override { return &config_; }
@@ -254,18 +362,24 @@ public:
         FCITX_UNUSED(entry);
         const auto &key = keyEvent.key();
         fcitx::InputContext *inputContext = keyEvent.inputContext();
+        HuxSession *huxSession = session(inputContext);
+        if (huxSession == nullptr) {
+            return;
+        }
         context_ = inputContext;
         // 应用侧周边文本（字反查用；应用不支持时 valid=0）。
         const auto &surrounding = inputContext->surroundingText();
         if (surrounding.isValid()) {
-            hux_engine_set_surrounding(engine_, surrounding.text().c_str(),
-                                             static_cast<int32_t>(surrounding.cursor()), 1);
+            hux_engine_set_surrounding(engine_, huxSession->id(),
+                                       surrounding.text().c_str(),
+                                       static_cast<int32_t>(surrounding.cursor()), 1);
         } else {
-            hux_engine_set_surrounding(engine_, nullptr, 0, 0);
+            hux_engine_set_surrounding(engine_, huxSession->id(), nullptr, 0, 0);
         }
         const int32_t disposition =
-            hux_engine_key(engine_, key.sym(), key.states().toInteger(),
-                                 keyEvent.isRelease() ? 1 : 0);
+            hux_engine_key(engine_, huxSession->id(), key.sym(),
+                           key.states().toInteger(),
+                           keyEvent.isRelease() ? 1 : 0);
         context_ = nullptr;
         if (disposition & HUX_KEY_FORWARD_AFTER_COMMIT) {
             // 布局转换键（如系统 colemak + 方案自定义 us 布局）：交回核心处理——
@@ -289,13 +403,15 @@ public:
     void activate(const fcitx::InputMethodEntry &entry,
                   fcitx::InputContextEvent &event) override {
         FCITX_UNUSED(entry);
-        resetSession(event);
+        // 会话在输入上下文注册时已建；激活只刷新状态区。
         updateStatusArea(event.inputContext());
     }
 
     void deactivate(const fcitx::InputMethodEntry &entry,
                     fcitx::InputContextEvent &event) override {
         FCITX_UNUSED(entry);
+        // 失焦：由核心/前端把客户端预编辑以原文提交（fcitx5 惯例，不保留组合）；
+        // 切换输入法/重置：本层直接丢弃（不提交；上游默认在切换时提交，本实现取丢弃）。
         resetSession(event);
     }
 
@@ -305,7 +421,26 @@ public:
         resetSession(event);
     }
 
+    /// 面板候选点击：以该输入上下文交给引擎（提交/预编辑/候选经回调送出）。
+    void selectCandidate(fcitx::InputContext *inputContext, int32_t index) {
+        HuxSession *huxSession = session(inputContext);
+        if (huxSession == nullptr) {
+            return;
+        }
+        context_ = inputContext;
+        hux_engine_select_candidate(engine_, huxSession->id(), index);
+        context_ = nullptr;
+    }
+
 private:
+    /// 该输入上下文对应会话（构造时注册的工厂保证已存在）。
+    HuxSession *session(fcitx::InputContext *inputContext) const {
+        if (inputContext == nullptr) {
+            return nullptr;
+        }
+        return static_cast<HuxSession *>(inputContext->property(&sessionFactory_));
+    }
+
     /// 状态菜单：注册「虎虚」子菜单与 5 项核心开关（构造时一次）。
     void setupStatusMenu() {
         static constexpr struct {
@@ -342,10 +477,15 @@ private:
         statusArea.addAction(fcitx::StatusGroup::InputMethod, &menuAction_);
     }
 
-    /// 清空会话与面板（activate/deactivate/reset 共用）。
+    /// 清空会话与面板（deactivate/reset 共用）。
     void resetSession(fcitx::InputContextEvent &event) {
-        context_ = event.inputContext();
-        hux_engine_reset(engine_);
+        fcitx::InputContext *inputContext = event.inputContext();
+        HuxSession *huxSession = session(inputContext);
+        if (huxSession == nullptr) {
+            return;
+        }
+        context_ = inputContext;
+        hux_engine_reset(engine_, huxSession->id());
         context_ = nullptr;
     }
 
@@ -387,6 +527,9 @@ private:
             config_.behavior->panelPreedit.value() ? preeditText
                                                    : fcitx::Text());
         // 客户端内联预编辑：跟随 fcitx5 全局预编辑设置（`isPreeditEnabled`）。
+        // 失焦时由核心/前端以预编辑原文提交（fcitx5 惯例），因此不做 `DontCommit` 标记——
+        // 标记后 KWin（input-method v1）在提交串为空时不发 commit，会在应用内留下可被保存的
+        // marked text「残影」。
         context_->inputPanel().setClientPreedit(context_->isPreeditEnabled() ? preeditText
                                                                             : fcitx::Text());
         context_->updatePreedit();
@@ -405,8 +548,8 @@ private:
                     comments != nullptr && comments[index] != nullptr
                         ? comments[index]
                         : "";
-                candidateList->append<fcitx::DisplayOnlyCandidateWord>(
-                    fcitx::Text(text), fcitx::Text(comment));
+                candidateList->append<HuxCandidateWord>(
+                    fcitx::Text(text), fcitx::Text(comment), this, index);
             }
             // 数字直选：面板显示 1–9 / 0 序号（与引擎页内定位一致）。
             if (config_.behavior->digitSelect.value()) {
@@ -415,6 +558,15 @@ private:
             // 翻页交由 fcitx5 面板（页大小与引擎一致）：绝对索引 → 全局光标 + 所在页。
             candidateList->setPageSize(std::clamp(
                 config_.behavior->pageSize.value(), kPageSizeMin, kPageSizeMax));
+            // 候选排列：仅显式选择横排/竖排时设置 LayoutHint（跟随全局时保持 NotSet，
+            // 由 fcitx5 全局「候选竖排」设置决定）。
+            const auto layout = config_.behavior->candidateLayout.value();
+            if (layout != HuxCandidateLayout::FollowGlobal) {
+                candidateList->setLayoutHint(
+                    layout == HuxCandidateLayout::Vertical
+                        ? fcitx::CandidateLayoutHint::Vertical
+                        : fcitx::CandidateLayoutHint::Horizontal);
+            }
             // 防御：越界不设光标索引。
             const int index = std::min(std::max(selected, 0), count - 1);
             candidateList->setGlobalCursorIndex(index);
@@ -458,6 +610,24 @@ private:
         fillKeyList(&options.page_up, hotkeys.pageUpKeys.value());
         fillKeyList(&options.page_down, hotkeys.pageDownKeys.value());
         options.digit_select = behavior.digitSelect.value() ? 1 : 0;
+        switch (behavior.candidateLayout.value()) {
+        case HuxCandidateLayout::Horizontal:
+            options.candidate_layout = 1;
+            break;
+        case HuxCandidateLayout::Vertical:
+            options.candidate_layout = 2;
+            break;
+        default:
+            options.candidate_layout = 0;
+            break;
+        }
+        const auto preeditMode = behavior.preeditMode.value();
+        options.preedit_mode = preeditMode == HuxPreeditMode::RawInput   ? 1
+                               : preeditMode == HuxPreeditMode::Hidden ? 2
+                                                                       : 0;
+        options.page_cycle = behavior.pageCycle.value() ? 1 : 0;
+        options.min_retained_raw_length =
+            behavior.minRetainedRawLength.value();
         if (hux_engine_apply_settings(engine_, &options) == 0) {
             FCITX_WARN() << "hux: apply settings failed";
         }
@@ -465,12 +635,18 @@ private:
 
     HuxConfig config_;
     fcitx::Instance *instance_;
-    hux_engine *engine_;
+    hux_engine *engine_ = nullptr;
+    /// 会话工厂（每输入上下文一个 [`HuxSession`]）。
+    fcitx::FactoryFor<HuxSession> sessionFactory_;
     fcitx::InputContext *context_ = nullptr;
     fcitx::Menu menu_;
     fcitx::SimpleAction menuAction_;
     std::vector<std::unique_ptr<HuxToggleAction>> toggleActions_;
 };
+
+void HuxCandidateWord::select(fcitx::InputContext *inputContext) const {
+    owner_->selectCandidate(inputContext, index_);
+}
 
 class HuxFactory : public fcitx::AddonFactory {
 public:

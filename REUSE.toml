@@ -1,7 +1,8 @@
 version = 1
 
 # 上游派生数据、生成物与杂项：不修改文件本体，仅在此标注（REUSE 规范）。
-# 自有源码/脚本/配置/文档的许可在各自文件头（SPDX）声明。
+# 自有源码/脚本/配置/文档的许可在各自文件头（SPDX）声明；
+# 根 LICENSE（GPL-3.0 全文，供 GitHub 识别）与 COPYING 类文件按 REUSE 规范被工具忽略，无需标注。
 
 [[annotations]]
 path = [
@@ -32,6 +33,12 @@ SPDX-FileCopyrightText = "2014 RIME Developers"
 SPDX-License-Identifier = "BSD-3-Clause"
 
 [[annotations]]
-path = [".gitignore", "Cargo.lock", "LICENSE"]
+path = [".gitignore", "Cargo.lock"]
+SPDX-FileCopyrightText = "2026 明雅流风 <crrvx@outlook.com>"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+
+# 文档图片（无 SPDX 头，按目录标注）
+[[annotations]]
+path = ["docs/images/*.png", "docs/images/*.jpg", "docs/images/*.gif", "docs/images/*.webp"]
 SPDX-FileCopyrightText = "2026 明雅流风 <crrvx@outlook.com>"
 SPDX-License-Identifier = "GPL-3.0-or-later"

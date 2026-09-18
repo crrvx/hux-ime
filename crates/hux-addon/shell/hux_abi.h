@@ -42,7 +42,16 @@ typedef struct hux_host {
 
 hux_engine *hux_engine_new(const hux_host *host);
 void hux_engine_free(hux_engine *engine);
-void hux_engine_reset(hux_engine *engine);
+
+/*
+ * 会话：每输入上下文（窗口/输入框）一个，组合与候选互相隔离。
+ * 输入上下文注册时创建，销毁时释放；未知 id 的操作忽略。
+ */
+uint64_t hux_engine_session_new(hux_engine *engine);
+void hux_engine_session_free(hux_engine *engine, uint64_t session);
+
+/* 重置会话（失焦 / 切换输入法 / 重置事件）。 */
+void hux_engine_reset(hux_engine *engine, uint64_t session);
 
 /* 数据加载状态（诊断；随引擎存活，可为 NULL）。 */
 const char *hux_engine_status(const hux_engine *engine);
@@ -60,13 +69,20 @@ const char *hux_engine_status(const hux_engine *engine);
  * 处理一次按键：返回位掩码（HUX_KEY_*）。
  * 提交/preedit/候选经宿主回调送出。
  */
-int32_t hux_engine_key(hux_engine *engine, uint32_t keysym,
-                             uint32_t states, int32_t release);
+int32_t hux_engine_key(hux_engine *engine, uint64_t session, uint32_t keysym,
+                       uint32_t states, int32_t release);
+
+/*
+ * 候选点击（面板候选 `CandidateWord::select`）：按全局索引选中并上屏
+ * （与空格相同的确认/学习链）。返回 1 = 已处理；0 = 忽略。
+ */
+int32_t hux_engine_select_candidate(hux_engine *engine, uint64_t session,
+                                    int32_t index);
 
 /* 送入应用侧周边文本（字符制光标；valid=0 表示不可用/应用不支持）。 */
-int32_t hux_engine_set_surrounding(hux_engine *engine,
-                                         const char *text_utf8,
-                                         int32_t cursor_chars, int32_t valid);
+int32_t hux_engine_set_surrounding(hux_engine *engine, uint64_t session,
+                                   const char *text_utf8, int32_t cursor_chars,
+                                   int32_t valid);
 
 /* 键位列表上限（与 Rust `HUX_MAX_KEYS` 一致）。 */
 #define HUX_MAX_KEYS 8
@@ -93,6 +109,14 @@ typedef struct hux_options {
   hux_key_list page_up;
   hux_key_list page_down;
   int32_t digit_select;
+  /* 候选排列：0 = 跟随全局（默认），1 = 横排，2 = 竖排。 */
+  int32_t candidate_layout;
+  /* 预编辑内容：0 = 候选分码（默认），1 = 原始输入，2 = 不显示。 */
+  int32_t preedit_mode;
+  /* 翻页循环：0 = 关（默认），1 = 开。 */
+  int32_t page_cycle;
+  /* 提前上屏最短保留码数（0..=20；0 = 不额外限制）。 */
+  int32_t min_retained_raw_length;
 } hux_options;
 
 /* 应用外部配置；返回 1 = 已应用。 */

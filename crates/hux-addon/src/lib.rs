@@ -7,8 +7,10 @@
 //! 逻辑在 Rust（本层 → `hux-core`）。组合重建照 2c 重放桩同构规则：
 //! 提交（翻译失效）或输入变化时重建，否则保留段状态（含菜单高亮）。
 //!
-//! K3b 范围：每引擎单会话（`activate/reset` 清空）；数据目录见 [`data_dirs`]。
+//! 会话：每个输入上下文一个（`InputContextProperty`，组合/候选互相隔离）；
+//! `deactivate/reset` 清空（参照行为）；数据目录见 [`data_dirs`]。
 
+use std::collections::HashMap;
 use std::ffi::{CString, c_char, c_void};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -19,16 +21,16 @@ mod settings;
 
 use learning_store::LearningStore;
 use options::OptionsStore;
-use settings::Settings;
+use settings::{CandidateLayout, PreeditMode, Settings};
 
 use hux_core::char_to_sound_shape;
 use hux_core::decode::Decoder;
 use hux_core::host::{self, HostOptions, HostResult};
 use hux_core::interaction::{
-    CompositionBuilder, K_CHAR_TO_SOUND_SHAPE_KEY, K_SOUND_TO_CHAR_SHAPE_KEY, LiveLearning,
-    OPTION_ALLOW_DUPLICATE_SINGLE, OPTION_DIGIT_SELECT, OPTION_EARLY_COMMIT,
+    CompositionBuilder, K_CHAR_TO_SOUND_SHAPE_KEY, K_SOUND_TO_CHAR_SHAPE_KEY, LearningCommit,
+    LiveLearning, OPTION_ALLOW_DUPLICATE_SINGLE, OPTION_DIGIT_SELECT, OPTION_EARLY_COMMIT,
     OPTION_EARLY_COMMIT_TO_PREEDIT, ProcessorEnv, ProcessorResult, SentenceState, buffered_text,
-    processor, reset_early_evidence, set_allow_duplicate_single, update_notifier,
+    processor, reset_early_evidence, select_candidate_at, update_notifier,
 };
 use hux_core::key::{
     K_ALT_MASK, K_CONTROL_MASK, K_LOCK_MASK, K_RELEASE_MASK, K_SHIFT_MASK, K_SUPER_MASK, KeyEvent,
@@ -142,10 +144,8 @@ const RUNTIME_OPTIONS: [&str; 5] = [
     OPTION_DIGIT_SELECT,
 ];
 
-/// 引擎：数据 + 单会话（`Context`/`SentenceState`/学习暂存）。
-pub struct Engine {
-    host: Option<HostCallback>,
-    decoder: Decoder,
+/// 会话：每个输入上下文（窗口/输入框）一份，互不干扰（fcitx5 `InputContextProperty`）。
+pub struct Session {
     context: Context,
     state: SentenceState,
     live: LiveLearning,
@@ -153,6 +153,16 @@ pub struct Engine {
     min_retained: Option<i64>,
     /// 组合重建（提交或输入变化时重建，保留段状态含菜单高亮）。
     builder: CompositionBuilder,
+    /// 字反查（⑧-2）会话态。
+    char_to_sound_shape: CharToSoundShapeState,
+}
+
+/// 引擎：共享数据（词库/解码/选项/学习库）+ 按输入上下文隔离的多会话。
+pub struct Engine {
+    host: Option<HostCallback>,
+    decoder: Decoder,
+    sessions: HashMap<u64, Session>,
+    next_session: u64,
     /// 选项存储（用户目录不可用时为 `None`，此时仅用内建缺省）。
     options: Option<OptionsStore>,
     /// 外部配置（fcitx5 配置界面 / 测试；默认 = 内建缺省）。
@@ -163,8 +173,6 @@ pub struct Engine {
     punct: Option<PunctTable>,
     /// 学习库（用户目录不可用时为禁用占位）。
     learning: LearningStore,
-    /// 字反查（⑧-2）会话态。
-    char_to_sound_shape: CharToSoundShapeState,
     /// 学习规则串（来自码表；用于拼 mode）。
     learning_rules: String,
     /// 当前学习 mode 串与已应用的索引版本。
@@ -226,21 +234,11 @@ impl Engine {
         {
             notes.push(format!("punct: {error}"));
         }
-        let mut context = Context::new();
-        // 宿主缺省：`_auto_commit`（librime `express_editor` 默认 true）。
-        context.set_option("_auto_commit", true);
         // 选项：有存储则同步（参照 `M.options.sync`，同步写入由核心抑制观察）；
-        // 无存储时直接用内建缺省。
-        let mut options = options_dir
+        // 无存储时直接用内建缺省。会话创建时逐个同步（见 `session_new`）。
+        let options = options_dir
             .as_deref()
             .map(|dir| OptionsStore::load_with_defaults(dir, settings.store_defaults()));
-        if let Some(options) = options.as_mut() {
-            options.sync(&mut context);
-        } else {
-            for (name, value) in settings.option_defaults() {
-                context.set_option(name, value);
-            }
-        }
         // 学习库：`<user dir>/tiger_sentence_learning_<hash>.userdb/`（用户目录不可用则禁用）。
         let learning = match options_dir.as_deref() {
             Some(dir) => LearningStore::open(
@@ -255,39 +253,83 @@ impl Engine {
         } else {
             notes.push(format!("learning: {}", learning.name));
         }
-        let learning_mode = settings.learning_mode(
-            &learning_rules,
-            u8::from(set_allow_duplicate_single(&context)),
-        );
-        let live = LiveLearning {
-            mode: learning_mode.clone(),
-            store_ready: learning.store_ready(),
-            ..LiveLearning::default()
-        };
-        let mut engine = Self {
+        let learning_mode =
+            settings.learning_mode(&learning_rules, u8::from(settings.allow_duplicate_single));
+        Self {
             host,
             decoder,
-            context,
-            state: SentenceState::fresh(1),
-            live,
-            dot_armed: false,
-            min_retained: None,
-            builder: CompositionBuilder::default(),
+            sessions: HashMap::new(),
+            next_session: 1,
             options,
             settings,
             host_options,
             punct,
             learning,
-            char_to_sound_shape: CharToSoundShapeState::default(),
             learning_rules,
             learning_mode,
             applied_learning: None,
             forward_after_commit: false,
             status: CString::new(notes.join("; ")).unwrap_or_default(),
+        }
+    }
+
+    /// 新建会话（一个输入上下文注册/激活时创建）；选项/触发键/学习模式按共享状态初始化。
+    pub fn session_new(&mut self) -> u64 {
+        let mut context = Context::new();
+        // 宿主缺省：`_auto_commit`（librime `express_editor` 默认 true）。
+        context.set_option("_auto_commit", true);
+        // 先写设置缺省（含不持久化的 `ascii_punct`），再由 `options.yaml` 持久化值覆盖。
+        for (name, value) in self.settings.option_defaults() {
+            context.set_option(name, value);
+        }
+        if let Some(options) = self.options.as_mut() {
+            options.sync(&mut context);
+        }
+        // 无存储时运行时开关（状态菜单）以现存会话为模板，避免新会话回退到设置缺省。
+        if let Some(existing) = self.sessions.values().next() {
+            for name in RUNTIME_OPTIONS {
+                let value = existing.context.get_option(name);
+                if context.get_option(name) != value {
+                    context.set_option(name, value);
+                }
+            }
+        }
+        let mut session = Session {
+            context,
+            state: SentenceState::fresh(1),
+            live: LiveLearning {
+                mode: self.learning_mode.clone(),
+                store_ready: self.learning.store_ready(),
+                ..LiveLearning::default()
+            },
+            dot_armed: false,
+            min_retained: Some(self.settings.min_retained() as i64),
+            builder: CompositionBuilder::default(),
+            char_to_sound_shape: CharToSoundShapeState::default(),
         };
-        engine.sync_sound_to_char_shape_prefix();
-        engine.push_update();
-        engine
+        self.apply_trigger_keys(&mut session);
+        self.apply_layout_options(&mut session);
+        let id = self.next_session;
+        self.next_session += 1;
+        self.sessions.insert(id, session);
+        id
+    }
+
+    /// 释放会话（输入上下文销毁时）。
+    pub fn session_free(&mut self, session_id: u64) {
+        self.sessions.remove(&session_id);
+    }
+
+    /// 取会话执行闭包后放回（借用拆分：会话与共享状态互不重叠）。
+    fn with_session<R>(
+        &mut self,
+        session_id: u64,
+        f: impl FnOnce(&mut Self, &mut Session) -> R,
+    ) -> Option<R> {
+        let mut session = self.sessions.remove(&session_id)?;
+        let result = f(self, &mut session);
+        self.sessions.insert(session_id, session);
+        Some(result)
     }
 
     /// 处理一次按键：返回是否消费；副作用（提交/preedit/候选）经宿主回调送出。
@@ -295,13 +337,20 @@ impl Engine {
     /// 提交且未消费（`express_editor` 的 `char_handler = DirectCommit`）时置
     /// [`Engine::forward_after_commit`]：宿主层据此消费该键并以 `forwardKey` 重发，
     /// 保证客户端先收到提交、后收到按键。
-    fn key(&mut self, keysym: u32, states: u32, release: bool) -> bool {
+    pub fn key(&mut self, session_id: u64, keysym: u32, states: u32, release: bool) -> bool {
+        self.with_session(session_id, |engine, session| {
+            engine.key_in(session, keysym, states, release)
+        })
+        .unwrap_or(false)
+    }
+
+    fn key_in(&mut self, session: &mut Session, keysym: u32, states: u32, release: bool) -> bool {
         self.forward_after_commit = false;
         let key = KeyEvent::new(keysym as i32, core_modifiers(states, release));
         // 字反查段：←/→/↑/↓ **交应用处理**（应用光标随动），本层不消费也不改动输入；
         // 两排在应用回传周边文本后的下一次按键（含 release）时刷新。
         if !release
-            && self.char_to_sound_shape_tagged()
+            && self.char_to_sound_shape_tagged(session)
             && matches!(key.repr().as_str(), "Left" | "Right" | "Up" | "Down")
         {
             return false;
@@ -310,16 +359,16 @@ impl Engine {
         let result = {
             let mut env = ProcessorEnv {
                 now,
-                dot_armed: &mut self.dot_armed,
-                min_retained: self.min_retained,
+                dot_armed: &mut session.dot_armed,
+                min_retained: session.min_retained,
                 page_size: self.host_options.page_size,
             };
             processor(
                 &key,
-                &mut self.context,
-                &mut self.state,
+                &mut session.context,
+                &mut session.state,
                 &mut self.decoder,
-                &mut self.live,
+                &mut session.live,
                 &mut env,
             )
         };
@@ -327,11 +376,18 @@ impl Engine {
             Ok(ProcessorResult::Consume) => true,
             // 参照链：处理器未消费的键交宿主等价物（selector/navigator/express_editor 等）。
             Ok(ProcessorResult::Forward) => {
+                let mut learning = LearningCommit {
+                    decoder: &mut self.decoder,
+                    live: &mut session.live,
+                    now,
+                };
                 host::process_key(
                     &key,
-                    &mut self.context,
+                    &mut session.context,
+                    &session.state,
                     self.punct.as_mut(),
                     &self.host_options,
+                    Some(&mut learning),
                 ) == HostResult::Consumed
             }
             Err(error) => {
@@ -339,11 +395,51 @@ impl Engine {
                 false
             }
         };
+        self.finish(session, now, Some(consumed));
+        consumed
+    }
+
+    /// 候选点击（面板候选 `CandidateWord::select`，按会话）：按全局索引选中并上屏。
+    /// 走与 `space` 相同的确认/学习链；越界/无可选段返回 `false`。
+    pub fn select_candidate(&mut self, session_id: u64, index: usize) -> bool {
+        self.with_session(session_id, |engine, session| {
+            engine.select_candidate_in(session, index)
+        })
+        .unwrap_or(false)
+    }
+
+    fn select_candidate_in(&mut self, session: &mut Session, index: usize) -> bool {
+        self.forward_after_commit = false;
+        let now = wall_clock();
+        match select_candidate_at(
+            &mut self.decoder,
+            &mut session.context,
+            &mut session.state,
+            &mut session.live,
+            now,
+            index,
+        ) {
+            Ok(true) => {}
+            Ok(false) => return false,
+            Err(error) => {
+                eprintln!("hux: select candidate error: {error}");
+                return false;
+            }
+        }
+        self.finish(session, now, None);
+        true
+    }
+
+    /// 提交泵 + 学习落库 + 组合重建 + UI 刷新（按键与候选点击共用）。
+    ///
+    /// `key_forward`：按键路径传入消费结果（据提交计算 `forward_after_commit`）；
+    /// 候选点击传 `None`（非按键路径，恒不转发）。
+    fn finish(&mut self, session: &mut Session, now: f64, key_forward: Option<bool>) {
         let mut commits = Vec::new();
         let mut invalidated = false;
         // 事件泵：选项事件可能触发确认（进而产生提交），循环至排空（有界）。
         for _ in 0..4 {
-            let events = self.context.drain_events();
+            let events = session.context.drain_events();
             if events.is_empty() {
                 break;
             }
@@ -354,7 +450,7 @@ impl Engine {
                         commits.push(text);
                     }
                     Event::Option(name) => {
-                        self.observe_option(&name);
+                        self.observe_option(&mut session.context, &name);
                     }
                     Event::Update => {}
                 }
@@ -364,48 +460,51 @@ impl Engine {
         for text in commits {
             self.host_commit(&text);
         }
-        self.forward_after_commit = !consumed && committed;
+        self.forward_after_commit = match key_forward {
+            Some(consumed) => !consumed && committed,
+            None => false,
+        };
         // 学习：核心暂存 → 落库；刷新打分（未组合时，60 秒节流）；应用索引。
-        let submitted = std::mem::take(&mut self.live.submitted);
+        let submitted = std::mem::take(&mut session.live.submitted);
         if !submitted.is_empty() {
             self.learning.confirm(&submitted);
         }
         self.refresh_learning_mode();
-        if !self.context.is_composing() {
+        if !session.context.is_composing() {
             self.learning.refresh_scores(now);
         }
-        self.apply_learning();
+        self.apply_learning(session);
         // 组合重建（参照 `ConcreteEngine::Compose`，先于通知器）与 update 通知器
         // （非组合清暂存；缓冲且实况输入为空时隐藏候选）。
-        if let Err(error) = self.builder.rebuild(
+        if let Err(error) = session.builder.rebuild(
             &mut self.decoder,
-            &mut self.context,
-            &self.state,
+            &mut session.context,
+            &session.state,
             invalidated,
             self.punct.as_mut(),
         ) {
             eprintln!("hux: rebuild error: {error}");
         }
-        update_notifier(&mut self.context, &mut self.state, &mut self.live);
-        self.refresh_char_to_sound_shape_aux();
-        self.push_update();
-        consumed
+        update_notifier(&mut session.context, &mut session.state, &mut session.live);
+        self.refresh_char_to_sound_shape_aux(session);
+        self.push_update(session);
     }
 
     /// 字反查（⑧-2）：查码段内 ←/→ 以 2 字符步长移动锚点（返回 `Some(true)` 消费）。
     /// 进入/退出查码段由 core 处理器负责（触发字符推入/清空组合）。
     /// 当前组合末段是否为字反查段。
-    fn char_to_sound_shape_tagged(&self) -> bool {
-        self.context
+    fn char_to_sound_shape_tagged(&self, session: &Session) -> bool {
+        session
+            .context
             .composition
             .back()
             .is_some_and(|segment| segment.has_tag(char_to_sound_shape::TAG))
     }
 
     /// 重算两排提示（上排 = 光标左侧拼音、下排 = 虎码）；不在查码段则清空。
-    fn refresh_char_to_sound_shape_aux(&mut self) {
-        let tagged = self.char_to_sound_shape_tagged();
-        let state = &mut self.char_to_sound_shape;
+    fn refresh_char_to_sound_shape_aux(&mut self, session: &mut Session) {
+        let tagged = self.char_to_sound_shape_tagged(session);
+        let state = &mut session.char_to_sound_shape;
         if !tagged {
             state.aux_up.clear();
             state.aux_down.clear();
@@ -428,8 +527,19 @@ impl Engine {
     }
 
     /// 宿主送入应用侧周边文本（字符制光标；`None` = 应用不支持/不可用）。
-    pub fn set_surrounding(&mut self, text: Option<&str>, cursor_chars: usize) {
-        let state = &mut self.char_to_sound_shape;
+    pub fn set_surrounding(&mut self, session_id: u64, text: Option<&str>, cursor_chars: usize) {
+        self.with_session(session_id, |engine, session| {
+            engine.set_surrounding_in(session, text, cursor_chars);
+        });
+    }
+
+    fn set_surrounding_in(
+        &mut self,
+        session: &mut Session,
+        text: Option<&str>,
+        cursor_chars: usize,
+    ) {
+        let state = &mut session.char_to_sound_shape;
         match text {
             Some(text) => {
                 state.valid = true;
@@ -442,75 +552,112 @@ impl Engine {
                 state.cursor = 0;
             }
         }
-        if self.char_to_sound_shape_tagged() {
-            self.refresh_char_to_sound_shape_aux();
+        if self.char_to_sound_shape_tagged(session) {
+            self.refresh_char_to_sound_shape_aux(session);
         }
     }
 
-    /// 重置会话（`activate`/`deactivate`/`reset`）。
-    fn reset(&mut self) {
-        self.char_to_sound_shape = CharToSoundShapeState::default();
-        self.context.clear();
-        self.state.reset(&mut self.context, false);
-        self.live.pending.clear();
-        self.live.baseline = None;
-        self.live.submitted_raw = None;
-        self.dot_armed = false;
-        self.builder.reset();
+    /// 重置会话（`deactivate`/`reset`；组合不跨输入上下文保留）。
+    pub fn reset(&mut self, session_id: u64) {
+        self.with_session(session_id, |engine, session| engine.reset_in(session));
+    }
+
+    fn reset_in(&mut self, session: &mut Session) {
+        // 契约：重置即丢弃——先清掉未派发的事件（含可能的提交），避免下次按键补上屏。
+        session.context.drain_events();
+        session.char_to_sound_shape = CharToSoundShapeState::default();
+        session.context.clear();
+        session.state.reset(&mut session.context, false);
+        session.live.pending.clear();
+        session.live.baseline = None;
+        session.live.submitted_raw = None;
+        session.dot_armed = false;
+        session.builder.reset();
         if let Some(options) = self.options.as_mut() {
-            options.sync(&mut self.context);
+            options.sync(&mut session.context);
         }
-        self.push_update();
+        self.push_update(session);
     }
 
     /// 选项事件 → 记录/持久化（参照 `M.options` 的选项通知器）。
-    fn observe_option(&mut self, name: &str) {
+    fn observe_option(&mut self, context: &mut Context, name: &str) {
         if let Some(options) = self.options.as_mut() {
-            options.observe(&mut self.context, name);
+            options.observe(context, name);
         }
     }
 
-    /// 运行时开关当前值（状态菜单）；非白名单返回 `None`。
+    /// 运行时开关当前值（状态菜单；全局）：任一会话的生效值，无会话时回退存储/设置缺省。
     pub fn option_value(&self, name: &str) -> Option<bool> {
-        RUNTIME_OPTIONS
-            .contains(&name)
-            .then(|| self.context.get_option(name))
+        if !RUNTIME_OPTIONS.contains(&name) {
+            return None;
+        }
+        if let Some(session) = self.sessions.values().next() {
+            return Some(session.context.get_option(name));
+        }
+        self.options
+            .as_ref()
+            .and_then(|store| store.value(name))
+            .or_else(|| self.settings.option_default(name))
     }
 
-    /// 设置运行时开关（状态菜单）：白名单校验 → 写入上下文 → 持久化（`options.yaml`）。
+    /// 设置运行时开关（状态菜单）：白名单校验 → 写入全部会话 → 持久化（`options.yaml`）。
     pub fn set_option_value(&mut self, name: &str, value: bool) -> bool {
         if !RUNTIME_OPTIONS.contains(&name) {
             return false;
         }
-        if self.context.get_option(name) != value {
-            self.context.set_option(name, value);
+        let ids: Vec<u64> = self.sessions.keys().copied().collect();
+        for id in ids {
+            self.with_session(id, |engine, session| {
+                if session.context.get_option(name) != value {
+                    session.context.set_option(name, value);
+                }
+                engine.observe_option(&mut session.context, name);
+            });
         }
-        self.observe_option(name);
         self.refresh_learning_mode();
         true
     }
 
     /// 应用外部配置（fcitx5 配置界面 / 测试）：选项类即时生效；`high_freq_limit` 需重启。
     /// 顺序：设置写入缺省 → `options.yaml` 持久化值覆盖（含状态菜单开关）→ 触发键/学习模式刷新。
+    /// 作用于全部会话（选项为引擎级）。
     pub fn apply_settings(&mut self, settings: Settings) {
         self.settings = settings;
         self.host_options = self.settings.host_options();
         let defaults = self.settings.option_defaults();
-        for (name, value) in defaults {
-            if self.context.get_option(name) != value {
-                self.context.set_option(name, value);
-            }
-        }
         if let Some(store) = self.options.as_mut() {
             store.set_defaults(self.settings.store_defaults());
-            store.sync(&mut self.context);
         }
-        self.sync_sound_to_char_shape_prefix();
+        let ids: Vec<u64> = self.sessions.keys().copied().collect();
+        for id in ids {
+            self.with_session(id, |engine, session| {
+                for (name, value) in &defaults {
+                    if session.context.get_option(name) != *value {
+                        session.context.set_option(name, *value);
+                    }
+                }
+                if let Some(store) = engine.options.as_mut() {
+                    store.sync(&mut session.context);
+                }
+                engine.apply_trigger_keys(session);
+                engine.apply_layout_options(session);
+                session.min_retained = Some(engine.settings.min_retained() as i64);
+            });
+        }
         self.refresh_learning_mode();
     }
 
+    /// 候选布局（context 选项）：host `selector` 读取 `_vertical` 决定 ←→/↑↓ 语义。
+    /// 仅「竖排」置位；「横排/跟随全局」维持横排键语义（面板排列见 C++ `LayoutHint`）。
+    fn apply_layout_options(&self, session: &mut Session) {
+        let vertical = self.settings.candidate_layout == CandidateLayout::Vertical;
+        if session.context.get_option("_vertical") != vertical {
+            session.context.set_option("_vertical", vertical);
+        }
+    }
+
     /// 触发键（属性）：把两项触发键的 rime 键名列表（逗号分隔）交给 core（解析/匹配均在 core 内）。
-    fn sync_sound_to_char_shape_prefix(&mut self) {
+    fn apply_trigger_keys(&self, session: &mut Session) {
         for (property, value) in [
             (
                 K_SOUND_TO_CHAR_SHAPE_KEY,
@@ -521,27 +668,32 @@ impl Engine {
                 self.settings.char_to_sound_shape_keys.join(","),
             ),
         ] {
-            if self.context.get_property(property).unwrap_or("") != value {
-                self.context.set_property(property, &value);
+            if session.context.get_property(property).unwrap_or("") != value {
+                session.context.set_property(property, &value);
             }
         }
     }
 
-    /// 按当前规则/选项刷新学习 mode（变化时强制重设 decoder 学习）。
+    /// 按当前规则/选项刷新学习 mode（变化时强制重设 decoder 学习；同步到全部会话）。
     fn refresh_learning_mode(&mut self) {
         let mode = self.settings.learning_mode(
             &self.learning_rules,
-            u8::from(set_allow_duplicate_single(&self.context)),
+            u8::from(
+                self.option_value(OPTION_ALLOW_DUPLICATE_SINGLE)
+                    .unwrap_or(true),
+            ),
         );
         if mode != self.learning_mode {
             self.learning_mode = mode.clone();
-            self.live.mode = mode;
+            for session in self.sessions.values_mut() {
+                session.live.mode = mode.clone();
+            }
             self.applied_learning = None;
         }
     }
 
     /// 索引变化时重设 decoder 学习（参照 `active_index` 变化：重置早证据与空码态）。
-    fn apply_learning(&mut self) {
+    fn apply_learning(&mut self, session: &mut Session) {
         let version = self.learning.index_version();
         if self.applied_learning == Some(version) {
             return;
@@ -549,8 +701,8 @@ impl Engine {
         self.applied_learning = Some(version);
         self.decoder
             .set_learning(self.learning.index().clone(), &self.learning_mode);
-        reset_early_evidence(&mut self.state);
-        self.state.empty_code_pending = None;
+        reset_early_evidence(&mut session.state);
+        session.state.empty_code_pending = None;
     }
 
     /// 提交回调（`engine:commit_text`）。
@@ -568,33 +720,37 @@ impl Engine {
     }
 
     /// UI 更新回调：preedit（缓冲文本 + 实况输入）+ 字节光标 + 候选（文本/注释/高亮）。
-    fn push_update(&self) {
+    fn push_update(&self, session: &Session) {
         let Some(host) = &self.host else {
             return;
         };
         let Some(update) = host.update else {
             return;
         };
-        let buffered = buffered_text(&self.context);
-        let live_bytes = self.context.live_input();
+        let buffered = buffered_text(&session.context);
+        let live_bytes = session.context.live_input();
         let live = String::from_utf8_lossy(live_bytes).into_owned();
         // 参照 librime `Composition::GetPreedit` + 参照 Lua 的候选 preedit：
         // 高亮候选的 preedit（「按字分码」，含缓冲前缀与音反查前缀）始终优先；
         // 组合（光标）之后的原始输入原样接在其后——左/右移动时保持按字分码，
         // 光标落在分码文本末尾、原始尾部之前。
-        let highlighted = self
+        let highlighted = session
             .context
             .composition
             .back()
             .and_then(|segment| segment.selected_candidate())
             .map(|candidate| candidate.preedit.clone())
             .unwrap_or_default();
-        let (mut preedit, cursor) = if !highlighted.is_empty() {
+        // 预编辑内容（`PreeditMode`）：候选分码（默认，历史行为）/ 原始输入 / 不显示。
+        let preedit_mode = self.settings.preedit_mode;
+        let (mut preedit, cursor) = if preedit_mode == PreeditMode::Hidden {
+            (String::new(), 0)
+        } else if preedit_mode == PreeditMode::CandidateCode && !highlighted.is_empty() {
             let cursor = highlighted.len();
             // 末段 `end` 为组合输入（含缓冲 `~` 标记）的字节位；换算到实况输入。
             let marker =
-                usize::from(!buffered.is_empty() && self.context.input().first() == Some(&b'~'));
-            let composed_end = self
+                usize::from(!buffered.is_empty() && session.context.input().first() == Some(&b'~'));
+            let composed_end = session
                 .context
                 .composition
                 .back()
@@ -618,26 +774,26 @@ impl Engine {
                 buffered.len() + usize::from(!live.is_empty())
             };
             text.push_str(&live);
-            let cursor = (prefix_length + self.context.live_caret()).min(text.len());
+            let cursor = (prefix_length + session.context.live_caret()).min(text.len());
             (text, cursor)
         };
         // 参照 `Composition::GetPreedit`：段提示插在光标处（如音反查段的「〔拼音〕」）。
-        let prompt = self
+        let prompt = session
             .context
             .composition
             .back()
             .map(|segment| segment.prompt.clone())
             .unwrap_or_default();
-        if !prompt.is_empty() {
+        if preedit_mode == PreeditMode::CandidateCode && !prompt.is_empty() {
             preedit.insert_str(cursor.min(preedit.len()), &prompt);
         }
         // 字反查段不下发预编辑：避免应用端 marked text 锁住光标（←/→ 无法移动）。
         let mut cursor = cursor;
-        if self.char_to_sound_shape_tagged() {
+        if self.char_to_sound_shape_tagged(session) {
             preedit.clear();
             cursor = 0;
         }
-        let (mut texts, mut comments, selected) = match self.context.composition.back() {
+        let (mut texts, mut comments, selected) = match session.context.composition.back() {
             Some(segment) => (
                 segment
                     .candidates
@@ -654,7 +810,7 @@ impl Engine {
             None => (Vec::new(), Vec::new(), 0),
         };
         // 参照 `_hide_candidate`：缓冲且实况输入为空时隐藏候选。
-        if self.context.get_option("_hide_candidate") {
+        if session.context.get_option("_hide_candidate") {
             texts.clear();
             comments.clear();
         }
@@ -670,8 +826,9 @@ impl Engine {
         let text_pointers: Vec<*const c_char> = texts.iter().map(|text| text.as_ptr()).collect();
         let comment_pointers: Vec<*const c_char> =
             comments.iter().map(|comment| comment.as_ptr()).collect();
-        let aux_up = CString::new(self.char_to_sound_shape.aux_up.as_str()).unwrap_or_default();
-        let aux_down = CString::new(self.char_to_sound_shape.aux_down.as_str()).unwrap_or_default();
+        let aux_up = CString::new(session.char_to_sound_shape.aux_up.as_str()).unwrap_or_default();
+        let aux_down =
+            CString::new(session.char_to_sound_shape.aux_down.as_str()).unwrap_or_default();
         // SAFETY: 指针数组与 C 串在本调用期间有效；计数与数组长度一致。
         unsafe {
             update(
@@ -715,14 +872,37 @@ pub unsafe extern "C" fn hux_engine_free(engine: *mut Engine) {
     drop(unsafe { Box::from_raw(engine) });
 }
 
-/// 重置会话（对应 fcitx5 `InputMethodEngine::activate/deactivate/reset`）。
+/// 新建会话（一个输入上下文注册时调用）；返回会话 id（`0` = 失败）。
 ///
 /// # Safety
 /// 同 [`hux_engine_free`]。
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hux_engine_reset(engine: *mut Engine) {
+pub unsafe extern "C" fn hux_engine_session_new(engine: *mut Engine) -> u64 {
+    match unsafe { engine.as_mut() } {
+        Some(engine) => engine.session_new(),
+        None => 0,
+    }
+}
+
+/// 释放会话（输入上下文销毁时调用；未知 id 忽略）。
+///
+/// # Safety
+/// 同 [`hux_engine_free`]。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hux_engine_session_free(engine: *mut Engine, session: u64) {
     if let Some(engine) = unsafe { engine.as_mut() } {
-        engine.reset();
+        engine.session_free(session);
+    }
+}
+
+/// 重置会话（对应 fcitx5 `InputMethodEngine::deactivate/reset`）。
+///
+/// # Safety
+/// 同 [`hux_engine_free`]。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hux_engine_reset(engine: *mut Engine, session: u64) {
+    if let Some(engine) = unsafe { engine.as_mut() } {
+        engine.reset(session);
     }
 }
 
@@ -772,6 +952,14 @@ pub struct HuxOptions {
     pub page_down: HuxKeyList,
     /// 数字直选（1–9；0=10）。
     pub digit_select: i32,
+    /// 候选排列：0 = 跟随全局（默认），1 = 横排，2 = 竖排。
+    pub candidate_layout: i32,
+    /// 预编辑内容：0 = 候选分码（默认），1 = 原始输入，2 = 不显示。
+    pub preedit_mode: i32,
+    /// 翻页循环：1 = 开（默认 0 = 关）。
+    pub page_cycle: i32,
+    /// 提前上屏最短保留码数（0..=20；0 = 不额外限制）。
+    pub min_retained_raw_length: i32,
 }
 
 /// 应用外部配置（fcitx5 配置界面 → C++ 壳 → 本入口）。返回 1 = 已应用。
@@ -815,6 +1003,21 @@ pub unsafe extern "C" fn hux_engine_apply_settings(
         page_up_keys: key_reprs(&options.page_up),
         page_down_keys: key_reprs(&options.page_down),
         digit_select: options.digit_select != 0,
+        candidate_layout: match options.candidate_layout {
+            1 => CandidateLayout::Horizontal,
+            2 => CandidateLayout::Vertical,
+            _ => CandidateLayout::FollowGlobal,
+        },
+        preedit_mode: match options.preedit_mode {
+            1 => PreeditMode::RawInput,
+            2 => PreeditMode::Hidden,
+            _ => PreeditMode::CandidateCode,
+        },
+        page_cycle: options.page_cycle != 0,
+        min_retained_raw_length: options
+            .min_retained_raw_length
+            .clamp(0, settings::MAX_MIN_RETAINED_RAW_LENGTH as i32)
+            as usize,
     });
     1
 }
@@ -866,6 +1069,7 @@ pub unsafe extern "C" fn hux_engine_set_option(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hux_engine_set_surrounding(
     engine: *mut Engine,
+    session: u64,
     text: *const c_char,
     cursor_chars: i32,
     valid: i32,
@@ -874,10 +1078,11 @@ pub unsafe extern "C" fn hux_engine_set_surrounding(
         return 0;
     };
     if valid == 0 || text.is_null() {
-        engine.set_surrounding(None, 0);
+        engine.set_surrounding(session, None, 0);
     } else {
         let text = unsafe { std::ffi::CStr::from_ptr(text) };
         engine.set_surrounding(
+            session,
             Some(text.to_string_lossy().as_ref()),
             cursor_chars.max(0) as usize,
         );
@@ -898,6 +1103,7 @@ pub const HUX_KEY_FORWARD_AFTER_COMMIT: i32 = 0x2;
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hux_engine_key(
     engine: *mut Engine,
+    session: u64,
     keysym: u32,
     states: u32,
     release: i32,
@@ -905,7 +1111,7 @@ pub unsafe extern "C" fn hux_engine_key(
     let Some(engine) = (unsafe { engine.as_mut() }) else {
         return 0;
     };
-    let consumed = engine.key(keysym, states, release != 0);
+    let consumed = engine.key(session, keysym, states, release != 0);
     let mut disposition = 0;
     if engine.forward_after_commit {
         disposition |= HUX_KEY_FORWARD_AFTER_COMMIT;
@@ -914,6 +1120,26 @@ pub unsafe extern "C" fn hux_engine_key(
         disposition |= HUX_KEY_CONSUMED;
     }
     disposition
+}
+
+/// 候选点击（面板候选 `CandidateWord::select`）：按全局索引选中并上屏。
+/// 返回 1 = 已处理；0 = 忽略（索引越界 / 无可选段 / 引擎不可用）。
+///
+/// # Safety
+/// `engine` 须有效（可为空指针）。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hux_engine_select_candidate(
+    engine: *mut Engine,
+    session: u64,
+    index: i32,
+) -> i32 {
+    let Some(engine) = (unsafe { engine.as_mut() }) else {
+        return 0;
+    };
+    if index < 0 {
+        return 0;
+    }
+    i32::from(engine.select_candidate(session, index as usize))
 }
 
 #[cfg(test)]
@@ -1008,13 +1234,69 @@ mod tests {
         UPDATES.lock().unwrap().last().cloned().expect("update")
     }
 
+    /// 测试用引擎包装：预建一个会话，按键/重置/点击/周边文本自动带上会话 id。
+    struct TestEngine {
+        engine: Engine,
+        session: u64,
+    }
+
+    impl TestEngine {
+        fn new(
+            host: Option<HostCallback>,
+            dirs: Vec<PathBuf>,
+            model_path: Option<PathBuf>,
+            options_dir: Option<PathBuf>,
+        ) -> Self {
+            let mut engine = Engine::new_with_dirs(host, dirs, model_path, options_dir);
+            let session = engine.session_new();
+            Self { engine, session }
+        }
+
+        fn key(&mut self, keysym: u32, states: u32, release: bool) -> bool {
+            self.engine.key(self.session, keysym, states, release)
+        }
+
+        fn reset(&mut self) {
+            self.engine.reset(self.session);
+        }
+
+        fn select_candidate(&mut self, index: usize) -> bool {
+            self.engine.select_candidate(self.session, index)
+        }
+
+        fn set_surrounding(&mut self, text: Option<&str>, cursor_chars: usize) {
+            self.engine
+                .set_surrounding(self.session, text, cursor_chars);
+        }
+
+        fn session(&self) -> &Session {
+            self.engine.sessions.get(&self.session).expect("session")
+        }
+    }
+
+    impl std::ops::Deref for TestEngine {
+        type Target = Engine;
+        fn deref(&self) -> &Engine {
+            &self.engine
+        }
+    }
+
+    impl std::ops::DerefMut for TestEngine {
+        fn deref_mut(&mut self) -> &mut Engine {
+            &mut self.engine
+        }
+    }
+
     #[test]
     fn engine_enables_learning_store() {
         let _guard = serial();
         let dir = temp_user_dir("learning");
-        let engine = Engine::new_with_dirs(host(), fixture_dirs(), None, Some(dir.clone()));
-        assert!(engine.live.store_ready, "用户目录可用时学习库应就绪");
-        assert!(engine.live.mode.starts_with("sentence-v1|rules="));
+        let engine = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
+        assert!(
+            engine.session().live.store_ready,
+            "用户目录可用时学习库应就绪"
+        );
+        assert!(engine.session().live.mode.starts_with("sentence-v1|rules="));
         assert!(
             dir.join(format!(
                 "{}.userdb",
@@ -1029,7 +1311,7 @@ mod tests {
     fn engine_applies_learning_after_key() {
         let _guard = serial();
         let dir = temp_user_dir("learning-apply");
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, Some(dir.clone()));
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
         engine.key(u32::from(b'a'), 0, false);
         assert!(engine.applied_learning.is_some(), "按键后应已应用学习索引");
         std::fs::remove_dir_all(&dir).ok();
@@ -1039,11 +1321,11 @@ mod tests {
     fn typing_shows_preedit_and_candidates() {
         let _guard = serial();
         UPDATES.lock().unwrap().clear();
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
         // 「甲/乙」共用码 ab：输入两个键后出现候选。
         assert!(engine.key(u32::from(b'a'), 0, false));
         assert!(engine.key(u32::from(b'b'), 0, false));
-        assert_eq!(engine.context.input(), b"ab");
+        assert_eq!(engine.session().context.input(), b"ab");
         let (preedit, cursor, candidates, selected, _, _) = last_update();
         assert_eq!(preedit, "ab");
         assert_eq!(cursor, 2);
@@ -1051,16 +1333,168 @@ mod tests {
         assert_eq!(selected, 0);
     }
 
+    /// 会话隔离：两个输入上下文各自维护组合，互不影响。
+    #[test]
+    fn sessions_are_isolated() {
+        let _guard = serial();
+        COMMITS.lock().unwrap().clear();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let first = engine.session_new();
+        let second = engine.session_new();
+        assert_ne!(first, second, "会话 id 应递增且不同");
+        for code in *b"ab" {
+            assert!(engine.key(first, u32::from(code), 0, false));
+        }
+        for code in *b"ja" {
+            assert!(engine.key(second, u32::from(code), 0, false));
+        }
+        assert_eq!(engine.sessions[&first].context.input(), b"ab");
+        assert_eq!(engine.sessions[&second].context.input(), b"ja");
+        // 一个会话上屏不影响另一个。
+        assert!(engine.key(first, 0x20, 0, false));
+        assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "甲");
+        assert_eq!(engine.sessions[&second].context.input(), b"ja");
+    }
+
+    /// 重置直接丢弃组合（不提交），面板清空；失焦的提交由核心/前端处理（不在本层）。
+    #[test]
+    fn reset_discards_composition_without_commit() {
+        let _guard = serial();
+        COMMITS.lock().unwrap().clear();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let session = engine.session_new();
+        for code in *b"ab" {
+            assert!(engine.key(session, u32::from(code), 0, false));
+        }
+        engine.reset(session);
+        assert!(COMMITS.lock().unwrap().is_empty(), "重置不应提交组合");
+        assert!(engine.sessions[&session].context.input().is_empty());
+        let (preedit, _, candidates, _, aux_up, aux_down) = last_update();
+        assert!(preedit.is_empty(), "预编辑应清空");
+        assert!(candidates.is_empty(), "候选应清空");
+        assert!(aux_up.is_empty() && aux_down.is_empty(), "辅助两排应清空");
+    }
+
+    /// 会话释放：销毁后按键与点击被忽略。
+    #[test]
+    fn session_free_drops_state() {
+        let _guard = serial();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let session = engine.session_new();
+        assert!(engine.key(session, u32::from(b'a'), 0, false));
+        engine.session_free(session);
+        assert!(!engine.sessions.contains_key(&session));
+        assert!(
+            !engine.key(session, u32::from(b'a'), 0, false),
+            "已释放会话忽略按键"
+        );
+        assert!(!engine.select_candidate(session, 0), "已释放会话忽略点击");
+    }
+
+    /// 运行时开关（状态菜单）作用于全部会话；新会话继承当前值（含无存储情形）。
+    #[test]
+    fn runtime_option_applies_to_all_sessions() {
+        let _guard = serial();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let first = engine.session_new();
+        let second = engine.session_new();
+        assert!(engine.set_option_value("full_shape", true));
+        assert!(engine.sessions[&first].context.get_option("full_shape"));
+        assert!(engine.sessions[&second].context.get_option("full_shape"));
+        let third = engine.session_new();
+        assert!(
+            engine.sessions[&third].context.get_option("full_shape"),
+            "新会话应继承当前开关"
+        );
+    }
+
+    /// 配置变更（设置页）作用于已存在的会话。
+    #[test]
+    fn apply_settings_reaches_existing_sessions() {
+        let _guard = serial();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let session = engine.session_new();
+        engine.apply_settings(Settings {
+            full_shape: true,
+            ascii_punct: true,
+            ..Default::default()
+        });
+        assert!(engine.sessions[&session].context.get_option("full_shape"));
+        assert!(engine.sessions[&session].context.get_option("ascii_punct"));
+    }
+
     #[test]
     fn space_commits_highlighted_candidate() {
         let _guard = serial();
         COMMITS.lock().unwrap().clear();
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
         assert!(engine.key(u32::from(b'a'), 0, false));
         assert!(engine.key(u32::from(b'b'), 0, false));
         assert!(engine.key(0x20, 0, false)); // space
         assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "甲");
-        assert!(engine.context.input().is_empty());
+        assert!(engine.session().context.input().is_empty());
+    }
+
+    /// 候选点击（面板 `CandidateWord::select`）：按全局索引选中并上屏。
+    #[test]
+    fn candidate_click_commits_selected_candidate() {
+        let _guard = serial();
+        COMMITS.lock().unwrap().clear();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
+        for code in *b"ab" {
+            engine.key(u32::from(code), 0, false);
+        }
+        let (_, _, candidates, _, _, _) = last_update();
+        assert!(candidates.len() >= 2, "夹具 ab 应有至少 2 个候选");
+        let second = candidates[1].clone();
+        assert!(engine.select_candidate(1), "点击页内候选应被处理");
+        assert_eq!(COMMITS.lock().unwrap().last().unwrap(), &second);
+        assert!(
+            engine.session().context.input().is_empty(),
+            "上屏后组合应清空"
+        );
+    }
+
+    /// 候选点击越界（如列表已被刷新）：忽略，不产生提交、组合不变。
+    #[test]
+    fn candidate_click_out_of_range_ignored() {
+        let _guard = serial();
+        COMMITS.lock().unwrap().clear();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
+        for code in *b"ab" {
+            engine.key(u32::from(code), 0, false);
+        }
+        assert!(!engine.select_candidate(99));
+        assert!(COMMITS.lock().unwrap().is_empty());
+        assert_eq!(engine.session().context.input(), b"ab");
+    }
+
+    /// 宿主自发提交接学习：Tab 选字后由宿主链提交（组合中大写字母），事件应落库。
+    #[test]
+    fn host_commit_records_tab_learning() {
+        let _guard = serial();
+        let dir = temp_user_dir("host-learning");
+        COMMITS.lock().unwrap().clear();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
+        for code in *b"ab" {
+            engine.key(u32::from(code), 0, false);
+        }
+        assert!(engine.key(0xff09, 0, false), "Tab 应被消费");
+        let before = engine.learning.index_version();
+        // 大写 A（0x41）：core 交宿主链 `char_handler`，先提交组合再交应用。
+        engine.key(0x41, 0, false);
+        assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "乙");
+        assert_ne!(
+            engine.learning.index_version(),
+            before,
+            "宿主提交应写入学习库"
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// 上翻页键：候选菜单可见即消费（首屏也不落作标点/输入）。
@@ -1069,7 +1503,7 @@ mod tests {
         let _guard = serial();
         COMMITS.lock().unwrap().clear();
         UPDATES.lock().unwrap().clear();
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
         for code in *b"ja" {
             engine.key(u32::from(code), 0, false);
         }
@@ -1083,7 +1517,7 @@ mod tests {
         let _guard = serial();
         COMMITS.lock().unwrap().clear();
         UPDATES.lock().unwrap().clear();
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
         engine.apply_settings(Settings {
             digit_select: true,
             page_size: 10,
@@ -1104,18 +1538,18 @@ mod tests {
     fn sound_to_char_shape_accepts_multiple_trigger_keys() {
         let _guard = serial();
         UPDATES.lock().unwrap().clear();
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
         engine.apply_settings(Settings {
             sound_to_char_shape_keys: vec!["grave".to_string(), "semicolon".to_string()],
             ..Default::default()
         });
         // 第二绑定（`;`）触发，入段字符为 `;`。
         assert!(engine.key(0x3b, 0, false), "; 应被消费");
-        assert_eq!(engine.context.input(), b";");
+        assert_eq!(engine.session().context.input(), b";");
         engine.reset();
         // 第一绑定（`` ` ``）触发，入段字符为 `` ` ``。
         assert!(engine.key(0x60, 0, false), "` 应被消费");
-        assert_eq!(engine.context.input(), b"`");
+        assert_eq!(engine.session().context.input(), b"`");
     }
 
     /// 数字直选关闭时：数字仍是编码字符（选重后缀），不直接上屏。
@@ -1123,7 +1557,7 @@ mod tests {
     fn digit_select_off_keeps_rank_suffix() {
         let _guard = serial();
         COMMITS.lock().unwrap().clear();
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
         engine.apply_settings(Settings {
             digit_select: false,
             ..Default::default()
@@ -1136,7 +1570,7 @@ mod tests {
             COMMITS.lock().unwrap().is_empty(),
             "关闭时：数字不应直接上屏"
         );
-        assert!(engine.context.input().ends_with(b"2"));
+        assert!(engine.session().context.input().ends_with(b"2"));
     }
 
     /// 数字直选：页大小 5 时 `0`（第 10 个）不在页内，按普通数字输入处理。
@@ -1144,7 +1578,7 @@ mod tests {
     fn digit_select_out_of_page_falls_through() {
         let _guard = serial();
         COMMITS.lock().unwrap().clear();
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
         engine.apply_settings(Settings {
             digit_select: true,
             ..Default::default()
@@ -1154,14 +1588,14 @@ mod tests {
         }
         assert!(engine.key(u32::from(b'0'), 0, false));
         assert!(COMMITS.lock().unwrap().is_empty(), "页外数字不应直接上屏");
-        assert!(engine.context.input().ends_with(b"0"));
+        assert!(engine.session().context.input().ends_with(b"0"));
     }
 
     /// 运行时开关（状态菜单）：白名单读写往返，未知选项拒绝。
     #[test]
     fn runtime_option_roundtrip_and_whitelist() {
         let _guard = serial();
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
         for name in RUNTIME_OPTIONS {
             let value = engine.option_value(name).expect("白名单选项");
             assert!(engine.set_option_value(name, !value), "{name} 应可设置");
@@ -1176,12 +1610,15 @@ mod tests {
     fn runtime_option_persists_to_store() {
         let _guard = serial();
         let dir = temp_user_dir("runtime-option");
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, Some(dir.clone()));
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
         assert!(engine.set_option_value("full_shape", true));
         let text = std::fs::read_to_string(dir.join(options::OPTIONS_FILE)).expect("options.yaml");
         assert!(text.contains("full_shape: true"), "{text}");
-        let restarted = Engine::new_with_dirs(host(), fixture_dirs(), None, Some(dir.clone()));
-        assert!(restarted.context.get_option("full_shape"), "重启后应保持");
+        let restarted = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
+        assert!(
+            restarted.session().context.get_option("full_shape"),
+            "重启后应保持"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -1195,13 +1632,13 @@ mod tests {
             "options:\n  full_shape: true\n",
         )
         .expect("write");
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, Some(dir.clone()));
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
         engine.apply_settings(Settings {
             full_shape: false,
             ..Default::default()
         });
         assert!(
-            engine.context.get_option("full_shape"),
+            engine.session().context.get_option("full_shape"),
             "options.yaml 应优先于设置"
         );
         std::fs::remove_dir_all(&dir).ok();
@@ -1212,27 +1649,27 @@ mod tests {
     fn ffi_runtime_option_roundtrip() {
         let _guard = serial();
         let dir = temp_user_dir("ffi-option");
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, Some(dir.clone()));
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
         let name = CString::new("full_shape").expect("name");
         assert_eq!(
-            unsafe { hux_engine_option_value(&mut engine, name.as_ptr()) },
+            unsafe { hux_engine_option_value(&mut *engine, name.as_ptr()) },
             0
         );
         assert_eq!(
-            unsafe { hux_engine_set_option(&mut engine, name.as_ptr(), 1) },
+            unsafe { hux_engine_set_option(&mut *engine, name.as_ptr(), 1) },
             1
         );
         assert_eq!(
-            unsafe { hux_engine_option_value(&mut engine, name.as_ptr()) },
+            unsafe { hux_engine_option_value(&mut *engine, name.as_ptr()) },
             1
         );
         let unknown = CString::new("not_an_option").expect("name");
         assert_eq!(
-            unsafe { hux_engine_option_value(&mut engine, unknown.as_ptr()) },
+            unsafe { hux_engine_option_value(&mut *engine, unknown.as_ptr()) },
             -1
         );
         assert_eq!(
-            unsafe { hux_engine_set_option(&mut engine, unknown.as_ptr(), 1) },
+            unsafe { hux_engine_set_option(&mut *engine, unknown.as_ptr(), 1) },
             0
         );
         std::fs::remove_dir_all(&dir).ok();
@@ -1241,28 +1678,28 @@ mod tests {
     #[test]
     fn modified_keys_pass_through() {
         let _guard = serial();
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
         assert!(!engine.key(u32::from(b'a'), FCITX_CTRL, false)); // Ctrl+a 交宿主
     }
 
     #[test]
     fn key_releases_pass_through() {
         let _guard = serial();
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
         assert!(!engine.key(u32::from(b'a'), 0, true));
     }
 
     #[test]
     fn idle_return_passes_through() {
         let _guard = serial();
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
         assert!(!engine.key(0xff0d, 0, false)); // Return 空闲交宿主
     }
 
     #[test]
     fn idle_editing_keys_pass_through() {
         let _guard = serial();
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
         // BackSpace/Delete/Left/Right/Up/Down/Home/End/Page_Up/Page_Down/Escape/Tab
         for keysym in [
             0xff08, 0xffff, 0xff51, 0xff53, 0xff52, 0xff54, 0xff50, 0xff57, 0xff55, 0xff56, 0xff1b,
@@ -1279,7 +1716,7 @@ mod tests {
     fn composing_left_right_move_caret_and_toggle_candidates() {
         let _guard = serial();
         UPDATES.lock().unwrap().clear();
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
         assert!(engine.key(u32::from(b'a'), 0, false));
         assert!(engine.key(u32::from(b'b'), 0, false));
         // ←：光标左移；组合按 caret 前缀重建（候选清空）
@@ -1299,7 +1736,7 @@ mod tests {
     fn composing_up_down_move_highlight() {
         let _guard = serial();
         UPDATES.lock().unwrap().clear();
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
         assert!(engine.key(u32::from(b'a'), 0, false));
         assert!(engine.key(u32::from(b'b'), 0, false));
         // ↓：高亮下移；↑ 到首项
@@ -1315,7 +1752,7 @@ mod tests {
     fn composing_backspace_deletes_input_and_clears_composition() {
         let _guard = serial();
         UPDATES.lock().unwrap().clear();
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
         assert!(engine.key(u32::from(b'a'), 0, false));
         assert!(engine.key(u32::from(b'b'), 0, false));
         // 退格：删除输入
@@ -1335,7 +1772,7 @@ mod tests {
     fn punctuation_commits_when_idle() {
         let _guard = serial();
         COMMITS.lock().unwrap().clear();
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
         // symbols.yaml half_shape："." → 。
         assert!(engine.key(0x2e, 0, false), "period 应被消费");
         assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "。");
@@ -1345,19 +1782,19 @@ mod tests {
     fn punctuation_appends_to_composition() {
         let _guard = serial();
         COMMITS.lock().unwrap().clear();
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
         assert!(engine.key(u32::from(b'a'), 0, false));
         assert!(engine.key(u32::from(b'b'), 0, false));
         assert!(engine.key(0x2c, 0, false), "comma 应被消费");
         assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "甲，");
-        assert!(engine.context.input().is_empty());
+        assert!(engine.session().context.input().is_empty());
     }
 
     #[test]
     fn punctuation_pair_alternates() {
         let _guard = serial();
         COMMITS.lock().unwrap().clear();
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
         // apostrophe：'‘' / '’'
         for text in ["‘", "’"] {
             assert!(engine.key(0x27, 0, false));
@@ -1368,7 +1805,7 @@ mod tests {
     #[test]
     fn punctuation_passes_unmapped_space() {
         let _guard = serial();
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
         assert!(!engine.key(0x20, 0, false), "空闲空格交宿主");
     }
 
@@ -1380,7 +1817,7 @@ mod tests {
         // 消费该键并以 forwardKey 重发，保证「候选 → 字母」送达顺序。
         COMMITS.lock().unwrap().clear();
         UPDATES.lock().unwrap().clear();
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
         assert!(engine.key(u32::from(b'a'), 0, false));
         assert!(!engine.forward_after_commit, "普通输入不应请求转发");
         assert!(engine.key(u32::from(b'b'), 0, false));
@@ -1393,13 +1830,16 @@ mod tests {
             "提交且未消费 → 宿主应消费并重发该键"
         );
         assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "甲");
-        assert!(engine.context.input().is_empty(), "组合已提交并清空");
+        assert!(
+            engine.session().context.input().is_empty(),
+            "组合已提交并清空"
+        );
     }
 
     #[test]
     fn idle_uppercase_does_not_request_forward() {
         let _guard = serial();
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
         assert!(!engine.key(0x41, FCITX_SHIFT, false));
         assert!(!engine.forward_after_commit);
     }
@@ -1407,26 +1847,26 @@ mod tests {
     #[test]
     fn apply_settings_switches_context_options() {
         let _guard = serial();
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
         engine.apply_settings(Settings {
             full_shape: true,
             ascii_punct: true,
             ..Default::default()
         });
-        assert!(engine.context.get_option("full_shape"));
-        assert!(engine.context.get_option("ascii_punct"));
+        assert!(engine.session().context.get_option("full_shape"));
+        assert!(engine.session().context.get_option("ascii_punct"));
     }
 
     #[test]
     fn apply_settings_disables_learning_mode() {
         let _guard = serial();
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
         engine.apply_settings(Settings {
             tab_learning: false,
             ..Default::default()
         });
         assert!(
-            engine.live.mode.is_empty(),
+            engine.session().live.mode.is_empty(),
             "关闭 Tab 学习 → 学习 mode 为空"
         );
     }
@@ -1459,26 +1899,126 @@ mod tests {
             page_up: key_list(&[(0x2c, 0)]),
             page_down: key_list(&[(0x2e, 0), (0x5d, 0)]),
             digit_select: 1,
+            candidate_layout: 0,
+            preedit_mode: 0,
+            page_cycle: 0,
+            min_retained_raw_length: 0,
         }
     }
 
     #[test]
     fn ffi_apply_settings_maps_engine_options() {
         let _guard = serial();
-        let engine = unsafe { hux_engine_new(std::ptr::null()) };
-        assert!(!engine.is_null());
+        let dir = temp_user_dir("ffi-settings");
+        // 独立目录（无 options.yaml）：设置缺省即生效值，不受本机用户配置影响。
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, Some(dir.clone()));
         let options = ffi_options();
-        assert_eq!(unsafe { hux_engine_apply_settings(engine, &options) }, 1);
-        let state = unsafe { &mut *engine };
-        assert!(!state.settings.early_commit);
-        assert!(state.context.get_option("full_shape"));
-        assert!(state.context.get_option("ascii_punct"));
+        assert_eq!(
+            unsafe { hux_engine_apply_settings(&mut engine, &options) },
+            1
+        );
+        assert!(!engine.settings.early_commit);
+        let session_id = engine.session_new();
+        let session = engine.sessions.get(&session_id).expect("session");
+        assert!(session.context.get_option("full_shape"));
+        assert!(session.context.get_option("ascii_punct"));
         assert!(
-            state.live.mode.is_empty(),
+            session.live.mode.is_empty(),
             "tab_learning=0 → 学习 mode 为空"
         );
-        assert_eq!(state.settings.high_freq_limit, 800);
-        unsafe { hux_engine_free(engine) };
+        assert_eq!(engine.settings.high_freq_limit, 800);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// FFI：新增四项设置映射（候选排列 / 预编辑 / 翻页循环 / 最短保留码数）。
+    #[test]
+    fn ffi_apply_settings_maps_new_options() {
+        let _guard = serial();
+        let dir = temp_user_dir("ffi-new-options");
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, Some(dir.clone()));
+        let options = HuxOptions {
+            candidate_layout: 2,
+            preedit_mode: 2,
+            page_cycle: 1,
+            min_retained_raw_length: 4,
+            ..ffi_options()
+        };
+        assert_eq!(
+            unsafe { hux_engine_apply_settings(&mut engine, &options) },
+            1
+        );
+        assert_eq!(engine.settings.candidate_layout, CandidateLayout::Vertical);
+        assert_eq!(engine.settings.preedit_mode, PreeditMode::Hidden);
+        assert!(engine.host_options.page_cycle);
+        let session_id = engine.session_new();
+        let session = engine.sessions.get(&session_id).expect("session");
+        assert!(
+            session.context.get_option("_vertical"),
+            "竖排应写入 `_vertical`"
+        );
+        assert_eq!(session.min_retained, Some(4));
+        // 越界钳制（0..=20）。
+        let clamped = HuxOptions {
+            min_retained_raw_length: 999,
+            ..ffi_options()
+        };
+        assert_eq!(
+            unsafe { hux_engine_apply_settings(&mut engine, &clamped) },
+            1
+        );
+        assert_eq!(
+            engine.settings.min_retained_raw_length,
+            settings::MAX_MIN_RETAINED_RAW_LENGTH
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 候选竖排：作用于已存在会话（host 读取 `_vertical`）。
+    #[test]
+    fn candidate_layout_applies_to_existing_sessions() {
+        let _guard = serial();
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
+        engine.apply_settings(Settings {
+            candidate_layout: CandidateLayout::Vertical,
+            ..Default::default()
+        });
+        assert!(engine.session().context.get_option("_vertical"));
+        engine.apply_settings(Settings::default());
+        assert!(!engine.session().context.get_option("_vertical"));
+    }
+
+    /// 预编辑内容三态：候选分码（默认）/ 原始输入 / 不显示。
+    #[test]
+    fn preedit_mode_variants() {
+        let _guard = serial();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
+        let type_abcd = |engine: &mut TestEngine| {
+            for code in *b"abcd" {
+                engine.key(u32::from(code), 0, false);
+            }
+        };
+        type_abcd(&mut engine);
+        assert_eq!(last_update().0, "ab cd", "默认：候选分码");
+        engine.apply_settings(Settings {
+            preedit_mode: PreeditMode::RawInput,
+            ..Default::default()
+        });
+        engine.reset();
+        UPDATES.lock().unwrap().clear();
+        type_abcd(&mut engine);
+        assert_eq!(last_update().0, "abcd", "原始输入");
+        engine.apply_settings(Settings {
+            preedit_mode: PreeditMode::Hidden,
+            ..Default::default()
+        });
+        engine.reset();
+        UPDATES.lock().unwrap().clear();
+        type_abcd(&mut engine);
+        let (preedit, cursor, candidates, _, _, _) = last_update();
+        assert!(preedit.is_empty(), "不显示：预编辑为空");
+        assert_eq!(cursor, 0);
+        assert!(!candidates.is_empty(), "候选不受影响");
     }
 
     #[test]
@@ -1531,14 +2071,14 @@ mod tests {
     fn reset_clears_panel() {
         let _guard = serial();
         UPDATES.lock().unwrap().clear();
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
         engine.key(u32::from(b'a'), 0, false);
         engine.reset();
         let (preedit, _, candidates, _, _, _) =
             UPDATES.lock().unwrap().last().cloned().expect("update");
         assert!(preedit.is_empty());
         assert!(candidates.is_empty());
-        assert!(engine.context.input().is_empty());
+        assert!(engine.session().context.input().is_empty());
     }
 
     /// 音反查（⑧-1）端到端：设置 → 前缀识别 → 候选/注释 → 预编辑提示 → 空格上屏。
@@ -1551,7 +2091,7 @@ mod tests {
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/sound_to_char_shape"),
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data"),
         ];
-        let mut engine = Engine::new_with_dirs(host(), dirs, None, None);
+        let mut engine = TestEngine::new(host(), dirs, None, None);
         assert!(engine.key(0x3a, FCITX_ALT, false), "音反查触发键应被消费");
         for code in *b"zho" {
             assert!(engine.key(u32::from(code), 0, false), "音反查输入应被消费");
@@ -1586,13 +2126,13 @@ mod tests {
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/sound_to_char_shape"),
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data"),
         ];
-        let mut engine = Engine::new_with_dirs(host(), dirs, None, None);
+        let mut engine = TestEngine::new(host(), dirs, None, None);
         // 应用侧周边文本「中欧中兴」，光标在第 2 个字符后（锚点 = 2）。
         engine.set_surrounding(Some("中欧中兴"), 2);
         // 默认 Alt+"（带修饰）→ 组合无默认候选；上排「咅」、下排「虍」。
         assert!(engine.key(0x22, FCITX_ALT, false), "Alt+\" 应被消费");
         let (preedit, _, candidates, _, up, down) = last_update();
-        assert_eq!(engine.context.input(), b"\"");
+        assert_eq!(engine.session().context.input(), b"\"");
         assert!(preedit.is_empty(), "查码段不下发预编辑：{preedit:?}");
         assert!(
             candidates.is_empty(),
@@ -1612,7 +2152,7 @@ mod tests {
         assert_eq!(down, "虍 d/dg/dgs");
         // 其它键：退出查码段并照常处理。
         assert!(engine.key(u32::from(b'a'), 0, false), "普通键照常处理");
-        assert_eq!(engine.context.input(), b"a");
+        assert_eq!(engine.session().context.input(), b"a");
         // 音反查：带修饰键（默认 Alt+:）**不给**默认候选；单字符键（;）才给。
         engine.reset();
         assert!(engine.key(0x3a, FCITX_ALT, false), "Alt+: 应被消费");
@@ -1677,7 +2217,7 @@ mod tests {
     fn char_to_sound_shape_without_surrounding_shows_nothing() {
         let _guard = serial();
         UPDATES.lock().unwrap().clear();
-        let mut engine = Engine::new_with_dirs(host(), char_to_sound_shape_dirs(), None, None);
+        let mut engine = TestEngine::new(host(), char_to_sound_shape_dirs(), None, None);
         engine.set_surrounding(None, 0);
         assert!(engine.key(0x22, FCITX_ALT, false), "Alt+\" 应被消费");
         let (_, _, _, _, up, down) = last_update();
@@ -1690,7 +2230,7 @@ mod tests {
     fn char_to_sound_shape_refreshes_when_surrounding_available() {
         let _guard = serial();
         UPDATES.lock().unwrap().clear();
-        let mut engine = Engine::new_with_dirs(host(), char_to_sound_shape_dirs(), None, None);
+        let mut engine = TestEngine::new(host(), char_to_sound_shape_dirs(), None, None);
         engine.set_surrounding(None, 0);
         assert!(engine.key(0x22, FCITX_ALT, false), "Alt+\" 应被消费");
         engine.set_surrounding(Some("中欧中兴"), 2);
@@ -1705,7 +2245,7 @@ mod tests {
     fn preedit_segments_word_codes() {
         let _guard = serial();
         UPDATES.lock().unwrap().clear();
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
         for code in *b"abcd" {
             engine.key(u32::from(code), 0, false);
         }
@@ -1720,7 +2260,7 @@ mod tests {
     fn preedit_single_char_is_unsegmented() {
         let _guard = serial();
         UPDATES.lock().unwrap().clear();
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
         for code in *b"ab" {
             engine.key(u32::from(code), 0, false);
         }
@@ -1734,7 +2274,7 @@ mod tests {
     fn preedit_keeps_segmented_codes_while_moving_caret() {
         let _guard = serial();
         UPDATES.lock().unwrap().clear();
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
         for code in *b"abcdja" {
             engine.key(u32::from(code), 0, false);
         }
@@ -1765,8 +2305,11 @@ mod tests {
         assert!(!engine.is_null());
         let status = unsafe { hux_engine_status(engine) };
         assert!(!status.is_null());
-        let consumed = unsafe { hux_engine_key(engine, u32::from(b'a'), 0, 0) };
+        let session = unsafe { hux_engine_session_new(engine) };
+        assert_ne!(session, 0, "会话创建应返回有效 id");
+        let consumed = unsafe { hux_engine_key(engine, session, u32::from(b'a'), 0, 0) };
         assert_eq!(consumed & HUX_KEY_CONSUMED, HUX_KEY_CONSUMED);
+        unsafe { hux_engine_session_free(engine, session) };
         unsafe { hux_engine_free(engine) };
     }
 }

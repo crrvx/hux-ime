@@ -17,6 +17,31 @@ use hux_core::interaction::{
 use hux_core::key::KeyEvent;
 use hux_core::lexicon::DEFAULT_HIGH_FREQ_LIMIT;
 
+/// 候选排列（参照 `style` 语义）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CandidateLayout {
+    /// 跟随 fcitx5 全局「候选竖排」设置（默认，不设布局提示；选字键语义维持横排）。
+    #[default]
+    FollowGlobal,
+    Horizontal,
+    Vertical,
+}
+
+/// 预编辑内容（桌面显示；默认候选分码，即历史行为）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PreeditMode {
+    /// 高亮候选分码优先（现状）。
+    #[default]
+    CandidateCode,
+    /// 原始输入（缓冲 + 实况输入）。
+    RawInput,
+    /// 不显示预编辑。
+    Hidden,
+}
+
+/// 最短保留码数上限（配置页 `MinRetainedRawLength` 的钳制值）。
+pub const MAX_MIN_RETAINED_RAW_LENGTH: usize = 20;
+
 /// 虎句方案引擎设置（与参照 schema / fcitx5 配置界面一一对应）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
@@ -44,6 +69,15 @@ pub struct Settings {
     pub page_down_keys: Vec<String>,
     /// 数字直选（addon 扩展，默认开）：菜单可见时数字直接上屏当前页候选（1–9；0=10）。
     pub digit_select: bool,
+    /// 候选排列（横排/竖排）。
+    pub candidate_layout: CandidateLayout,
+    /// 预编辑内容（候选分码/原始输入/不显示）。
+    pub preedit_mode: PreeditMode,
+    /// 翻页循环（参照 `menu/page_down_cycle`，默认关）。
+    pub page_cycle: bool,
+    /// 提前上屏/空码上屏的最短保留编码数（参照 `tiger_sentence/min_retained_raw_length`；
+    /// 0 = 不额外限制；钳制到 `0..=`[`MAX_MIN_RETAINED_RAW_LENGTH`]）。
+    pub min_retained_raw_length: usize,
 }
 
 impl Default for Settings {
@@ -62,6 +96,10 @@ impl Default for Settings {
             page_up_keys: vec!["minus".to_string(), "bracketleft".to_string()],
             page_down_keys: vec!["equal".to_string(), "bracketright".to_string()],
             digit_select: true,
+            candidate_layout: CandidateLayout::FollowGlobal,
+            preedit_mode: PreeditMode::CandidateCode,
+            page_cycle: false,
+            min_retained_raw_length: 0,
         }
     }
 }
@@ -77,6 +115,14 @@ impl Settings {
             ("ascii_punct", self.ascii_punct),
             (OPTION_DIGIT_SELECT, self.digit_select),
         ]
+    }
+
+    /// 单项设置缺省（[`Settings::option_defaults`] 的查询形式）。
+    pub fn option_default(&self, name: &str) -> Option<bool> {
+        self.option_defaults()
+            .into_iter()
+            .find(|(key, _)| *key == name)
+            .map(|(_, value)| value)
     }
 
     /// 存储层缺省：可持久化的核心开关（`options.yaml` 缺失键回退到这些值）。
@@ -104,6 +150,12 @@ impl Settings {
         )
     }
 
+    /// 最短保留码数（钳制到 `0..=`[`MAX_MIN_RETAINED_RAW_LENGTH`]）。
+    pub fn min_retained(&self) -> usize {
+        self.min_retained_raw_length
+            .min(MAX_MIN_RETAINED_RAW_LENGTH)
+    }
+
     /// 宿主选项（翻页键与页大小）：键名解析失败项忽略；页大小钳制到 `1..=MAX_PAGE_SIZE`。
     pub fn host_options(&self) -> HostOptions {
         let parse = |reprs: &[String]| -> Vec<KeyEvent> {
@@ -116,6 +168,7 @@ impl Settings {
             page_size: self.page_size.clamp(1, MAX_PAGE_SIZE),
             page_up_keys: parse(&self.page_up_keys),
             page_down_keys: parse(&self.page_down_keys),
+            page_cycle: self.page_cycle,
         }
     }
 }
@@ -152,6 +205,20 @@ mod tests {
             vec!["Alt+quotedbl".to_string()]
         );
         assert!(settings.digit_select);
+        assert_eq!(settings.candidate_layout, CandidateLayout::FollowGlobal);
+        assert_eq!(settings.preedit_mode, PreeditMode::CandidateCode);
+        assert!(!settings.page_cycle);
+        assert_eq!(settings.min_retained_raw_length, 0);
+        assert_eq!(settings.min_retained(), 0);
+    }
+
+    #[test]
+    fn min_retained_clamps_upper_bound() {
+        let settings = Settings {
+            min_retained_raw_length: 999,
+            ..Default::default()
+        };
+        assert_eq!(settings.min_retained(), MAX_MIN_RETAINED_RAW_LENGTH);
     }
 
     #[test]

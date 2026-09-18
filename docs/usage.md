@@ -30,6 +30,15 @@ fcitx5 -r -d
 
 ## 安装
 
+一键安装（构建 → 装插件与随包数据 → 重启 fcitx5）：
+
+```sh
+./install.sh            # 预览将执行的命令：./install.sh --dry-run
+```
+
+脚本结尾会提示自行获取 n-gram 模型（见下）。\
+手工安装（自定义前缀或打包时参考）：
+
 依赖：CMake 3.20+，以及提供 CMake 包 `Fcitx5Core` 的 fcitx5 开发文件。 \
 （Arch：`fcitx5`；Fedora：`fcitx5-devel`；Debian/Ubuntu：`libfcitx5core-dev`）
 
@@ -68,6 +77,7 @@ cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
 ## 使用
 
 - `空格` 高亮项上屏
+- 鼠标点击候选：选中并上屏
 - `Left/Right` 码标移动
 - `Up/Down` 或 `Tab / Shift+Tab` 高亮选择
 - `-/=` 或 `[/]` 或 `PgUp/PgDn` 翻页
@@ -75,10 +85,15 @@ cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
 - `Alt+:` 音反查
 - `Alt+"` 字反查
 
+![虎句](images/虎句.png)
+
 配置项见 [`config.md`](config.md)（可在配置工具的「虎虚」页修改）。
 
-状态菜单「**虎虚**」子菜单可随时切换：提前上屏、提前上屏至预编辑、单字重码组句、全角标点、
-数字直选（写入 `tiger_sentence.options.yaml`，重启后保持）。
+状态菜单「**虎虚**」子菜单可随时切换： \
+提前上屏、提前上屏至预编辑、单字重码组句、全角标点、数字直选 \
+（写入 `tiger_sentence.options.yaml`，重启后保持）。
+
+![虍](images/虍.png)
 
 ### 音反查
 
@@ -89,6 +104,8 @@ cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
 ```
 Alt+:  zhongguo   →   :zhong guo〔拼音〕   候选：中国 …
 ```
+
+![音反查](images/音反查.png)
 
 ### 字反查
 
@@ -104,7 +121,18 @@ Alt+:  zhongguo   →   :zhong guo〔拼音〕   候选：中国 …
 虍 d/dg/dgs
 ```
 
+![字反查](images/字反查.png)
+
 ## 卸载（无残留）
+
+一键卸载：
+
+```sh
+./uninstall.sh          # 移除系统文件，保留用户数据（选项/学习库/模型）
+./uninstall.sh --purge  # 连用户数据一起清除
+```
+
+手工步骤：
 
 ```sh
 # 系统级

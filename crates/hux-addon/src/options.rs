@@ -113,6 +113,15 @@ impl OptionsStore {
         self.options.sync(context);
     }
 
+    /// 单项生效值（持久化值 → 设置缺省）；未知项返回 `None`。
+    pub fn value(&self, name: &str) -> Option<bool> {
+        self.options
+            .values
+            .get(name)
+            .or_else(|| self.options.defaults.get(name))
+            .copied()
+    }
+
     /// 选项变更（上下文事件）：记录；有变更则保存并维护错误属性。
     pub fn observe(&mut self, context: &mut Context, name: &str) {
         if !self.options.observe(context, name) {
