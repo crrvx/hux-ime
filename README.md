@@ -21,20 +21,25 @@
 
 ## 致谢
 
-虎句方案（虎爪 / 虎整句）由 [B佬（lvyww）](https://github.com/lvyww) 创作；本项目的语义、数据与金样
-均以其 [虎爪-rime](https://github.com/lvyww/tiger-sentense-rime) 为参照，谨致谢意。
+**虎码** 由 [B佬（lvyww）](https://github.com/lvyww) 创作。感谢以**B佬**为首的一众虎码同志对虎码的维护与贡献。
 
-hux-ime 是兴趣驱动的第三方 fcitx5 适配，与上游无隶属关系。
+本项目的语义、数据与金样均以[虎爪-rime](https://github.com/lvyww/tiger-sentense-rime) 为参照，谨致谢意。
 
-虎码信息汇总：
+hux-ime 是兴趣驱动的 fcitx5 社区方案，与上游无隶属关系。
+
+## 虎码信息汇总
 
 - 虎码官网：[tiger-code.com](https://www.tiger-code.com)
 - 虎码资源：[huma.ysepan.com](https://huma.ysepan.com)
-<br><br>
+
+<br>
+
 - 官方 · [虎娘](https://github.com/lvyww/tigirl)
 - 官方 · [虎爪](https://github.com/lvyww/tigerclaw)
 - 官方 · [虎爪-rime](https://github.com/lvyww/tiger-sentense-rime)（本方案的参照实现，GPL-3.0）
-<br><br>
+
+<br>
+
 - 社区 · [虎符](https://github.com/LeafHW/hufu-ime-rust)
 - 社区 · [魔虎音形](https://github.com/fcxxxz/rime-mohu)
 - 社区 · [hux](https://github.com/crrvx/hux-ime)（本方案）
