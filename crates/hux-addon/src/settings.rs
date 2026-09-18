@@ -4,13 +4,15 @@
 //! addon 配置模型（Rust 半）：外部设置（fcitx5 配置界面 / 测试）与内建缺省。
 //!
 //! 合并顺序照参照 schema 语义：**`tiger_sentence.options.yaml`（user 覆盖） > 本设置 > 内建缺省**；
-//! 三项早提交选项由存储层负责覆盖（C++ 对话框经 ABI 传入后将成为存储层缺省，待接线），
-//! `full_shape`/`ascii_punct` 直接作为会话初始选项，`tab_learning` 门控学习 mode（`false` → 空串 = 不学习，
-//! 对照参照 `prepare_learning` 的 `enabled`），`high_freq_limit` 在创建词库时生效（修改需重启）。
+//! 可持久化开关（三项早提交、`full_shape`、数字直选）以本设置为存储层缺省（配置 / 状态菜单变更后
+//! 经 `apply_settings` 重放存储，`options.yaml` 仍优先）；`ascii_punct` 等作会话初始选项；
+//! `tab_learning` 门控学习 mode（`false` → 空串 = 不学习，对照参照 `prepare_learning` 的 `enabled`），
+//! `high_freq_limit` 在创建词库时生效（修改需重启）。
 
 use hux_core::host::{DEFAULT_PAGE_SIZE, HostOptions, MAX_PAGE_SIZE};
 use hux_core::interaction::{
-    OPTION_ALLOW_DUPLICATE_SINGLE, OPTION_EARLY_COMMIT, OPTION_EARLY_COMMIT_TO_PREEDIT,
+    OPTION_ALLOW_DUPLICATE_SINGLE, OPTION_DIGIT_SELECT, OPTION_EARLY_COMMIT,
+    OPTION_EARLY_COMMIT_TO_PREEDIT,
 };
 use hux_core::key::KeyEvent;
 use hux_core::lexicon::DEFAULT_HIGH_FREQ_LIMIT;
@@ -40,7 +42,7 @@ pub struct Settings {
     /// 上/下翻页键（rime 键名，可多项；缺省对应参照 `key_binder` 的 `-`/`=`）。
     pub page_up_keys: Vec<String>,
     pub page_down_keys: Vec<String>,
-    /// 数字直选（addon 扩展，默认关）：菜单可见时数字直接上屏当前页候选（1–9；0=10）。
+    /// 数字直选（addon 扩展，默认开）：菜单可见时数字直接上屏当前页候选（1–9；0=10）。
     pub digit_select: bool,
 }
 
@@ -59,7 +61,7 @@ impl Default for Settings {
             page_size: DEFAULT_PAGE_SIZE,
             page_up_keys: vec!["minus".to_string(), "bracketleft".to_string()],
             page_down_keys: vec!["equal".to_string(), "bracketright".to_string()],
-            digit_select: false,
+            digit_select: true,
         }
     }
 }
@@ -73,15 +75,18 @@ impl Settings {
             (OPTION_ALLOW_DUPLICATE_SINGLE, self.allow_duplicate_single),
             ("full_shape", self.full_shape),
             ("ascii_punct", self.ascii_punct),
+            (OPTION_DIGIT_SELECT, self.digit_select),
         ]
     }
 
-    /// 存储层缺省：三项早提交选项（`options.yaml` 缺失键回退到这些值）。
+    /// 存储层缺省：可持久化的核心开关（`options.yaml` 缺失键回退到这些值）。
     pub fn store_defaults(&self) -> hashbrown::HashMap<String, bool> {
         [
             (OPTION_EARLY_COMMIT, self.early_commit),
             (OPTION_EARLY_COMMIT_TO_PREEDIT, self.early_commit_to_preedit),
             (OPTION_ALLOW_DUPLICATE_SINGLE, self.allow_duplicate_single),
+            ("full_shape", self.full_shape),
+            (OPTION_DIGIT_SELECT, self.digit_select),
         ]
         .into_iter()
         .map(|(name, value)| (name.to_string(), value))
@@ -146,7 +151,7 @@ mod tests {
             settings.char_to_sound_shape_keys,
             vec!["Alt+quotedbl".to_string()]
         );
-        assert!(!settings.digit_select);
+        assert!(settings.digit_select);
     }
 
     #[test]
@@ -192,13 +197,15 @@ mod tests {
     }
 
     #[test]
-    fn store_defaults_cover_early_commit_options() {
+    fn store_defaults_cover_core_switches() {
         let store_defaults = Settings::default().store_defaults();
         assert_eq!(
             store_defaults.get(OPTION_EARLY_COMMIT_TO_PREEDIT),
             Some(&false)
         );
-        assert_eq!(store_defaults.len(), 3);
+        assert_eq!(store_defaults.get("full_shape"), Some(&false));
+        assert_eq!(store_defaults.get(OPTION_DIGIT_SELECT), Some(&true));
+        assert_eq!(store_defaults.len(), 5);
     }
 
     #[test]

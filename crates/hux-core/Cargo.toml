@@ -7,7 +7,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "虎句方案核心逻辑（hux-ime；Rust 直迁、差分验证）"
+description = "虎虚（hux-ime）核心逻辑：虎句方案 Rust 直迁与差分验证"
 
 [dependencies]
 anyhow.workspace = true

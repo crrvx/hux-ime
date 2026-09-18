@@ -142,6 +142,8 @@ const EARLY_COMMIT_RETAINED_RAW_LENGTH: usize = 3;
 pub const OPTION_EARLY_COMMIT_TO_PREEDIT: &str = "tiger_sentence_early_commit_to_preedit";
 /// 提前上屏总开关。
 pub const OPTION_EARLY_COMMIT: &str = "tiger_sentence_early_commit";
+/// 数字直选（addon 扩展）：菜单可见时数字直接上屏当前页候选（1–9；0=10）。
+pub const OPTION_DIGIT_SELECT: &str = "tiger_sentence_digit_select";
 
 /// 证据追踪器（对应参照 tracker 表）。
 #[derive(Clone, Debug)]
@@ -2142,8 +2144,6 @@ pub struct ProcessorEnv<'a> {
     pub min_retained: Option<i64>,
     /// 每页候选个数（addon 设置；数字直选按页定位）。
     pub page_size: usize,
-    /// 数字直选（addon 扩展，默认关）：菜单可见时数字直接上屏当前页候选（1–9；0=10）。
-    pub digit_select: bool,
 }
 
 /// 处理器结果：`Consume` 对应参照返回 1（拦截），`Forward` 对应 2（交后续处理器）。
@@ -2339,8 +2339,8 @@ pub fn processor(
         if live_input(context).len() >= MAX_RAW_LENGTH {
             return Ok(ProcessorResult::Consume);
         }
-        // 数字直选（`DigitSelect`；addon 扩展）：菜单可见时直接上屏当前页候选。
-        if env.digit_select
+        // 数字直选（`OPTION_DIGIT_SELECT`；addon 扩展）：菜单可见时直接上屏当前页候选。
+        if context.get_option(OPTION_DIGIT_SELECT)
             && ch.is_ascii_digit()
             && context.has_menu()
             && let Some(position) = digit_page_position(ch)
@@ -3655,7 +3655,6 @@ mod tests {
         live: LiveLearning,
         dot_armed: bool,
         page_size: usize,
-        digit_select: bool,
     }
 
     impl Harness {
@@ -3667,7 +3666,6 @@ mod tests {
                 live: LiveLearning::default(),
                 dot_armed: false,
                 page_size: 5,
-                digit_select: false,
             }
         }
 
@@ -3677,7 +3675,6 @@ mod tests {
                 dot_armed: &mut self.dot_armed,
                 min_retained: None,
                 page_size: self.page_size,
-                digit_select: self.digit_select,
             };
             processor(
                 key,
@@ -3920,7 +3917,7 @@ mod tests {
     #[test]
     fn processor_digit_select_commits_page_candidate() {
         let mut h = Harness::new();
-        h.digit_select = true;
+        h.context.set_option(OPTION_DIGIT_SELECT, true);
         h.context.set_option("_auto_commit", true);
         h.push_segment(b"ab", &["交", "疒"]);
         assert!(h.context.has_menu());
@@ -3944,7 +3941,7 @@ mod tests {
     #[test]
     fn processor_digit_select_out_of_page_falls_through() {
         let mut h = Harness::new();
-        h.digit_select = true;
+        h.context.set_option(OPTION_DIGIT_SELECT, true);
         h.context.set_option("_auto_commit", true);
         h.push_segment(b"ab", &["交", "疒"]);
         // 页大小 5：`0`（第 10 个）不在页内 → 作为编码后缀进入输入。
@@ -3957,7 +3954,7 @@ mod tests {
     #[test]
     fn processor_digit_select_zero_picks_tenth_on_ten_page() {
         let mut h = Harness::new();
-        h.digit_select = true;
+        h.context.set_option(OPTION_DIGIT_SELECT, true);
         h.page_size = 10;
         h.context.set_option("_auto_commit", true);
         let texts: Vec<String> = (0..12).map(|index| format!("候{index}")).collect();

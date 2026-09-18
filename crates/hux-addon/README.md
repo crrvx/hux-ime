@@ -3,7 +3,7 @@
 
 # hux-addon（K3）
 
-fcitx5 addon：**C++ 薄壳**（`shell/`，只做 fcitx5 接口适配）+ **Rust 逻辑**（`src/`，经 C ABI 调用
+hux-ime（虎虚）fcitx5 addon：**C++ 薄壳**（`shell/`，只做 fcitx5 接口适配）+ **Rust 逻辑**（`src/`，经 C ABI 调用
 `hux-core`）。按键 → core（`processor`/`translate`）→ 提交 / preedit / 候选 → fcitx5。
 
 按键语义与参照（librime）一致：组合中的可打印字符（如大写字母）先提交当前组合，再交应用；
@@ -27,4 +27,4 @@ fcitx5 addon：**C++ 薄壳**（`shell/`，只做 fcitx5 接口适配）+ **Rust
 
 ## 已知限制
 
-每引擎单会话（切换/重置即清空）；候选为展示型（点击不提交）；打包与状态菜单待做。
+每引擎单会话（切换/重置即清空）；候选为展示型（点击不提交）；打包待做。

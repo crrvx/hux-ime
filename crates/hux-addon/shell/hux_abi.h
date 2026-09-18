@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 /*
- * hux-ime（虎句方案）fcitx5 addon 的 C ABI（Rust 侧实现，C++ 薄壳调用）。
+ * hux-ime（虎虚）fcitx5 addon 的 C ABI（Rust 侧实现，C++ 薄壳调用）。
  * 头文件与 `crates/hux-addon/src/lib.rs` 的导出符号一一对应。
  */
 #ifndef HUX_ABI_H_
@@ -98,6 +98,13 @@ typedef struct hux_options {
 /* 应用外部配置；返回 1 = 已应用。 */
 int32_t hux_engine_apply_settings(hux_engine *engine,
                                         const hux_options *options);
+
+/* 读取运行时开关（状态菜单）：1/0；未知选项 -1。 */
+int32_t hux_engine_option_value(hux_engine *engine, const char *name);
+
+/* 设置运行时开关（状态菜单）：1 = 已应用；未知选项 0。 */
+int32_t hux_engine_set_option(hux_engine *engine, const char *name,
+                              int32_t value);
 
 #ifdef __cplusplus
 }

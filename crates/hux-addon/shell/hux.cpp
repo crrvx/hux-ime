@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// hux-ime（虎句方案）fcitx5 addon 的 C++ 薄壳：只做 fcitx5 接口适配，逻辑在 Rust（libhux_addon）。
+// hux-ime（虎虚）fcitx5 addon 的 C++ 薄壳：只做 fcitx5 接口适配，逻辑在 Rust（libhux_addon）。
 #include <fcitx-config/configuration.h>
 #include <fcitx-config/option.h>
 #include <fcitx-config/iniparser.h>
+#include <fcitx/action.h>
 #include <fcitx/addonfactory.h>
 #include <fcitx/addoninstance.h>
 #include <fcitx/candidatelist.h>
@@ -12,16 +13,21 @@
 #include <fcitx/inputcontext.h>
 #include <fcitx/inputmethodengine.h>
 #include <fcitx/inputmethodentry.h>
+#include <fcitx/instance.h>
+#include <fcitx/menu.h>
+#include <fcitx/statusarea.h>
 #include <fcitx/surroundingtext.h>
 #include <fcitx/inputpanel.h>
 #include <fcitx/text.h>
 #include <fcitx/userinterface.h>
+#include <fcitx/userinterfacemanager.h>
 #include <fcitx-utils/key.h>
 #include <fcitx-utils/log.h>
 
 #include <algorithm>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "hux_abi.h"
 
@@ -102,7 +108,7 @@ FCITX_CONFIGURATION(
         .parent = this,
         .path{"DigitSelect"},
         .description{"数字直选"},
-        .defaultValue = false,
+        .defaultValue = true,
         .annotation{"开启后菜单可见时 `1`–`9` 直接上屏当前页候选、`0` = 第 10 个；"
                     "关闭时数字仍作编码选重后缀。"}}};
     fcitx::OptionWithAnnotation<bool, fcitx::ToolTipAnnotation> panelPreedit{{
@@ -184,9 +190,42 @@ FCITX_CONFIGURATION(
     fcitx::Option<HuxBehaviorConfig> behavior{this, "Behavior", "行为"};
     fcitx::Option<HuxHotkeyConfig> hotkeys{this, "Hotkey", "快捷键"};);
 
+/// 「虎虚」状态菜单开关：勾选态取自引擎运行时选项（`options.yaml`），激活即翻转并落盘。
+class HuxToggleAction : public fcitx::Action {
+public:
+    HuxToggleAction(hux_engine *engine, const char *option, const char *label)
+        : engine_(engine), option_(option), label_(label) {
+        setCheckable(true);
+    }
+
+    std::string shortText(fcitx::InputContext * /*unused*/) const override {
+        return label_;
+    }
+
+    std::string icon(fcitx::InputContext * /*unused*/) const override {
+        return {};
+    }
+
+    bool isChecked(fcitx::InputContext * /*unused*/) const override {
+        return hux_engine_option_value(engine_, option_.c_str()) == 1;
+    }
+
+    void activate(fcitx::InputContext * /*unused*/) override {
+        const int32_t value = hux_engine_option_value(engine_, option_.c_str());
+        if (value >= 0) {
+            hux_engine_set_option(engine_, option_.c_str(), value == 0 ? 1 : 0);
+        }
+    }
+
+private:
+    hux_engine *engine_;
+    std::string option_;
+    std::string label_;
+};
+
 class HuxEngine : public fcitx::InputMethodEngine {
 public:
-    HuxEngine() {
+    explicit HuxEngine(fcitx::Instance *instance) : instance_(instance) {
         fcitx::readAsIni(config_, "conf/hux.conf");
         hux_host host = {};
         host.user = this;
@@ -197,6 +236,7 @@ public:
             FCITX_INFO() << "hux: " << status;
         }
         applyConfig();
+        setupStatusMenu();
     }
     ~HuxEngine() override { hux_engine_free(engine_); }
 
@@ -250,6 +290,7 @@ public:
                   fcitx::InputContextEvent &event) override {
         FCITX_UNUSED(entry);
         resetSession(event);
+        updateStatusArea(event.inputContext());
     }
 
     void deactivate(const fcitx::InputMethodEntry &entry,
@@ -265,6 +306,42 @@ public:
     }
 
 private:
+    /// 状态菜单：注册「虎虚」子菜单与 5 项核心开关（构造时一次）。
+    void setupStatusMenu() {
+        static constexpr struct {
+            const char *option;
+            const char *label;
+        } kToggles[] = {
+            {"tiger_sentence_early_commit", "提前上屏"},
+            {"tiger_sentence_early_commit_to_preedit", "提前上屏至预编辑"},
+            {"tiger_sentence_allow_duplicate_single", "单字重码组句"},
+            {"full_shape", "全角标点"},
+            {"tiger_sentence_digit_select", "数字直选"},
+        };
+        menuAction_.setShortText("虎虚");
+        for (const auto &toggle : kToggles) {
+            auto action = std::make_unique<HuxToggleAction>(
+                engine_, toggle.option, toggle.label);
+            instance_->userInterfaceManager().registerAction(
+                std::string("hux-") + toggle.option, action.get());
+            menu_.addAction(action.get());
+            toggleActions_.push_back(std::move(action));
+        }
+        menuAction_.setMenu(&menu_);
+        instance_->userInterfaceManager().registerAction("hux-menu",
+                                                         &menuAction_);
+    }
+
+    /// 把「虎虚」子菜单挂到当前输入上下文的状态区（仅在本输入法激活时显示）。
+    void updateStatusArea(fcitx::InputContext *inputContext) {
+        if (inputContext == nullptr) {
+            return;
+        }
+        auto &statusArea = inputContext->statusArea();
+        statusArea.clearGroup(fcitx::StatusGroup::InputMethod);
+        statusArea.addAction(fcitx::StatusGroup::InputMethod, &menuAction_);
+    }
+
     /// 清空会话与面板（activate/deactivate/reset 共用）。
     void resetSession(fcitx::InputContextEvent &event) {
         context_ = event.inputContext();
@@ -354,6 +431,7 @@ private:
         context_->inputPanel().setAuxUp(auxText(auxUp));
         context_->inputPanel().setAuxDown(auxText(auxDown));
         context_->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
+        updateStatusArea(context_);
     }
 
     /// 把 schema 值经 C ABI 推给 Rust 侧（`Settings::apply_settings`）。
@@ -386,15 +464,18 @@ private:
     }
 
     HuxConfig config_;
+    fcitx::Instance *instance_;
     hux_engine *engine_;
     fcitx::InputContext *context_ = nullptr;
+    fcitx::Menu menu_;
+    fcitx::SimpleAction menuAction_;
+    std::vector<std::unique_ptr<HuxToggleAction>> toggleActions_;
 };
 
 class HuxFactory : public fcitx::AddonFactory {
 public:
     fcitx::AddonInstance *create(fcitx::AddonManager *manager) override {
-        FCITX_UNUSED(manager);
-        return new HuxEngine;
+        return new HuxEngine(manager->instance());
     }
 };
 

@@ -3,7 +3,7 @@
 
 # 设计（K0–K4）
 
-hux-ime：虎句（`tiger_sentence`）输入方案的 fcitx5 原生 Rust 实现。
+hux-ime（虎虚）：虎句（`tiger_sentence`）输入方案的 fcitx5 原生 Rust 实现。
 参照实现（测试 oracle，仅开发/CI 使用）：<https://github.com/lvyww/tiger-sentense-rime>；
 金样清单与复现命令见 [`../goldens/README.md`](../goldens/README.md)。
 
@@ -15,8 +15,14 @@ hux-ime：虎句（`tiger_sentence`）输入方案的 fcitx5 原生 Rust 实现�
 | K1 | 计算核：lexicon、beam 解码、早提交证据、learning | ✅ 快照差分全绿 |
 | K1.5 | 上游追平：紧凑排序先验（TCSLEX01）、锁播种修复 | ✅ |
 | K2 | 交互引擎：键事件/键表、会话、交互层、宿主链 | ✅ 键序列金样一致 |
-| K3 | fcitx5 addon：注册与候选、编辑语义、标点、音反查、字反查、配置与学习库 | 进行中（打包与状态菜单待做） |
-| K4 | 验收与打包 | 待做 |
+| K3 | fcitx5 addon：注册与候选、编辑语义、标点、音反查、字反查、配置与学习库、状态菜单 | ✅ |
+| K4 | 验收与打包 | 进行中：验收随开发持续进行；打包与下述遗留待做 |
+
+遗留（后续）：
+- **打包**：PKGBUILD（AUR）与随包数据安装（`/usr/share/fcitx5/hux/`）；模型分发说明。
+- **候选点击提交**：候选为展示型（`DisplayOnlyCandidateWord`），点击不上屏；需自定义 CandidateWord 回调引擎。
+- **每引擎单会话**：切换/重置即清空；按输入上下文会话为后续优化。
+- **`Ctrl+Delete` 删除候选**：当前仅设置选中并通知，无删除通道。
 
 - **移植纪律**：计算部分机械翻译（浮点按位模式比较）；交互部分按行为契约自由设计。
 - **确定性纪律**：凡排序必带全序 tie-breaker；凡 `pairs` 影响可观测结果处显式排序；凡时间/随机全部注入。
@@ -58,22 +64,16 @@ docs/                    # 本文档、词先验署名
 - 用户目录 `~/.local/share/fcitx5/hux`，共享目录 `/usr/share/fcitx5/hux`；
   开发可用 `HUX_DATA_DIRS`（冒号分隔）与 `HUX_MODEL` 覆盖。
 - 运行数据：码表四件套（`tiger_sentence.{codes,char_ranks,full_code_whitelist,supplement}.txt`）、
-  `models/sentence-ngram-mobile.bin`（TCSKNM02）、`symbols.yaml`、`tiger_sentence.lexical.bin`（TCSLEX01）、
-  `tiger_sentence.pinyin.bin.gz`（TCSRV01）、`tiger_sentence.options.yaml`、学习库 `<hash>.userdb/`（LevelDB 同构）。
-- 仓库 `data/`：发布默认 `symbols.yaml`（仅覆盖 half_shape 的 `/` 提交 `/`）、词先验位图（CC BY 4.0，
-  署名见 [`LEXICAL_PRIOR_ATTRIBUTION.md`](LEXICAL_PRIOR_ATTRIBUTION.md)）、音反查索引；
-  详见 [`../data/README.md`](../data/README.md)。
+  `models/sentence-ngram-mobile.bin`（TCSKNM02）、`symbols.yaml`、词先验（TCSLEX01）、音反查索引（TCSRV01）、
+  `tiger_sentence.options.yaml`、学习库 `<hash>.userdb/`（LevelDB 同构）。
+- 仓库 `data/` 的清单、来源与署名见 [`../data/README.md`](../data/README.md) 与
+  [`LEXICAL_PRIOR_ATTRIBUTION.md`](LEXICAL_PRIOR_ATTRIBUTION.md)。
 
 ## 5. fcitx5 集成要点
 
-- **注册与构建**：`Category=InputMethod` + `OnDemand` + 输入法条目 conf；C++ 薄壳链接 Rust 静态库：
-
-  ```sh
-  cmake -S crates/hux-addon -B build/addon -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
-  cmake --build build/addon -j && sudo cmake --install build/addon
-  ```
-
-  产物：`/usr/lib/fcitx5/libhux.so`、`/usr/share/fcitx5/{addon,inputmethod}/hux.conf`。
+- **注册与构建**：`Category=InputMethod` + `OnDemand` + 输入法条目 conf；C++ 薄壳链接 Rust 静态库，
+  构建/安装与依赖见 [`usage.md`](usage.md)。产物：`/usr/lib/fcitx5/libhux.so`、
+  `/usr/share/fcitx5/{addon,inputmethod}/hux.conf`。
 - **会话**：每引擎单会话（`activate/deactivate/reset` 清空）；组合重建由 `interaction::CompositionBuilder`
   按参照 `ConcreteEngine::Compose` 语义（`input[..caret]`、按公共前缀增量保留段、提交后旧段不复用）。
 - **宿主语义**（core `host.rs`，`processor` 返回 Forward 后执行）：
@@ -103,10 +103,11 @@ docs/                    # 本文档、词先验署名
 - **学习**：提交点通知器内建于核心路径（`confirm_selection`、自动上屏）；宿主排空
   `LiveLearning::submitted` 落库并在 `store_ready` 后生效；存储
   `<user>/tiger_sentence_learning_<hash(schema_id)>.userdb/`（1 万条 / 16 MiB，60 秒节流刷新）。
-- **选项与配置**：`tiger_sentence.options.yaml`（主）+ legacy `user.yaml` 的 `var/option/*`（只读回退）；
-  合并顺序 **options.yaml > 设置 > 内建缺省**；图形配置由 C++ `HuxConfig` schema 生成（分「行为」
-  「快捷键」两区，子配置 + `ToolTipAnnotation` 悬浮说明；快捷键为 `KeyList`，可多项），经
-  `hux_engine_apply_settings` 应用；状态菜单 4 项核心开关待接线。
+- **选项与配置**：`tiger_sentence.options.yaml`（主）+ legacy `user.yaml` 的 `var/option/*`（只读回退，
+  保存失败写属性 `tiger_sentence_options_error`）；合并顺序 **options.yaml > 设置 > 内建缺省**；图形配置由
+  C++ `HuxConfig` schema 生成（「行为」「快捷键」两区，子配置 + `ToolTipAnnotation`；快捷键为 `KeyList`），
+  经 `hux_engine_apply_settings` 应用；状态菜单（「虎虚」子菜单，5 项核心开关：提前上屏、提前上屏至预编辑、
+  单字重码组句、全角标点、数字直选）经 `hux_engine_set_option` 切换并写入 `options.yaml`。
 
 ## 6. 测试
 
