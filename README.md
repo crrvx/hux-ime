@@ -45,7 +45,7 @@ cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
 
 可选 n-gram 模型不随包（来源 [Releases › model](https://github.com/lvyww/tiger-sentense-rime/releases/tag/model)，
 可与 fcitx5-rime 共用同一份）；随后在配置工具中添加「hux」，
-细节见[`crates/hux-addon/README.md`](crates/hux-addon/README.md)。
+详见[`crates/hux-addon/README.md`](crates/hux-addon/README.md)。
 
 ## 使用
 
@@ -61,8 +61,8 @@ cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
 
 ### 音查虎：拼音 → 虎码（默认 `Alt`+`:`）
 
-按下触发键后输入拼音（支持拼写缩写），候选即为对应词语，注释显示虎码；预编辑按音节切分，
-空格上屏高亮候选：
+按下触发键后输入拼音（支持拼写缩写），`空格`上屏高亮候选。
+候选即为对应词语，注释显示虎码，预编辑按音节切分：
 
 ```
 Alt+:  zhongguo   →   :zhong guo〔拼音〕   候选：中国 …
@@ -80,8 +80,8 @@ Alt+:  zhongguo   →   :zhong guo〔拼音〕   候选：中国 …
 虍 d/dg/dgs
 ```
 
-依赖应用的周边文本支持（不支持时上排提示「应用不支持周边文本」）；`←`/`→` 移动应用光标
-（提示随光标刷新），`Esc`、再次触发或输入其它键退出。
+依赖应用提供周边文本（不可用时查不到内容，两排为空）；`←`/`→` 移动应用光标
+（两排随光标刷新），`Esc`、再次触发或输入其它键退出。
 
 ## 致谢
 
@@ -96,14 +96,12 @@ Alt+:  zhongguo   →   :zhong guo〔拼音〕   候选：中国 …
 - 官方 · [虎爪-rime](https://github.com/lvyww/tiger-sentense-rime)（本方案的参照实现，GPL-3.0）
 - 社区 · [虎符](https://github.com/LeafHW/hufu-ime-rust)
 - 社区 · [魔虎音形](https://github.com/fcxxxz/rime-mohu)
-- 社区 · hux（本方案）
+- 社区 · [hux](https://github.com/crrvx/hux-ime)（本方案）
 
 ## 许可与署名
 
 - 代码：GPL-3.0-or-later，见 [`LICENSE`](LICENSE)。
-- 码表数据 `data/tiger_sentence.{codes,char_ranks,full_code_whitelist,supplement}.txt`：取自上游
-  [tiger-sentense-rime](https://github.com/lvyww/tiger-sentense-rime)（GPL-3.0）。
-- 词先验数据 `data/tiger_sentence.lexical.bin`：**CC BY 4.0**（派生自
-  [rime-mohu](https://github.com/fcxxxz/rime-mohu)）；署名见
-  [`docs/LEXICAL_PRIOR_ATTRIBUTION.md`](docs/LEXICAL_PRIOR_ATTRIBUTION.md)，许可正文见
-  [`LICENSES/CC-BY-4.0.txt`](LICENSES/CC-BY-4.0.txt)。
+- 拼音数据 `` 取自 [虎码官方秃版小狼毫](https://huma.ysepan.com)。
+- 词先验数据 `data/tiger_sentence.lexical.bin`：[CC-BY-4.0](LICENSES/CC-BY-4.0.txt) 派生自 [rime-mohu](https://github.com/fcxxxz/rime-mohu)；
+- 模型/码表/其他数据 `data/tiger_sentence.*`：[GPL-3.0](LICENSES/GPL-3.0.txt) 取自 [tiger-sentense-rime](https://github.com/lvyww/tiger-sentense-rime)。
+  署名见 [`docs/LEXICAL_PRIOR_ATTRIBUTION.md`](docs/LEXICAL_PRIOR_ATTRIBUTION.md)，
