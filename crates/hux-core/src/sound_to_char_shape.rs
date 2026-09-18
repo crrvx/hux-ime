@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! 音查虎（⑧-1）：`tiger_sentence.pinyin.bin[.gz]`（TCSRV01）读取与音查虎翻译。
+//! 音反查（⑧-1）：`tiger_sentence.pinyin.bin[.gz]`（TCSRV01）读取与音反查翻译。
 //!
-//! 语义对齐 librime 1.17.0 的词典音查虎（`reverse_lookup_translator` + `ReverseLookupFilter`，
+//! 语义对齐 librime 1.17.0 的词典音反查（`reverse_lookup_translator` + `ReverseLookupFilter`，
 //! 见 `docs/rust-migration.md`）：
 //! - 输入（去掉前缀后）按**拼写表**分段：音节本体 + 缩写（PY_c.schema.yaml 的两条
 //!   `abbrev` 规则），缩写可信度罚 `log(0.5)`；
@@ -24,14 +24,14 @@ use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 
 /// 索引文件名（发布为 `.gz`；fixture 常用未压缩）。
-pub const PINYIN_FILE: &str = "tiger_sentence.pinyin.bin";
-pub const PINYIN_FILE_GZ: &str = "tiger_sentence.pinyin.bin.gz";
-/// 音查虎候选上限（与主候选一致；⑧ 裁决）。
+pub const SOUND_TO_CHAR_SHAPE_FILE: &str = "tiger_sentence.pinyin.bin";
+pub const SOUND_TO_CHAR_SHAPE_FILE_GZ: &str = "tiger_sentence.pinyin.bin.gz";
+/// 音反查候选上限（与主候选一致；⑧ 裁决）。
 pub const CANDIDATE_LIMIT: usize = 20;
-/// 音查虎段标签（参照 schema 的 `reverse_lookup`）。
-pub const PINYIN_LOOKUP_TAG: &str = "reverse_lookup";
-/// 音查虎段提示（参照 schema `reverse_lookup/tips`）。
-pub const PINYIN_LOOKUP_TIPS: &str = "〔拼音〕";
+/// 音反查段标签（参照 schema 的 `reverse_lookup`）。
+pub const SOUND_TO_CHAR_SHAPE_TAG: &str = "reverse_lookup";
+/// 音反查段提示（参照 schema `reverse_lookup/tips`）。
+pub const SOUND_TO_CHAR_SHAPE_TIPS: &str = "〔拼音〕";
 
 const MAGIC: &[u8; 8] = b"TCSRV01\n";
 /// 拼写类型（同 librime `SpellingType` 序：normal < fuzzy < abbreviation < completion）。
@@ -66,20 +66,20 @@ struct Entry {
     len: u16,
 }
 
-/// 拼音索引（TCSRV01；音查虎与字查音+虎共用）。
-pub struct PinyinIndex {
+/// 拼音索引（TCSRV01；音反查与字反查共用）。
+pub struct SoundToCharShapeIndex {
     syllables: Vec<String>,
     /// 拼写键（字节序）：键 → [(音节 id, 类型)]。
     spellings: Vec<SpellingEntry>,
     /// 词条组（按码字典序；前缀连续）。
     groups: Vec<Group>,
-    /// 单字读音倒排（字查音+虎用；源序，含多音字）。
+    /// 单字读音倒排（字反查用；源序，含多音字）。
     character_pinyin: hashbrown::HashMap<char, Vec<String>>,
     text: String,
     entries: Vec<Entry>,
 }
 
-impl PinyinIndex {
+impl SoundToCharShapeIndex {
     /// 载入索引（`gzip` 由魔数识别）。
     pub fn load(path: &Path) -> Result<Self> {
         let raw = std::fs::read(path).with_context(|| format!("读取 {}", path.display()))?;
@@ -240,13 +240,13 @@ impl PinyinIndex {
 }
 
 /// 载入目录序列中首个存在的索引（用户目录 → 共享目录；`.gz` 与未压缩皆可）。
-pub fn load_first(dirs: &[PathBuf]) -> (Option<PinyinIndex>, Option<String>) {
+pub fn load_first(dirs: &[PathBuf]) -> (Option<SoundToCharShapeIndex>, Option<String>) {
     let mut errors = Vec::new();
     for dir in dirs {
-        for name in [PINYIN_FILE, PINYIN_FILE_GZ] {
+        for name in [SOUND_TO_CHAR_SHAPE_FILE, SOUND_TO_CHAR_SHAPE_FILE_GZ] {
             let path = dir.join(name);
             if path.is_file() {
-                match PinyinIndex::load(&path) {
+                match SoundToCharShapeIndex::load(&path) {
                     Ok(index) => return (Some(index), None),
                     Err(error) => errors.push(format!("{error:#}")),
                 }
@@ -260,10 +260,10 @@ pub fn load_first(dirs: &[PathBuf]) -> (Option<PinyinIndex>, Option<String>) {
     }
 }
 
-/// 音查虎翻译（参照 `ReverseLookupTranslator::Query`）：`input` 为段输入（含前缀）。
+/// 音反查翻译（参照 `ReverseLookupTranslator::Query`）：`input` 为段输入（含前缀）。
 #[allow(clippy::too_many_arguments)]
 pub fn translate(
-    index: &PinyinIndex,
+    index: &SoundToCharShapeIndex,
     lexicon: &Lexicon,
     input: &[u8],
     prefix: char,
@@ -279,7 +279,7 @@ pub fn translate(
     } else {
         input
     };
-    // 前缀单独成段：`punct` 段与音查虎段同区间，参照里由标点翻译器给出候选。
+    // 前缀单独成段：`punct` 段与音反查段同区间，参照里由标点翻译器给出候选。
     if code.is_empty() {
         return punct_candidate(punct, prefix, full_shape, start, end)
             .into_iter()
@@ -318,7 +318,7 @@ struct Edge {
 }
 
 /// 建立拼写边（按音节 id、终点排序；与参照 `Transpose` 的索引序一致）。
-fn build_edges(index: &PinyinIndex, code: &[u8]) -> Vec<Vec<Edge>> {
+fn build_edges(index: &SoundToCharShapeIndex, code: &[u8]) -> Vec<Vec<Edge>> {
     let len = code.len();
     let mut edges: Vec<Vec<Edge>> = (0..=len).map(|_| Vec::new()).collect();
     for position in 0..len {
@@ -389,7 +389,12 @@ fn prune(edges: &mut [Vec<Edge>], types: &[Option<u8>], farthest: usize, last_ty
 
 /// 尾部补全（参照 `BuildSyllableGraph` 的 completion 段）：`tail` 对应拼写键子树；
 /// 本体拼写按补全罚、缩写保持自身罚。补全后不重跑剪枝。
-fn complete(index: &PinyinIndex, edges: &mut [Vec<Edge>], code: &[u8], farthest: usize) -> bool {
+fn complete(
+    index: &SoundToCharShapeIndex,
+    edges: &mut [Vec<Edge>],
+    code: &[u8],
+    farthest: usize,
+) -> bool {
     let len = code.len();
     let tail = &code[farthest..];
     let mut added = false;
@@ -428,14 +433,19 @@ struct Chunk {
     count: u32,
     cursor: u32,
     penalty: f64,
-    /// 预编辑（按音节切分；不含音查虎前缀）。
+    /// 预编辑（按音节切分；不含音反查前缀）。
     preedit: String,
 }
 
 /// 广度优先收集「码恰好等于路径音节序列」的词条块（参照 `Table::Query` 的推入序）。
 /// `code` 用于生成「按音节分码」的预编辑：上一段为全拼（正常拼写）时在下一个音节前插空格，
 /// 缩写/补全段与后续合并（如 `` `zhongguo `` → `` `zhong guo ``、`` `zho `` → `` `zho ``）。
-fn collect_chunks(index: &PinyinIndex, edges: &[Vec<Edge>], code: &[u8], len: usize) -> Vec<Chunk> {
+fn collect_chunks(
+    index: &SoundToCharShapeIndex,
+    edges: &[Vec<Edge>],
+    code: &[u8],
+    len: usize,
+) -> Vec<Chunk> {
     let mut chunks = Vec::new();
     let mut queue = std::collections::VecDeque::new();
     queue.push_back((
@@ -476,7 +486,7 @@ fn collect_chunks(index: &PinyinIndex, edges: &[Vec<Edge>], code: &[u8], len: us
 
 /// 按「可信度 + ln(权重)」降序逐条产出（并列取块序在前者；参照 `DictEntryIterator::Sort`）。
 fn emit(
-    index: &PinyinIndex,
+    index: &SoundToCharShapeIndex,
     chunks: &[Chunk],
     code_prefix: &str,
     start: usize,
@@ -516,7 +526,7 @@ fn emit(
 }
 
 /// 裸前缀的标点候选（参照 `PunctTranslator` 与 `CreatePunctCandidate`）；
-/// 字查音+虎的「默认可上屏候选」复用同一实现。
+/// 字反查的「默认可上屏候选」复用同一实现。
 pub(crate) fn punct_candidate(
     punct: Option<&mut PunctTable>,
     prefix: char,
@@ -580,7 +590,7 @@ fn punct_shape_comment(punct: &str) -> String {
     }
 }
 
-/// 音查虎输入模式：`<前缀>[a-z]*'?`（参照 schema `recognizer/patterns/reverse_lookup`）。
+/// 音反查输入模式：`<前缀>[a-z]*'?`（参照 schema `recognizer/patterns/reverse_lookup`）。
 pub fn matches_pattern(input: &[u8], prefix: char) -> bool {
     let prefix = prefix as u8;
     let Some(rest) = input.strip_prefix(&[prefix][..]) else {
@@ -638,10 +648,10 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    fn fixture_index() -> PinyinIndex {
+    fn fixture_index() -> SoundToCharShapeIndex {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../goldens/pinyin_lookup/tiger_sentence.pinyin.bin");
-        PinyinIndex::load(&path).expect("fixture index")
+            .join("../../goldens/sound_to_char_shape/tiger_sentence.pinyin.bin");
+        SoundToCharShapeIndex::load(&path).expect("fixture index")
     }
 
     #[test]
@@ -665,10 +675,15 @@ mod tests {
     }
 
     #[test]
-    fn fixture_index_lookup_matches_reference() {
+    fn fixture_index_reports_counts() {
         let index = fixture_index();
         assert_eq!(index.syllable_count(), 14);
         assert_eq!(index.entry_count(), 22);
+    }
+
+    #[test]
+    fn translate_matches_abbrev_and_pruning_candidates() {
+        let index = fixture_index();
         let lexicon = Lexicon::load(&[], 0);
         let texts = |input: &[u8]| -> Vec<String> {
             translate(
@@ -692,7 +707,15 @@ mod tests {
             ["中哦", "中龘", "中欧", "找哦", "兆欧", "找欧"]
         );
         assert_eq!(texts(b"`zhou"), ["周", "轴"]);
-        // 预编辑「按音节分码」：全拼段之后插空格；缩写段与后续合并。
+        assert_eq!(texts(b"`zhong"), ["中", "重", "种", "钟", "垚"]);
+        assert!(texts(b"`zhon").is_empty());
+        assert!(texts(b"`zuo").is_empty());
+    }
+
+    #[test]
+    fn translate_segments_preedit_by_syllable() {
+        let index = fixture_index();
+        let lexicon = Lexicon::load(&[], 0);
         let preedits = |input: &[u8]| -> Vec<String> {
             translate(
                 &index,
@@ -709,12 +732,10 @@ mod tests {
             .map(|candidate| candidate.preedit)
             .collect()
         };
+        // 预编辑「按音节分码」：全拼段之后插空格；缩写段与后续合并。
         assert_eq!(preedits(b"`zhong")[0], "`zhong");
         assert_eq!(preedits(b"`zhongguo")[0], "`zhong guo");
         assert_eq!(preedits(b"`zhongg")[0], "`zhong g");
         assert_eq!(preedits(b"`zho")[0], "`zho");
-        assert_eq!(texts(b"`zhong"), ["中", "重", "种", "钟", "垚"]);
-        assert!(texts(b"`zhon").is_empty());
-        assert!(texts(b"`zuo").is_empty());
     }
 }

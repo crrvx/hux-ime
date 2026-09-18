@@ -8,9 +8,11 @@
 //! `full_shape`/`ascii_punct` 直接作为会话初始选项，`tab_learning` 门控学习 mode（`false` → 空串 = 不学习，
 //! 对照参照 `prepare_learning` 的 `enabled`），`high_freq_limit` 在创建词库时生效（修改需重启）。
 
+use hux_core::host::{DEFAULT_PAGE_SIZE, HostOptions, MAX_PAGE_SIZE};
 use hux_core::interaction::{
     OPTION_ALLOW_DUPLICATE_SINGLE, OPTION_EARLY_COMMIT, OPTION_EARLY_COMMIT_TO_PREEDIT,
 };
+use hux_core::key::KeyEvent;
 use hux_core::lexicon::DEFAULT_HIGH_FREQ_LIMIT;
 
 /// 虎句方案引擎设置（与参照 schema / fcitx5 配置界面一一对应）。
@@ -30,9 +32,16 @@ pub struct Settings {
     pub tab_learning: bool,
     /// 高频字过滤上限（参照 `tiger_sentence/high_freq_limit`；创建词库时生效）。
     pub high_freq_limit: usize,
-    /// 音查虎（拼音查虎码）/ 字查音+虎（查光标处汉字的音与虎码）触发键（rime 键名）。
-    pub pinyin_lookup_key: String,
-    pub character_lookup_key: String,
+    /// 音反查（拼音反查码）/ 字反查（查光标处汉字的音与虎码）触发键（rime 键名，可多项）。
+    pub sound_to_char_shape_keys: Vec<String>,
+    pub char_to_sound_shape_keys: Vec<String>,
+    /// 每页候选个数（参照 `menu/page_size`；上限 [`MAX_PAGE_SIZE`]）。
+    pub page_size: usize,
+    /// 上/下翻页键（rime 键名，可多项；缺省对应参照 `key_binder` 的 `-`/`=`）。
+    pub page_up_keys: Vec<String>,
+    pub page_down_keys: Vec<String>,
+    /// 数字直选（addon 扩展，默认关）：菜单可见时数字直接上屏当前页候选（1–9；0=10）。
+    pub digit_select: bool,
 }
 
 impl Default for Settings {
@@ -45,8 +54,12 @@ impl Default for Settings {
             ascii_punct: false,
             tab_learning: true,
             high_freq_limit: DEFAULT_HIGH_FREQ_LIMIT,
-            pinyin_lookup_key: "Alt+colon".to_string(),
-            character_lookup_key: "Alt+quotedbl".to_string(),
+            sound_to_char_shape_keys: vec!["Alt+colon".to_string()],
+            char_to_sound_shape_keys: vec!["Alt+quotedbl".to_string()],
+            page_size: DEFAULT_PAGE_SIZE,
+            page_up_keys: vec!["minus".to_string(), "bracketleft".to_string()],
+            page_down_keys: vec!["equal".to_string(), "bracketright".to_string()],
+            digit_select: false,
         }
     }
 }
@@ -85,6 +98,21 @@ impl Settings {
             self.high_freq_limit
         )
     }
+
+    /// 宿主选项（翻页键与页大小）：键名解析失败项忽略；页大小钳制到 `1..=MAX_PAGE_SIZE`。
+    pub fn host_options(&self) -> HostOptions {
+        let parse = |reprs: &[String]| -> Vec<KeyEvent> {
+            reprs
+                .iter()
+                .filter_map(|repr| KeyEvent::from_repr(repr))
+                .collect()
+        };
+        HostOptions {
+            page_size: self.page_size.clamp(1, MAX_PAGE_SIZE),
+            page_up_keys: parse(&self.page_up_keys),
+            page_down_keys: parse(&self.page_down_keys),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -101,32 +129,95 @@ mod tests {
         assert!(!settings.ascii_punct);
         assert!(settings.tab_learning);
         assert_eq!(settings.high_freq_limit, DEFAULT_HIGH_FREQ_LIMIT);
+        assert_eq!(settings.page_size, DEFAULT_PAGE_SIZE);
+        assert_eq!(
+            settings.page_up_keys,
+            vec!["minus".to_string(), "bracketleft".to_string()]
+        );
+        assert_eq!(
+            settings.page_down_keys,
+            vec!["equal".to_string(), "bracketright".to_string()]
+        );
+        assert_eq!(
+            settings.sound_to_char_shape_keys,
+            vec!["Alt+colon".to_string()]
+        );
+        assert_eq!(
+            settings.char_to_sound_shape_keys,
+            vec!["Alt+quotedbl".to_string()]
+        );
+        assert!(!settings.digit_select);
     }
 
     #[test]
-    fn option_defaults_and_learning_mode() {
+    fn host_options_clamp_page_size() {
+        let low = Settings {
+            page_size: 0,
+            ..Default::default()
+        }
+        .host_options();
+        assert_eq!(low.page_size, 1, "页大小下限为 1");
+        let high = Settings {
+            page_size: 999,
+            ..Default::default()
+        }
+        .host_options();
+        assert_eq!(high.page_size, MAX_PAGE_SIZE, "页大小上限为 10");
+    }
+
+    #[test]
+    fn host_options_parse_keys_ignores_invalid() {
+        let options = Settings {
+            page_up_keys: vec!["comma".to_string(), "not-a-key".to_string()],
+            page_down_keys: Vec::new(),
+            ..Default::default()
+        }
+        .host_options();
+        assert_eq!(
+            options.page_up_keys,
+            vec![KeyEvent::from_repr("comma").unwrap()]
+        );
+        assert!(options.page_down_keys.is_empty(), "空列表 = 不绑定翻页键");
+    }
+
+    #[test]
+    fn option_defaults_follow_settings() {
         let settings = Settings {
             full_shape: true,
-            tab_learning: false,
-            high_freq_limit: 100,
             ..Default::default()
         };
         let defaults = settings.option_defaults();
         assert!(defaults.contains(&("full_shape", true)));
         assert!(defaults.contains(&(OPTION_EARLY_COMMIT, true)));
-        assert_eq!(settings.learning_mode("abc", 1), "");
-        let store_defaults = settings.store_defaults();
+    }
+
+    #[test]
+    fn store_defaults_cover_early_commit_options() {
+        let store_defaults = Settings::default().store_defaults();
         assert_eq!(
             store_defaults.get(OPTION_EARLY_COMMIT_TO_PREEDIT),
             Some(&false)
         );
         assert_eq!(store_defaults.len(), 3);
-        let with_learning = Settings {
+    }
+
+    #[test]
+    fn learning_mode_disabled_when_tab_learning_off() {
+        let settings = Settings {
+            tab_learning: false,
+            ..Default::default()
+        };
+        assert_eq!(settings.learning_mode("abc", 1), "");
+    }
+
+    #[test]
+    fn learning_mode_encodes_rules_limit_and_duplicate() {
+        let settings = Settings {
             high_freq_limit: 100,
             ..Default::default()
         };
         assert_eq!(
-            with_learning.learning_mode("abc", 1),
+            settings.learning_mode("abc", 1),
             "sentence-v1|rules=abc|optimal=100|dup=1"
         );
     }

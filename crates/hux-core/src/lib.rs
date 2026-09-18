@@ -8,7 +8,7 @@
 //! 见 `docs/rust-migration.md`。
 
 pub mod cache;
-pub mod character_lookup;
+pub mod char_to_sound_shape;
 pub mod decode;
 pub mod host;
 pub mod interaction;
@@ -18,6 +18,6 @@ pub mod learning;
 pub mod lexical;
 pub mod lexicon;
 pub mod ngram;
-pub mod pinyin_lookup;
 pub mod punct;
 pub mod session;
+pub mod sound_to_char_shape;

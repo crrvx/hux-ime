@@ -24,7 +24,7 @@ typedef struct hux_engine hux_engine;
  * commit: 上屏文本（UTF-8，NUL 结尾）。
  * update: UI 状态快照——preedit（UTF-8，NUL 结尾）+ 光标（字节偏移，与
  *         fcitx `Text::cursor` 一致）+ 候选数组（文本/注释，各 NUL 结尾）+
- *         候选数 + 当前高亮索引 + 两排辅助文本（auxUp = 字查音+虎上排/光标左、
+ *         候选数 + 当前高亮索引 + 两排辅助文本（auxUp = 字反查上排/光标左、
  *         auxDown = 下排/光标右；UTF-8，NUL 结尾，可为 ""）。
  *         候选数为 0 时宿主必须清除候选列表（置 `nullptr`）——不得留下
  *         「存在但为空」的列表：其他组件（如 fcitx5-table）会对它调用
@@ -68,6 +68,16 @@ int32_t hux_engine_set_surrounding(hux_engine *engine,
                                          const char *text_utf8,
                                          int32_t cursor_chars, int32_t valid);
 
+/* 键位列表上限（与 Rust `HUX_MAX_KEYS` 一致）。 */
+#define HUX_MAX_KEYS 8
+
+/* 键位列表（fcitx5 KeyList → C ABI；`sym == 0` 的项忽略）。 */
+typedef struct hux_key_list {
+  int32_t count;
+  int32_t sym[HUX_MAX_KEYS];
+  int32_t states[HUX_MAX_KEYS];
+} hux_key_list;
+
 /* 外部配置（Rust 侧 Settings 的 C 布局；由壳从 fcitx5 配置读出后传入）。 */
 typedef struct hux_options {
   int32_t early_commit;
@@ -77,8 +87,12 @@ typedef struct hux_options {
   int32_t ascii_punct;
   int32_t tab_learning;
   int32_t high_freq_limit;
-  int32_t pinyin_lookup_sym, pinyin_lookup_states;
-  int32_t character_lookup_sym, character_lookup_states;
+  hux_key_list sound_to_char_shape;
+  hux_key_list char_to_sound_shape;
+  int32_t page_size;
+  hux_key_list page_up;
+  hux_key_list page_down;
+  int32_t digit_select;
 } hux_options;
 
 /* 应用外部配置；返回 1 = 已应用。 */

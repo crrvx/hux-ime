@@ -27,33 +27,162 @@
 
 namespace {
 
-/// 候选页大小（与 core `host::DEFAULT_PAGE_SIZE` 一致；参照 schema `menu/page_size: 5`）。
 /// 注意：`CommonCandidateList::setCursorIndex` 是**页内索引**（越界抛异常），
-/// 绝对索引必须用 `setGlobalCursorIndex` + `setPage`。
-constexpr int kCandidatePageSize = 5;
+/// 绝对索引必须用 `setGlobalCursorIndex` + `setPage`；页大小来自配置 `PageSize`。
+/// 页大小范围与 core `host::MAX_PAGE_SIZE` 一致（数字直选 0=第 10 个）。
+constexpr int kPageSizeMin = 1;
+constexpr int kPageSizeMax = 10;
 
-/// 配置 schema：fcitx5-configtool 依据它自动生成设置页（fcitx://config/addon/hux）。
+/// 数字直选键序（1–9、0=第 10 个）：候选面板序号显示用。
+const fcitx::KeyList &digitSelectionKeys() {
+    static const fcitx::KeyList keys = {
+        fcitx::Key(FcitxKey_1), fcitx::Key(FcitxKey_2), fcitx::Key(FcitxKey_3),
+        fcitx::Key(FcitxKey_4), fcitx::Key(FcitxKey_5), fcitx::Key(FcitxKey_6),
+        fcitx::Key(FcitxKey_7), fcitx::Key(FcitxKey_8), fcitx::Key(FcitxKey_9),
+        fcitx::Key(FcitxKey_0)};
+    return keys;
+}
+
+/// fcitx5 `KeyList` → C ABI 键位列表（超出上限的项忽略）。
+void fillKeyList(hux_key_list *dest, const fcitx::KeyList &keys) {
+    dest->count = 0;
+    for (const fcitx::Key &key : keys) {
+        if (dest->count >= HUX_MAX_KEYS) {
+            break;
+        }
+        dest->sym[dest->count] = static_cast<int32_t>(key.sym());
+        dest->states[dest->count] =
+            static_cast<int32_t>(key.states().toInteger());
+        ++dest->count;
+    }
+}
+
+/// 行为设置（配置页「行为」分区）。
+FCITX_CONFIGURATION(
+    HuxBehaviorConfig,
+    fcitx::OptionWithAnnotation<bool, fcitx::ToolTipAnnotation> earlyCommit{{
+        .parent = this,
+        .path{"EarlyCommit"},
+        .description{"提前上屏"},
+        .defaultValue = true,
+        .annotation{"组合中证据成熟即提交当前候选；关闭后仅在空格/回车确认时上屏。"}}};
+    fcitx::OptionWithAnnotation<bool, fcitx::ToolTipAnnotation>
+        earlyCommitToPreedit{{
+            .parent = this,
+            .path{"EarlyCommitToPreedit"},
+            .description{"提前上屏至预编辑"},
+            .defaultValue = false,
+            .annotation{"提前上屏改为写入预编辑（缓冲，不直接提交），继续输入可修正。"}}};
+    fcitx::OptionWithAnnotation<bool, fcitx::ToolTipAnnotation>
+        allowDuplicateSingle{{
+            .parent = this,
+            .path{"AllowDuplicateSingle"},
+            .description{"单字重码参与组句"},
+            .defaultValue = true,
+            .annotation{"允许同一单字的重码候选参与整句解码；关闭可减少同字重复。"}}};
+    fcitx::OptionWithAnnotation<bool, fcitx::ToolTipAnnotation> fullShape{{
+        .parent = this,
+        .path{"FullShape"},
+        .description{"全角标点"},
+        .defaultValue = false,
+        .annotation{"标点输出全角形式（如 `,` → `，`）。"}}};
+    fcitx::OptionWithAnnotation<bool, fcitx::ToolTipAnnotation> asciiPunct{{
+        .parent = this,
+        .path{"AsciiPunct"},
+        .description{"ASCII 标点直通"},
+        .defaultValue = false,
+        .annotation{"标点不做中文映射，直接输出 ASCII。"}}};
+    fcitx::OptionWithAnnotation<bool, fcitx::ToolTipAnnotation> tabLearning{{
+        .parent = this,
+        .path{"TabLearning"},
+        .description{"Tab 选字写入学习库"},
+        .defaultValue = true,
+        .annotation{"用 Tab 选字时记录学习事件，参与后续候选排序。"}}};
+    fcitx::OptionWithAnnotation<bool, fcitx::ToolTipAnnotation> digitSelect{{
+        .parent = this,
+        .path{"DigitSelect"},
+        .description{"数字直选"},
+        .defaultValue = false,
+        .annotation{"开启后菜单可见时 `1`–`9` 直接上屏当前页候选、`0` = 第 10 个；"
+                    "关闭时数字仍作编码选重后缀。"}}};
+    fcitx::OptionWithAnnotation<bool, fcitx::ToolTipAnnotation> panelPreedit{{
+        .parent = this,
+        .path{"PanelPreedit"},
+        .description{"候选窗口显示预编辑"},
+        .defaultValue = false,
+        .annotation{"仅宿主显示项，不经引擎：候选窗口是否显示预编辑文本。"}}};
+    // 值选项（`int` 等）列在布尔选项之后。
+    fcitx::Option<int, fcitx::IntConstrain, fcitx::DefaultMarshaller<int>,
+                  fcitx::ToolTipAnnotation>
+        highFreqLimit{{
+            .parent = this,
+            .path{"HighFreqLimit"},
+            .description{"高频字过滤上限"},
+            .defaultValue = 1500,
+            .constrain = fcitx::IntConstrain(0, 20000),
+            .annotation{"仅使用最优码组句的高频字数量上限；0 = 不限制。修改后需重启生效。"}}};
+    fcitx::Option<int, fcitx::IntConstrain, fcitx::DefaultMarshaller<int>,
+                  fcitx::ToolTipAnnotation>
+        pageSize{{
+            .parent = this,
+            .path{"PageSize"},
+            .description{"每页候选个数"},
+            .defaultValue = 5,
+            .constrain = fcitx::IntConstrain(kPageSizeMin, kPageSizeMax),
+            .annotation{"候选列表每页个数（1–10）；数字直选 `0` 对应第 10 个。"}}};);
+
+/// 快捷键设置（配置页「快捷键」分区；`KeyList` 可多项，与全局设置同款）。
+FCITX_CONFIGURATION(
+    HuxHotkeyConfig,
+    fcitx::KeyListOptionWithAnnotation<fcitx::ToolTipAnnotation>
+        soundToCharShapeKeys{{
+            .parent = this,
+            .path{"SoundToCharShapeKey"},
+            .description{"音反查"},
+            .defaultValue = fcitx::KeyList{
+                fcitx::Key(FcitxKey_colon, fcitx::KeyState::Alt)},
+            .constrain = fcitx::KeyListConstrain(
+                fcitx::KeyConstrainFlag::AllowModifierLess),
+            .annotation{"可多项。按下后输入拼音（支持拼写缩写），候选为对应词语、"
+                        "注释显示虎码。"}}};
+    fcitx::KeyListOptionWithAnnotation<fcitx::ToolTipAnnotation>
+        charToSoundShapeKeys{{
+            .parent = this,
+            .path{"CharToSoundShapeKey"},
+            .description{"字反查"},
+            .defaultValue = fcitx::KeyList{
+                fcitx::Key(FcitxKey_quotedbl, fcitx::KeyState::Alt)},
+            .constrain = fcitx::KeyListConstrain(
+                fcitx::KeyConstrainFlag::AllowModifierLess),
+            .annotation{"可多项。按下后显示光标左侧汉字的拼音与虎码"
+                        "（需应用支持周边文本）。"}}};
+    fcitx::KeyListOptionWithAnnotation<fcitx::ToolTipAnnotation> pageUpKeys{{
+        .parent = this,
+        .path{"PageUpKey"},
+        .description{"上翻页"},
+        .defaultValue = fcitx::KeyList{
+            fcitx::Key(FcitxKey_minus, fcitx::KeyState::NoState),
+            fcitx::Key(FcitxKey_bracketleft, fcitx::KeyState::NoState)},
+        .constrain =
+            fcitx::KeyListConstrain(fcitx::KeyConstrainFlag::AllowModifierLess),
+        .annotation{"可多项。有候选时生效（首屏不动）；Page_Up 键始终可用。"}}};
+    fcitx::KeyListOptionWithAnnotation<fcitx::ToolTipAnnotation> pageDownKeys{{
+        .parent = this,
+        .path{"PageDownKey"},
+        .description{"下翻页"},
+        .defaultValue = fcitx::KeyList{
+            fcitx::Key(FcitxKey_equal, fcitx::KeyState::NoState),
+            fcitx::Key(FcitxKey_bracketright, fcitx::KeyState::NoState)},
+        .constrain =
+            fcitx::KeyListConstrain(fcitx::KeyConstrainFlag::AllowModifierLess),
+        .annotation{"可多项。有候选时生效；Page_Down 键始终可用。"}}};);
+
+/// 配置 schema：fcitx5-configtool 依据它自动生成设置页（fcitx://config/addon/hux）；
+/// 分区结构参照全局设置（`Option<SubConfig>` → 分组标题，选项带悬浮说明）。
 FCITX_CONFIGURATION(
     HuxConfig,
-    fcitx::Option<bool> earlyCommit{this, "EarlyCommit", "提前上屏（组合中证据成熟即上屏）", true};
-    fcitx::Option<bool> earlyCommitToPreedit{this, "EarlyCommitToPreedit", "提前上屏至预编辑（缓冲，不直接提交）", false};
-    fcitx::Option<bool> allowDuplicateSingle{this, "AllowDuplicateSingle", "单字重码参与组句", true};
-    fcitx::Option<bool> fullShape{this, "FullShape", "全角标点", false};
-    fcitx::Option<bool> asciiPunct{this, "AsciiPunct", "ASCII 标点直通（不做中文标点映射）", false};
-    fcitx::Option<bool> tabLearning{this, "TabLearning", "Tab 选字写入学习库", true};
-    fcitx::Option<int, fcitx::IntConstrain> highFreqLimit{
-        this, "HighFreqLimit", "高频字过滤上限（重启生效）", 1500, fcitx::IntConstrain(0, 20000)};
-    // 单键选项须显式放宽「允许无修饰键」：默认 KeyConstrain 会拒绝 ` / ; 这类
-    // 无修饰键（配置工具的按键录制会报「不满足约束」）。
-    fcitx::Option<fcitx::Key, fcitx::KeyConstrain> pinyinLookupKey{
-        this, "PinyinLookupKey", "音查虎：用拼音查虎码",
-        fcitx::Key(FcitxKey_colon, fcitx::KeyState::Alt),
-        fcitx::KeyConstrain(fcitx::KeyConstrainFlag::AllowModifierLess)};
-    fcitx::Option<fcitx::Key, fcitx::KeyConstrain> characterLookupKey{
-        this, "CharacterLookupKey", "字查音+虎：查光标左侧汉字的拼音与虎码",
-        fcitx::Key(FcitxKey_quotedbl, fcitx::KeyState::Alt),
-        fcitx::KeyConstrain(fcitx::KeyConstrainFlag::AllowModifierLess)};
-    fcitx::Option<bool> panelPreedit{this, "PanelPreedit", "候选窗口显示预编辑文本", false};);
+    fcitx::Option<HuxBehaviorConfig> behavior{this, "Behavior", "行为"};
+    fcitx::Option<HuxHotkeyConfig> hotkeys{this, "Hotkey", "快捷键"};);
 
 class HuxEngine : public fcitx::InputMethodEngine {
 public:
@@ -86,7 +215,7 @@ public:
         const auto &key = keyEvent.key();
         fcitx::InputContext *inputContext = keyEvent.inputContext();
         context_ = inputContext;
-        // 应用侧周边文本（字查音+虎用；应用不支持时 valid=0）。
+        // 应用侧周边文本（字反查用；应用不支持时 valid=0）。
         const auto &surrounding = inputContext->surroundingText();
         if (surrounding.isValid()) {
             hux_engine_set_surrounding(engine_, surrounding.text().c_str(),
@@ -177,8 +306,9 @@ private:
             preeditText.setCursor(cursor);
         }
         // 候选窗口预编辑：可配置关闭（关闭后仅候选与注释）。
-        context_->inputPanel().setPreedit(config_.panelPreedit.value() ? preeditText
-                                                                      : fcitx::Text());
+        context_->inputPanel().setPreedit(
+            config_.behavior->panelPreedit.value() ? preeditText
+                                                   : fcitx::Text());
         // 客户端内联预编辑：跟随 fcitx5 全局预编辑设置（`isPreeditEnabled`）。
         context_->inputPanel().setClientPreedit(context_->isPreeditEnabled() ? preeditText
                                                                             : fcitx::Text());
@@ -201,8 +331,13 @@ private:
                 candidateList->append<fcitx::DisplayOnlyCandidateWord>(
                     fcitx::Text(text), fcitx::Text(comment));
             }
+            // 数字直选：面板显示 1–9 / 0 序号（与引擎页内定位一致）。
+            if (config_.behavior->digitSelect.value()) {
+                candidateList->setSelectionKey(digitSelectionKeys());
+            }
             // 翻页交由 fcitx5 面板（页大小与引擎一致）：绝对索引 → 全局光标 + 所在页。
-            candidateList->setPageSize(kCandidatePageSize);
+            candidateList->setPageSize(std::clamp(
+                config_.behavior->pageSize.value(), kPageSizeMin, kPageSizeMax));
             // 防御：越界不设光标索引。
             const int index = std::min(std::max(selected, 0), count - 1);
             candidateList->setGlobalCursorIndex(index);
@@ -212,7 +347,7 @@ private:
             }
             context_->inputPanel().setCandidateList(std::move(candidateList));
         }
-        // 字查音+虎（⑧-2）：两排辅助文本（上排 = 光标左、下排 = 光标右）；空串清除。
+        // 字反查（⑧-2）：两排辅助文本（上排 = 光标左、下排 = 光标右）；空串清除。
         const auto auxText = [](const char *value) {
             return value != nullptr && *value != '\0' ? fcitx::Text(value) : fcitx::Text();
         };
@@ -227,19 +362,24 @@ private:
             return;
         }
         hux_options options = {};
-        options.early_commit = config_.earlyCommit.value() ? 1 : 0;
-        options.early_commit_to_preedit = config_.earlyCommitToPreedit.value() ? 1 : 0;
-        options.allow_duplicate_single = config_.allowDuplicateSingle.value() ? 1 : 0;
-        options.full_shape = config_.fullShape.value() ? 1 : 0;
-        options.ascii_punct = config_.asciiPunct.value() ? 1 : 0;
-        options.tab_learning = config_.tabLearning.value() ? 1 : 0;
-        options.high_freq_limit = config_.highFreqLimit.value();
-        const auto fillKey = [](int32_t *sym, int32_t *states, const fcitx::Key &key) {
-            *sym = static_cast<int32_t>(key.sym());
-            *states = static_cast<int32_t>(key.states().toInteger());
-        };
-        fillKey(&options.pinyin_lookup_sym, &options.pinyin_lookup_states, config_.pinyinLookupKey.value());
-        fillKey(&options.character_lookup_sym, &options.character_lookup_states, config_.characterLookupKey.value());
+        const auto &behavior = config_.behavior.value();
+        const auto &hotkeys = config_.hotkeys.value();
+        options.early_commit = behavior.earlyCommit.value() ? 1 : 0;
+        options.early_commit_to_preedit =
+            behavior.earlyCommitToPreedit.value() ? 1 : 0;
+        options.allow_duplicate_single =
+            behavior.allowDuplicateSingle.value() ? 1 : 0;
+        options.full_shape = behavior.fullShape.value() ? 1 : 0;
+        options.ascii_punct = behavior.asciiPunct.value() ? 1 : 0;
+        options.tab_learning = behavior.tabLearning.value() ? 1 : 0;
+        options.high_freq_limit = behavior.highFreqLimit.value();
+        fillKeyList(&options.sound_to_char_shape, hotkeys.soundToCharShapeKeys.value());
+        fillKeyList(&options.char_to_sound_shape,
+                    hotkeys.charToSoundShapeKeys.value());
+        options.page_size = behavior.pageSize.value();
+        fillKeyList(&options.page_up, hotkeys.pageUpKeys.value());
+        fillKeyList(&options.page_down, hotkeys.pageDownKeys.value());
+        options.digit_select = behavior.digitSelect.value() ? 1 : 0;
         if (hux_engine_apply_settings(engine_, &options) == 0) {
             FCITX_WARN() << "hux: apply settings failed";
         }

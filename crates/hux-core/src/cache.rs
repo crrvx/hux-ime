@@ -145,7 +145,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fifo_evicts_in_insertion_order_and_updates_in_place() {
+    fn fifo_updates_existing_key_in_place() {
         let mut cache = Fifo::new(2);
         cache.put(10u32, "a");
         cache.put(20u32, "b");
@@ -155,6 +155,13 @@ mod tests {
         cache.put(10u32, "a2");
         assert_eq!(cache.get(&10), Some(&"a2"));
         assert_eq!(cache.len(), 2);
+    }
+
+    #[test]
+    fn fifo_evicts_oldest_slot() {
+        let mut cache = Fifo::new(2);
+        cache.put(10u32, "a");
+        cache.put(20u32, "b");
         // 新 key 顶掉最旧槽位（10）。
         cache.put(30u32, "c");
         assert_eq!(cache.get(&10), None);

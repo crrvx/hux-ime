@@ -21,12 +21,12 @@ use learning_store::LearningStore;
 use options::OptionsStore;
 use settings::Settings;
 
-use hux_core::character_lookup;
+use hux_core::char_to_sound_shape;
 use hux_core::decode::Decoder;
-use hux_core::host::{self, HostResult};
+use hux_core::host::{self, HostOptions, HostResult};
 use hux_core::interaction::{
-    CompositionBuilder, K_CHARACTER_LOOKUP_KEY, K_PINYIN_LOOKUP_KEY, LiveLearning, ProcessorEnv,
-    ProcessorResult, SentenceState, buffered_text, processor, reset_early_evidence,
+    CompositionBuilder, K_CHAR_TO_SOUND_SHAPE_KEY, K_SOUND_TO_CHAR_SHAPE_KEY, LiveLearning,
+    ProcessorEnv, ProcessorResult, SentenceState, buffered_text, processor, reset_early_evidence,
     set_allow_duplicate_single, update_notifier,
 };
 use hux_core::key::{
@@ -122,9 +122,9 @@ pub(crate) fn wall_clock() -> f64 {
         .unwrap_or(0.0)
 }
 
-/// 字查音+虎（⑧-2）会话态：周边文本（字符制光标）+ 窗口起点 + 已算好的提示。
+/// 字反查（⑧-2）会话态：周边文本（字符制光标）+ 窗口起点 + 已算好的提示。
 #[derive(Default)]
-struct CharacterLookupState {
+struct CharToSoundShapeState {
     valid: bool,
     text: String,
     cursor: usize,
@@ -147,12 +147,14 @@ pub struct Engine {
     options: Option<OptionsStore>,
     /// 外部配置（fcitx5 配置界面 / 测试；默认 = 内建缺省）。
     settings: Settings,
+    /// 宿主选项（翻页键/页大小；由 `settings` 派生，避免每次按键解析键名）。
+    host_options: HostOptions,
     /// 标点表（`symbols.yaml`；缺失时标点交宿主）。
     punct: Option<PunctTable>,
     /// 学习库（用户目录不可用时为禁用占位）。
     learning: LearningStore,
-    /// 字查音+虎（⑧-2）会话态。
-    character_lookup: CharacterLookupState,
+    /// 字反查（⑧-2）会话态。
+    char_to_sound_shape: CharToSoundShapeState,
     /// 学习规则串（来自码表；用于拼 mode）。
     learning_rules: String,
     /// 当前学习 mode 串与已应用的索引版本。
@@ -189,6 +191,7 @@ impl Engine {
                 .join(":")
         )];
         let settings = Settings::default();
+        let host_options = settings.host_options();
         let lexicon = Lexicon::load(&dirs, settings.high_freq_limit);
         notes.push(format!("lexicon: {}", lexicon.data_status().canonical()));
         let learning_rules = lexicon.learning_rules.clone();
@@ -262,16 +265,17 @@ impl Engine {
             builder: CompositionBuilder::default(),
             options,
             settings,
+            host_options,
             punct,
             learning,
-            character_lookup: CharacterLookupState::default(),
+            char_to_sound_shape: CharToSoundShapeState::default(),
             learning_rules,
             learning_mode,
             applied_learning: None,
             forward_after_commit: false,
             status: CString::new(notes.join("; ")).unwrap_or_default(),
         };
-        engine.sync_pinyin_lookup_prefix();
+        engine.sync_sound_to_char_shape_prefix();
         engine.push_update();
         engine
     }
@@ -284,10 +288,10 @@ impl Engine {
     fn key(&mut self, keysym: u32, states: u32, release: bool) -> bool {
         self.forward_after_commit = false;
         let key = KeyEvent::new(keysym as i32, core_modifiers(states, release));
-        // 字查音+虎查码段：←/→/↑/↓ **交应用处理**（应用光标随动），本层不消费也不改动输入；
+        // 字反查段：←/→/↑/↓ **交应用处理**（应用光标随动），本层不消费也不改动输入；
         // 两排在应用回传周边文本后的下一次按键（含 release）时刷新。
         if !release
-            && self.character_lookup_tagged()
+            && self.char_to_sound_shape_tagged()
             && matches!(key.repr().as_str(), "Left" | "Right" | "Up" | "Down")
         {
             return false;
@@ -298,6 +302,8 @@ impl Engine {
                 now,
                 dot_armed: &mut self.dot_armed,
                 min_retained: self.min_retained,
+                page_size: self.host_options.page_size,
+                digit_select: self.settings.digit_select,
             };
             processor(
                 &key,
@@ -312,8 +318,12 @@ impl Engine {
             Ok(ProcessorResult::Consume) => true,
             // 参照链：处理器未消费的键交宿主等价物（selector/navigator/express_editor 等）。
             Ok(ProcessorResult::Forward) => {
-                host::process_key(&key, &mut self.context, self.punct.as_mut())
-                    == HostResult::Consumed
+                host::process_key(
+                    &key,
+                    &mut self.context,
+                    self.punct.as_mut(),
+                    &self.host_options,
+                ) == HostResult::Consumed
             }
             Err(error) => {
                 eprintln!("hux: processor error: {error}");
@@ -368,25 +378,25 @@ impl Engine {
             eprintln!("hux: rebuild error: {error}");
         }
         update_notifier(&mut self.context, &mut self.state, &mut self.live);
-        self.refresh_character_lookup_aux();
+        self.refresh_char_to_sound_shape_aux();
         self.push_update();
         consumed
     }
 
-    /// 字查音+虎（⑧-2）：查码段内 ←/→ 以 2 字符步长移动锚点（返回 `Some(true)` 消费）。
+    /// 字反查（⑧-2）：查码段内 ←/→ 以 2 字符步长移动锚点（返回 `Some(true)` 消费）。
     /// 进入/退出查码段由 core 处理器负责（触发字符推入/清空组合）。
-    /// 当前组合末段是否为字查音+虎查码段。
-    fn character_lookup_tagged(&self) -> bool {
+    /// 当前组合末段是否为字反查段。
+    fn char_to_sound_shape_tagged(&self) -> bool {
         self.context
             .composition
             .back()
-            .is_some_and(|segment| segment.has_tag(character_lookup::TAG))
+            .is_some_and(|segment| segment.has_tag(char_to_sound_shape::TAG))
     }
 
     /// 重算两排提示（上排 = 光标左侧拼音、下排 = 虎码）；不在查码段则清空。
-    fn refresh_character_lookup_aux(&mut self) {
-        let tagged = self.character_lookup_tagged();
-        let state = &mut self.character_lookup;
+    fn refresh_char_to_sound_shape_aux(&mut self) {
+        let tagged = self.char_to_sound_shape_tagged();
+        let state = &mut self.char_to_sound_shape;
         if !tagged {
             state.aux_up.clear();
             state.aux_down.clear();
@@ -402,7 +412,7 @@ impl Engine {
         let (text, cursor) = (state.text.clone(), state.cursor);
         let (up, down) = self
             .decoder
-            .character_lookup_rows(&text, cursor)
+            .char_to_sound_shape_rows(&text, cursor)
             .unwrap_or_default();
         state.aux_up = up;
         state.aux_down = down;
@@ -410,7 +420,7 @@ impl Engine {
 
     /// 宿主送入应用侧周边文本（字符制光标；`None` = 应用不支持/不可用）。
     pub fn set_surrounding(&mut self, text: Option<&str>, cursor_chars: usize) {
-        let state = &mut self.character_lookup;
+        let state = &mut self.char_to_sound_shape;
         match text {
             Some(text) => {
                 state.valid = true;
@@ -423,14 +433,14 @@ impl Engine {
                 state.cursor = 0;
             }
         }
-        if self.character_lookup_tagged() {
-            self.refresh_character_lookup_aux();
+        if self.char_to_sound_shape_tagged() {
+            self.refresh_char_to_sound_shape_aux();
         }
     }
 
     /// 重置会话（`activate`/`deactivate`/`reset`）。
     fn reset(&mut self) {
-        self.character_lookup = CharacterLookupState::default();
+        self.char_to_sound_shape = CharToSoundShapeState::default();
         self.context.clear();
         self.state.reset(&mut self.context, false);
         self.live.pending.clear();
@@ -454,31 +464,31 @@ impl Engine {
     /// 应用外部配置（fcitx5 配置界面 / 测试）：选项类即时生效；`high_freq_limit` 需重启。
     pub fn apply_settings(&mut self, settings: Settings) {
         self.settings = settings;
+        self.host_options = self.settings.host_options();
         let defaults = self.settings.option_defaults();
         for (name, value) in defaults {
             if self.context.get_option(name) != value {
                 self.context.set_option(name, value);
             }
         }
-        self.sync_pinyin_lookup_prefix();
+        self.sync_sound_to_char_shape_prefix();
         self.refresh_learning_mode();
     }
 
-    /// 查找键（属性）：音查虎前缀（可打印 ASCII 且无修饰）与字查音+虎触发字符。
-    /// 查找键（属性）：把两项触发键的 rime 键名交给 core（解析/匹配均在 core 内）。
-    fn sync_pinyin_lookup_prefix(&mut self) {
+    /// 触发键（属性）：把两项触发键的 rime 键名列表（逗号分隔）交给 core（解析/匹配均在 core 内）。
+    fn sync_sound_to_char_shape_prefix(&mut self) {
         for (property, value) in [
             (
-                K_PINYIN_LOOKUP_KEY,
-                self.settings.pinyin_lookup_key.as_str(),
+                K_SOUND_TO_CHAR_SHAPE_KEY,
+                self.settings.sound_to_char_shape_keys.join(","),
             ),
             (
-                K_CHARACTER_LOOKUP_KEY,
-                self.settings.character_lookup_key.as_str(),
+                K_CHAR_TO_SOUND_SHAPE_KEY,
+                self.settings.char_to_sound_shape_keys.join(","),
             ),
         ] {
             if self.context.get_property(property).unwrap_or("") != value {
-                self.context.set_property(property, value);
+                self.context.set_property(property, &value);
             }
         }
     }
@@ -532,10 +542,12 @@ impl Engine {
             return;
         };
         let buffered = buffered_text(&self.context);
-        let live = String::from_utf8_lossy(self.context.live_input()).into_owned();
+        let live_bytes = self.context.live_input();
+        let live = String::from_utf8_lossy(live_bytes).into_owned();
         // 参照 librime `Composition::GetPreedit` + 参照 Lua 的候选 preedit：
-        // 高亮候选的 preedit（「按词分码」，含缓冲前缀与音查虎前缀）优先；
-        // 光标不在实况输入末尾时回退「缓冲 + 实况输入」，保证字节光标与字符串一致。
+        // 高亮候选的 preedit（「按字分码」，含缓冲前缀与音反查前缀）始终优先；
+        // 组合（光标）之后的原始输入原样接在其后——左/右移动时保持按字分码，
+        // 光标落在分码文本末尾、原始尾部之前。
         let highlighted = self
             .context
             .composition
@@ -543,11 +555,24 @@ impl Engine {
             .and_then(|segment| segment.selected_candidate())
             .map(|candidate| candidate.preedit.clone())
             .unwrap_or_default();
-        let caret_at_end = self.context.live_caret() >= self.context.live_input().len();
-        let (mut preedit, cursor) = if !highlighted.is_empty() && caret_at_end {
+        let (mut preedit, cursor) = if !highlighted.is_empty() {
             let cursor = highlighted.len();
-            (highlighted, cursor)
+            // 末段 `end` 为组合输入（含缓冲 `~` 标记）的字节位；换算到实况输入。
+            let marker =
+                usize::from(!buffered.is_empty() && self.context.input().first() == Some(&b'~'));
+            let composed_end = self
+                .context
+                .composition
+                .back()
+                .map(|segment| segment.end)
+                .unwrap_or(0)
+                .saturating_sub(marker)
+                .min(live_bytes.len());
+            let mut text = highlighted;
+            text.push_str(&String::from_utf8_lossy(&live_bytes[composed_end..]));
+            (text, cursor)
         } else {
+            // 无高亮候选（如未翻译段）：回退「缓冲 + 实况输入」，光标按字节对应。
             let mut text = String::new();
             text.push_str(&buffered);
             if !buffered.is_empty() && !live.is_empty() {
@@ -562,7 +587,7 @@ impl Engine {
             let cursor = (prefix_length + self.context.live_caret()).min(text.len());
             (text, cursor)
         };
-        // 参照 `Composition::GetPreedit`：段提示插在光标处（如音查虎段的「〔拼音〕」）。
+        // 参照 `Composition::GetPreedit`：段提示插在光标处（如音反查段的「〔拼音〕」）。
         let prompt = self
             .context
             .composition
@@ -572,9 +597,9 @@ impl Engine {
         if !prompt.is_empty() {
             preedit.insert_str(cursor.min(preedit.len()), &prompt);
         }
-        // 字查音+虎查码段不下发预编辑：避免应用端 marked text 锁住光标（←/→ 无法移动）。
+        // 字反查段不下发预编辑：避免应用端 marked text 锁住光标（←/→ 无法移动）。
         let mut cursor = cursor;
-        if self.character_lookup_tagged() {
+        if self.char_to_sound_shape_tagged() {
             preedit.clear();
             cursor = 0;
         }
@@ -611,8 +636,8 @@ impl Engine {
         let text_pointers: Vec<*const c_char> = texts.iter().map(|text| text.as_ptr()).collect();
         let comment_pointers: Vec<*const c_char> =
             comments.iter().map(|comment| comment.as_ptr()).collect();
-        let aux_up = CString::new(self.character_lookup.aux_up.as_str()).unwrap_or_default();
-        let aux_down = CString::new(self.character_lookup.aux_down.as_str()).unwrap_or_default();
+        let aux_up = CString::new(self.char_to_sound_shape.aux_up.as_str()).unwrap_or_default();
+        let aux_down = CString::new(self.char_to_sound_shape.aux_down.as_str()).unwrap_or_default();
         // SAFETY: 指针数组与 C 串在本调用期间有效；计数与数组长度一致。
         unsafe {
             update(
@@ -679,6 +704,18 @@ pub unsafe extern "C" fn hux_engine_status(engine: *const Engine) -> *const c_ch
     }
 }
 
+/// 键位列表上限（与 `shell/hux_abi.h` 的 `HUX_MAX_KEYS` 一致）。
+pub const HUX_MAX_KEYS: usize = 8;
+
+/// 键位列表（fcitx5 `KeyList` → C ABI；`sym == 0` 的项忽略）。
+#[derive(Clone, Copy, Debug, Default)]
+#[repr(C)]
+pub struct HuxKeyList {
+    pub count: i32,
+    pub sym: [i32; HUX_MAX_KEYS],
+    pub states: [i32; HUX_MAX_KEYS],
+}
+
 /// 外部配置（C ABI 布局；与 `shell/hux_abi.h` 一致）。
 #[derive(Clone, Copy, Debug, Default)]
 #[repr(C)]
@@ -690,10 +727,17 @@ pub struct HuxOptions {
     pub ascii_punct: i32,
     pub tab_learning: i32,
     pub high_freq_limit: i32,
-    pub pinyin_lookup_sym: i32,
-    pub pinyin_lookup_states: i32,
-    pub character_lookup_sym: i32,
-    pub character_lookup_states: i32,
+    /// 音反查触发键（rime 键名，可多项）。
+    pub sound_to_char_shape: HuxKeyList,
+    /// 字反查触发键（rime 键名，可多项）。
+    pub char_to_sound_shape: HuxKeyList,
+    /// 每页候选个数（1..=10）。
+    pub page_size: i32,
+    /// 上/下翻页键（rime 键名，可多项）。
+    pub page_up: HuxKeyList,
+    pub page_down: HuxKeyList,
+    /// 数字直选（1–9；0=10）。
+    pub digit_select: i32,
 }
 
 /// 应用外部配置（fcitx5 配置界面 → C++ 壳 → 本入口）。返回 1 = 已应用。
@@ -711,12 +755,17 @@ pub unsafe extern "C" fn hux_engine_apply_settings(
     let Some(options) = (unsafe { options.as_ref() }) else {
         return 0;
     };
-    // fcitx5 按键（keysym + 状态位）→ rime 键名；未设（sym=0）为空串。
-    let key_repr = |sym: i32, states: i32| -> String {
-        if sym == 0 {
-            return String::new();
-        }
-        KeyEvent::new(sym, core_modifiers(states as u32, false)).repr()
+    // fcitx5 按键列表（keysym + 状态位）→ rime 键名列表；`sym=0` 项忽略。
+    let key_reprs = |list: &HuxKeyList| -> Vec<String> {
+        (0..HUX_MAX_KEYS)
+            .take(list.count.clamp(0, HUX_MAX_KEYS as i32) as usize)
+            .filter_map(|index| {
+                let sym = list.sym[index];
+                (sym != 0).then(|| {
+                    KeyEvent::new(sym, core_modifiers(list.states[index] as u32, false)).repr()
+                })
+            })
+            .collect()
     };
     engine.apply_settings(Settings {
         early_commit: options.early_commit != 0,
@@ -726,11 +775,12 @@ pub unsafe extern "C" fn hux_engine_apply_settings(
         ascii_punct: options.ascii_punct != 0,
         tab_learning: options.tab_learning != 0,
         high_freq_limit: options.high_freq_limit.max(0) as usize,
-        pinyin_lookup_key: key_repr(options.pinyin_lookup_sym, options.pinyin_lookup_states),
-        character_lookup_key: key_repr(
-            options.character_lookup_sym,
-            options.character_lookup_states,
-        ),
+        sound_to_char_shape_keys: key_reprs(&options.sound_to_char_shape),
+        char_to_sound_shape_keys: key_reprs(&options.char_to_sound_shape),
+        page_size: options.page_size.max(1) as usize,
+        page_up_keys: key_reprs(&options.page_up),
+        page_down_keys: key_reprs(&options.page_down),
+        digit_select: options.digit_select != 0,
     });
     1
 }
@@ -885,14 +935,12 @@ mod tests {
     }
 
     #[test]
-    fn engine_wires_learning_store() {
+    fn engine_enables_learning_store() {
         let _guard = serial();
         let dir = temp_user_dir("learning");
-        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, Some(dir.clone()));
+        let engine = Engine::new_with_dirs(host(), fixture_dirs(), None, Some(dir.clone()));
         assert!(engine.live.store_ready, "用户目录可用时学习库应就绪");
         assert!(engine.live.mode.starts_with("sentence-v1|rules="));
-        engine.key(u32::from(b'a'), 0, false);
-        assert!(engine.applied_learning.is_some(), "按键后应已应用学习索引");
         assert!(
             dir.join(format!(
                 "{}.userdb",
@@ -904,32 +952,150 @@ mod tests {
     }
 
     #[test]
-    fn types_composition_and_commits_with_fixture() {
+    fn engine_applies_learning_after_key() {
         let _guard = serial();
-        COMMITS.lock().unwrap().clear();
+        let dir = temp_user_dir("learning-apply");
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, Some(dir.clone()));
+        engine.key(u32::from(b'a'), 0, false);
+        assert!(engine.applied_learning.is_some(), "按键后应已应用学习索引");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn typing_shows_preedit_and_candidates() {
+        let _guard = serial();
         UPDATES.lock().unwrap().clear();
         let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
-        // 「甲/乙」共用码 ab：输入两个键后出现候选，space 确认并提交。
+        // 「甲/乙」共用码 ab：输入两个键后出现候选。
         assert!(engine.key(u32::from(b'a'), 0, false));
         assert!(engine.key(u32::from(b'b'), 0, false));
         assert_eq!(engine.context.input(), b"ab");
-        let (preedit, cursor, candidates, selected, _, _) =
-            UPDATES.lock().unwrap().last().cloned().expect("update");
+        let (preedit, cursor, candidates, selected, _, _) = last_update();
         assert_eq!(preedit, "ab");
         assert_eq!(cursor, 2);
         assert_eq!(candidates, vec!["甲".to_string(), "乙".to_string()]);
         assert_eq!(selected, 0);
+    }
+
+    #[test]
+    fn space_commits_highlighted_candidate() {
+        let _guard = serial();
+        COMMITS.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        assert!(engine.key(u32::from(b'a'), 0, false));
+        assert!(engine.key(u32::from(b'b'), 0, false));
         assert!(engine.key(0x20, 0, false)); // space
         assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "甲");
         assert!(engine.context.input().is_empty());
     }
 
+    /// 上翻页键：候选菜单可见即消费（首屏也不落作标点/输入）。
     #[test]
-    fn modifiers_and_release_pass_through() {
+    fn page_up_is_consumed_with_menu() {
+        let _guard = serial();
+        COMMITS.lock().unwrap().clear();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        for code in *b"ja" {
+            engine.key(u32::from(code), 0, false);
+        }
+        assert!(engine.key(0x2d, 0, false), "- 菜单可见时应被消费");
+        assert!(COMMITS.lock().unwrap().is_empty(), "不应作为标点/输入上屏");
+    }
+
+    /// 数字直选（`DigitSelect`）：菜单可见时 1–9 直接上屏当前页候选，0=第 10 个。
+    #[test]
+    fn digit_select_commits_page_candidate() {
+        let _guard = serial();
+        COMMITS.lock().unwrap().clear();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        engine.apply_settings(Settings {
+            digit_select: true,
+            page_size: 10,
+            ..Default::default()
+        });
+        for code in *b"ja" {
+            engine.key(u32::from(code), 0, false);
+        }
+        let (_, _, candidates, _, _, _) = last_update();
+        assert!(candidates.len() >= 10, "夹具 ja 应有至少 10 个候选");
+        let tenth = candidates[9].clone();
+        assert!(engine.key(u32::from(b'0'), 0, false), "0 应被消费");
+        assert_eq!(COMMITS.lock().unwrap().last().unwrap(), &tenth);
+    }
+
+    /// 多项触发键（`KeyList`）：两项均可进入音反查。
+    #[test]
+    fn sound_to_char_shape_accepts_multiple_trigger_keys() {
+        let _guard = serial();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        engine.apply_settings(Settings {
+            sound_to_char_shape_keys: vec!["grave".to_string(), "semicolon".to_string()],
+            ..Default::default()
+        });
+        // 第二绑定（`;`）触发，入段字符为 `;`。
+        assert!(engine.key(0x3b, 0, false), "; 应被消费");
+        assert_eq!(engine.context.input(), b";");
+        engine.reset();
+        // 第一绑定（`` ` ``）触发，入段字符为 `` ` ``。
+        assert!(engine.key(0x60, 0, false), "` 应被消费");
+        assert_eq!(engine.context.input(), b"`");
+    }
+    /// 数字直选默认关：数字仍是编码字符（选重后缀），不直接上屏。
+    #[test]
+    fn digit_select_off_keeps_rank_suffix() {
+        let _guard = serial();
+        COMMITS.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        for code in *b"ja" {
+            engine.key(u32::from(code), 0, false);
+        }
+        assert!(engine.key(u32::from(b'2'), 0, false));
+        assert!(
+            COMMITS.lock().unwrap().is_empty(),
+            "默认关：数字不应直接上屏"
+        );
+        assert!(engine.context.input().ends_with(b"2"));
+    }
+
+    /// 数字直选：页大小 5 时 `0`（第 10 个）不在页内，按普通数字输入处理。
+    #[test]
+    fn digit_select_out_of_page_falls_through() {
+        let _guard = serial();
+        COMMITS.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        engine.apply_settings(Settings {
+            digit_select: true,
+            ..Default::default()
+        });
+        for code in *b"ja" {
+            engine.key(u32::from(code), 0, false);
+        }
+        assert!(engine.key(u32::from(b'0'), 0, false));
+        assert!(COMMITS.lock().unwrap().is_empty(), "页外数字不应直接上屏");
+        assert!(engine.context.input().ends_with(b"0"));
+    }
+
+    #[test]
+    fn modified_keys_pass_through() {
         let _guard = serial();
         let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
         assert!(!engine.key(u32::from(b'a'), FCITX_CTRL, false)); // Ctrl+a 交宿主
-        assert!(!engine.key(u32::from(b'a'), 0, true)); // release 交宿主
+    }
+
+    #[test]
+    fn key_releases_pass_through() {
+        let _guard = serial();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        assert!(!engine.key(u32::from(b'a'), 0, true));
+    }
+
+    #[test]
+    fn idle_return_passes_through() {
+        let _guard = serial();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
         assert!(!engine.key(0xff0d, 0, false)); // Return 空闲交宿主
     }
 
@@ -950,17 +1116,12 @@ mod tests {
     }
 
     #[test]
-    fn composing_editing_keys_update_panel_and_are_consumed() {
+    fn composing_left_right_move_caret_and_toggle_candidates() {
         let _guard = serial();
-        COMMITS.lock().unwrap().clear();
         UPDATES.lock().unwrap().clear();
         let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
         assert!(engine.key(u32::from(b'a'), 0, false));
         assert!(engine.key(u32::from(b'b'), 0, false));
-        let (preedit, cursor, candidates, _, _, _) = last_update();
-        assert_eq!(preedit, "ab");
-        assert_eq!(cursor, 2);
-        assert_eq!(candidates, vec!["甲".to_string(), "乙".to_string()]);
         // ←：光标左移；组合按 caret 前缀重建（候选清空）
         assert!(engine.key(0xff51, 0, false), "组合中 Left 应被消费");
         let (preedit, cursor, candidates, _, _, _) = last_update();
@@ -972,6 +1133,15 @@ mod tests {
         let (_, cursor, candidates, _, _, _) = last_update();
         assert_eq!(cursor, 2);
         assert_eq!(candidates, vec!["甲".to_string(), "乙".to_string()]);
+    }
+
+    #[test]
+    fn composing_up_down_move_highlight() {
+        let _guard = serial();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        assert!(engine.key(u32::from(b'a'), 0, false));
+        assert!(engine.key(u32::from(b'b'), 0, false));
         // ↓：高亮下移；↑ 到首项
         assert!(engine.key(0xff54, 0, false));
         let (_, _, _, selected, _, _) = last_update();
@@ -979,46 +1149,71 @@ mod tests {
         assert!(engine.key(0xff52, 0, false));
         let (_, _, _, selected, _, _) = last_update();
         assert_eq!(selected, 0);
+    }
+
+    #[test]
+    fn composing_backspace_deletes_input_and_clears_composition() {
+        let _guard = serial();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        assert!(engine.key(u32::from(b'a'), 0, false));
+        assert!(engine.key(u32::from(b'b'), 0, false));
         // 退格：删除输入
         assert!(engine.key(0xff08, 0, false));
         let (preedit, cursor, candidates, _, _, _) = last_update();
         assert_eq!(preedit, "a");
         assert_eq!(cursor, 1);
         assert!(candidates.is_empty());
-        // 再退格清空组合；此后交宿主
+        // 再退格清空组合
         assert!(engine.key(0xff08, 0, false));
         let (preedit, _, candidates, _, _, _) = last_update();
         assert!(preedit.is_empty());
         assert!(candidates.is_empty());
-        assert!(!engine.key(0xff08, 0, false), "空闲 BackSpace 交宿主");
     }
 
     #[test]
-    fn punctuation_commits_via_table() {
+    fn punctuation_commits_when_idle() {
         let _guard = serial();
         COMMITS.lock().unwrap().clear();
-        UPDATES.lock().unwrap().clear();
         let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
-        // 空闲：标点直提交（symbols.yaml half_shape："." → 。）
+        // symbols.yaml half_shape："." → 。
         assert!(engine.key(0x2e, 0, false), "period 应被消费");
         assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "。");
-        // 组合中：当前候选 + 标点一并提交并清空
+    }
+
+    #[test]
+    fn punctuation_appends_to_composition() {
+        let _guard = serial();
+        COMMITS.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
         assert!(engine.key(u32::from(b'a'), 0, false));
         assert!(engine.key(u32::from(b'b'), 0, false));
         assert!(engine.key(0x2c, 0, false), "comma 应被消费");
         assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "甲，");
         assert!(engine.context.input().is_empty());
-        // pair 交替（apostrophe：'‘' / '’'）
-        assert!(engine.key(0x27, 0, false));
-        assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "‘");
-        assert!(engine.key(0x27, 0, false));
-        assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "’");
-        // 半角空格未映射：交宿主
+    }
+
+    #[test]
+    fn punctuation_pair_alternates() {
+        let _guard = serial();
+        COMMITS.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        // apostrophe：'‘' / '’'
+        for text in ["‘", "’"] {
+            assert!(engine.key(0x27, 0, false));
+            assert_eq!(COMMITS.lock().unwrap().last().unwrap(), text);
+        }
+    }
+
+    #[test]
+    fn punctuation_passes_unmapped_space() {
+        let _guard = serial();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
         assert!(!engine.key(0x20, 0, false), "空闲空格交宿主");
     }
 
     #[test]
-    fn uppercase_letter_commits_composition_first() {
+    fn uppercase_commits_composition_and_requests_forward() {
         let _guard = serial();
         // 用户报告：组合中收到大写字母时，应先上屏当前候选（而非把字母插到预编辑之前）。
         // 核心语义保持「提交 + 不消费」（同 librime）；宿主层据 `forward_after_commit`
@@ -1039,37 +1234,55 @@ mod tests {
         );
         assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "甲");
         assert!(engine.context.input().is_empty(), "组合已提交并清空");
-        // 空闲大写字母：无提交，不请求转发（前端自行转发）。
+    }
+
+    #[test]
+    fn idle_uppercase_does_not_request_forward() {
+        let _guard = serial();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
         assert!(!engine.key(0x41, FCITX_SHIFT, false));
         assert!(!engine.forward_after_commit);
     }
 
     #[test]
-    fn apply_settings_switches_options_and_learning() {
+    fn apply_settings_switches_context_options() {
         let _guard = serial();
         let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
-        let settings = Settings {
+        engine.apply_settings(Settings {
             full_shape: true,
             ascii_punct: true,
-            tab_learning: false,
-            high_freq_limit: 100,
             ..Default::default()
-        };
-        engine.apply_settings(settings);
+        });
         assert!(engine.context.get_option("full_shape"));
         assert!(engine.context.get_option("ascii_punct"));
+    }
+
+    #[test]
+    fn apply_settings_disables_learning_mode() {
+        let _guard = serial();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        engine.apply_settings(Settings {
+            tab_learning: false,
+            ..Default::default()
+        });
         assert!(
             engine.live.mode.is_empty(),
             "关闭 Tab 学习 → 学习 mode 为空"
         );
     }
 
-    #[test]
-    fn ffi_apply_settings_roundtrip() {
-        let _guard = serial();
-        let engine = unsafe { hux_engine_new(std::ptr::null()) };
-        assert!(!engine.is_null());
-        let options = HuxOptions {
+    fn key_list(keys: &[(i32, i32)]) -> HuxKeyList {
+        let mut list = HuxKeyList::default();
+        for (index, (sym, states)) in keys.iter().enumerate().take(HUX_MAX_KEYS) {
+            list.sym[index] = *sym;
+            list.states[index] = *states;
+        }
+        list.count = keys.len().min(HUX_MAX_KEYS) as i32;
+        list
+    }
+
+    fn ffi_options() -> HuxOptions {
+        HuxOptions {
             early_commit: 0,
             early_commit_to_preedit: 1,
             allow_duplicate_single: 1,
@@ -1077,13 +1290,25 @@ mod tests {
             ascii_punct: 1,
             tab_learning: 0,
             high_freq_limit: 800,
-            pinyin_lookup_sym: 0x60,
-            pinyin_lookup_states: 0,
-            character_lookup_sym: 0x60,
-            character_lookup_states: 1,
-        };
-        let applied = unsafe { hux_engine_apply_settings(engine, &options) };
-        assert_eq!(applied, 1);
+            // 音反查：`；`（无修饰）与 Shift+`；`（= `:`）。
+            sound_to_char_shape: key_list(&[(0x3b, 0), (0x3a, 0)]),
+            // 字反查：Shift+`（= `~`）。
+            char_to_sound_shape: key_list(&[(0x60, 1)]),
+            page_size: 7,
+            // 翻页：`.` 与 `]`。
+            page_up: key_list(&[(0x2c, 0)]),
+            page_down: key_list(&[(0x2e, 0), (0x5d, 0)]),
+            digit_select: 1,
+        }
+    }
+
+    #[test]
+    fn ffi_apply_settings_maps_engine_options() {
+        let _guard = serial();
+        let engine = unsafe { hux_engine_new(std::ptr::null()) };
+        assert!(!engine.is_null());
+        let options = ffi_options();
+        assert_eq!(unsafe { hux_engine_apply_settings(engine, &options) }, 1);
         let state = unsafe { &mut *engine };
         assert!(!state.settings.early_commit);
         assert!(state.context.get_option("full_shape"));
@@ -1093,8 +1318,52 @@ mod tests {
             "tab_learning=0 → 学习 mode 为空"
         );
         assert_eq!(state.settings.high_freq_limit, 800);
-        assert_eq!(state.settings.pinyin_lookup_key, "grave");
-        assert_eq!(state.settings.character_lookup_key, "Shift+grave");
+        unsafe { hux_engine_free(engine) };
+    }
+
+    #[test]
+    fn ffi_apply_settings_maps_lookup_keys() {
+        let _guard = serial();
+        let engine = unsafe { hux_engine_new(std::ptr::null()) };
+        assert!(!engine.is_null());
+        let options = ffi_options();
+        assert_eq!(unsafe { hux_engine_apply_settings(engine, &options) }, 1);
+        let state = unsafe { &mut *engine };
+        assert_eq!(
+            state.settings.sound_to_char_shape_keys,
+            vec!["semicolon", "colon"]
+        );
+        assert_eq!(state.settings.char_to_sound_shape_keys, vec!["Shift+grave"]);
+        unsafe { hux_engine_free(engine) };
+    }
+
+    #[test]
+    fn ffi_apply_settings_maps_page_options() {
+        let _guard = serial();
+        let engine = unsafe { hux_engine_new(std::ptr::null()) };
+        assert!(!engine.is_null());
+        let options = ffi_options();
+        assert_eq!(unsafe { hux_engine_apply_settings(engine, &options) }, 1);
+        let state = unsafe { &mut *engine };
+        assert_eq!(state.settings.page_size, 7);
+        assert_eq!(state.settings.page_up_keys, vec!["comma"]);
+        assert_eq!(
+            state.settings.page_down_keys,
+            vec!["period", "bracketright"]
+        );
+        assert!(state.settings.digit_select);
+        assert_eq!(state.host_options.page_size, 7);
+        assert_eq!(
+            state.host_options.page_up_keys,
+            vec![KeyEvent::from_repr("comma").unwrap()]
+        );
+        assert_eq!(
+            state.host_options.page_down_keys,
+            vec![
+                KeyEvent::from_repr("period").unwrap(),
+                KeyEvent::from_repr("bracketright").unwrap()
+            ]
+        );
         unsafe { hux_engine_free(engine) };
     }
 
@@ -1112,20 +1381,20 @@ mod tests {
         assert!(engine.context.input().is_empty());
     }
 
-    /// 音查虎（⑧-1）端到端：设置 → 前缀识别 → 候选/注释 → 预编辑提示 → 空格上屏。
+    /// 音反查（⑧-1）端到端：设置 → 前缀识别 → 候选/注释 → 预编辑提示 → 空格上屏。
     #[test]
-    fn pinyin_lookup_end_to_end() {
+    fn sound_to_char_shape_end_to_end() {
         let _guard = serial();
         COMMITS.lock().unwrap().clear();
         UPDATES.lock().unwrap().clear();
         let dirs = vec![
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/pinyin_lookup"),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/sound_to_char_shape"),
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data"),
         ];
         let mut engine = Engine::new_with_dirs(host(), dirs, None, None);
-        assert!(engine.key(0x3a, FCITX_ALT, false), "音查虎触发键应被消费");
+        assert!(engine.key(0x3a, FCITX_ALT, false), "音反查触发键应被消费");
         for code in *b"zho" {
-            assert!(engine.key(u32::from(code), 0, false), "音查虎输入应被消费");
+            assert!(engine.key(u32::from(code), 0, false), "音反查输入应被消费");
         }
         let (preedit, _, candidates, _, _, _) = last_update();
         assert_eq!(preedit, ":zho〔拼音〕");
@@ -1135,7 +1404,7 @@ mod tests {
         );
         assert!(engine.key(0x20, 0, false));
         assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "中哦");
-        // 音查虎预编辑「按音节分码」：全拼音节之间插空格。
+        // 音反查预编辑「按音节分码」：全拼音节之间插空格。
         engine.reset();
         assert!(engine.key(0x3a, FCITX_ALT, false));
         for code in *b"zhongguo" {
@@ -1146,15 +1415,15 @@ mod tests {
         assert_eq!(preedit, ":zhong guo〔拼音〕");
     }
 
-    /// 字查音+虎（⑧-2）：默认 Alt+" 进入组合（**带修饰键不给默认候选**）；
+    /// 字反查（⑧-2）：默认 Alt+" 进入组合（**带修饰键不给默认候选**）；
     /// 上排 = 光标左侧 1 字拼音、下排 = 虎码，步长 1；改为单字符键时才给默认可上屏候选。
     #[test]
-    fn character_lookup_end_to_end() {
+    fn char_to_sound_shape_end_to_end() {
         let _guard = serial();
         COMMITS.lock().unwrap().clear();
         UPDATES.lock().unwrap().clear();
         let dirs = vec![
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/pinyin_lookup"),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/sound_to_char_shape"),
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data"),
         ];
         let mut engine = Engine::new_with_dirs(host(), dirs, None, None);
@@ -1184,7 +1453,7 @@ mod tests {
         // 其它键：退出查码段并照常处理。
         assert!(engine.key(u32::from(b'a'), 0, false), "普通键照常处理");
         assert_eq!(engine.context.input(), b"a");
-        // 音查虎：带修饰键（默认 Alt+:）**不给**默认候选；单字符键（;）才给。
+        // 音反查：带修饰键（默认 Alt+:）**不给**默认候选；单字符键（;）才给。
         engine.reset();
         assert!(engine.key(0x3a, FCITX_ALT, false), "Alt+: 应被消费");
         let (_, _, candidates, _, _, _) = last_update();
@@ -1194,7 +1463,7 @@ mod tests {
         );
         engine.reset();
         engine.apply_settings(settings::Settings {
-            pinyin_lookup_key: "semicolon".to_string(),
+            sound_to_char_shape_keys: vec!["semicolon".to_string()],
             ..settings::Settings::default()
         });
         assert!(engine.key(0x3b, 0, false), "; 应被消费");
@@ -1204,24 +1473,24 @@ mod tests {
             candidates.iter().any(|candidate| candidate == "；"),
             "单字符触发键应给默认候选：{candidates:?}"
         );
-        // 音查虎：单字符触发键（`）→ 同样给默认可上屏候选，空格上屏。
+        // 音反查：单字符触发键（`）→ 同样给默认可上屏候选，空格上屏。
         engine.reset();
         engine.apply_settings(settings::Settings {
-            pinyin_lookup_key: "grave".to_string(),
+            sound_to_char_shape_keys: vec!["grave".to_string()],
             ..settings::Settings::default()
         });
         assert!(engine.key(0x60, 0, false), "` 应被消费");
         let (_, _, candidates, _, _, _) = last_update();
         assert!(
             candidates.iter().any(|candidate| candidate == "`"),
-            "音查虎单字符触发键应给默认候选：{candidates:?}"
+            "音反查单字符触发键应给默认候选：{candidates:?}"
         );
         assert!(engine.key(0x20, 0, false), "空格确认候选");
         assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "`");
         // 单字符触发键（~）→ 提供默认可上屏候选，空格上屏。
         engine.reset();
         engine.apply_settings(settings::Settings {
-            character_lookup_key: "asciitilde".to_string(),
+            char_to_sound_shape_keys: vec!["asciitilde".to_string()],
             ..settings::Settings::default()
         });
         engine.set_surrounding(Some("中欧中兴"), 2);
@@ -1235,22 +1504,35 @@ mod tests {
         assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "~");
     }
 
-    /// 字查音+虎（⑧-2）：周边文本不可用（如终端）时不显示提示，两排均为空。
+    /// 字反查（⑧-2）夹具目录。
+    fn char_to_sound_shape_dirs() -> Vec<PathBuf> {
+        vec![
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/sound_to_char_shape"),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+        ]
+    }
+
+    /// 字反查（⑧-2）：周边文本不可用（如终端）时不显示提示，两排均为空。
     #[test]
-    fn character_lookup_without_surrounding_shows_nothing() {
+    fn char_to_sound_shape_without_surrounding_shows_nothing() {
         let _guard = serial();
         UPDATES.lock().unwrap().clear();
-        let dirs = vec![
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/pinyin_lookup"),
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data"),
-        ];
-        let mut engine = Engine::new_with_dirs(host(), dirs, None, None);
+        let mut engine = Engine::new_with_dirs(host(), char_to_sound_shape_dirs(), None, None);
         engine.set_surrounding(None, 0);
         assert!(engine.key(0x22, FCITX_ALT, false), "Alt+\" 应被消费");
         let (_, _, _, _, up, down) = last_update();
         assert!(up.is_empty(), "周边文本不可用时上排应为空：{up:?}");
         assert!(down.is_empty(), "周边文本不可用时下排应为空：{down:?}");
-        // 周边文本恢复后，同一查码段在下一次按键刷新出两排。
+    }
+
+    /// 字反查（⑧-2）：周边文本恢复后，同一查码段在下一次按键刷新出两排。
+    #[test]
+    fn char_to_sound_shape_refreshes_when_surrounding_available() {
+        let _guard = serial();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), char_to_sound_shape_dirs(), None, None);
+        engine.set_surrounding(None, 0);
+        assert!(engine.key(0x22, FCITX_ALT, false), "Alt+\" 应被消费");
         engine.set_surrounding(Some("中欧中兴"), 2);
         assert!(!engine.key(0xffe1, 0, false), "修饰键不消费（触发刷新）");
         let (_, _, _, _, up, down) = last_update();
@@ -1258,9 +1540,9 @@ mod tests {
         assert_eq!(down, "虍 nbe/nbeq");
     }
 
-    /// 预编辑「按词分码」：使用高亮候选的 preedit（`ab cd`），单字不分段（`ab`）。
+    /// 预编辑「按词分码」：使用高亮候选的 preedit（`ab cd`）。
     #[test]
-    fn preedit_uses_segmented_codes() {
+    fn preedit_segments_word_codes() {
         let _guard = serial();
         UPDATES.lock().unwrap().clear();
         let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
@@ -1271,13 +1553,49 @@ mod tests {
         assert!(!candidates.is_empty(), "abcd 应有候选");
         assert_eq!(preedit, "ab cd");
         assert_eq!(cursor, 5);
-        engine.reset();
+    }
+
+    /// 预编辑：单字不分段（`ab`）。
+    #[test]
+    fn preedit_single_char_is_unsegmented() {
+        let _guard = serial();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
         for code in *b"ab" {
             engine.key(u32::from(code), 0, false);
         }
         let (preedit, cursor, _, _, _, _) = last_update();
         assert_eq!(preedit, "ab");
         assert_eq!(cursor, 2);
+    }
+
+    /// 按字分码：左右移动光标时保持分码显示，组合之后的原始尾部接在其后。
+    #[test]
+    fn preedit_keeps_segmented_codes_while_moving_caret() {
+        let _guard = serial();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        for code in *b"abcdja" {
+            engine.key(u32::from(code), 0, false);
+        }
+        // 末尾：整段按词分码（ab cd ja）。
+        let (preedit, cursor, candidates, _, _, _) = last_update();
+        assert_eq!(preedit, "ab cd ja");
+        assert_eq!(cursor, 8);
+        assert!(!candidates.is_empty());
+        // ←×2：组合重建为 `abcd`（分码 `ab cd`），光标之后接上原始尾部 `ja`。
+        assert!(engine.key(0xff51, 0, false));
+        assert!(engine.key(0xff51, 0, false));
+        let (preedit, cursor, candidates, _, _, _) = last_update();
+        assert_eq!(preedit, "ab cdja");
+        assert_eq!(cursor, 5);
+        assert!(!candidates.is_empty(), "前缀 `abcd` 应有候选");
+        // →×2：回到末尾，恢复整段分码。
+        assert!(engine.key(0xff53, 0, false));
+        assert!(engine.key(0xff53, 0, false));
+        let (preedit, cursor, _, _, _, _) = last_update();
+        assert_eq!(preedit, "ab cd ja");
+        assert_eq!(cursor, 8);
     }
 
     #[test]

@@ -241,8 +241,8 @@ pub struct Decoder {
     ranking_prior: RankingPriorParameters,
     lexical: Option<LexicalModel>,
     lexical_load_error: Option<String>,
-    /// 音查虎索引（懒加载；缺文件时为 `None`）。
-    pinyin: Option<crate::pinyin_lookup::PinyinIndex>,
+    /// 音反查索引（懒加载；缺文件时为 `None`）。
+    pinyin: Option<crate::sound_to_char_shape::SoundToCharShapeIndex>,
     pinyin_checked: bool,
     pinyin_load_error: Option<String>,
 }
@@ -288,27 +288,31 @@ impl Decoder {
         }
     }
 
-    /// 音查虎索引（首次访问时按数据目录懒加载）。
-    pub fn pinyin_index(&mut self) -> Option<&crate::pinyin_lookup::PinyinIndex> {
+    /// 音反查索引（首次访问时按数据目录懒加载）。
+    pub fn pinyin_index(&mut self) -> Option<&crate::sound_to_char_shape::SoundToCharShapeIndex> {
         if !self.pinyin_checked {
             self.pinyin_checked = true;
-            let (index, error) = crate::pinyin_lookup::load_first(self.lexicon.dirs());
+            let (index, error) = crate::sound_to_char_shape::load_first(self.lexicon.dirs());
             self.pinyin = index;
             self.pinyin_load_error = error;
         }
         self.pinyin.as_ref()
     }
 
-    /// 音查虎索引载入错误（有文件但无效时记录）。
+    /// 音反查索引载入错误（有文件但无效时记录）。
     pub fn pinyin_load_error(&self) -> Option<&str> {
         self.pinyin_load_error.as_deref()
     }
 
-    /// 字查音+虎两排提示（上排 = 光标左侧拼音、下排 = 虎码；懒加载索引，缺索引返回 `None`）。
-    pub fn character_lookup_rows(&mut self, text: &str, anchor: usize) -> Option<(String, String)> {
+    /// 字反查两排提示（上排 = 光标左侧拼音、下排 = 虎码；懒加载索引，缺索引返回 `None`）。
+    pub fn char_to_sound_shape_rows(
+        &mut self,
+        text: &str,
+        anchor: usize,
+    ) -> Option<(String, String)> {
         self.pinyin_index();
         let index = self.pinyin.as_ref()?;
-        Some(crate::character_lookup::rows(
+        Some(crate::char_to_sound_shape::rows(
             index,
             &self.lexicon,
             text,
@@ -316,8 +320,8 @@ impl Decoder {
         ))
     }
 
-    /// 音查虎候选（含虎码注释过滤；上限 [`crate::pinyin_lookup::CANDIDATE_LIMIT`]）。
-    pub fn pinyin_candidates(
+    /// 音反查候选（含虎码注释过滤；上限 [`crate::sound_to_char_shape::CANDIDATE_LIMIT`]）。
+    pub fn sound_to_char_shape_candidates(
         &mut self,
         input: &[u8],
         prefix: char,
@@ -330,7 +334,7 @@ impl Decoder {
         let Some(index) = self.pinyin.as_ref() else {
             return Vec::new();
         };
-        crate::pinyin_lookup::translate(
+        crate::sound_to_char_shape::translate(
             index,
             &self.lexicon,
             input,
@@ -339,7 +343,7 @@ impl Decoder {
             end,
             punct,
             full_shape,
-            crate::pinyin_lookup::CANDIDATE_LIMIT,
+            crate::sound_to_char_shape::CANDIDATE_LIMIT,
         )
     }
 
@@ -2066,13 +2070,39 @@ fn segmented_from_path(raw: &[u8], arena: &[State], path: usize) -> String {
 mod tests {
     use super::*;
 
+    fn fixture_lexicon() -> Lexicon {
+        let dir =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
+        Lexicon::load(std::slice::from_ref(&dir), 1500)
+    }
+
+    fn fixture_decoder() -> Decoder {
+        let dir =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
+        let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
+        let supplement = Supplement::load_default(Some(&dir));
+        Decoder::new(lexicon, supplement, None)
+    }
+
     #[test]
-    fn normalize_matches_reference_rules() {
+    fn normalize_strips_whitespace_and_control() {
         assert_eq!(normalize("A B\tC\r\n"), b"abc");
         assert_eq!(normalize("a\u{0b}b"), b"ab");
+    }
+
+    #[test]
+    fn has_letter_detects_ascii_letters() {
         assert!(has_letter(b"a1"));
         assert!(!has_letter(b"123"));
+    }
+
+    #[test]
+    fn trailing_selector_span_finds_selector_tail() {
         assert_eq!(trailing_selector_span(b"ab12;"), 3);
+    }
+
+    #[test]
+    fn parse_selector_parses_and_saturates() {
         assert_eq!(parse_selector(b"ab;", 2), (2, 3));
         assert_eq!(parse_selector(b"ab'", 2), (3, 3));
         assert_eq!(parse_selector(b"ab0", 2), (10, 3));
@@ -2292,10 +2322,8 @@ mod tests {
     }
 
     #[test]
-    fn has_complete_candidate_honors_lock() {
-        let dir =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
-        let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
+    fn has_complete_candidate_detects_complete_input() {
+        let lexicon = fixture_lexicon();
         // 无锁：abab 完整（ab → 交/疒），带必需前缀亦完整
         assert!(has_complete_candidate(
             &lexicon, "abab", "", None, false, true, None
@@ -2303,6 +2331,11 @@ mod tests {
         assert!(has_complete_candidate(
             &lexicon, "abab", "交", None, false, true, None
         ));
+    }
+
+    #[test]
+    fn has_complete_candidate_scans_from_lock_end() {
+        let lexicon = fixture_lexicon();
         // 锁 "ab"→交：扫描自锁末端开始
         let lock = DecodeLock {
             raw: "ab",
@@ -2336,6 +2369,16 @@ mod tests {
             true,
             Some(&lock)
         ));
+    }
+
+    #[test]
+    fn has_complete_candidate_rejects_mismatched_lock() {
+        let lexicon = fixture_lexicon();
+        let lock = DecodeLock {
+            raw: "ab",
+            text: "交",
+            boundaries: "2,3;",
+        };
         // 锁前缀与输入不符 / 与已确认文本不符 → false
         let foreign = DecodeLock {
             raw: "cd",
@@ -2360,6 +2403,16 @@ mod tests {
             true,
             Some(&lock)
         ));
+    }
+
+    #[test]
+    fn has_complete_candidate_honors_excluded_text() {
+        let lexicon = fixture_lexicon();
+        let lock = DecodeLock {
+            raw: "ab",
+            text: "交",
+            boundaries: "2,3;",
+        };
         // excluded 与锁文本一致：「交」不算新完成，「交交」可以
         assert!(!has_complete_candidate(
             &lexicon,
@@ -2382,23 +2435,20 @@ mod tests {
     }
 
     #[test]
-    fn ranking_prior_parameters_defaults_and_setters() {
-        let dir =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
-        let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
-        let supplement = Supplement::load_default(Some(&dir));
-        let mut decoder = Decoder::new(lexicon, supplement, None);
-        assert_eq!(
-            decoder.ranking_prior_parameters(),
-            RankingPriorParameters::default()
-        );
-        assert_eq!(RankingPriorParameters::default().canonical_code_reward, 2.0);
-        assert_eq!(RankingPriorParameters::default().lexical_prior_weight, 0.1);
-        assert_eq!(RankingPriorParameters::default().lexical_candidate_limit, 5);
-        assert_eq!(
-            RankingPriorParameters::default().canonical_isolation_min_code_length,
-            4
-        );
+    fn ranking_prior_parameters_defaults() {
+        let parameters = RankingPriorParameters::default();
+        assert_eq!(parameters.canonical_code_reward, 2.0);
+        assert_eq!(parameters.lexical_prior_weight, 0.1);
+        assert_eq!(parameters.lexical_candidate_limit, 5);
+        assert_eq!(parameters.canonical_isolation_min_code_length, 4);
+        // decoder 默认即内建参数。
+        let decoder = fixture_decoder();
+        assert_eq!(decoder.ranking_prior_parameters(), parameters);
+    }
+
+    #[test]
+    fn ranking_prior_parameters_setter_roundtrip() {
+        let mut decoder = fixture_decoder();
         decoder.set_ranking_prior_parameters(RankingPriorParameters {
             canonical_code_reward: 1.0,
             ..RankingPriorParameters::default()
@@ -2407,11 +2457,20 @@ mod tests {
             decoder.ranking_prior_parameters().canonical_code_reward,
             1.0
         );
-        // 无模型时码形证据不累计，故恒为 0
+    }
+
+    #[test]
+    fn decode_without_model_has_zero_code_score() {
+        let mut decoder = fixture_decoder();
+        // 无模型时码形证据不累计，故恒为 0。
         let output = decoder.decode_with("ab", false, "").expect("decode");
         assert!(!output.items.is_empty());
         assert!(output.items.iter().all(|item| item.code_score == 0.0));
-        // 词先验模型挂载
+    }
+
+    #[test]
+    fn lexical_model_setter_roundtrip() {
+        let mut decoder = fixture_decoder();
         assert!(decoder.lexical_model().is_none());
         let model = crate::lexical::load(
             &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))

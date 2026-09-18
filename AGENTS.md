@@ -3,7 +3,7 @@
 
 # AGENTS.md
 
-hux-ime：虎句（`tiger_sentence`）输入方案从 fcitx5-rime 迁移到 fcitx5 原生实现。
+hux-ime（虎虚）：虎句（`tiger_sentence`）输入方案从 fcitx5-rime 迁移到 fcitx5 原生实现。
 
 ## AI 风格
 1. 中文回答，简明扼要；
@@ -19,7 +19,8 @@ hux-ime：虎句（`tiger_sentence`）输入方案从 fcitx5-rime 迁移到 fcit
 1. 自顶向下设计，自底向上实现；
 2. 模块化-高内聚低耦合；
 3. 代码简练但清晰；
-4. 文档详略得当且内容完备。
+4. 文档详略得当且内容完备；
+5. 单元测试按功能自成独立函数；集成测试（端到端/差分/冒烟等）若有需要可单独编写。
 
 ## 协作流程
 1. AI 的每次修改：若当前节点非空，则在对应历史节点上 `jj new` 开新副本，改动只落在该副本内，不直接改动已有节点；
@@ -27,7 +28,7 @@ hux-ime：虎句（`tiger_sentence`）输入方案从 fcitx5-rime 迁移到 fcit
 3. squash 与历史整理由用户自行执行，AI 不代做。
 
 ## 命名
-1. 讲我们：`hux-ime`（简写 `hux`）——crate、addon ID、数据目录、环境变量等工程标识一律用它；
+1. 讲我们：`hux-ime`（中文名「虎虚」，繁体「虎虛」；简写 `hux`）——crate、addon ID、数据目录、环境变量等工程标识一律用它；展示名（README 标题、fcitx5 输入法/配置页名称）用「虎虚」；
 2. 讲方案/数据/标识：`tiger_sentence`（显示名「虎句」）——数据文件、选项、学习库与金样沿用该标识（与上游 rime 方案互通），保持不变；
 3. 讲上游：`虎爪` = [tigerclaw](https://github.com/lvyww/tigerclaw)（原生），`虎整句`／[tiger-sentense-rime](https://github.com/lvyww/tiger-sentense-rime)（rime 版，即「虎爪-rime」）。
 
@@ -43,8 +44,9 @@ hux-ime：虎句（`tiger_sentence`）输入方案从 fcitx5-rime 迁移到 fcit
 - 移植纪律：计算部分机械翻译 + 差分逐位验证；交互部分按行为契约自由设计；
 - Lua 仅作测试 oracle（CI/开发环境），不进入运行时依赖；
 - 版本控制：jj（Jujutsu）colocate 模式；日常操作走 jj，不直接使用 git；
-- 文档：`docs/rust-migration.md`（设计）、`crates/hux-addon/README.md`（addon 使用）、`goldens/README.md`（金样）、
-  `data/README.md`（数据）、`docs/LEXICAL_PRIOR_ATTRIBUTION.md`（词先验署名/许可）。
+- 文档：`docs/usage.md`（开发/安装/使用/卸载）、`docs/config.md`（配置项）、`docs/rust-migration.md`（设计）、
+  `docs/config-options.md`（可配置项扩展 B/C 组记录）、`docs/android.md`（fcitx5-android 适配计划）、`crates/hux-addon/README.md`（addon 实现）、
+  `goldens/README.md`（金样）、`data/README.md`（数据）、`docs/LEXICAL_PRIOR_ATTRIBUTION.md`（词先验署名/许可）。
 
 ## 特殊目录
 - `_tmp/`：本地开发 / 临时记录

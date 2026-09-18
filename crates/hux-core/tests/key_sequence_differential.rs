@@ -11,8 +11,8 @@
 //! 之后执行 update 通知器等价物（`interaction::update_notifier`）。
 //!
 //! 金样与数据：`goldens/key_sequence.tsv.gz`、`goldens/key_sequence/`（合成小码表）；
-//! 音查虎（⑧-1）：`goldens/pinyin_lookup.tsv.gz`、`goldens/pinyin_lookup/`（小 PY_c + 音查虎索引夹具）。
-//! 再生成：`tools/generators/gen_key_sequence_golden.sh`、`tools/generators/gen_pinyin_lookup_golden.sh`
+//! 音反查（⑧-1）：`goldens/sound_to_char_shape.tsv.gz`、`goldens/sound_to_char_shape/`（小 PY_c + 音反查索引夹具）。
+//! 再生成：`tools/generators/gen_key_sequence_golden.sh`、`tools/generators/gen_sound_to_char_shape_golden.sh`
 //! （依赖系统 librime + librime-lua）。
 
 mod common;
@@ -23,9 +23,9 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use hux_core::decode::Decoder;
-use hux_core::host::{HostResult, process_key as host_process_key};
+use hux_core::host::{HostOptions, HostResult, process_key as host_process_key};
 use hux_core::interaction::{
-    CompositionBuilder, K_PINYIN_LOOKUP_KEY, LiveLearning, OPTION_EARLY_COMMIT,
+    CompositionBuilder, K_SOUND_TO_CHAR_SHAPE_KEY, LiveLearning, OPTION_EARLY_COMMIT,
     OPTION_EARLY_COMMIT_TO_PREEDIT, ProcessorEnv, ProcessorResult, SentenceState, processor,
     update_notifier,
 };
@@ -139,7 +139,7 @@ fn replay(
     context.set_option(OPTION_EARLY_COMMIT, true);
     context.set_option(OPTION_EARLY_COMMIT_TO_PREEDIT, false);
     if let Some(key) = lookup_key {
-        context.set_property(K_PINYIN_LOOKUP_KEY, key);
+        context.set_property(K_SOUND_TO_CHAR_SHAPE_KEY, key);
     }
     for (name, value) in &case.options {
         context.set_option(name, *value);
@@ -158,6 +158,8 @@ fn replay(
             now: 0.0,
             dot_armed: &mut dot_armed,
             min_retained: None,
+            page_size,
+            digit_select: false,
         };
         let result = processor(
             &key,
@@ -172,7 +174,15 @@ fn replay(
         let consumed = match result {
             ProcessorResult::Consume => true,
             ProcessorResult::Forward => {
-                host_process_key(&key, &mut context, punct.as_mut()) == HostResult::Consumed
+                host_process_key(
+                    &key,
+                    &mut context,
+                    punct.as_mut(),
+                    &HostOptions {
+                        page_size,
+                        ..HostOptions::default()
+                    },
+                ) == HostResult::Consumed
             }
         };
         // 事件泵：提交与选项事件。
@@ -317,13 +327,13 @@ fn key_sequence_matches_reference() {
     );
 }
 
-/// 音查虎金样（⑧-1）：夹具页大小 5（与引擎一致，翻页用例覆盖后续页）；音查虎前缀 `` ` ``。
+/// 音反查金样（⑧-1）：夹具页大小 5（与引擎一致，翻页用例覆盖后续页）；音反查前缀 `` ` ``。
 #[test]
-fn pinyin_lookup_matches_reference() {
+fn sound_to_char_shape_matches_reference() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let cases = load_cases(&root.join("goldens/pinyin_lookup.tsv.gz"));
+    let cases = load_cases(&root.join("goldens/sound_to_char_shape.tsv.gz"));
     assert!(!cases.is_empty(), "empty pinyin lookup golden");
-    let data_dir = root.join("goldens/pinyin_lookup");
+    let data_dir = root.join("goldens/sound_to_char_shape");
     let mut failures = Vec::new();
     let mut steps = 0usize;
     for case in &cases {
@@ -338,7 +348,7 @@ fn pinyin_lookup_matches_reference() {
     }
     assert!(
         failures.is_empty(),
-        "音查虎不一致 {} 处（{} 例 / {} 步）：\n{}",
+        "音反查不一致 {} 处（{} 例 / {} 步）：\n{}",
         failures.len(),
         cases.len(),
         steps,
