@@ -282,7 +282,7 @@ impl Engine {
         self.forward_after_commit = false;
         let key = KeyEvent::new(keysym as i32, core_modifiers(states, release));
         // 字查音+虎查码段：←/→/↑/↓ **交应用处理**（应用光标随动），本层不消费也不改动输入；
-        // 提示在应用回传周边文本后的下一次按键（含 release）时刷新。
+        // 两排在应用回传周边文本后的下一次按键（含 release）时刷新。
         if !release
             && self.character_lookup_tagged()
             && matches!(key.repr().as_str(), "Left" | "Right" | "Up" | "Down")
@@ -390,7 +390,9 @@ impl Engine {
             return;
         }
         if !state.valid {
-            state.aux_up = "应用不支持周边文本".to_string();
+            // 周边文本不可用（如终端）：不显示提示——提示能否呈现取决于前端，
+            // 统一清空两排。
+            state.aux_up.clear();
             state.aux_down.clear();
             return;
         }
@@ -1228,6 +1230,29 @@ mod tests {
         );
         assert!(engine.key(0x20, 0, false), "空格确认候选");
         assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "~");
+    }
+
+    /// 字查音+虎（⑧-2）：周边文本不可用（如终端）时不显示提示，两排均为空。
+    #[test]
+    fn character_lookup_without_surrounding_shows_nothing() {
+        let _guard = serial();
+        UPDATES.lock().unwrap().clear();
+        let dirs = vec![
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/pinyin_lookup"),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+        ];
+        let mut engine = Engine::new_with_dirs(host(), dirs, None, None);
+        engine.set_surrounding(None, 0);
+        assert!(engine.key(0x27, FCITX_ALT, false), "Alt+' 应被消费");
+        let (_, _, _, _, up, down) = last_update();
+        assert!(up.is_empty(), "周边文本不可用时上排应为空：{up:?}");
+        assert!(down.is_empty(), "周边文本不可用时下排应为空：{down:?}");
+        // 周边文本恢复后，同一查码段在下一次按键刷新出两排。
+        engine.set_surrounding(Some("中欧中兴"), 2);
+        assert!(!engine.key(0xffe1, 0, false), "修饰键不消费（触发刷新）");
+        let (_, _, _, _, up, down) = last_update();
+        assert_eq!(up, "咅 ?");
+        assert_eq!(down, "虍 nbe/nbeq");
     }
 
     /// 预编辑「按词分码」：使用高亮候选的 preedit（`ab cd`），单字不分段（`ab`）。
