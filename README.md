@@ -19,14 +19,6 @@
 | [`goldens/README.md`](goldens/README.md)                   | 差分金样：清单、来源、复现命令                   |
 | [`data/README.md`](data/README.md)                         | 随包数据说明                                     |
 
-## 致谢
-
-**虎码** 由 [B佬（lvyww）](https://github.com/lvyww) 创作。感谢以**B佬**为首的一众虎码同志对虎码的维护与贡献。
-
-本项目的语义、数据与金样均以[虎爪-rime](https://github.com/lvyww/tiger-sentense-rime) 为参照，谨致谢意。
-
-hux-ime 是兴趣驱动的 fcitx5 社区方案，与上游无隶属关系。
-
 ## 虎码信息汇总
 
 - 虎码官网：[tiger-code.com](https://www.tiger-code.com)
@@ -43,6 +35,13 @@ hux-ime 是兴趣驱动的 fcitx5 社区方案，与上游无隶属关系。
 - 社区 · [虎符](https://github.com/LeafHW/hufu-ime-rust)
 - 社区 · [魔虎音形](https://github.com/fcxxxz/rime-mohu)
 - 社区 · [hux](https://github.com/crrvx/hux-ime)（本方案）
+
+## 致谢
+
+感谢 [B佬（lvyww）](https://github.com/lvyww) 创作虎句方案（虎爪 / 虎整句），也感谢参与虎码建设的
+各位同好——本项目的语义、数据与金样均参照 [虎爪-rime](https://github.com/lvyww/tiger-sentense-rime)。
+
+hux-ime 是社区第三方适配，出于热爱而作，与上游无隶属关系。
 
 ## 许可与署名
 
