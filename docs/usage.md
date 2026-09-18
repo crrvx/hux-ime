@@ -68,6 +68,7 @@ cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
 ## 使用
 
 - `空格` 高亮项上屏
+- 鼠标点击候选：选中并上屏
 - `Left/Right` 码标移动
 - `Up/Down` 或 `Tab / Shift+Tab` 高亮选择
 - `-/=` 或 `[/]` 或 `PgUp/PgDn` 翻页

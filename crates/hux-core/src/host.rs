@@ -15,6 +15,7 @@
 //!   `Ctrl/Shift+Left|Right` 直接跳到首/尾）；标点段与词组 spans 见 ⑦；
 //! - `speller`/`punctuator` 属 ⑦；`editor/char_handler`（Printables 直接提交）同。
 
+use crate::interaction::{LearningCommit, SentenceState, learning_commit};
 use crate::key::{K_CONTROL_MASK, K_SHIFT_MASK, KeyEvent};
 use crate::punct::PunctTable;
 use crate::session::Context;
@@ -57,21 +58,27 @@ pub enum HostResult {
 
 /// 参照处理器链（`key_binder` → `speller` → `punctuator` → `selector` → `navigator`
 /// → `express_editor`；`speller` 由 core `processor` 承担，见 ⑦）。
+///
+/// `learning`（可空）供宿主链的提交点记录学习——对应 librime `Context::Commit()`
+/// 内、清空组合前的 `commit_notifier`（`Editor::DirectCommit` 等原生处理器由此落学习）。
 pub fn process_key(
     key_event: &KeyEvent,
     context: &mut Context,
+    state: &SentenceState,
     punct: Option<&mut PunctTable>,
     options: &HostOptions,
+    learning: Option<&mut LearningCommit<'_>>,
 ) -> HostResult {
     if key_event.release() {
         return HostResult::Forward;
     }
+    let mut learning = learning;
     // 依序执行，前一处理器吞键则不再继续（参照引擎的处理器链）。
     let mut result = key_binder(key_event, context, options);
     if result == HostResult::Consumed {
         return result;
     }
-    result = punctuator(key_event, context, punct);
+    result = punctuator(key_event, context, state, punct, &mut learning);
     if result == HostResult::Consumed {
         return result;
     }
@@ -83,7 +90,28 @@ pub fn process_key(
     if result == HostResult::Consumed {
         return result;
     }
-    editor(key_event, context)
+    editor(key_event, context, state, &mut learning)
+}
+
+/// 宿主链提交点学习（对应 librime `Context::Commit()` 的通知器：组合仍完整时记录）；
+/// `learning` 为 `None` 时 no-op。
+fn commit_notifier(
+    learning: &mut Option<&mut LearningCommit<'_>>,
+    context: &Context,
+    state: &SentenceState,
+    commit_text: &str,
+) {
+    let Some(learning) = learning.as_deref_mut() else {
+        return;
+    };
+    learning_commit(
+        learning.decoder,
+        context,
+        state,
+        learning.live,
+        learning.now,
+        commit_text,
+    );
 }
 
 // ---------------------------------------------------------------- punctuator
@@ -96,7 +124,9 @@ pub fn process_key(
 fn punctuator(
     key_event: &KeyEvent,
     context: &mut Context,
+    state: &SentenceState,
     punct: Option<&mut PunctTable>,
+    learning: &mut Option<&mut LearningCommit<'_>>,
 ) -> HostResult {
     let Some(table) = punct else {
         return HostResult::Forward;
@@ -120,6 +150,7 @@ fn punctuator(
         return HostResult::Forward;
     };
     let commit = format!("{}{}", context.get_commit_text(), text);
+    commit_notifier(learning, context, state, &commit);
     context.clear();
     context.direct_commit(&commit);
     HostResult::Consumed
@@ -493,8 +524,13 @@ fn go_to_end(context: &mut Context) {
 /// Return/space/Escape 在组合中已被 core `processor` 消费，此处为完整的兜底实现；
 /// 可打印字符按 `char_handler`（ExpressEditor = `DirectCommit`）处理：
 /// **先提交当前组合**（保证上屏顺序），按键交宿主。
-/// 学习链：参照经 commit 通知器记录；本实现该提交未接学习（宿主自发提交见 K4 清理项）。
-fn editor(key_event: &KeyEvent, context: &mut Context) -> HostResult {
+/// 学习链：提交点经 [`commit_notifier`] 记录（对应参照 librime 的提交通知器）。
+fn editor(
+    key_event: &KeyEvent,
+    context: &mut Context,
+    state: &SentenceState,
+    learning: &mut Option<&mut LearningCommit<'_>>,
+) -> HostResult {
     if !context.is_composing() {
         return HostResult::Forward;
     }
@@ -502,6 +538,8 @@ fn editor(key_event: &KeyEvent, context: &mut Context) -> HostResult {
         (0x20, 0) => {
             // Confirm：`confirm_current_selection() || commit()`
             if !confirm(context) {
+                let commit_text = context.get_commit_text();
+                commit_notifier(learning, context, state, &commit_text);
                 context.commit();
             }
             true
@@ -515,6 +553,8 @@ fn editor(key_event: &KeyEvent, context: &mut Context) -> HostResult {
             true
         }
         (0xff0d, 0) => {
+            let commit_text = context.get_commit_text();
+            commit_notifier(learning, context, state, &commit_text);
             context.commit();
             true
         }
@@ -541,6 +581,8 @@ fn editor(key_event: &KeyEvent, context: &mut Context) -> HostResult {
         && key_event.keycode > 0x20
         && key_event.keycode < 0x7f
     {
+        let commit_text = context.get_commit_text();
+        commit_notifier(learning, context, state, &commit_text);
         context.commit();
     }
     HostResult::Forward
@@ -666,7 +708,14 @@ mod tests {
         options: &HostOptions,
     ) -> HostResult {
         let key = KeyEvent::from_repr(repr).expect("key repr");
-        process_key(&key, context, punct, options)
+        process_key(
+            &key,
+            context,
+            &SentenceState::fresh(1),
+            punct,
+            options,
+            None,
+        )
     }
 
     fn press(context: &mut Context, repr: &str) -> HostResult {

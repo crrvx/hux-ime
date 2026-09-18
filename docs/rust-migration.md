@@ -19,10 +19,12 @@ hux-ime（虎虚）：虎句（`tiger_sentence`）输入方案的 fcitx5 原生 
 | K4 | 验收与打包 | 进行中：验收随开发持续进行；打包与下述遗留待做 |
 
 遗留（后续）：
-- **打包**：PKGBUILD（AUR）与随包数据安装（`/usr/share/fcitx5/hux/`）；模型分发说明。
-- **候选点击提交**：候选为展示型（`DisplayOnlyCandidateWord`），点击不上屏；需自定义 CandidateWord 回调引擎。
+- **打包**：PKGBUILD（AUR `fcitx5-hux`）与随包数据安装（`/usr/share/fcitx5/hux/`，CMake 默认装）；
+  模型不随包（文档 + 安装提示指向上游 model release）。
 - **每引擎单会话**：切换/重置即清空；按输入上下文会话为后续优化。
-- **`Ctrl+Delete` 删除候选**：当前仅设置选中并通知，无删除通道。
+
+已收口（设计取舍，不实现）：**`Ctrl+Delete` 删除候选**——参照无删除通道，本实现仅消费该键
+（`host.rs`），不删除候选。
 
 - **移植纪律**：计算部分机械翻译（浮点按位模式比较）；交互部分按行为契约自由设计。
 - **确定性纪律**：凡排序必带全序 tie-breaker；凡 `pairs` 影响可观测结果处显式排序；凡时间/随机全部注入。
@@ -100,9 +102,12 @@ docs/                    # 本文档、词先验署名
   缩写路径剪枝、补全罚 `log 0.05`、排序 = 可信度 + `ln(权重)`、上限 20；字反查（`char_to_sound_shape.rs`）
   取光标左侧 1 字，上排拼音（排头「咅」）、下排虎码（排头「虍」）。两者触发键可配置，**仅单字符触发键**
   给默认可上屏候选。详见 [`../crates/hux-addon/README.md`](../crates/hux-addon/README.md)。
-- **学习**：提交点通知器内建于核心路径（`confirm_selection`、自动上屏）；宿主排空
-  `LiveLearning::submitted` 落库并在 `store_ready` 后生效；存储
-  `<user>/tiger_sentence_learning_<hash(schema_id)>.userdb/`（1 万条 / 16 MiB，60 秒节流刷新）。
+- **候选点击**：面板候选为自定义 `CandidateWord`，点击经 `hux_engine_select_candidate` 按全局索引
+  选中并上屏（与空格同一条确认/学习链）。
+- **学习**：提交点通知器（参照 `Context::Commit` 的 `commit_notifier`）内建于核心路径
+  （`confirm_selection`、自动上屏）与宿主链提交点（`editor` char_handler、`punctuator`）；
+  候选点击经确认链记录；宿主排空 `LiveLearning::submitted` 落库并在 `store_ready` 后生效；
+  存储 `<user>/tiger_sentence_learning_<hash(schema_id)>.userdb/`（1 万条 / 16 MiB，60 秒节流刷新）。
 - **选项与配置**：`tiger_sentence.options.yaml`（主）+ legacy `user.yaml` 的 `var/option/*`（只读回退，
   保存失败写属性 `tiger_sentence_options_error`）；合并顺序 **options.yaml > 设置 > 内建缺省**；图形配置由
   C++ `HuxConfig` schema 生成（「行为」「快捷键」两区，子配置 + `ToolTipAnnotation`；快捷键为 `KeyList`），

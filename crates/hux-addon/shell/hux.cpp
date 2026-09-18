@@ -223,6 +223,24 @@ private:
     std::string label_;
 };
 
+class HuxEngine;
+
+/// 面板候选：点击（`select`）按全局索引选中并上屏（与空格相同的确认/学习链）。
+class HuxCandidateWord : public fcitx::CandidateWord {
+public:
+    HuxCandidateWord(fcitx::Text text, fcitx::Text comment, HuxEngine *owner,
+                     int32_t index)
+        : CandidateWord(std::move(text)), owner_(owner), index_(index) {
+        setComment(std::move(comment));
+    }
+
+    void select(fcitx::InputContext *inputContext) const override;
+
+private:
+    HuxEngine *owner_;
+    int32_t index_;
+};
+
 class HuxEngine : public fcitx::InputMethodEngine {
 public:
     explicit HuxEngine(fcitx::Instance *instance) : instance_(instance) {
@@ -303,6 +321,16 @@ public:
                fcitx::InputContextEvent &event) override {
         FCITX_UNUSED(entry);
         resetSession(event);
+    }
+
+    /// 面板候选点击：以该输入上下文交给引擎（提交/预编辑/候选经回调送出）。
+    void selectCandidate(fcitx::InputContext *inputContext, int32_t index) {
+        if (inputContext == nullptr) {
+            return;
+        }
+        context_ = inputContext;
+        hux_engine_select_candidate(engine_, index);
+        context_ = nullptr;
     }
 
 private:
@@ -405,8 +433,8 @@ private:
                     comments != nullptr && comments[index] != nullptr
                         ? comments[index]
                         : "";
-                candidateList->append<fcitx::DisplayOnlyCandidateWord>(
-                    fcitx::Text(text), fcitx::Text(comment));
+                candidateList->append<HuxCandidateWord>(
+                    fcitx::Text(text), fcitx::Text(comment), this, index);
             }
             // 数字直选：面板显示 1–9 / 0 序号（与引擎页内定位一致）。
             if (config_.behavior->digitSelect.value()) {
@@ -471,6 +499,10 @@ private:
     fcitx::SimpleAction menuAction_;
     std::vector<std::unique_ptr<HuxToggleAction>> toggleActions_;
 };
+
+void HuxCandidateWord::select(fcitx::InputContext *inputContext) const {
+    owner_->selectCandidate(inputContext, index_);
+}
 
 class HuxFactory : public fcitx::AddonFactory {
 public:

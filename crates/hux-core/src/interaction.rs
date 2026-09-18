@@ -2177,17 +2177,32 @@ fn select_page_candidate(
     if position >= page_size {
         return Ok(false);
     }
-    let index = {
+    let Some(segment) = context.composition.back() else {
+        return Ok(false);
+    };
+    let page_start = (segment.selected_index / page_size) * page_size;
+    select_candidate_at(decoder, context, state, live, now, page_start + position)
+}
+
+/// 候选点击 / 数字直选共用：按**全局索引**选中候选，走与 `space` 相同的确认/学习链
+/// 并直接上屏（对齐参照 `ConcreteEngine::OnSelect` + `RimeState::selectCandidate`：
+/// 点选后提交整个组合）。索引越界（候选未生成）或无可选段时返回 `false`。
+pub fn select_candidate_at(
+    decoder: &mut Decoder,
+    context: &mut Context,
+    state: &mut SentenceState,
+    live: &mut LiveLearning,
+    now: f64,
+    index: usize,
+) -> anyhow::Result<bool> {
+    {
         let Some(segment) = context.composition.back() else {
             return Ok(false);
         };
-        let page_start = (segment.selected_index / page_size) * page_size;
-        let index = page_start + position;
         if index >= segment.prepare(index + 1) {
             return Ok(false);
         }
-        index
-    };
+    }
     context.highlight(index);
     let selection = learning_selection(decoder, context, state)?;
     learning_stage(

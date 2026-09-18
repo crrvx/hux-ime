@@ -63,6 +63,12 @@ const char *hux_engine_status(const hux_engine *engine);
 int32_t hux_engine_key(hux_engine *engine, uint32_t keysym,
                              uint32_t states, int32_t release);
 
+/*
+ * 候选点击（面板候选 `CandidateWord::select`）：按全局索引选中并上屏
+ * （与空格相同的确认/学习链）。返回 1 = 已处理；0 = 忽略。
+ */
+int32_t hux_engine_select_candidate(hux_engine *engine, int32_t index);
+
 /* 送入应用侧周边文本（字符制光标；valid=0 表示不可用/应用不支持）。 */
 int32_t hux_engine_set_surrounding(hux_engine *engine,
                                          const char *text_utf8,

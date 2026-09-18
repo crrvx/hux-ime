@@ -25,10 +25,11 @@ use hux_core::char_to_sound_shape;
 use hux_core::decode::Decoder;
 use hux_core::host::{self, HostOptions, HostResult};
 use hux_core::interaction::{
-    CompositionBuilder, K_CHAR_TO_SOUND_SHAPE_KEY, K_SOUND_TO_CHAR_SHAPE_KEY, LiveLearning,
-    OPTION_ALLOW_DUPLICATE_SINGLE, OPTION_DIGIT_SELECT, OPTION_EARLY_COMMIT,
+    CompositionBuilder, K_CHAR_TO_SOUND_SHAPE_KEY, K_SOUND_TO_CHAR_SHAPE_KEY, LearningCommit,
+    LiveLearning, OPTION_ALLOW_DUPLICATE_SINGLE, OPTION_DIGIT_SELECT, OPTION_EARLY_COMMIT,
     OPTION_EARLY_COMMIT_TO_PREEDIT, ProcessorEnv, ProcessorResult, SentenceState, buffered_text,
-    processor, reset_early_evidence, set_allow_duplicate_single, update_notifier,
+    processor, reset_early_evidence, select_candidate_at, set_allow_duplicate_single,
+    update_notifier,
 };
 use hux_core::key::{
     K_ALT_MASK, K_CONTROL_MASK, K_LOCK_MASK, K_RELEASE_MASK, K_SHIFT_MASK, K_SUPER_MASK, KeyEvent,
@@ -327,11 +328,18 @@ impl Engine {
             Ok(ProcessorResult::Consume) => true,
             // 参照链：处理器未消费的键交宿主等价物（selector/navigator/express_editor 等）。
             Ok(ProcessorResult::Forward) => {
+                let mut learning = LearningCommit {
+                    decoder: &mut self.decoder,
+                    live: &mut self.live,
+                    now,
+                };
                 host::process_key(
                     &key,
                     &mut self.context,
+                    &self.state,
                     self.punct.as_mut(),
                     &self.host_options,
+                    Some(&mut learning),
                 ) == HostResult::Consumed
             }
             Err(error) => {
@@ -339,6 +347,39 @@ impl Engine {
                 false
             }
         };
+        self.finish(now, Some(consumed));
+        consumed
+    }
+
+    /// 候选点击（面板候选 `CandidateWord::select`）：按全局索引选中并上屏。
+    /// 走与 `space` 相同的确认/学习链；越界/无可选段返回 `false`。
+    pub fn select_candidate(&mut self, index: usize) -> bool {
+        self.forward_after_commit = false;
+        let now = wall_clock();
+        match select_candidate_at(
+            &mut self.decoder,
+            &mut self.context,
+            &mut self.state,
+            &mut self.live,
+            now,
+            index,
+        ) {
+            Ok(true) => {}
+            Ok(false) => return false,
+            Err(error) => {
+                eprintln!("hux: select candidate error: {error}");
+                return false;
+            }
+        }
+        self.finish(now, None);
+        true
+    }
+
+    /// 提交泵 + 学习落库 + 组合重建 + UI 刷新（按键与候选点击共用）。
+    ///
+    /// `key_forward`：按键路径传入消费结果（据提交计算 `forward_after_commit`）；
+    /// 候选点击传 `None`（非按键路径，恒不转发）。
+    fn finish(&mut self, now: f64, key_forward: Option<bool>) {
         let mut commits = Vec::new();
         let mut invalidated = false;
         // 事件泵：选项事件可能触发确认（进而产生提交），循环至排空（有界）。
@@ -364,7 +405,10 @@ impl Engine {
         for text in commits {
             self.host_commit(&text);
         }
-        self.forward_after_commit = !consumed && committed;
+        self.forward_after_commit = match key_forward {
+            Some(consumed) => !consumed && committed,
+            None => false,
+        };
         // 学习：核心暂存 → 落库；刷新打分（未组合时，60 秒节流）；应用索引。
         let submitted = std::mem::take(&mut self.live.submitted);
         if !submitted.is_empty() {
@@ -389,7 +433,6 @@ impl Engine {
         update_notifier(&mut self.context, &mut self.state, &mut self.live);
         self.refresh_char_to_sound_shape_aux();
         self.push_update();
-        consumed
     }
 
     /// 字反查（⑧-2）：查码段内 ←/→ 以 2 字符步长移动锚点（返回 `Some(true)` 消费）。
@@ -916,6 +959,22 @@ pub unsafe extern "C" fn hux_engine_key(
     disposition
 }
 
+/// 候选点击（面板候选 `CandidateWord::select`）：按全局索引选中并上屏。
+/// 返回 1 = 已处理；0 = 忽略（索引越界 / 无可选段 / 引擎不可用）。
+///
+/// # Safety
+/// `engine` 须有效（可为空指针）。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hux_engine_select_candidate(engine: *mut Engine, index: i32) -> i32 {
+    let Some(engine) = (unsafe { engine.as_mut() }) else {
+        return 0;
+    };
+    if index < 0 {
+        return 0;
+    }
+    i32::from(engine.select_candidate(index as usize))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1061,6 +1120,63 @@ mod tests {
         assert!(engine.key(0x20, 0, false)); // space
         assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "甲");
         assert!(engine.context.input().is_empty());
+    }
+
+    /// 候选点击（面板 `CandidateWord::select`）：按全局索引选中并上屏。
+    #[test]
+    fn candidate_click_commits_selected_candidate() {
+        let _guard = serial();
+        COMMITS.lock().unwrap().clear();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        for code in *b"ab" {
+            engine.key(u32::from(code), 0, false);
+        }
+        let (_, _, candidates, _, _, _) = last_update();
+        assert!(candidates.len() >= 2, "夹具 ab 应有至少 2 个候选");
+        let second = candidates[1].clone();
+        assert!(engine.select_candidate(1), "点击页内候选应被处理");
+        assert_eq!(COMMITS.lock().unwrap().last().unwrap(), &second);
+        assert!(engine.context.input().is_empty(), "上屏后组合应清空");
+    }
+
+    /// 候选点击越界（如列表已被刷新）：忽略，不产生提交、组合不变。
+    #[test]
+    fn candidate_click_out_of_range_ignored() {
+        let _guard = serial();
+        COMMITS.lock().unwrap().clear();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        for code in *b"ab" {
+            engine.key(u32::from(code), 0, false);
+        }
+        assert!(!engine.select_candidate(99));
+        assert!(COMMITS.lock().unwrap().is_empty());
+        assert_eq!(engine.context.input(), b"ab");
+    }
+
+    /// 宿主自发提交接学习：Tab 选字后由宿主链提交（组合中大写字母），事件应落库。
+    #[test]
+    fn host_commit_records_tab_learning() {
+        let _guard = serial();
+        let dir = temp_user_dir("host-learning");
+        COMMITS.lock().unwrap().clear();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, Some(dir.clone()));
+        for code in *b"ab" {
+            engine.key(u32::from(code), 0, false);
+        }
+        assert!(engine.key(0xff09, 0, false), "Tab 应被消费");
+        let before = engine.learning.index_version();
+        // 大写 A（0x41）：core 交宿主链 `char_handler`，先提交组合再交应用。
+        engine.key(0x41, 0, false);
+        assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "乙");
+        assert_ne!(
+            engine.learning.index_version(),
+            before,
+            "宿主提交应写入学习库"
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// 上翻页键：候选菜单可见即消费（首屏也不落作标点/输入）。
