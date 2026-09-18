@@ -225,6 +225,21 @@ private:
 
 class HuxEngine;
 
+/// 每输入上下文会话（fcitx5 `InputContextProperty`）：持引擎侧会话 id，销毁时释放。
+/// 组合/候选/学习暂存按会话隔离，互不干扰。
+class HuxSession : public fcitx::InputContextProperty {
+public:
+    HuxSession(hux_engine *engine, uint64_t id) : engine_(engine), id_(id) {}
+
+    ~HuxSession() override { hux_engine_session_free(engine_, id_); }
+
+    uint64_t id() const { return id_; }
+
+private:
+    hux_engine *engine_;
+    uint64_t id_;
+};
+
 /// 面板候选：点击（`select`）按全局索引选中并上屏（与空格相同的确认/学习链）。
 class HuxCandidateWord : public fcitx::CandidateWord {
 public:
@@ -243,7 +258,11 @@ private:
 
 class HuxEngine : public fcitx::InputMethodEngine {
 public:
-    explicit HuxEngine(fcitx::Instance *instance) : instance_(instance) {
+    explicit HuxEngine(fcitx::Instance *instance)
+        : instance_(instance),
+          sessionFactory_([this](fcitx::InputContext & /*unused*/) {
+              return new HuxSession(engine_, hux_engine_session_new(engine_));
+          }) {
         fcitx::readAsIni(config_, "conf/hux.conf");
         hux_host host = {};
         host.user = this;
@@ -253,10 +272,17 @@ public:
         if (const char *status = hux_engine_status(engine_)) {
             FCITX_INFO() << "hux: " << status;
         }
+        // 每输入上下文一个会话（现存的与后续新建的都会经工厂创建）。
+        instance_->inputContextManager().registerProperty("huxSession",
+                                                          &sessionFactory_);
         applyConfig();
         setupStatusMenu();
     }
-    ~HuxEngine() override { hux_engine_free(engine_); }
+    ~HuxEngine() override {
+        // 先注销并销毁全部会话（属性析构回调 `hux_engine_session_free`），再释放引擎。
+        sessionFactory_.unregister();
+        hux_engine_free(engine_);
+    }
 
     /// 配置 schema（fcitx5-configtool 生成设置页；保存到 ~/.config/fcitx5/conf/hux.conf）。
     const fcitx::Configuration *getConfig() const override { return &config_; }
@@ -272,18 +298,24 @@ public:
         FCITX_UNUSED(entry);
         const auto &key = keyEvent.key();
         fcitx::InputContext *inputContext = keyEvent.inputContext();
+        HuxSession *huxSession = session(inputContext);
+        if (huxSession == nullptr) {
+            return;
+        }
         context_ = inputContext;
         // 应用侧周边文本（字反查用；应用不支持时 valid=0）。
         const auto &surrounding = inputContext->surroundingText();
         if (surrounding.isValid()) {
-            hux_engine_set_surrounding(engine_, surrounding.text().c_str(),
-                                             static_cast<int32_t>(surrounding.cursor()), 1);
+            hux_engine_set_surrounding(engine_, huxSession->id(),
+                                       surrounding.text().c_str(),
+                                       static_cast<int32_t>(surrounding.cursor()), 1);
         } else {
-            hux_engine_set_surrounding(engine_, nullptr, 0, 0);
+            hux_engine_set_surrounding(engine_, huxSession->id(), nullptr, 0, 0);
         }
         const int32_t disposition =
-            hux_engine_key(engine_, key.sym(), key.states().toInteger(),
-                                 keyEvent.isRelease() ? 1 : 0);
+            hux_engine_key(engine_, huxSession->id(), key.sym(),
+                           key.states().toInteger(),
+                           keyEvent.isRelease() ? 1 : 0);
         context_ = nullptr;
         if (disposition & HUX_KEY_FORWARD_AFTER_COMMIT) {
             // 布局转换键（如系统 colemak + 方案自定义 us 布局）：交回核心处理——
@@ -307,13 +339,15 @@ public:
     void activate(const fcitx::InputMethodEntry &entry,
                   fcitx::InputContextEvent &event) override {
         FCITX_UNUSED(entry);
-        resetSession(event);
+        // 会话在输入上下文注册时已建；激活只刷新状态区。
         updateStatusArea(event.inputContext());
     }
 
     void deactivate(const fcitx::InputMethodEntry &entry,
                     fcitx::InputContextEvent &event) override {
         FCITX_UNUSED(entry);
+        // 参照（fcitx5-rime）：失焦/切换输入法即清空组合——fcitx5 核心会在失焦时
+        // 提交客户端预编辑，保留组合会在恢复时重复上屏。
         resetSession(event);
     }
 
@@ -325,15 +359,24 @@ public:
 
     /// 面板候选点击：以该输入上下文交给引擎（提交/预编辑/候选经回调送出）。
     void selectCandidate(fcitx::InputContext *inputContext, int32_t index) {
-        if (inputContext == nullptr) {
+        HuxSession *huxSession = session(inputContext);
+        if (huxSession == nullptr) {
             return;
         }
         context_ = inputContext;
-        hux_engine_select_candidate(engine_, index);
+        hux_engine_select_candidate(engine_, huxSession->id(), index);
         context_ = nullptr;
     }
 
 private:
+    /// 该输入上下文对应会话（构造时注册的工厂保证已存在）。
+    HuxSession *session(fcitx::InputContext *inputContext) const {
+        if (inputContext == nullptr) {
+            return nullptr;
+        }
+        return static_cast<HuxSession *>(inputContext->property(&sessionFactory_));
+    }
+
     /// 状态菜单：注册「虎虚」子菜单与 5 项核心开关（构造时一次）。
     void setupStatusMenu() {
         static constexpr struct {
@@ -370,10 +413,15 @@ private:
         statusArea.addAction(fcitx::StatusGroup::InputMethod, &menuAction_);
     }
 
-    /// 清空会话与面板（activate/deactivate/reset 共用）。
+    /// 清空会话与面板（deactivate/reset 共用）。
     void resetSession(fcitx::InputContextEvent &event) {
-        context_ = event.inputContext();
-        hux_engine_reset(engine_);
+        fcitx::InputContext *inputContext = event.inputContext();
+        HuxSession *huxSession = session(inputContext);
+        if (huxSession == nullptr) {
+            return;
+        }
+        context_ = inputContext;
+        hux_engine_reset(engine_, huxSession->id());
         context_ = nullptr;
     }
 
@@ -493,7 +541,9 @@ private:
 
     HuxConfig config_;
     fcitx::Instance *instance_;
-    hux_engine *engine_;
+    hux_engine *engine_ = nullptr;
+    /// 会话工厂（每输入上下文一个 [`HuxSession`]）。
+    fcitx::FactoryFor<HuxSession> sessionFactory_;
     fcitx::InputContext *context_ = nullptr;
     fcitx::Menu menu_;
     fcitx::SimpleAction menuAction_;

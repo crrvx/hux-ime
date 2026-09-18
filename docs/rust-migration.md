@@ -21,7 +21,6 @@ hux-ime（虎虚）：虎句（`tiger_sentence`）输入方案的 fcitx5 原生 
 遗留（后续）：
 - **打包**：PKGBUILD（AUR `fcitx5-hux`）与随包数据安装（`/usr/share/fcitx5/hux/`，CMake 默认装）；
   模型不随包（文档 + 安装提示指向上游 model release）。
-- **每引擎单会话**：切换/重置即清空；按输入上下文会话为后续优化。
 
 已收口（设计取舍，不实现）：**`Ctrl+Delete` 删除候选**——参照无删除通道，本实现仅消费该键
 （`host.rs`），不删除候选。
@@ -76,8 +75,10 @@ docs/                    # 本文档、词先验署名
 - **注册与构建**：`Category=InputMethod` + `OnDemand` + 输入法条目 conf；C++ 薄壳链接 Rust 静态库，
   构建/安装与依赖见 [`usage.md`](usage.md)。产物：`/usr/lib/fcitx5/libhux.so`、
   `/usr/share/fcitx5/{addon,inputmethod}/hux.conf`。
-- **会话**：每引擎单会话（`activate/deactivate/reset` 清空）；组合重建由 `interaction::CompositionBuilder`
-  按参照 `ConcreteEngine::Compose` 语义（`input[..caret]`、按公共前缀增量保留段、提交后旧段不复用）。
+- **会话**：每输入上下文一个（fcitx5 `InputContextProperty`；组合/候选/学习暂存隔离，选项为引擎级
+  并同步到全部会话）；`deactivate/reset` 清空（fcitx5 核心会在失焦时提交客户端预编辑，不保留组合
+  以免恢复后重复上屏）。组合重建由 `interaction::CompositionBuilder` 按参照 `ConcreteEngine::Compose`
+  语义（`input[..caret]`、按公共前缀增量保留段、提交后旧段不复用）。
 - **宿主语义**（core `host.rs`，`processor` 返回 Forward 后执行）：
 
   | 组件 | 行为要点 |

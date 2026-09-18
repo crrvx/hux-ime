@@ -79,6 +79,14 @@ impl Settings {
         ]
     }
 
+    /// 单项设置缺省（[`Settings::option_defaults`] 的查询形式）。
+    pub fn option_default(&self, name: &str) -> Option<bool> {
+        self.option_defaults()
+            .into_iter()
+            .find(|(key, _)| *key == name)
+            .map(|(_, value)| value)
+    }
+
     /// 存储层缺省：可持久化的核心开关（`options.yaml` 缺失键回退到这些值）。
     pub fn store_defaults(&self) -> hashbrown::HashMap<String, bool> {
         [
