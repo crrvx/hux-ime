@@ -10,7 +10,8 @@
 
 use hux_core::host::{DEFAULT_PAGE_SIZE, HostOptions, MAX_PAGE_SIZE};
 use hux_core::interaction::{
-    OPTION_ALLOW_DUPLICATE_SINGLE, OPTION_EARLY_COMMIT, OPTION_EARLY_COMMIT_TO_PREEDIT,
+    OPTION_ALLOW_DUPLICATE_SINGLE, OPTION_DIGIT_SELECT, OPTION_EARLY_COMMIT,
+    OPTION_EARLY_COMMIT_TO_PREEDIT,
 };
 use hux_core::key::KeyEvent;
 use hux_core::lexicon::DEFAULT_HIGH_FREQ_LIMIT;
@@ -73,15 +74,18 @@ impl Settings {
             (OPTION_ALLOW_DUPLICATE_SINGLE, self.allow_duplicate_single),
             ("full_shape", self.full_shape),
             ("ascii_punct", self.ascii_punct),
+            (OPTION_DIGIT_SELECT, self.digit_select),
         ]
     }
 
-    /// 存储层缺省：三项早提交选项（`options.yaml` 缺失键回退到这些值）。
+    /// 存储层缺省：可持久化的核心开关（`options.yaml` 缺失键回退到这些值）。
     pub fn store_defaults(&self) -> hashbrown::HashMap<String, bool> {
         [
             (OPTION_EARLY_COMMIT, self.early_commit),
             (OPTION_EARLY_COMMIT_TO_PREEDIT, self.early_commit_to_preedit),
             (OPTION_ALLOW_DUPLICATE_SINGLE, self.allow_duplicate_single),
+            ("full_shape", self.full_shape),
+            (OPTION_DIGIT_SELECT, self.digit_select),
         ]
         .into_iter()
         .map(|(name, value)| (name.to_string(), value))
@@ -192,13 +196,15 @@ mod tests {
     }
 
     #[test]
-    fn store_defaults_cover_early_commit_options() {
+    fn store_defaults_cover_core_switches() {
         let store_defaults = Settings::default().store_defaults();
         assert_eq!(
             store_defaults.get(OPTION_EARLY_COMMIT_TO_PREEDIT),
             Some(&false)
         );
-        assert_eq!(store_defaults.len(), 3);
+        assert_eq!(store_defaults.get("full_shape"), Some(&false));
+        assert_eq!(store_defaults.get(OPTION_DIGIT_SELECT), Some(&true));
+        assert_eq!(store_defaults.len(), 5);
     }
 
     #[test]

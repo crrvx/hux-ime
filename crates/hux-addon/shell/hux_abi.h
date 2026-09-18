@@ -99,6 +99,13 @@ typedef struct hux_options {
 int32_t hux_engine_apply_settings(hux_engine *engine,
                                         const hux_options *options);
 
+/* 读取运行时开关（状态菜单）：1/0；未知选项 -1。 */
+int32_t hux_engine_option_value(hux_engine *engine, const char *name);
+
+/* 设置运行时开关（状态菜单）：1 = 已应用；未知选项 0。 */
+int32_t hux_engine_set_option(hux_engine *engine, const char *name,
+                              int32_t value);
+
 #ifdef __cplusplus
 }
 #endif

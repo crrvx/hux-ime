@@ -103,6 +103,11 @@ impl OptionsStore {
         }
     }
 
+    /// 更新设置层缺省（配置界面变化后调用；`options.yaml` 值仍优先）。
+    pub fn set_defaults(&mut self, defaults: HashMap<String, bool>) {
+        self.options.defaults = defaults;
+    }
+
     /// 参照 `M.options.sync`：把持久化值（缺省回退内建缺省）同步进上下文选项。
     pub fn sync(&mut self, context: &mut Context) {
         self.options.sync(context);

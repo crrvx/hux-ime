@@ -77,6 +77,9 @@ cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
 
 配置项见 [`config.md`](config.md)（可在配置工具的「虎虚」页修改）。
 
+状态菜单「**虎虚**」子菜单可随时切换：提前上屏、提前上屏至预编辑、单字重码组句、全角标点、
+数字直选（写入 `tiger_sentence.options.yaml`，重启后保持）。
+
 ### 音反查
 
 输入拼音（支持缩写），候选为字词，注释即虎码

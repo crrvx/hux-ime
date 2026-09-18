@@ -15,7 +15,7 @@ hux-ime（虎虚）：虎句（`tiger_sentence`）输入方案的 fcitx5 原生 
 | K1 | 计算核：lexicon、beam 解码、早提交证据、learning | ✅ 快照差分全绿 |
 | K1.5 | 上游追平：紧凑排序先验（TCSLEX01）、锁播种修复 | ✅ |
 | K2 | 交互引擎：键事件/键表、会话、交互层、宿主链 | ✅ 键序列金样一致 |
-| K3 | fcitx5 addon：注册与候选、编辑语义、标点、音反查、字反查、配置与学习库 | 进行中（打包与状态菜单待做） |
+| K3 | fcitx5 addon：注册与候选、编辑语义、标点、音反查、字反查、配置与学习库、状态菜单 | 进行中（打包待做） |
 | K4 | 验收与打包 | 待做 |
 
 - **移植纪律**：计算部分机械翻译（浮点按位模式比较）；交互部分按行为契约自由设计。
@@ -106,7 +106,9 @@ docs/                    # 本文档、词先验署名
 - **选项与配置**：`tiger_sentence.options.yaml`（主）+ legacy `user.yaml` 的 `var/option/*`（只读回退，
   保存失败写属性 `tiger_sentence_options_error`）；合并顺序 **options.yaml > 设置 > 内建缺省**；图形配置由 C++ `HuxConfig` schema 生成（分「行为」
   「快捷键」两区，子配置 + `ToolTipAnnotation` 悬浮说明；快捷键为 `KeyList`，可多项），经
-  `hux_engine_apply_settings` 应用；状态菜单 4 项核心开关待接线。
+  `hux_engine_apply_settings` 应用；状态菜单（「虎虚」子菜单，5 项核心开关：提前上屏、提前上屏至
+  预编辑、单字重码组句、全角标点、数字直选）经 `hux_engine_set_option` 接线，开关写入
+  `tiger_sentence.options.yaml`（`options.yaml > 设置 > 内建缺省`）。
 
 ## 6. 测试
 

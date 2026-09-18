@@ -37,6 +37,8 @@
 ## 选项与学习存储
 
 - 选项：`~/.local/share/fcitx5/hux/tiger_sentence.options.yaml` \
-  优先级：options.yaml > 设置 > 内建缺省；兼容只读回退 `user.yaml` 的 `var/option/*`
+  优先级：options.yaml > 设置 > 内建缺省；兼容只读回退 `user.yaml` 的 `var/option/*` \
+  其中「提前上屏、提前上屏至预编辑、单字重码组句、全角标点、数字直选」也可在输入法状态菜单的
+  「虎虚」子菜单切换（勾选即写入本文件）。
 - 学习库：`~/.local/share/fcitx5/hux/tiger_sentence_learning_<hash>.userdb/` \
   （LevelDB 同构，可直接迁移）

@@ -26,8 +26,9 @@ use hux_core::decode::Decoder;
 use hux_core::host::{self, HostOptions, HostResult};
 use hux_core::interaction::{
     CompositionBuilder, K_CHAR_TO_SOUND_SHAPE_KEY, K_SOUND_TO_CHAR_SHAPE_KEY, LiveLearning,
-    ProcessorEnv, ProcessorResult, SentenceState, buffered_text, processor, reset_early_evidence,
-    set_allow_duplicate_single, update_notifier,
+    OPTION_ALLOW_DUPLICATE_SINGLE, OPTION_DIGIT_SELECT, OPTION_EARLY_COMMIT,
+    OPTION_EARLY_COMMIT_TO_PREEDIT, ProcessorEnv, ProcessorResult, SentenceState, buffered_text,
+    processor, reset_early_evidence, set_allow_duplicate_single, update_notifier,
 };
 use hux_core::key::{
     K_ALT_MASK, K_CONTROL_MASK, K_LOCK_MASK, K_RELEASE_MASK, K_SHIFT_MASK, K_SUPER_MASK, KeyEvent,
@@ -131,6 +132,15 @@ struct CharToSoundShapeState {
     aux_up: String,
     aux_down: String,
 }
+
+/// 状态菜单可切换的核心开关（`hux_engine_set_option` 白名单）。
+const RUNTIME_OPTIONS: [&str; 5] = [
+    OPTION_EARLY_COMMIT,
+    OPTION_EARLY_COMMIT_TO_PREEDIT,
+    OPTION_ALLOW_DUPLICATE_SINGLE,
+    "full_shape",
+    OPTION_DIGIT_SELECT,
+];
 
 /// 引擎：数据 + 单会话（`Context`/`SentenceState`/学习暂存）。
 pub struct Engine {
@@ -303,7 +313,6 @@ impl Engine {
                 dot_armed: &mut self.dot_armed,
                 min_retained: self.min_retained,
                 page_size: self.host_options.page_size,
-                digit_select: self.settings.digit_select,
             };
             processor(
                 &key,
@@ -461,7 +470,28 @@ impl Engine {
         }
     }
 
+    /// 运行时开关当前值（状态菜单）；非白名单返回 `None`。
+    pub fn option_value(&self, name: &str) -> Option<bool> {
+        RUNTIME_OPTIONS
+            .contains(&name)
+            .then(|| self.context.get_option(name))
+    }
+
+    /// 设置运行时开关（状态菜单）：白名单校验 → 写入上下文 → 持久化（`options.yaml`）。
+    pub fn set_option_value(&mut self, name: &str, value: bool) -> bool {
+        if !RUNTIME_OPTIONS.contains(&name) {
+            return false;
+        }
+        if self.context.get_option(name) != value {
+            self.context.set_option(name, value);
+        }
+        self.observe_option(name);
+        self.refresh_learning_mode();
+        true
+    }
+
     /// 应用外部配置（fcitx5 配置界面 / 测试）：选项类即时生效；`high_freq_limit` 需重启。
+    /// 顺序：设置写入缺省 → `options.yaml` 持久化值覆盖（含状态菜单开关）→ 触发键/学习模式刷新。
     pub fn apply_settings(&mut self, settings: Settings) {
         self.settings = settings;
         self.host_options = self.settings.host_options();
@@ -470,6 +500,10 @@ impl Engine {
             if self.context.get_option(name) != value {
                 self.context.set_option(name, value);
             }
+        }
+        if let Some(store) = self.options.as_mut() {
+            store.set_defaults(self.settings.store_defaults());
+            store.sync(&mut self.context);
         }
         self.sync_sound_to_char_shape_prefix();
         self.refresh_learning_mode();
@@ -785,6 +819,46 @@ pub unsafe extern "C" fn hux_engine_apply_settings(
     1
 }
 
+/// 读取运行时开关（状态菜单）：返回 1/0；未知选项返回 -1。
+///
+/// # Safety
+/// `engine` 须有效（可为空指针）；`name` 须为空或指向 NUL 结尾字符串。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hux_engine_option_value(engine: *mut Engine, name: *const c_char) -> i32 {
+    let Some(engine) = (unsafe { engine.as_ref() }) else {
+        return -1;
+    };
+    if name.is_null() {
+        return -1;
+    }
+    let name = unsafe { std::ffi::CStr::from_ptr(name) }.to_string_lossy();
+    match engine.option_value(&name) {
+        Some(true) => 1,
+        Some(false) => 0,
+        None => -1,
+    }
+}
+
+/// 设置运行时开关（状态菜单）：返回 1 = 已应用；未知选项返回 0。
+///
+/// # Safety
+/// `engine` 须有效（可为空指针）；`name` 须为空或指向 NUL 结尾字符串。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hux_engine_set_option(
+    engine: *mut Engine,
+    name: *const c_char,
+    value: i32,
+) -> i32 {
+    let Some(engine) = (unsafe { engine.as_mut() }) else {
+        return 0;
+    };
+    if name.is_null() {
+        return 0;
+    }
+    let name = unsafe { std::ffi::CStr::from_ptr(name) }.to_string_lossy();
+    i32::from(engine.set_option_value(&name, value != 0))
+}
+
 /// 送入应用侧周边文本（字符制光标；`valid=0` 表示不可用/应用不支持）。返回 1 = 已受理。
 ///
 /// # Safety
@@ -1043,6 +1117,7 @@ mod tests {
         assert!(engine.key(0x60, 0, false), "` 应被消费");
         assert_eq!(engine.context.input(), b"`");
     }
+
     /// 数字直选关闭时：数字仍是编码字符（选重后缀），不直接上屏。
     #[test]
     fn digit_select_off_keeps_rank_suffix() {
@@ -1080,6 +1155,87 @@ mod tests {
         assert!(engine.key(u32::from(b'0'), 0, false));
         assert!(COMMITS.lock().unwrap().is_empty(), "页外数字不应直接上屏");
         assert!(engine.context.input().ends_with(b"0"));
+    }
+
+    /// 运行时开关（状态菜单）：白名单读写往返，未知选项拒绝。
+    #[test]
+    fn runtime_option_roundtrip_and_whitelist() {
+        let _guard = serial();
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, None);
+        for name in RUNTIME_OPTIONS {
+            let value = engine.option_value(name).expect("白名单选项");
+            assert!(engine.set_option_value(name, !value), "{name} 应可设置");
+            assert_eq!(engine.option_value(name), Some(!value));
+        }
+        assert_eq!(engine.option_value("not_an_option"), None);
+        assert!(!engine.set_option_value("not_an_option", true));
+    }
+
+    /// 运行时开关落盘到 `tiger_sentence.options.yaml`，重启后保持。
+    #[test]
+    fn runtime_option_persists_to_store() {
+        let _guard = serial();
+        let dir = temp_user_dir("runtime-option");
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, Some(dir.clone()));
+        assert!(engine.set_option_value("full_shape", true));
+        let text = std::fs::read_to_string(dir.join(options::OPTIONS_FILE)).expect("options.yaml");
+        assert!(text.contains("full_shape: true"), "{text}");
+        let restarted = Engine::new_with_dirs(host(), fixture_dirs(), None, Some(dir.clone()));
+        assert!(restarted.context.get_option("full_shape"), "重启后应保持");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 合并顺序：`options.yaml`（状态菜单开关）优先于配置界面设置。
+    #[test]
+    fn apply_settings_respects_store_values() {
+        let _guard = serial();
+        let dir = temp_user_dir("settings-order");
+        std::fs::write(
+            dir.join(options::OPTIONS_FILE),
+            "options:\n  full_shape: true\n",
+        )
+        .expect("write");
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, Some(dir.clone()));
+        engine.apply_settings(Settings {
+            full_shape: false,
+            ..Default::default()
+        });
+        assert!(
+            engine.context.get_option("full_shape"),
+            "options.yaml 应优先于设置"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// FFI：运行时开关读写（含未知选项）。
+    #[test]
+    fn ffi_runtime_option_roundtrip() {
+        let _guard = serial();
+        let dir = temp_user_dir("ffi-option");
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, Some(dir.clone()));
+        let name = CString::new("full_shape").expect("name");
+        assert_eq!(
+            unsafe { hux_engine_option_value(&mut engine, name.as_ptr()) },
+            0
+        );
+        assert_eq!(
+            unsafe { hux_engine_set_option(&mut engine, name.as_ptr(), 1) },
+            1
+        );
+        assert_eq!(
+            unsafe { hux_engine_option_value(&mut engine, name.as_ptr()) },
+            1
+        );
+        let unknown = CString::new("not_an_option").expect("name");
+        assert_eq!(
+            unsafe { hux_engine_option_value(&mut engine, unknown.as_ptr()) },
+            -1
+        );
+        assert_eq!(
+            unsafe { hux_engine_set_option(&mut engine, unknown.as_ptr(), 1) },
+            0
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
