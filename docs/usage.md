@@ -30,7 +30,8 @@ fcitx5 -r -d
 
 ## 安装
 
-依赖：CMake 3.20+、fcitx5 开发包（`Fcitx5Core`）。
+依赖：CMake 3.20+，以及提供 CMake 包 `Fcitx5Core` 的 fcitx5 开发文件。 \
+（Arch：`fcitx5`；Fedora：`fcitx5-devel`；Debian/Ubuntu：`libfcitx5core-dev`）
 
 ```sh
 cmake -S crates/hux-addon -B build/addon \
