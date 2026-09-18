@@ -39,11 +39,17 @@
 特别感谢 [B佬（lvyww）](https://github.com/lvyww) 对 **虎码** 的发明！也感谢倾情虎码建设的各位同志！\
 没有同志们这份共同的紧持，就没有如今 **虎码** 在 **虎字、虎词、虎句** 等方案上的一路高歌，推陈出新！
 
-## 许可与署名
+## 署名
 
-- 代码：GPL-3.0-or-later，见 [`LICENSE`](LICENSE)。
 - 拼音数据 `data/tiger_sentence.pinyin.bin.gz` 取自 [虎码官方秃版小狼毫](https://huma.ysepan.com)。
-- 词先验数据 `data/tiger_sentence.lexical.bin`：[CC-BY-4.0](LICENSES/CC-BY-4.0.txt) 派生自 [rime-mohu](https://github.com/fcxxxz/rime-mohu)；
-- 模型/码表/其他数据 `data/tiger_sentence.*`：[GPL-3.0](LICENSES/GPL-3.0-only.txt) 取自 [tiger-sentense-rime](https://github.com/lvyww/tiger-sentense-rime)；
-  词先验署名见 [`docs/LEXICAL_PRIOR_ATTRIBUTION.md`](docs/LEXICAL_PRIOR_ATTRIBUTION.md)。
-- 各文件版权与许可以 SPDX 头 / [`REUSE.toml`](REUSE.toml) 标注（REUSE 规范），许可正文见 [`LICENSES/`](LICENSES/)。
+- 词先验数据 `data/tiger_sentence.lexical.bin`：[CC-BY-4.0](LICENSES/CC-BY-4.0.txt)
+  派生自 [rime-mohu](https://github.com/fcxxxz/rime-mohu)；\
+  署名见 [`docs/LEXICAL_PRIOR_ATTRIBUTION.md`](docs/LEXICAL_PRIOR_ATTRIBUTION.md)。
+- 模型/码表/其他数据 `data/tiger_sentence.*`：[GPL-3.0](LICENSES/GPL-3.0-only.txt)
+  取自 [tiger-sentense-rime](https://github.com/lvyww/tiger-sentense-rime)。
+
+## 许可证
+
+本项目代码以 **GPL-3.0-or-later** 发布，全文见 [`LICENSE`](LICENSE)。\
+各文件的版权与许可经 SPDX 头 / [`REUSE.toml`](REUSE.toml) 标注（REUSE 规范），许可正文见
+[`LICENSES/`](LICENSES/)。
