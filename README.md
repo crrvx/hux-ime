@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com> -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 # hux-ime
 
 虎句（`tiger_sentence`）输入方案的 fcitx5 原生 Rust 实现。
@@ -101,7 +104,8 @@ Alt+:  zhongguo   →   :zhong guo〔拼音〕   候选：中国 …
 ## 许可与署名
 
 - 代码：GPL-3.0-or-later，见 [`LICENSE`](LICENSE)。
-- 拼音数据 `` 取自 [虎码官方秃版小狼毫](https://huma.ysepan.com)。
+- 拼音数据 `data/tiger_sentence.pinyin.bin.gz` 取自 [虎码官方秃版小狼毫](https://huma.ysepan.com)。
 - 词先验数据 `data/tiger_sentence.lexical.bin`：[CC-BY-4.0](LICENSES/CC-BY-4.0.txt) 派生自 [rime-mohu](https://github.com/fcxxxz/rime-mohu)；
-- 模型/码表/其他数据 `data/tiger_sentence.*`：[GPL-3.0](LICENSES/GPL-3.0.txt) 取自 [tiger-sentense-rime](https://github.com/lvyww/tiger-sentense-rime)。
-  署名见 [`docs/LEXICAL_PRIOR_ATTRIBUTION.md`](docs/LEXICAL_PRIOR_ATTRIBUTION.md)，
+- 模型/码表/其他数据 `data/tiger_sentence.*`：[GPL-3.0](LICENSES/GPL-3.0-only.txt) 取自 [tiger-sentense-rime](https://github.com/lvyww/tiger-sentense-rime)；
+  词先验署名见 [`docs/LEXICAL_PRIOR_ATTRIBUTION.md`](docs/LEXICAL_PRIOR_ATTRIBUTION.md)。
+- 各文件版权与许可以 SPDX 头 / [`REUSE.toml`](REUSE.toml) 标注（REUSE 规范），许可正文见 [`LICENSES/`](LICENSES/)。

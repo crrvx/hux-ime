@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com> -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 # goldens：差分金样
 
 金样由参照实现（[`lvyww/tiger-sentense-rime`](https://github.com/lvyww/tiger-sentense-rime) 的 Lua 核心）生成，Rust 侧逐位重放比对

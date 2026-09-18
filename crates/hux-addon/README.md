@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com> -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 # hux-addon（K3）
 
 fcitx5 addon：**C++ 薄壳**（`shell/`，只做 fcitx5 接口适配）+ **Rust 逻辑**（`src/`，经 C ABI 调用

@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com> -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 # data/
 
 运行时数据（随包安装到 `…/hux/`）。

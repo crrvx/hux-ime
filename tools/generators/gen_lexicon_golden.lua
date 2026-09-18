@@ -1,3 +1,6 @@
+-- SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+-- SPDX-License-Identifier: GPL-3.0-or-later
+
 -- 生成 lexicon 差分金样 transcript（TSV），供 Rust 侧重放比对。
 --
 --   lua tools/generators/gen_lexicon_golden.lua --reference <repo> --data <dir> --out <tsv> [--mode present|missing]

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """从 librime `src/rime/key_table.cc` 生成 Rust 键名表。
 
     python3 tools/generators/gen_key_table.py --source <librime>/src/rime/key_table.cc \
@@ -107,6 +110,11 @@ def main() -> int:
         raise ValueError(f"expected 32 modifier slots, got {len(modifiers)}")
 
     lines: list[str] = []
+    # REUSE-IgnoreStart
+    lines.append("// SPDX-FileCopyrightText: 2014 RIME Developers")
+    lines.append("// SPDX-License-Identifier: BSD-3-Clause")
+    # REUSE-IgnoreEnd
+    lines.append("//")
     lines.append("//! 由 librime `src/rime/key_table.cc` 生成（请勿手改）。")
     lines.append("//!")
     lines.append("//! 生成：`python3 tools/generators/gen_key_table.py --source <librime>/src/rime/key_table.cc --out <此文件>`")

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 码表 / 字频 / 白名单 / 补充短语的数据层，对应参照实现
 //! `lua/tiger_sentence.lua` 的 parse_* / build_lexicon_index / rebuild_lexicon /
 //! supplement 部分。

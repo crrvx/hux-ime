@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! addon 配置模型（Rust 半）：外部设置（fcitx5 配置界面 / 测试）与内建缺省。
 //!
 //! 合并顺序照参照 schema 语义：**`tiger_sentence.options.yaml`（user 覆盖） > 本设置 > 内建缺省**；

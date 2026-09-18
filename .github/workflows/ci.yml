@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 name: ci
 
 on:
@@ -5,6 +8,12 @@ on:
   pull_request:
 
 jobs:
+  reuse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: fsfe/reuse-action@v6
+
   rust:
     runs-on: ubuntu-latest
     steps:

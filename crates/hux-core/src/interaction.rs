@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 交互层（2b）：会话状态、锁、早提交、translator/filters 与学习（暂存 + 提交通知器），
 //! 对应参照 `tiger_sentence.lua` 的状态段（`fresh_transient_state`…`ends_with_digit`）、
 //! 证据/追踪器、早提交、`translator`、filters 与 `learning_selection`/`learning_commit` 系列。

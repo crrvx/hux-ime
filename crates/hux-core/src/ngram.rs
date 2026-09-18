@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TCSKNM02 分页 KN 语言模型读取，对应参照实现 `lua/tiger_sentence_ngram.lua`。
 //!
 //! 模型格式：TCSKNM02（mobile）。加载器仅接受该格式。

@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com> -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 # 设计（K0–K4）
 
 hux-ime：虎句（`tiger_sentence`）输入方案的 fcitx5 原生 Rust 实现。

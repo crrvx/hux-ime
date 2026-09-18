@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 差分测试：重放 decode 金样（冷路径、无学习），逐位比对。
 //!
 //! 金样由 `tools/generators/gen_decode_golden.lua` 生成：

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # 键序列用例矩阵（2c 金样）。
 # 格式：<名称>\t<重置选项（逗号分隔，可空）>\t<按键 repr 序列（空格分隔）>
 # 重置固定：clear_composition、ascii_mode=false、tiger_sentence_early_commit=1、

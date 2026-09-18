@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com> -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 # 紧凑词先验：来源与署名
 
 `data/tiger_sentence.lexical.bin`（TCSLEX01 Bloom filter，150,032 字节，

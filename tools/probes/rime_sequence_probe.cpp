@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // 键序列金样探针（2c）：真 librime + librime-lua 驱动 pin 版虎句 Lua 核心。
 //
 // 用法：rime_sequence_probe <user_dir> <shared_dir> <lua_plugin> <cases_file>

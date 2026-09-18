@@ -1,3 +1,6 @@
+-- SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+-- SPDX-License-Identifier: GPL-3.0-or-later
+
 -- 生成 decode 金样（冷路径：include_early_commit=false；未接入学习）。
 --
 --   lua tools/generators/gen_decode_golden.lua --reference <repo> --data <dir> --out <tsv> [--model <bin>] [--every N] [--duplicate 0|1] [--early-commit 0|1] [--required 0|1] [--learning 0|1]

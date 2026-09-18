@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 有界 FIFO 缓存，对应参照实现 `lua/tiger_sentence_cache.lua`。
 //!
 //! 两种形态与 Lua 一一对应：

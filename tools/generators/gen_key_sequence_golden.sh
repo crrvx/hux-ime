@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # 生成键序列金样（2c）：pin 版参照 Lua 核心 + 系统 librime + librime-lua。
 #
 # 用法：tools/generators/gen_key_sequence_golden.sh [输出文件]

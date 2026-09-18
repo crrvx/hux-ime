@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # 键 repr 用例（每行一个；`#` 注释）；探针与 Rust 差分测试共用。
 a
 A

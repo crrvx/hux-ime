@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! hux-ime（虎句方案）fcitx5 addon 的 Rust 侧（K3）：C ABI、数据加载与会话装配。
 //!
 //! 分工：`shell/hux.cpp` 只做 fcitx5 接口适配（按键 → 本层；提交/preedit/候选 ← 本层回调），

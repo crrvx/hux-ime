@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 会话运行时：实现参照交互层依赖的 librime Context/Composition/Menu 子集。
 //!
 //! 对齐点（与参照用法一一对应）：

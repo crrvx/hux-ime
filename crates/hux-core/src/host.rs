@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 宿主等价物（K3 ⑥）：core `processor` 返回 Forward 后，参照链上由 librime 原生组件
 //! （`key_binder` → `selector` → `navigator` → `express_editor`）处理的按键。
 //!

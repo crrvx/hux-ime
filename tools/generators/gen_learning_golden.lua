@@ -1,3 +1,6 @@
+-- SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+-- SPDX-License-Identifier: GPL-3.0-or-later
+
 -- 生成 learning 金样（纯计算；持久化用内存 mock，不触碰系统 LevelDb）。
 --
 --   lua tools/generators/gen_learning_golden.lua --reference <repo> --out <tsv>

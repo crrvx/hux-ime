@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com> -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 # AGENTS.md
 
 hux-ime：虎句（`tiger_sentence`）输入方案从 fcitx5-rime 迁移到 fcitx5 原生实现。

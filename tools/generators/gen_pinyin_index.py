@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """音查虎索引生成器（⑧-1）：PY_c.dict.yaml → TCSRV01 紧凑索引。
 
 语义依据（librime 1.17.0 的词典反查；本项目称「音查虎」，见 docs/rust-migration.md）：

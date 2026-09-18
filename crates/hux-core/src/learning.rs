@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Tab 纠错学习，对应参照 `lua/tiger_sentence_learning.lua` 的纯计算部分。
 //!
 //! 实现：`build`（全量重放 oracle）、`runtime_index`/`update`（运行时快照）、

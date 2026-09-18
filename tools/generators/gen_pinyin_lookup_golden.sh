@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # 生成音查虎金样（⑧-1）：参照分支（含 PY_c 音查虎）的 Lua 核心 + 系统 librime + librime-lua。
 # 参照态 = 分支提交 PIN 与主干提交 BASE 的**本地合并**（上游未合并该分支；合并保证
 # 音查虎特性与主干修复（如自动上屏对齐）同时生效；生成器自建临时 worktree，可复现）。
