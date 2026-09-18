@@ -104,9 +104,9 @@ docs/                    # 本文档、词先验署名
   `LiveLearning::submitted` 落库并在 `store_ready` 后生效；存储
   `<user>/tiger_sentence_learning_<hash(schema_id)>.userdb/`（1 万条 / 16 MiB，60 秒节流刷新）。
 - **选项与配置**：`tiger_sentence.options.yaml`（主）+ legacy `user.yaml` 的 `var/option/*`（只读回退）；
-  合并顺序 **options.yaml > 设置 > 内建缺省**；图形配置由 C++ `HuxConfig` schema 生成（引擎 13 项 +
-  宿主显示项 `PanelPreedit`；快捷键为 `KeyList`，可多项），经 `hux_engine_apply_settings` 应用；
-  状态菜单 4 项核心开关待接线。
+  合并顺序 **options.yaml > 设置 > 内建缺省**；图形配置由 C++ `HuxConfig` schema 生成（分「行为」
+  「快捷键」两区，子配置 + `ToolTipAnnotation` 悬浮说明；快捷键为 `KeyList`，可多项），经
+  `hux_engine_apply_settings` 应用；状态菜单 4 项核心开关待接线。
 
 ## 6. 测试
 
