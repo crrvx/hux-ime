@@ -6,6 +6,10 @@
 **虎句**（`tiger_sentence`）输入方案的 fcitx5 原生 Rust 实现。 \
 计算与交互核心全部为 Rust，不依赖 librime。
 
+本项目的语义、数据与金样均参照 [虎爪-rime](https://github.com/lvyww/tiger-sentense-rime)。
+
+hux-ime 是社区第三方适配，出于热爱而作，与上游无隶属关系。
+
 名称 **hux** = **tux**`linux` + **hu**`虎码`
 
 ## 文档
@@ -38,12 +42,8 @@
 
 ## 致谢
 
-感谢 [B佬（lvyww）](https://github.com/lvyww) 创造**虎码**，并在**虎字、虎词、虎句**等方案上，一路高歌，推陈出新！
-也感谢参与虎码建设的各位同好。
-
-本项目的语义、数据与金样均参照 [虎爪-rime](https://github.com/lvyww/tiger-sentense-rime)。
-
-hux-ime 是社区第三方适配，出于热爱而作，与上游无隶属关系。
+特别感谢 [B佬（lvyww）](https://github.com/lvyww) 对 **虎码** 的发明！也感谢倾情虎码建设的各位同志！\
+没有同志们这份共同的紧持，就没有如今 **虎码** 在 **虎字、虎词、虎句** 等方案上的一路高歌，推陈出新！
 
 ## 许可与署名
 
