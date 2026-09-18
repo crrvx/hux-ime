@@ -154,7 +154,7 @@ jobs:
       REFERENCE_COMMIT: 8b615235c17c858e1eca8f1a41fbc74e202f8bbe
     steps:
       - name: Install toolchain
-        run: pacman -Sy --noconfirm git lua gzip
+        run: pacman -Sy --noconfirm git lua gzip diffutils
       - uses: actions/checkout@v4
       - name: Fetch reference implementation
         run: |
