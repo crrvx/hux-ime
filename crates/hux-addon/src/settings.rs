@@ -4,9 +4,10 @@
 //! addon 配置模型（Rust 半）：外部设置（fcitx5 配置界面 / 测试）与内建缺省。
 //!
 //! 合并顺序照参照 schema 语义：**`tiger_sentence.options.yaml`（user 覆盖） > 本设置 > 内建缺省**；
-//! 三项早提交选项由存储层负责覆盖（C++ 对话框经 ABI 传入后将成为存储层缺省，待接线），
-//! `full_shape`/`ascii_punct` 直接作为会话初始选项，`tab_learning` 门控学习 mode（`false` → 空串 = 不学习，
-//! 对照参照 `prepare_learning` 的 `enabled`），`high_freq_limit` 在创建词库时生效（修改需重启）。
+//! 可持久化开关（三项早提交、`full_shape`、数字直选）以本设置为存储层缺省（配置 / 状态菜单变更后
+//! 经 `apply_settings` 重放存储，`options.yaml` 仍优先）；`ascii_punct` 等作会话初始选项；
+//! `tab_learning` 门控学习 mode（`false` → 空串 = 不学习，对照参照 `prepare_learning` 的 `enabled`），
+//! `high_freq_limit` 在创建词库时生效（修改需重启）。
 
 use hux_core::host::{DEFAULT_PAGE_SIZE, HostOptions, MAX_PAGE_SIZE};
 use hux_core::interaction::{
