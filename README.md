@@ -38,8 +38,10 @@
 
 ## 致谢
 
-感谢 [B佬（lvyww）](https://github.com/lvyww) 创作虎句方案（虎爪 / 虎整句），也感谢参与虎码建设的
-各位同好——本项目的语义、数据与金样均参照 [虎爪-rime](https://github.com/lvyww/tiger-sentense-rime)。
+感谢 [B佬（lvyww）](https://github.com/lvyww) 创造**虎码**，并在**虎字、虎词、虎句**等方案上，一路高歌，推陈出新！
+也感谢参与虎码建设的各位同好。
+
+本项目的语义、数据与金样均参照 [虎爪-rime](https://github.com/lvyww/tiger-sentense-rime)。
 
 hux-ime 是社区第三方适配，出于热爱而作，与上游无隶属关系。
 
