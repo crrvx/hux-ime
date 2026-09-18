@@ -3,91 +3,21 @@
 
 # hux-ime
 
-虎句（`tiger_sentence`）输入方案的 fcitx5 原生 Rust 实现。
+**虎句**（`tiger_sentence`）输入方案的 fcitx5 原生 Rust 实现。 \
 计算与交互核心全部为 Rust，不依赖 librime。
 
-名称 `hux` = `tux`(linux) + `hu`(虎码)
+名称 **hux** = **tux**`linux` + **hu**`虎码`
 
 ## 文档
 
-| 文档                                                        | 内容                                       |
-| ----------------------------------------------------------- | ------------------------------------------ |
-| [`docs/rust-migration.md`](docs/rust-migration.md)         | 设计：路线与状态、模块映射、数据、集成要点 |
-| [`crates/hux-addon/README.md`](crates/hux-addon/README.md) | addon 构建/安装、数据目录、配置与功能说明  |
-| [`goldens/README.md`](goldens/README.md)                   | 差分金样：清单、来源、复现命令             |
-| [`data/README.md`](data/README.md)                         | 随包数据说明                               |
-
-## 开发
-
-依赖：Rust 1.85+（edition 2024）。
-
-```sh
-cargo test -p hux-core -p hux-addon       # 逐位差分 + addon 测试（本地抽样缺失自动跳过）
-cargo clippy --all-targets -- -D warnings
-cargo fmt --all --check
-```
-
-## 安装（fcitx5 addon）
-
-依赖：CMake 3.20+、fcitx5 开发包（`Fcitx5Core`）。
-
-```sh
-cmake -S crates/hux-addon -B build/addon -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
-cmake --build build/addon -j
-sudo cmake --install build/addon
-fcitx5 -r -d  # 或以所在发行版的方式重启
-```
-
-随包数据在仓库 [`data/`](data/README.md)（码表四件套、词先验位图、音反查索引、标点表），
-安装到 fcitx5 数据目录：
-
-```sh
-mkdir -p ~/.local/share/fcitx5/hux/models
-cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
-```
-
-可选 n-gram 模型不随包（来源 [Releases › model](https://github.com/lvyww/tiger-sentense-rime/releases/tag/model)，
-可与 fcitx5-rime 共用同一份）；随后在配置工具中添加「hux」，
-详见[`crates/hux-addon/README.md`](crates/hux-addon/README.md)。
-
-## 使用
-
-方案：虎句（`tiger_sentence`）。
-
-`空格`上屏高亮、`Tab`/`Shift+Tab` 移动高亮，
-`=`/`-`（或 `[`/`]`）或 `PgDn`/`PgUp` 翻页，
-`回车`提交原文，`Esc` 取消。
-
-> 每页 5 个候选项（可配置 1–10）
-
-以上按键与每页个数均可在配置工具的「hux」页修改（分「行为」「快捷键」两区，选项悬浮可见详情；
-快捷键为可多项的 `KeyList`：翻页 `PageUpKey`/`PageDownKey`/`PageSize`；反查触发键
-`SoundToCharShapeKey`/`CharToSoundShapeKey`；开启 `DigitSelect` 后 `1`–`9` 直接上屏当前页候选、
-`0` = 第 10 个）。
-
-### 音反查：拼音 → 虎码（默认 `Alt`+`:`）
-
-按下触发键后输入拼音（支持拼写缩写），`空格`上屏高亮候选。
-候选即为对应词语，注释显示虎码，预编辑按音节切分：
-
-```
-Alt+:  zhongguo   →   :zhong guo〔拼音〕   候选：中国 …
-```
-
-### 字反查：查光标左侧汉字的音与码（默认 `Alt`+`"`）
-
-按下触发键后，输入面板显示光标左侧 1 个字的信息：
-上排拼音（排头「**咅**」）、下排虎码（排头「**虍**」）
-
-> 多音/多码以 `/` 连接，缺数据为 `?`
-
-```
-咅 zhong
-虍 d/dg/dgs
-```
-
-依赖应用提供周边文本（不可用时查不到内容，两排为空）；`←`/`→` 移动应用光标
-（两排随光标刷新），`Esc`、再次触发或输入其它键退出。
+| 文档                                                       | 内容                                             |
+| ---------------------------------------------------------- | ------------------------------------------------ |
+| [`docs/usage.md`](docs/usage.md)                           | 开发 / 安装 / 使用 / 卸载                        |
+| [`docs/config.md`](docs/config.md)                         | 配置项：行为 / 快捷键 / 选项与学习存储           |
+| [`docs/rust-migration.md`](docs/rust-migration.md)         | 设计：路线与状态、模块映射、数据、集成要点       |
+| [`crates/hux-addon/README.md`](crates/hux-addon/README.md) | addon 实现：分工、按键语义、反查机制、已知限制   |
+| [`goldens/README.md`](goldens/README.md)                   | 差分金样：清单、来源、复现命令                   |
+| [`data/README.md`](data/README.md)                         | 随包数据说明                                     |
 
 ## 致谢
 

@@ -44,5 +44,5 @@ hux-ime：虎句（`tiger_sentence`）输入方案从 fcitx5-rime 迁移到 fcit
 - 移植纪律：计算部分机械翻译 + 差分逐位验证；交互部分按行为契约自由设计；
 - Lua 仅作测试 oracle（CI/开发环境），不进入运行时依赖；
 - 版本控制：jj（Jujutsu）colocate 模式；日常操作走 jj，不直接使用 git；
-- 文档：`docs/rust-migration.md`（设计）、`crates/hux-addon/README.md`（addon 使用）、`goldens/README.md`（金样）、
+- 文档：`docs/usage.md`（开发/安装/使用/卸载）、`docs/config.md`（配置项）、`docs/rust-migration.md`（设计）、`crates/hux-addon/README.md`（addon 实现）、`goldens/README.md`（金样）、
   `data/README.md`（数据）、`docs/LEXICAL_PRIOR_ATTRIBUTION.md`（词先验署名/许可）。
