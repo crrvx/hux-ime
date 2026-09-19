@@ -45,5 +45,5 @@ hux-ime（虎虚）：虎句（`tiger_sentence`）输入方案从 fcitx5-rime �
 - Lua 仅作测试 oracle（CI/开发环境），不进入运行时依赖；
 - 版本控制：jj（Jujutsu）colocate 模式；日常操作走 jj，不直接使用 git；
 - 文档：`docs/usage.md`（开发/安装/使用/卸载）、`docs/config.md`（配置项）、`docs/rust-migration.md`（设计）、
-  `docs/config-options.md`（新增可配置项计划）、`docs/android.md`（fcitx5-android 适配计划）、`crates/hux-addon/README.md`（addon 实现）、
+  `docs/config-options.md`（可配置项扩展 B/C 组记录）、`docs/android.md`（fcitx5-android 适配计划）、`crates/hux-addon/README.md`（addon 实现）、
   `goldens/README.md`（金样）、`data/README.md`（数据）、`docs/LEXICAL_PRIOR_ATTRIBUTION.md`（词先验署名/许可）。

@@ -1,70 +1,63 @@
 <!-- SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com> -->
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 
-# 可配置项扩展（开发文档：A 组）
+# 可配置项扩展（B/C 组记录）
 
-范围：**低成本、常用**的四项（下称 A 组），现行为即默认值，改后即时生效。其余项见 §5 待定。
+A 组四项（候选排列、预编辑内容、翻页循环、最短保留码数）已实施，见 [`config.md`](config.md)。 \
+本文记录**待定**项：低成本余项、中等成本（B）、高成本（C）与明确不做项，供后续排期选取。
 
-## 1. 本批项目（已实施）
+## 1. 低成本余项（现管线只差暴露）
 
-| # | 配置项 | 取值 / 默认 | UI 区 | 说明 |
-| --- | --- | --- | --- | --- |
-| 1 ✅ | 候选排列 `CandidateLayout` | `FollowGlobal`（默认）/ `Horizontal` / `Vertical` | 行为 | 默认跟随 fcitx5 全局「候选竖排」；显式横排/竖排时同时决定选字键语义（←→ 或 ↑↓） |
-| 2 ✅ | 翻页循环 `PageCycle` | 关（默认）/ 开 | 行为 | 末页再翻回首页、首页向上翻到末页（参照 `menu/page_down_cycle`，默认关） |
-| 3 ✅ | 预编辑内容 `PreeditMode` | `CandidateCode`（默认，现状）/ `RawInput` / `Hidden` | 行为 | 候选分码（高亮候选分码+原文尾部）/ 原始输入 / 不显示 |
-| 4 ✅ | 提前上屏最短保留码数 `MinRetainedRawLength` | `0`（默认，不额外限制）/ `0..=20` | 行为 | 对照参照 `tiger_sentence/min_retained_raw_length`；概率型早提交仍不少于 3 |
+| 项 | 现状 | 实现点 | 备注 |
+| --- | --- | --- | --- |
+| 反查候选上限 | 固定 20 | core 常量 → 设置 + ABI `int` | 少用 |
+| 学习库上限 | 固定 1 万条 / 16 MiB | `learning_store` 常量 → 设置（重启生效） | 少用；「清空学习库」需另做动作，非配置 |
+| 候选序号显示 | 随数字直选联动（直选开启才显示 `1`–`9`/`0`） | C++ `setSelectionKey` 条件 → 三态设置 | 少用 |
 
-## 2. 逐项实现点
+## 2. B 组（中等成本，可排期）
 
-### 1. 候选布局
-- C++：`HuxConfig` 新增枚举选项（`FollowGlobal`（默认）/ `Horizontal` / `Vertical`）；显式选择横竖排时
-  `candidateList->setLayoutHint(...)`，跟随全局时保持 `NotSet`（由 fcitx5 全局「候选竖排」决定）。
-- Rust：`Settings.candidate_layout` → 仅「竖排」写会话 context 的 `_vertical`
-  （host `selector` 据此决定 ←→/↑↓ 选择语义；默认不置位 = 现状）。
-- 生效时机：下一次 UI 更新（无需重启）。
+### B1 模型路径（`ModelPath`）
+- **价值**：自定义/禁用 n-gram 模型；Android 模型分发后续也依赖「模型路径」能力（模型 APK 走默认目录）。
+- **现状**：仅 `HUX_MODEL` 环境变量；模型在引擎创建时加载（修改需重启）。
+- **实现**：schema `String` → ABI 传路径（缺省/空串语义待定：空 = 默认查找还是禁用）；与 `HUX_MODEL` 的优先级约定。
+- **成本/风险**：中 / 低（重启生效；输出随模型版本变化）。
 
-### 2. 翻页循环
-- `HostOptions` 增 `page_cycle: bool`（由 `Settings` 派生）；`host.rs::selector_action` 的
-  `NextPage`/`PreviousPage` 加循环分支（`NextPage` 到末页 → 回 0；`PreviousPage` 到首页 → 末页）。
-- 仅影响键盘翻页（Page_Up/Page_Down 与配置页键）；面板箭头翻页仍交给 fcitx5。
+### B2 候选选择键可配置
+- **价值**：除 Tab/Shift+Tab、Up/Down 外可自定义选字键。
+- **现状**：host `key_binder` 固定 Tab/Shift+Tab；`selector` 固定 Up/Down（横排）/ ←→（竖排）。
+- **实现**：`HostOptions` 增 `prev/next_candidate_keys`（rime 键名，`KeyList` 可多项），`selector` 按列表匹配；
+  与翻页键、导航键在现有处理器链中的优先级需一并理清。
+- **成本/风险**：中 / 低（沿用「有候选时生效」语义）。
 
-### 3. 预编辑内容
-- `lib.rs::push_update` 按模式分支：
-  - `CandidateCode`＝现状（高亮候选 `preedit` 优先 + 组合后原文尾部）；
-  - `RawInput`＝缓冲 + 实况输入（不按候选分码）；
-  - `Hidden`＝空。
-- 反查段（字反查）仍不下发预编辑，维持既有约束。
+### B3 普通候选显示虎码注释
+- **价值**：打字时候选旁显示虎码（学码友好）。
+- **现状**：普通解码候选 `comment` 为空；音反查候选注释 = 虎码。
+- **实现**：注释来源（候选路径的编码/词条虎码）；显示格式与宽度；仅展示层换算，**不得进入排序**（差分金样不受影响）。
+- **成本/风险**：中 / 中。
 
-### 4. 最短保留码数
-- `Settings.min_retained_raw_length`（钳制 `0..=20`）→ `HuxOptions` → 写入会话；
-- core 管线已具备（`ProcessorEnv.min_retained` → `min_retained_raw_length()`，
-  参照语义：`0` = 不额外限制；概率型早提交下限 3 不变）。
+### B4 码表 / 标点表自定义
+- **现状**：**用户目录同名文件覆盖已可用**（`<user>/fcitx5/hux/` 放 `tiger_sentence.*.txt` 或 `symbols.yaml` 即生效），无需代码。
+- **路线**：先补文档（`usage.md` / `data/README.md`）；若需 UI 指定路径（`String` 项 + 重启）再排期。
+- **成本**：文档 = 小；UI = 中。
 
-## 3. 统一改动套路（四项共用）
+## 3. C 组（高成本，暂缓）
 
-1. `shell/hux.cpp`：schema（「行为」区）+ 注解 → `applyConfig()` 填 ABI；
-2. `shell/hux_abi.h` + `src/lib.rs::HuxOptions` + `src/settings.rs`：追加字段（C 布局只能追加）；
-3. 需要时改 core（本批仅 #2 `host.rs`、#4 会话字段）；
-4. 测试：Rust 单测（默认值 / 边界 / 行为）；**默认值必须等于现行为**（键序列金样与既有测试不变）；
-5. 文档：`docs/config.md` 表格补行；本文件勾选完成项。
+### C1 简繁转换
+- **价值**：输出简/繁切换（参照未带，属扩展）。
+- **前置**：OpenCC 级转换表（体积 / 许可 / 来源）；转换挂点（提交文本与候选文本）；与学习库、反查展示的交互契约。
+- **成本/风险**：高（数据 + 全链路）。
 
-## 4. 顺序与验收
+### C2 用户词 / 自造词
+- **价值**：用户词典导入导出、编辑；学习过程可见化。
+- **现状**：只有打分式学习库（LevelDB 同构），无用户词层。
+- **前置**：数据结构与迁移、与解码排序/学习的关系、桌面与 Android 两端 UI。
+- **成本/风险**：高。
 
-顺序：**#1 → #3 → #2 → #4**（每项独立提交，便于回退）。
+## 4. 明确不做
+- 早提交概率阈值（share / 证据数）：调参危险，参照亦未暴露为 UI；
+- `memory_profile`（compact/balanced）：本实现仅支持 TCSKNM02 mobile 模型；
+- `ascii_composer` 系列（Caps/Shift 行为）：无内置英文模式。
 
-验收：
-- 配置页四项可改、即改即生效（下一次按键/更新），重启后保持（写入 `~/.config/fcitx5/conf/hux.conf`）；
-- #1 竖排时 ↑↓ 选择、←→ 移动语义一致；横排保持现状；
-- #2 末页/首页循环正确，默认关时行为与现状一致；
-- #3 三态在普通组合、缓冲态、音反查下表现正确；
-- #4 边界 0/20 钳制正确，调大后早提交更保守（单测覆盖）。
-
-## 5. 待定（不在本批）
-
-- **B 组（中成本）**：模型路径设置、候选选择键可配置、普通候选显示虎码注释、码表/标点表自定义路径
-  （注：用户目录覆盖码表/`symbols.yaml` 已可用，先补文档）。
-- **C 组（高成本）**：简繁转换（需 OpenCC 类数据）、用户词/自造词（导入导出与编辑）。
-- **明确不做**：早提交概率阈值、`memory_profile`、`ascii_composer` 系列（无内置英文模式）。
-
-> Android 适配（见 [`android.md`](android.md)）复用本批选项：Android 配置页支持 `Enum/Int/Bool/String/List|Key`，
-> 本批四项无需额外适配。
+## 5. 记录规则
+- 新想法先落本表（价值 / 现状 / 实现点 / 成本），低风险小项可随时转实施；
+- 实施后从本表移除，同步 `config.md`、测试与相关文档。
