@@ -30,6 +30,15 @@ fcitx5 -r -d
 
 ## 安装
 
+一键安装（构建 → 装插件与随包数据 → 重启 fcitx5）：
+
+```sh
+./install.sh            # 预览将执行的命令：./install.sh --dry-run
+```
+
+脚本结尾会提示自行获取 n-gram 模型（见下）。\
+手工安装（自定义前缀或打包时参考）：
+
 依赖：CMake 3.20+，以及提供 CMake 包 `Fcitx5Core` 的 fcitx5 开发文件。 \
 （Arch：`fcitx5`；Fedora：`fcitx5-devel`；Debian/Ubuntu：`libfcitx5core-dev`）
 
@@ -106,6 +115,15 @@ Alt+:  zhongguo   →   :zhong guo〔拼音〕   候选：中国 …
 ```
 
 ## 卸载（无残留）
+
+一键卸载：
+
+```sh
+./uninstall.sh          # 移除系统文件，保留用户数据（选项/学习库/模型）
+./uninstall.sh --purge  # 连用户数据一起清除
+```
+
+手工步骤：
 
 ```sh
 # 系统级
