@@ -37,6 +37,8 @@ pub struct HostOptions {
     pub page_up_keys: Vec<KeyEvent>,
     /// 下翻页键列表：菜单可用（`has_menu`）时生效。
     pub page_down_keys: Vec<KeyEvent>,
+    /// 翻页循环（参照 `menu/page_down_cycle`，默认关）：末页再翻回首页、首页向上翻到末页。
+    pub page_cycle: bool,
 }
 
 impl Default for HostOptions {
@@ -45,6 +47,7 @@ impl Default for HostOptions {
             page_size: DEFAULT_PAGE_SIZE,
             page_up_keys: vec![KeyEvent::from_repr("minus").expect("minus")],
             page_down_keys: vec![KeyEvent::from_repr("equal").expect("equal")],
+            page_cycle: false,
         }
     }
 }
@@ -281,14 +284,23 @@ fn selector_action(
             }
         }
         SelectorAction::PreviousPage => {
-            if context.composition.segments.is_empty() {
-                false
+            let Some(segment) = context.composition.back() else {
+                return HostResult::Forward;
+            };
+            if !segment.translated {
+                return HostResult::Forward;
+            }
+            let selected = segment.selected_index;
+            if selected < page_size {
+                // 已在首页：默认停在首页（吞键）；开启循环则回到末页。
+                if options.page_cycle {
+                    let total = segment.prepare(usize::MAX);
+                    let last_page_start = total.saturating_sub(1) / page_size * page_size;
+                    context.highlight(last_page_start);
+                    mark_paging(context);
+                }
+                true
             } else {
-                let selected = context
-                    .composition
-                    .back()
-                    .map(|segment| segment.selected_index)
-                    .unwrap_or(0);
                 let index = selected.saturating_sub(page_size);
                 context.highlight(index);
                 mark_paging(context);
@@ -306,7 +318,12 @@ fn selector_action(
             let page_start = (index / page_size) * page_size;
             let candidate_count = segment.prepare(page_start + page_size);
             if candidate_count <= page_start {
-                true // page_down_cycle 缺省 false：吞键不循环
+                // 已在末页：默认吞键不循环；开启循环则回到首页。
+                if options.page_cycle {
+                    context.highlight(0);
+                    mark_paging(context);
+                }
+                true
             } else {
                 let index = if index >= candidate_count {
                     candidate_count - 1
@@ -735,6 +752,7 @@ mod tests {
             page_size,
             page_up_keys: vec![KeyEvent::from_repr("comma").expect("key")],
             page_down_keys: vec![KeyEvent::from_repr("period").expect("key")],
+            page_cycle: false,
         }
     }
 
@@ -871,6 +889,57 @@ mod tests {
         assert_eq!(selected(&small), 0);
     }
 
+    /// 翻页循环（`page_cycle`）：末页再下回首页、首页向上翻到末页。
+    #[test]
+    fn selector_page_cycle_wraps_at_ends() {
+        let mut options = custom_page_options(2);
+        options.page_cycle = true;
+        let mut context = context_with_menu(&["a", "b", "c", "d", "e"], 0);
+        assert_eq!(
+            press_with(&mut context, "period", &options),
+            HostResult::Consumed
+        );
+        assert_eq!(selected(&context), 2);
+        assert_eq!(
+            press_with(&mut context, "period", &options),
+            HostResult::Consumed
+        );
+        assert_eq!(selected(&context), 4);
+        // 末页再下 → 首页。
+        assert_eq!(
+            press_with(&mut context, "period", &options),
+            HostResult::Consumed
+        );
+        assert_eq!(selected(&context), 0);
+        // 首页再上 → 末页起点。
+        assert_eq!(
+            press_with(&mut context, "comma", &options),
+            HostResult::Consumed
+        );
+        assert_eq!(selected(&context), 4);
+    }
+
+    /// 默认不循环：末页/首页翻页只吞键、不动。
+    #[test]
+    fn selector_page_does_not_wrap_by_default() {
+        let options = custom_page_options(2);
+        let mut context = context_with_menu(&["a", "b", "c", "d", "e"], 0);
+        for expected in [2, 4, 4] {
+            assert_eq!(
+                press_with(&mut context, "period", &options),
+                HostResult::Consumed
+            );
+            assert_eq!(selected(&context), expected);
+        }
+        for expected in [2, 0, 0] {
+            assert_eq!(
+                press_with(&mut context, "comma", &options),
+                HostResult::Consumed
+            );
+            assert_eq!(selected(&context), expected);
+        }
+    }
+
     #[test]
     fn selector_uses_configured_page_keys() {
         let options = custom_page_options(2);
@@ -936,6 +1005,7 @@ mod tests {
                 KeyEvent::from_repr("period").expect("key"),
                 KeyEvent::from_repr("bracketright").expect("key"),
             ],
+            page_cycle: false,
         };
         let mut context = context_with_menu(&["a", "b", "c", "d", "e", "f"], 0);
         assert_eq!(

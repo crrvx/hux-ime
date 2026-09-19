@@ -109,6 +109,14 @@ typedef struct hux_options {
   hux_key_list page_up;
   hux_key_list page_down;
   int32_t digit_select;
+  /* 候选排列：0 = 跟随全局（默认），1 = 横排，2 = 竖排。 */
+  int32_t candidate_layout;
+  /* 预编辑内容：0 = 候选分码（默认），1 = 原始输入，2 = 不显示。 */
+  int32_t preedit_mode;
+  /* 翻页循环：0 = 关（默认），1 = 开。 */
+  int32_t page_cycle;
+  /* 提前上屏最短保留码数（0..=20；0 = 不额外限制）。 */
+  int32_t min_retained_raw_length;
 } hux_options;
 
 /* 应用外部配置；返回 1 = 已应用。 */

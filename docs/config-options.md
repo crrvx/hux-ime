@@ -5,22 +5,22 @@
 
 范围：**低成本、常用**的四项（下称 A 组），现行为即默认值，改后即时生效。其余项见 §5 待定。
 
-## 1. 本批项目
+## 1. 本批项目（已实施）
 
 | # | 配置项 | 取值 / 默认 | UI 区 | 说明 |
 | --- | --- | --- | --- | --- |
-| 1 | 候选布局 `CandidateLayout` | `Horizontal`（默认）/ `Vertical` | 行为 | 候选窗排列与选择键语义（←→ 或 ↑↓） |
-| 2 | 翻页循环 `PageDownCycle` | 关（默认）/ 开 | 行为 | 末页再翻回首页、首页向上翻到末页（参照 `menu/page_down_cycle`，默认关） |
-| 3 | 预编辑内容 `PreeditMode` | `CandidateCode`（默认，现状）/ `RawInput` / `Hidden` | 行为 | 候选分码（高亮候选分码+原文尾部）/ 原始输入 / 不显示 |
-| 4 | 提前上屏最短保留码数 `MinRetainedRawLength` | `0`（默认，不额外限制）/ `0..=20` | 行为 | 对照参照 `tiger_sentence/min_retained_raw_length`；概率型早提交仍不少于 3 |
+| 1 ✅ | 候选排列 `CandidateLayout` | `FollowGlobal`（默认）/ `Horizontal` / `Vertical` | 行为 | 默认跟随 fcitx5 全局「候选竖排」；显式横排/竖排时同时决定选字键语义（←→ 或 ↑↓） |
+| 2 ✅ | 翻页循环 `PageCycle` | 关（默认）/ 开 | 行为 | 末页再翻回首页、首页向上翻到末页（参照 `menu/page_down_cycle`，默认关） |
+| 3 ✅ | 预编辑内容 `PreeditMode` | `CandidateCode`（默认，现状）/ `RawInput` / `Hidden` | 行为 | 候选分码（高亮候选分码+原文尾部）/ 原始输入 / 不显示 |
+| 4 ✅ | 提前上屏最短保留码数 `MinRetainedRawLength` | `0`（默认，不额外限制）/ `0..=20` | 行为 | 对照参照 `tiger_sentence/min_retained_raw_length`；概率型早提交仍不少于 3 |
 
 ## 2. 逐项实现点
 
 ### 1. 候选布局
-- C++：`HuxConfig` 新增枚举选项（`FCITX_CONFIG_ENUM` + 中英文名）；`applyUpdate` 里
-  `candidateList->setLayoutHint(fcitx::CandidateLayoutHint::Vertical|Horizontal)`。
-- Rust：`Settings.candidate_layout` → 写入各会话 context 的 `_vertical` / `_horizontal` / `_linear`
-  （host `selector` 已读取这些选项决定 ↑↓/←→ 选择语义；默认 = 现状「Horizontal | Stacked」）。
+- C++：`HuxConfig` 新增枚举选项（`FollowGlobal`（默认）/ `Horizontal` / `Vertical`）；显式选择横竖排时
+  `candidateList->setLayoutHint(...)`，跟随全局时保持 `NotSet`（由 fcitx5 全局「候选竖排」决定）。
+- Rust：`Settings.candidate_layout` → 仅「竖排」写会话 context 的 `_vertical`
+  （host `selector` 据此决定 ←→/↑↓ 选择语义；默认不置位 = 现状）。
 - 生效时机：下一次 UI 更新（无需重启）。
 
 ### 2. 翻页循环

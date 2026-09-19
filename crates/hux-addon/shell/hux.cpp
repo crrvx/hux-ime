@@ -3,8 +3,10 @@
 
 // hux-ime（虎虚）fcitx5 addon 的 C++ 薄壳：只做 fcitx5 接口适配，逻辑在 Rust（libhux_addon）。
 #include <fcitx-config/configuration.h>
+#include <fcitx-config/enum.h>
 #include <fcitx-config/option.h>
 #include <fcitx-config/iniparser.h>
+#include <fcitx-utils/i18n.h>
 #include <fcitx/action.h>
 #include <fcitx/addonfactory.h>
 #include <fcitx/addoninstance.h>
@@ -63,6 +65,33 @@ void fillKeyList(hux_key_list *dest, const fcitx::KeyList &keys) {
     }
 }
 
+/// 候选排列（参照 `style` 语义；默认跟随 fcitx5 全局「候选竖排」设置）。
+enum class HuxCandidateLayout { FollowGlobal, Horizontal, Vertical };
+FCITX_CONFIG_ENUM_NAME(HuxCandidateLayout, "跟随全局", "横排", "竖排");
+FCITX_CONFIG_ENUM_I18N_ANNOTATION(HuxCandidateLayout, "跟随全局", "横排", "竖排");
+
+/// 预编辑内容。
+enum class HuxPreeditMode { CandidateCode, RawInput, Hidden };
+FCITX_CONFIG_ENUM_NAME(HuxPreeditMode, "候选分码", "原始输入", "不显示");
+FCITX_CONFIG_ENUM_I18N_ANNOTATION(HuxPreeditMode, "候选分码", "原始输入", "不显示");
+
+/// 枚举注解 + 悬浮说明（`EnumI18n` 与 `Tooltip` 并存）。
+template <typename EnumAnnotation>
+struct EnumAnnotationWithTooltip : EnumAnnotation {
+    explicit EnumAnnotationWithTooltip(std::string tooltip)
+        : tooltip_(std::move(tooltip)) {}
+
+    bool skipDescription() const { return false; }
+    bool skipSave() const { return false; }
+    void dumpDescription(fcitx::RawConfig &config) const {
+        EnumAnnotation::dumpDescription(config);
+        config.setValueByPath("Tooltip", tooltip_);
+    }
+
+private:
+    std::string tooltip_;
+};
+
 /// 行为设置（配置页「行为」分区）。
 FCITX_CONFIGURATION(
     HuxBehaviorConfig,
@@ -111,6 +140,12 @@ FCITX_CONFIGURATION(
         .defaultValue = true,
         .annotation{"开启后菜单可见时 `1`–`9` 直接上屏当前页候选、`0` = 第 10 个；"
                     "关闭时数字仍作编码选重后缀。"}}};
+    fcitx::OptionWithAnnotation<bool, fcitx::ToolTipAnnotation> pageCycle{{
+        .parent = this,
+        .path{"PageCycle"},
+        .description{"翻页循环"},
+        .defaultValue = false,
+        .annotation{"候选翻页在末页再翻回首页、首页向上翻到末页。"}}};
     fcitx::OptionWithAnnotation<bool, fcitx::ToolTipAnnotation> panelPreedit{{
         .parent = this,
         .path{"PanelPreedit"},
@@ -135,7 +170,36 @@ FCITX_CONFIGURATION(
             .description{"每页候选个数"},
             .defaultValue = 5,
             .constrain = fcitx::IntConstrain(kPageSizeMin, kPageSizeMax),
-            .annotation{"候选列表每页个数（1–10）；数字直选 `0` 对应第 10 个。"}}};);
+            .annotation{"候选列表每页个数（1–10）；数字直选 `0` 对应第 10 个。"}}};
+    fcitx::OptionWithAnnotation<
+        HuxCandidateLayout,
+        EnumAnnotationWithTooltip<HuxCandidateLayoutI18NAnnotation>>
+        candidateLayout{{
+            .parent = this,
+            .path{"CandidateLayout"},
+            .description{"候选排列"},
+            .defaultValue = HuxCandidateLayout::FollowGlobal,
+            .annotation{"跟随全局：候选窗排列随 fcitx5 全局「候选竖排」；"
+                        "横排：↑↓ 选字、←→ 移动；竖排：←→ 选字、↑↓ 移动。"}}};
+    fcitx::OptionWithAnnotation<HuxPreeditMode,
+                                EnumAnnotationWithTooltip<HuxPreeditModeI18NAnnotation>>
+        preeditMode{{
+            .parent = this,
+            .path{"PreeditMode"},
+            .description{"预编辑内容"},
+            .defaultValue = HuxPreeditMode::CandidateCode,
+            .annotation{"候选分码：按词分段显示（如 `ab cd`）；原始输入：按输入原文；"
+                        "不显示：仅候选与注释。"}}};
+    fcitx::Option<int, fcitx::IntConstrain, fcitx::DefaultMarshaller<int>,
+                  fcitx::ToolTipAnnotation>
+        minRetainedRawLength{{
+            .parent = this,
+            .path{"MinRetainedRawLength"},
+            .description{"提前上屏最短保留码数"},
+            .defaultValue = 0,
+            .constrain = fcitx::IntConstrain(0, 20),
+            .annotation{"提前上屏与空码上屏共用的最短保留编码数；0 = 不额外限制"
+                        "（概率型早提交仍不少于 3）。"}}};);
 
 /// 快捷键设置（配置页「快捷键」分区；`KeyList` 可多项，与全局设置同款）。
 FCITX_CONFIGURATION(
@@ -494,6 +558,15 @@ private:
             // 翻页交由 fcitx5 面板（页大小与引擎一致）：绝对索引 → 全局光标 + 所在页。
             candidateList->setPageSize(std::clamp(
                 config_.behavior->pageSize.value(), kPageSizeMin, kPageSizeMax));
+            // 候选排列：仅显式选择横排/竖排时设置 LayoutHint（跟随全局时保持 NotSet，
+            // 由 fcitx5 全局「候选竖排」设置决定）。
+            const auto layout = config_.behavior->candidateLayout.value();
+            if (layout != HuxCandidateLayout::FollowGlobal) {
+                candidateList->setLayoutHint(
+                    layout == HuxCandidateLayout::Vertical
+                        ? fcitx::CandidateLayoutHint::Vertical
+                        : fcitx::CandidateLayoutHint::Horizontal);
+            }
             // 防御：越界不设光标索引。
             const int index = std::min(std::max(selected, 0), count - 1);
             candidateList->setGlobalCursorIndex(index);
@@ -537,6 +610,24 @@ private:
         fillKeyList(&options.page_up, hotkeys.pageUpKeys.value());
         fillKeyList(&options.page_down, hotkeys.pageDownKeys.value());
         options.digit_select = behavior.digitSelect.value() ? 1 : 0;
+        switch (behavior.candidateLayout.value()) {
+        case HuxCandidateLayout::Horizontal:
+            options.candidate_layout = 1;
+            break;
+        case HuxCandidateLayout::Vertical:
+            options.candidate_layout = 2;
+            break;
+        default:
+            options.candidate_layout = 0;
+            break;
+        }
+        const auto preeditMode = behavior.preeditMode.value();
+        options.preedit_mode = preeditMode == HuxPreeditMode::RawInput   ? 1
+                               : preeditMode == HuxPreeditMode::Hidden ? 2
+                                                                       : 0;
+        options.page_cycle = behavior.pageCycle.value() ? 1 : 0;
+        options.min_retained_raw_length =
+            behavior.minRetainedRawLength.value();
         if (hux_engine_apply_settings(engine_, &options) == 0) {
             FCITX_WARN() << "hux: apply settings failed";
         }

@@ -21,7 +21,7 @@ mod settings;
 
 use learning_store::LearningStore;
 use options::OptionsStore;
-use settings::Settings;
+use settings::{CandidateLayout, PreeditMode, Settings};
 
 use hux_core::char_to_sound_shape;
 use hux_core::decode::Decoder;
@@ -303,11 +303,12 @@ impl Engine {
                 ..LiveLearning::default()
             },
             dot_armed: false,
-            min_retained: None,
+            min_retained: Some(self.settings.min_retained() as i64),
             builder: CompositionBuilder::default(),
             char_to_sound_shape: CharToSoundShapeState::default(),
         };
         self.apply_trigger_keys(&mut session);
+        self.apply_layout_options(&mut session);
         let id = self.next_session;
         self.next_session += 1;
         self.sessions.insert(id, session);
@@ -639,9 +640,20 @@ impl Engine {
                     store.sync(&mut session.context);
                 }
                 engine.apply_trigger_keys(session);
+                engine.apply_layout_options(session);
+                session.min_retained = Some(engine.settings.min_retained() as i64);
             });
         }
         self.refresh_learning_mode();
+    }
+
+    /// 候选布局（context 选项）：host `selector` 读取 `_vertical` 决定 ←→/↑↓ 语义。
+    /// 仅「竖排」置位；「横排/跟随全局」维持横排键语义（面板排列见 C++ `LayoutHint`）。
+    fn apply_layout_options(&self, session: &mut Session) {
+        let vertical = self.settings.candidate_layout == CandidateLayout::Vertical;
+        if session.context.get_option("_vertical") != vertical {
+            session.context.set_option("_vertical", vertical);
+        }
     }
 
     /// 触发键（属性）：把两项触发键的 rime 键名列表（逗号分隔）交给 core（解析/匹配均在 core 内）。
@@ -729,7 +741,11 @@ impl Engine {
             .and_then(|segment| segment.selected_candidate())
             .map(|candidate| candidate.preedit.clone())
             .unwrap_or_default();
-        let (mut preedit, cursor) = if !highlighted.is_empty() {
+        // 预编辑内容（`PreeditMode`）：候选分码（默认，历史行为）/ 原始输入 / 不显示。
+        let preedit_mode = self.settings.preedit_mode;
+        let (mut preedit, cursor) = if preedit_mode == PreeditMode::Hidden {
+            (String::new(), 0)
+        } else if preedit_mode == PreeditMode::CandidateCode && !highlighted.is_empty() {
             let cursor = highlighted.len();
             // 末段 `end` 为组合输入（含缓冲 `~` 标记）的字节位；换算到实况输入。
             let marker =
@@ -768,7 +784,7 @@ impl Engine {
             .back()
             .map(|segment| segment.prompt.clone())
             .unwrap_or_default();
-        if !prompt.is_empty() {
+        if preedit_mode == PreeditMode::CandidateCode && !prompt.is_empty() {
             preedit.insert_str(cursor.min(preedit.len()), &prompt);
         }
         // 字反查段不下发预编辑：避免应用端 marked text 锁住光标（←/→ 无法移动）。
@@ -936,6 +952,14 @@ pub struct HuxOptions {
     pub page_down: HuxKeyList,
     /// 数字直选（1–9；0=10）。
     pub digit_select: i32,
+    /// 候选排列：0 = 跟随全局（默认），1 = 横排，2 = 竖排。
+    pub candidate_layout: i32,
+    /// 预编辑内容：0 = 候选分码（默认），1 = 原始输入，2 = 不显示。
+    pub preedit_mode: i32,
+    /// 翻页循环：1 = 开（默认 0 = 关）。
+    pub page_cycle: i32,
+    /// 提前上屏最短保留码数（0..=20；0 = 不额外限制）。
+    pub min_retained_raw_length: i32,
 }
 
 /// 应用外部配置（fcitx5 配置界面 → C++ 壳 → 本入口）。返回 1 = 已应用。
@@ -979,6 +1003,21 @@ pub unsafe extern "C" fn hux_engine_apply_settings(
         page_up_keys: key_reprs(&options.page_up),
         page_down_keys: key_reprs(&options.page_down),
         digit_select: options.digit_select != 0,
+        candidate_layout: match options.candidate_layout {
+            1 => CandidateLayout::Horizontal,
+            2 => CandidateLayout::Vertical,
+            _ => CandidateLayout::FollowGlobal,
+        },
+        preedit_mode: match options.preedit_mode {
+            1 => PreeditMode::RawInput,
+            2 => PreeditMode::Hidden,
+            _ => PreeditMode::CandidateCode,
+        },
+        page_cycle: options.page_cycle != 0,
+        min_retained_raw_length: options
+            .min_retained_raw_length
+            .clamp(0, settings::MAX_MIN_RETAINED_RAW_LENGTH as i32)
+            as usize,
     });
     1
 }
@@ -1860,6 +1899,10 @@ mod tests {
             page_up: key_list(&[(0x2c, 0)]),
             page_down: key_list(&[(0x2e, 0), (0x5d, 0)]),
             digit_select: 1,
+            candidate_layout: 0,
+            preedit_mode: 0,
+            page_cycle: 0,
+            min_retained_raw_length: 0,
         }
     }
 
@@ -1885,6 +1928,97 @@ mod tests {
         );
         assert_eq!(engine.settings.high_freq_limit, 800);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// FFI：新增四项设置映射（候选排列 / 预编辑 / 翻页循环 / 最短保留码数）。
+    #[test]
+    fn ffi_apply_settings_maps_new_options() {
+        let _guard = serial();
+        let dir = temp_user_dir("ffi-new-options");
+        let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, Some(dir.clone()));
+        let options = HuxOptions {
+            candidate_layout: 2,
+            preedit_mode: 2,
+            page_cycle: 1,
+            min_retained_raw_length: 4,
+            ..ffi_options()
+        };
+        assert_eq!(
+            unsafe { hux_engine_apply_settings(&mut engine, &options) },
+            1
+        );
+        assert_eq!(engine.settings.candidate_layout, CandidateLayout::Vertical);
+        assert_eq!(engine.settings.preedit_mode, PreeditMode::Hidden);
+        assert!(engine.host_options.page_cycle);
+        let session_id = engine.session_new();
+        let session = engine.sessions.get(&session_id).expect("session");
+        assert!(
+            session.context.get_option("_vertical"),
+            "竖排应写入 `_vertical`"
+        );
+        assert_eq!(session.min_retained, Some(4));
+        // 越界钳制（0..=20）。
+        let clamped = HuxOptions {
+            min_retained_raw_length: 999,
+            ..ffi_options()
+        };
+        assert_eq!(
+            unsafe { hux_engine_apply_settings(&mut engine, &clamped) },
+            1
+        );
+        assert_eq!(
+            engine.settings.min_retained_raw_length,
+            settings::MAX_MIN_RETAINED_RAW_LENGTH
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 候选竖排：作用于已存在会话（host 读取 `_vertical`）。
+    #[test]
+    fn candidate_layout_applies_to_existing_sessions() {
+        let _guard = serial();
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
+        engine.apply_settings(Settings {
+            candidate_layout: CandidateLayout::Vertical,
+            ..Default::default()
+        });
+        assert!(engine.session().context.get_option("_vertical"));
+        engine.apply_settings(Settings::default());
+        assert!(!engine.session().context.get_option("_vertical"));
+    }
+
+    /// 预编辑内容三态：候选分码（默认）/ 原始输入 / 不显示。
+    #[test]
+    fn preedit_mode_variants() {
+        let _guard = serial();
+        UPDATES.lock().unwrap().clear();
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
+        let type_abcd = |engine: &mut TestEngine| {
+            for code in *b"abcd" {
+                engine.key(u32::from(code), 0, false);
+            }
+        };
+        type_abcd(&mut engine);
+        assert_eq!(last_update().0, "ab cd", "默认：候选分码");
+        engine.apply_settings(Settings {
+            preedit_mode: PreeditMode::RawInput,
+            ..Default::default()
+        });
+        engine.reset();
+        UPDATES.lock().unwrap().clear();
+        type_abcd(&mut engine);
+        assert_eq!(last_update().0, "abcd", "原始输入");
+        engine.apply_settings(Settings {
+            preedit_mode: PreeditMode::Hidden,
+            ..Default::default()
+        });
+        engine.reset();
+        UPDATES.lock().unwrap().clear();
+        type_abcd(&mut engine);
+        let (preedit, cursor, candidates, _, _, _) = last_update();
+        assert!(preedit.is_empty(), "不显示：预编辑为空");
+        assert_eq!(cursor, 0);
+        assert!(!candidates.is_empty(), "候选不受影响");
     }
 
     #[test]
