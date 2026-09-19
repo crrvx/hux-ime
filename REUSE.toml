@@ -35,3 +35,9 @@ SPDX-License-Identifier = "BSD-3-Clause"
 path = [".gitignore", "Cargo.lock", "LICENSE"]
 SPDX-FileCopyrightText = "2026 明雅流风 <crrvx@outlook.com>"
 SPDX-License-Identifier = "GPL-3.0-or-later"
+
+# 文档图片（无 SPDX 头，按目录标注）
+[[annotations]]
+path = ["docs/images/*.png", "docs/images/*.jpg", "docs/images/*.gif", "docs/images/*.webp"]
+SPDX-FileCopyrightText = "2026 明雅流风 <crrvx@outlook.com>"
+SPDX-License-Identifier = "GPL-3.0-or-later"
