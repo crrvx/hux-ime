@@ -19,6 +19,8 @@
 | [`docs/usage.md`](docs/usage.md)                           | 开发 / 安装 / 使用 / 卸载                        |
 | [`docs/config.md`](docs/config.md)                         | 配置项：行为 / 快捷键 / 选项与学习存储           |
 | [`docs/rust-migration.md`](docs/rust-migration.md)         | 设计：路线与状态、模块映射、数据、集成要点       |
+| [`docs/config-options.md`](docs/config-options.md)         | 计划：新增可配置项（A 组四项）                   |
+| [`docs/android.md`](docs/android.md)                       | 计划：fcitx5-android 插件适配                    |
 | [`crates/hux-addon/README.md`](crates/hux-addon/README.md) | addon 实现：分工、按键语义、反查机制、已知限制   |
 | [`goldens/README.md`](goldens/README.md)                   | 差分金样：清单、来源、复现命令                   |
 | [`data/README.md`](data/README.md)                         | 随包数据说明                                     |
