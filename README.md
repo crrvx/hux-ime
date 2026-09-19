@@ -9,17 +9,22 @@
 > 本项目的语义、数据与金样均参照 [虎爪-rime](https://github.com/lvyww/tiger-sentense-rime)。\
 > hux-ime 属于社区方案，出于热爱而作，与上游无隶属关系。
 
+just for fun:
+
 - 英文名 —— **hux** =  **hu**`虎码` + **tux**`linux(意指fcitx5方案)`
 - 中文名 —— **虎虚** = **虎**`hux正取2字母` + **虚**`hux倒取2字母`
+- 托盘图 —— 虎虚虎虚，**虎内空虚**，故取 **虍**
+- 字反查 —— **虍** 内取空，**咅** 也取空，对仗工整（
 
-## 使用指南
+## 快速指南
 
-**安装（一键）**
+**一键安装**
 
 ```sh
-git clone https://github.com/crrvx/hux-ime
-cd hux-ime
-./install.sh            # 构建 → 装插件与数据 → 重启 fcitx5（预演：--dry-run）
+git clone https://github.com/crrvx/hux-ime && cd hux-ime
+
+# 预演：./install.sh --dry-run
+./install.sh  # 构建 → 装插件与数据 → 重启 fcitx5
 ```
 
 随后在 fcitx5 配置工具「添加输入法」→ **虎虚（hux）**。
@@ -28,10 +33,10 @@ cd hux-ime
 
 n-gram 模型不随包，能明显提升整句质量：\
 从 [上游 model release](https://github.com/lvyww/tiger-sentense-rime/releases/tag/model)
-获取 `sentence-ngram-mobile.bin`，放入
+获取 `sentence-ngram-mobile.bin`，放入位置（二选一）：
 
 - 用户级 `~/.local/share/fcitx5/hux/models/`（推荐）
-- 系统级 `/usr/share/fcitx5/hux/models/`（与 rime 共用同一份也可）
+- 系统级 `/usr/share/fcitx5/hux/models/`
 
 不装也能使用，仅整句排序略弱。
 
@@ -40,10 +45,10 @@ n-gram 模型不随包，能明显提升整句质量：\
 - `空格` 上屏高亮项；数字 `1`–`9` 直选当页候选（`0` = 第 10 个）
 - `↑/↓` 或 `Tab / Shift+Tab` 选字；`←/→` 移动光标
 - `-/=` 或 `[/]` 或 `PgUp/PgDn` 翻页；`Enter` 提交原文；`Esc` 取消
-- `Alt+:` 音反查（拼音 → 虎码）；`Alt+"` 字反查（光标左侧汉字的音与虎码）
+- `Alt+:` 音反查（拼音 → 虎码）；`Alt+"` 字反查（光标左侧汉字 → 拼音 + 虎码）
 - 状态菜单「虎虚」：提前上屏、提前上屏至预编辑、单字重码组句、全角标点、数字直选
 
-**卸载**
+**一键卸载**
 
 ```sh
 ./uninstall.sh          # 保留用户数据（选项 / 学习库 / 模型）
