@@ -85,7 +85,7 @@ cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
 - `Alt+:` 音反查
 - `Alt+"` 字反查
 
-![虎句](../docs/images/虎句.png)
+![虎句](images/虎句.png)
 
 配置项见 [`config.md`](config.md)（可在配置工具的「虎虚」页修改）。
 
@@ -93,7 +93,7 @@ cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
 提前上屏、提前上屏至预编辑、单字重码组句、全角标点、数字直选 \
 （写入 `tiger_sentence.options.yaml`，重启后保持）。
 
-![虍](../docs/images/虍.png)
+![虍](images/虍.png)
 
 ### 音反查
 
@@ -105,7 +105,7 @@ cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
 Alt+:  zhongguo   →   :zhong guo〔拼音〕   候选：中国 …
 ```
 
-![音反查](../docs/images/音反查.png)
+![音反查](images/音反查.png)
 
 ### 字反查
 
@@ -121,7 +121,7 @@ Alt+:  zhongguo   →   :zhong guo〔拼音〕   候选：中国 …
 虍 d/dg/dgs
 ```
 
-![字反查](../docs/images/字反查.png)
+![字反查](images/字反查.png)
 
 ## 卸载（无残留）
 
