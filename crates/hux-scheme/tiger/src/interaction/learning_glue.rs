@@ -307,3 +307,25 @@ impl LearningCommit<'_> {
         self.live.submitted.extend(accepted);
     }
 }
+
+/// 宿主链提交点回调（[`hux_core::host::CommitObserver`] 的方案侧实现）：
+/// 把 `host` 处理器链的提交接到学习提交上（core 不持有方案状态）。
+pub struct HostCommitObserver<'a> {
+    pub decoder: &'a mut Decoder,
+    pub live: &'a mut LiveLearning,
+    pub state: &'a SentenceState,
+    pub now: f64,
+}
+
+impl hux_core::host::CommitObserver for HostCommitObserver<'_> {
+    fn on_commit(&mut self, context: &Context, commit_text: &str) {
+        learning_commit(
+            self.decoder,
+            context,
+            self.state,
+            self.live,
+            self.now,
+            commit_text,
+        );
+    }
+}

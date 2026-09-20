@@ -6,7 +6,7 @@
 //!
 //!   cargo run --release --example ngram_bench -- <model.bin> <transcript.tsv>
 
-use hux_core::ngram::MobileModel;
+use hux_scheme_tiger::ngram::MobileModel;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::time::Instant;

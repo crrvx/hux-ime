@@ -23,11 +23,38 @@ jobs:
           components: rustfmt, clippy
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test -p hux-core
+      - name: Test kernel & test-support
+        run: cargo test -p hux-core -p hux-test-support
+      - name: Test schemes
+        run: cargo test -p hux-scheme-tiger
+      - name: Test cfg / ffi / platform
+        run: cargo test -p hux-cfg -p hux-ffi -p hux-platform-fcitx5
       - name: Core platform-clean (no env/XDG/clock/logging)
         run: |
           if grep -RnE 'std::env::var|SystemTime|/usr/share|eprintln!|println!' crates/hux-core/src; then
             echo "::error::hux-core 不得包含平台痕迹（环境变量 / XDG / 系统时钟 / 直接打印）"
+            exit 1
+          fi
+      - name: Core is scheme-free (no hux-scheme dependency)
+        run: |
+          # 依赖边判定（源码里的文档提及不算）：cargo tree 不得出现 hux-scheme/*
+          if cargo tree -p hux-core --edges normal | grep -q 'hux-scheme'; then
+            echo "::error::hux-core 不得依赖任何方案（hux-scheme/*，见 docs/refactor.md §1）"
+            exit 1
+          fi
+          # 方案依赖不得反向：方案只允许依赖 hux-core
+          if cargo tree -p hux-scheme-tiger --edges normal --depth 1 | grep -qE 'hux-platform|hux-cfg|hux-ffi'; then
+            echo "::error::hux-scheme/* 只允许依赖 hux-core"
+            exit 1
+          fi
+          # 平台只经契约驱动方案：除装配处（`scheme::{TigerScheme, ASSETS, SCHEME_ID}`）外
+          # 不得引用方案内部模块（见 docs/refactor.md §1/§7）。
+          if grep -RnE 'hux_scheme_tiger::(interaction|decode|lexicon|lexical|ngram|char_to_sound_shape|sound_to_char_shape)' platform/fcitx5/src; then
+            echo "::error::平台层不得直接引用方案内部模块，请经 hux_core::scheme 契约"
+            exit 1
+          fi
+          if grep -RnE 'crate::(decode|lexicon|lexical|ngram|interaction|sound_to_char_shape|char_to_sound_shape)\b' crates/hux-core/src; then
+            echo "::error::hux-core 内不得出现已迁出的方案模块引用"
             exit 1
           fi
       - name: Verify lexical prior data (provenance)

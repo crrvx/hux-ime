@@ -7,16 +7,16 @@
 //! 早提交证据、学习集成、锁播种（`decode_with_lock`）。
 //! 暂不含：增量/锁缓存（性能优化）、模型失败回退（guarded_decode）。
 
-use crate::learning::{
-    DiffItem, DiffPathNode, LearningIndex, character_count, context as learning_context,
-};
 use crate::lexical::{self, LexicalModel};
 use crate::lexicon::{CodeEntry, Lexicon, Supplement};
 use crate::ngram::MobileModel;
-use crate::punct::PunctTable;
-use crate::session::Candidate;
 use anyhow::Result;
 use hashbrown::{HashMap, HashSet};
+use hux_core::learning::{
+    DiffItem, DiffPathNode, LearningIndex, character_count, context as learning_context,
+};
+use hux_core::punct::PunctTable;
+use hux_core::session::Candidate;
 use std::path::PathBuf;
 
 pub const BOS: char = '\u{2}';
@@ -2072,13 +2072,13 @@ mod tests {
 
     fn fixture_lexicon() -> Lexicon {
         let dir =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../goldens/lexicon");
         Lexicon::load(std::slice::from_ref(&dir), 1500)
     }
 
     fn fixture_decoder() -> Decoder {
         let dir =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../goldens/lexicon");
         let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
         let supplement = Supplement::load_default(Some(&dir));
         Decoder::new(lexicon, supplement, None)
@@ -2115,7 +2115,7 @@ mod tests {
     #[test]
     fn locked_decode_rebuilds_confirmed_prefix() {
         let dir =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../goldens/lexicon");
         let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
         let supplement = Supplement::load_default(Some(&dir));
         let mut decoder = Decoder::new(lexicon, supplement, None);
@@ -2155,7 +2155,7 @@ mod tests {
     #[test]
     fn locked_decode_honors_full_input_lock() {
         let dir =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../goldens/lexicon");
         let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
         let supplement = Supplement::load_default(Some(&dir));
         let mut decoder = Decoder::new(lexicon, supplement, None);
@@ -2201,7 +2201,7 @@ mod tests {
     #[test]
     fn locked_decode_expands_after_partial_lock() {
         let dir =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../goldens/lexicon");
         let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
         let supplement = Supplement::load_default(Some(&dir));
         let mut decoder = Decoder::new(lexicon, supplement, None);
@@ -2234,7 +2234,7 @@ mod tests {
     #[test]
     fn locked_decode_rejects_mismatches() {
         let dir =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../goldens/lexicon");
         let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
         let supplement = Supplement::load_default(Some(&dir));
         let mut decoder = Decoder::new(lexicon, supplement, None);
@@ -2304,7 +2304,7 @@ mod tests {
     #[test]
     fn path_summary_orders_nodes_outermost_first() {
         let dir =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../goldens/lexicon");
         let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
         let supplement = Supplement::load_default(Some(&dir));
         let mut decoder = Decoder::new(lexicon, supplement, None);
@@ -2474,7 +2474,7 @@ mod tests {
         assert!(decoder.lexical_model().is_none());
         let model = crate::lexical::load(
             &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../data/tiger_sentence.lexical.bin"),
+                .join("../../../data/tiger_sentence.lexical.bin"),
         )
         .expect("load lexical model");
         decoder.set_lexical_model(Some(model));
@@ -2484,7 +2484,7 @@ mod tests {
     #[test]
     fn locked_decode_replays_opaque_prefix_neutrally() {
         let dir =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../goldens/lexicon");
         let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
         let supplement = Supplement::load_default(Some(&dir));
         let mut decoder = Decoder::new(lexicon, supplement, None);

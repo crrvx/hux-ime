@@ -7,10 +7,8 @@
 //! * fixture 模式入库（`goldens/ngram_fixture.*`）；
 //! * sample 模式对真实模型抽样，仅本地（`goldens/local/`，不入库；缺失即跳过）。
 
-mod common;
-
-use common::{decode_hex as decode, open_golden, parse_bits, repo_path, try_open_golden};
-use hux_core::ngram::{Limits, MobileModel};
+use hux_scheme_tiger::ngram::{Limits, MobileModel};
+use hux_test_support::{decode_hex as decode, open_golden, parse_bits, repo_path, try_open_golden};
 use std::io::BufRead;
 use std::path::PathBuf;
 

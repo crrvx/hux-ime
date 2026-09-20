@@ -9,13 +9,22 @@
 //! * `goldens/decode_rank_first.tsv.gz`：fixture 模型 + 关闭单字重码；
 //! * `goldens/decode_evidence*.tsv.gz`：早提交证据（`--early-commit 1`）。
 
-mod common;
-
-use common::{decode_hex, field, make_decoder, open_golden, parse_bits, repo_path};
-use hux_core::decode::{DecodeLock, Decoder, has_complete_candidate};
 use hux_core::learning::{Event, LearningIndex};
-use hux_core::ngram::MobileModel;
+use hux_scheme_tiger::decode::{DecodeLock, Decoder, has_complete_candidate};
+use hux_scheme_tiger::lexicon::{Lexicon, Supplement};
+use hux_scheme_tiger::ngram::MobileModel;
+use hux_test_support::{decode_hex, field, open_golden, parse_bits, repo_path};
 use std::io::BufRead;
+
+/// decode 差分用解码器：`goldens/lexicon` 数据 + `data/` 词先验位图
+/// （与金样生成时的参照数据目录一致）。方案专属夹具，留在本包内（不进 `hux-test-support`）。
+fn make_decoder(model: Option<MobileModel>) -> Decoder {
+    let data_dir = hux_test_support::repo_path("goldens/lexicon");
+    let lexical_dir = hux_test_support::repo_path("data");
+    let lexicon = Lexicon::load(&[data_dir.clone(), lexical_dir], 1500);
+    let supplement = Supplement::load_default(Some(&data_dir));
+    Decoder::new(lexicon, supplement, model)
+}
 
 fn replay(mut decoder: Decoder, reader: impl BufRead, early: bool) -> usize {
     let mut lines = reader

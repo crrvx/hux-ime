@@ -15,7 +15,8 @@ cargo fmt --all --check
 ```
 
 设计、模块映射与测试说明见 [`rust-migration.md`](rust-migration.md)； \
-差分金样与复现命令见 [`../goldens/README.md`](../goldens/README.md)。
+差分金样与复现命令见 [`../goldens/README.md`](../goldens/README.md)；
+性能基准与基线见 [`perf.md`](perf.md)（`cargo run --release --example {decode_bench,key_bench}`）。
 
 开发可用环境变量覆盖数据目录与模型（目录冒号分隔；`data/` 已含全部随包数据）：
 

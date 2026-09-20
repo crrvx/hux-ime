@@ -10,6 +10,9 @@ mod options;
 mod settings;
 mod store;
 
+pub use hux_core::scheme::OptionIds;
 pub use options::{Options, option_defaults};
-pub use settings::{CandidateLayout, MAX_MIN_RETAINED_RAW_LENGTH, PreeditMode, Settings};
+pub use settings::{
+    CandidateLayout, DEFAULT_HIGH_FREQ_LIMIT, MAX_MIN_RETAINED_RAW_LENGTH, PreeditMode, Settings,
+};
 pub use store::{LEGACY_FILE, OPTIONS_ERROR_PROPERTY, OPTIONS_FILE, OptionsStore};

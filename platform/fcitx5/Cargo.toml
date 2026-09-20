@@ -19,3 +19,7 @@ rusty-leveldb = "4.0.1"
 hux-cfg = { path = "../../crates/hux-cfg" }
 hux-core = { path = "../../crates/hux-core" }
 hux-ffi = { path = "../../crates/hux-ffi" }
+hux-scheme-tiger = { path = "../../crates/hux-scheme/tiger" }
+
+[dev-dependencies]
+hux-test-support = { path = "../../crates/hux-test-support" }

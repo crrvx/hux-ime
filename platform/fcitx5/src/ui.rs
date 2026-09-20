@@ -9,8 +9,6 @@ use crate::engine::Engine;
 use crate::session::Session;
 use hux_cfg::PreeditMode;
 
-use hux_core::interaction::buffered_text;
-
 impl Engine {
     pub(crate) fn push_update(&self, session: &Session) {
         let Some(host) = &self.host else {
@@ -19,7 +17,7 @@ impl Engine {
         let Some(update) = host.update else {
             return;
         };
-        let buffered = buffered_text(&session.context);
+        let buffered = self.scheme.buffered_text(&session.context);
         let live_bytes = session.context.live_input();
         let live = String::from_utf8_lossy(live_bytes).into_owned();
         // 参照 librime `Composition::GetPreedit` + 参照 Lua 的候选 preedit：

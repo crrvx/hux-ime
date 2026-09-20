@@ -14,7 +14,7 @@
 use hashbrown::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-pub const DEFAULT_HIGH_FREQ_LIMIT: usize = 1500;
+/// 未知字符的字频回退（参照 `unknown_character_rank`）。
 pub const UNKNOWN_CHARACTER_RANK_FALLBACK: usize = 20001;
 
 const CODES_FILE: &str = "tiger_sentence.codes.txt";
@@ -270,7 +270,7 @@ impl Lexicon {
             .as_ref()
             .map(|(content, _)| content.as_str())
             .unwrap_or("");
-        self.learning_rules = crate::learning::hash(&format!(
+        self.learning_rules = hux_core::learning::hash(&format!(
             "{codes_content}\0{ranks_content}\0{whitelist_content}"
         ));
         self.errors = errors;

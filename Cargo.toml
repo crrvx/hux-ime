@@ -3,7 +3,14 @@
 
 [workspace]
 resolver = "3"
-members = ["crates/hux-core", "crates/hux-cfg", "crates/hux-ffi", "platform/fcitx5"]
+members = [
+    "crates/hux-core",
+    "crates/hux-test-support",
+    "crates/hux-cfg",
+    "crates/hux-ffi",
+    "crates/hux-scheme/tiger",
+    "platform/fcitx5",
+]
 
 [workspace.package]
 version = "0.1.0"

@@ -10,8 +10,6 @@ use std::path::Path;
 use hux_core::learning::{self, Event, LearningIndex};
 use rusty_leveldb::{DB, LdbIterator, Options};
 
-/// 学习库名后缀所用的默认 schema id（参照 `schema.schema_id or "tiger_sentence"`）。
-pub const DEFAULT_SCHEMA_ID: &str = "tiger_sentence";
 /// 事件上限（参照 `store.count >= 10000`）。
 pub const MAX_COUNT: usize = 10000;
 /// 字节上限（参照 `16 * 1024 * 1024`）。
@@ -255,7 +253,7 @@ mod tests {
     #[test]
     fn roundtrip_persists_events_and_keys() {
         let dir = temp_dir("roundtrip");
-        let name = store_name(DEFAULT_SCHEMA_ID);
+        let name = store_name(hux_scheme_tiger::scheme::SCHEME_ID);
         {
             let mut store = LearningStore::open(&dir, &name, 100.0);
             assert!(store.store_ready());

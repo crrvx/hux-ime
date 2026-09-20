@@ -7,9 +7,9 @@
 //! 语义保真要点：两级稀疏索引、按字节分页的 LRU 页缓存、列式上下文缓存、
 //! FIFO 索引缓存、`cache_status` 计数（`#keys` 语义）。
 
-use crate::cache::{Columns, Fifo};
 use anyhow::{Context, Result, anyhow, bail};
 use hashbrown::HashMap;
+use hux_core::cache::{Columns, Fifo};
 use memmap2::Mmap;
 use std::collections::VecDeque;
 use std::fs::File;
@@ -794,7 +794,7 @@ mod tests {
     fn corrupt_index_queries_do_not_panic() {
         // 畸形模型：头部合法、trigram 索引区被填充异常值 → 查询必须返回错误而非 panic。
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../goldens/ngram_fixture.bin");
+            .join("../../../goldens/ngram_fixture.bin");
         let source = std::fs::read(&fixture).expect("read fixture model");
         let directory = std::env::temp_dir();
         for (index, fill) in [0xffu8, 0x00].into_iter().enumerate() {

@@ -7,10 +7,8 @@
 //! 真实位图 `data/tiger_sentence.lexical.bin`；语料取自参照码表（正例）与确定性
 //! 采样（负例），全量记录查询与结果，故重放不依赖任何外部词表。
 
-mod common;
-
-use common::{decode_hex, open_golden, parse_bits, repo_path};
-use hux_core::lexical;
+use hux_scheme_tiger::lexical;
+use hux_test_support::{decode_hex, open_golden, parse_bits, repo_path};
 use std::io::BufRead;
 
 #[test]

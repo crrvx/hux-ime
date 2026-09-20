@@ -15,8 +15,8 @@
 //! - `last_commit` 保留最近一次组合提交文本，供诊断；参照的 `get_commit_text()`
 //!   为即时计算（任何时刻可读），跨实现一律以 [`Event::Commit`] 携带的文本为准。
 //! - 属性写入不产生事件（参照未使用 `property_update_notifier`）。
-//! - 组合重建（分段/翻译/过滤）由交互层 [`crate::interaction::CompositionBuilder`] 负责，
-//!   见 `interaction` 模块。
+//! - 组合重建（分段/翻译/过滤）由**方案侧**交互层负责（`hux-scheme/*`）；
+//!   本模块只提供 Context/Composition/Menu 子集，不感知任何方案。
 
 use hashbrown::HashMap;
 use std::collections::VecDeque;
@@ -197,6 +197,8 @@ pub struct Context {
     pub composition: Composition,
     options: HashMap<String, bool>,
     properties: HashMap<String, String>,
+    /// 缓冲态（由方案设置；内核不解释来源，只影响实况输入视图）。
+    buffered: bool,
     last_commit: String,
     events: VecDeque<Event>,
 }
@@ -215,6 +217,7 @@ impl Context {
             composition: Composition::default(),
             options: HashMap::new(),
             properties: HashMap::new(),
+            buffered: false,
             last_commit: String::new(),
             events: VecDeque::new(),
         }
@@ -248,7 +251,7 @@ impl Context {
 
     pub fn live_input(&self) -> &[u8] {
         let value = self.input();
-        if !self.buffered().is_empty() && value.first() == Some(&b'~') {
+        if self.is_buffered() && value.first() == Some(&b'~') {
             &value[1..]
         } else {
             value
@@ -258,7 +261,7 @@ impl Context {
     /// 与 `input` 对应的 caret 在 live 输入中的字节偏移（参照 `input_caret`）。
     pub fn live_caret(&self) -> usize {
         let length = self.live_input().len();
-        let caret = if !self.buffered().is_empty() {
+        let caret = if self.is_buffered() {
             self.caret.saturating_sub(1)
         } else {
             self.caret
@@ -287,7 +290,6 @@ impl Context {
     pub fn get_option(&self, name: &str) -> bool {
         self.options.get(name).copied().unwrap_or(false)
     }
-
     /// 带缺省的选项读取（参照对缺省值有特殊约定的选项使用）。
     pub fn get_option_or(&self, name: &str, default: bool) -> bool {
         self.options.get(name).copied().unwrap_or(default)
@@ -311,9 +313,14 @@ impl Context {
         }
     }
 
-    pub fn buffered(&self) -> &str {
-        self.get_property("tiger_sentence_buffered_text")
-            .unwrap_or("")
+    /// 缓冲态（方案在写入自己的缓冲属性后，经 [`Context::set_buffered`] 同步）。
+    pub fn is_buffered(&self) -> bool {
+        self.buffered
+    }
+
+    /// 设置缓冲态；内核据此调整 [`Context::live_input`] / `live_caret` 的实况视图。
+    pub fn set_buffered(&mut self, value: bool) {
+        self.buffered = value;
     }
 
     // ------------------------------------------------------------ 编辑操作
@@ -441,6 +448,14 @@ impl Context {
 
     pub fn has_events(&self) -> bool {
         !self.events.is_empty()
+    }
+}
+
+/// 参照 `set_property_if_changed`：仅在值变化时写入属性（属性写入不产生事件，
+/// 但避免无谓的属性更新）。方案侧与配置层共用。
+pub fn set_property_if_changed(context: &mut Context, key: &str, value: &str) {
+    if context.get_property(key).unwrap_or("") != value {
+        context.set_property(key, value);
     }
 }
 
@@ -590,12 +605,12 @@ mod tests {
     #[test]
     fn buffered_marker_live_views() {
         let mut context = Context::new();
-        context.set_property("tiger_sentence_buffered_text", "甲");
+        context.set_buffered(true);
         context.set_input(b"~ab");
         assert_eq!(context.live_input(), b"ab");
         context.set_caret(2); // "~a|b"
         assert_eq!(context.live_caret(), 1);
-        context.set_property("tiger_sentence_buffered_text", "");
+        context.set_buffered(false);
         assert_eq!(context.live_input(), b"~ab");
         assert_eq!(context.live_caret(), 2);
     }

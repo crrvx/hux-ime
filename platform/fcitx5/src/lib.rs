@@ -24,7 +24,7 @@ pub(crate) use engine::wall_clock;
 #[cfg(test)]
 pub(crate) use abi::*;
 #[cfg(test)]
-pub(crate) use engine::{Engine, RUNTIME_OPTIONS};
+pub(crate) use engine::Engine;
 #[cfg(test)]
 pub(crate) use hux_cfg::{
     CandidateLayout, MAX_MIN_RETAINED_RAW_LENGTH, OPTIONS_FILE, PreeditMode, Settings,

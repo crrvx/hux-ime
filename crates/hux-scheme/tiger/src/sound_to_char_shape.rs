@@ -18,9 +18,9 @@
 
 use crate::interaction::code_comment_filter;
 use crate::lexicon::Lexicon;
-use crate::punct::PunctTable;
-use crate::session::Candidate;
 use anyhow::{Context, Result, bail};
+use hux_core::punct::PunctTable;
+use hux_core::session::Candidate;
 use std::path::{Path, PathBuf};
 
 /// 索引文件名（发布为 `.gz`；fixture 常用未压缩）。
@@ -650,7 +650,7 @@ mod tests {
 
     fn fixture_index() -> SoundToCharShapeIndex {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../goldens/sound_to_char_shape/tiger_sentence.pinyin.bin");
+            .join("../../../goldens/sound_to_char_shape/tiger_sentence.pinyin.bin");
         SoundToCharShapeIndex::load(&path).expect("fixture index")
     }
 

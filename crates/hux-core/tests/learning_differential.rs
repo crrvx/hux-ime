@@ -5,11 +5,9 @@
 //!
 //! 金样由 `tools/generators/gen_learning_golden.lua` 生成（`goldens/learning.tsv.gz`）。
 
-mod common;
-
-use common::{decode_bytes, decode_hex, open_golden, parse_bits};
 use hashbrown::HashMap;
 use hux_core::learning::{self, DiffItem, DiffPathNode, Event, LearningIndex, RewardNode};
+use hux_test_support::{decode_bytes, decode_hex, open_golden, parse_bits};
 use std::io::BufRead;
 
 struct Harness {

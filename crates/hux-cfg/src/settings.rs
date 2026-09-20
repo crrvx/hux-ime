@@ -10,12 +10,11 @@
 //! `high_freq_limit` 在创建词库时生效（修改需重启）。
 
 use hux_core::host::{DEFAULT_PAGE_SIZE, HostOptions, MAX_PAGE_SIZE};
-use hux_core::interaction::{
-    OPTION_ALLOW_DUPLICATE_SINGLE, OPTION_DIGIT_SELECT, OPTION_EARLY_COMMIT,
-    OPTION_EARLY_COMMIT_TO_PREEDIT,
-};
 use hux_core::key::KeyEvent;
-use hux_core::lexicon::DEFAULT_HIGH_FREQ_LIMIT;
+use hux_core::scheme::OptionIds;
+
+/// 高频字过滤上限的缺省值（词库创建时生效；`0` = 不限）。
+pub const DEFAULT_HIGH_FREQ_LIMIT: usize = 1500;
 
 /// 候选排列（参照 `style` 语义）。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -106,48 +105,38 @@ impl Default for Settings {
 
 impl Settings {
     /// 会话初始选项（写入 context；`options.yaml` 的同名项随后覆盖）。
-    pub fn option_defaults(&self) -> Vec<(&'static str, bool)> {
+    /// `ids` 由平台从方案取得（见 `hux_core::scheme::OptionIds`）。
+    pub fn option_defaults(&self, ids: &OptionIds) -> Vec<(&'static str, bool)> {
         vec![
-            (OPTION_EARLY_COMMIT, self.early_commit),
-            (OPTION_EARLY_COMMIT_TO_PREEDIT, self.early_commit_to_preedit),
-            (OPTION_ALLOW_DUPLICATE_SINGLE, self.allow_duplicate_single),
+            (ids.early_commit, self.early_commit),
+            (ids.early_commit_to_preedit, self.early_commit_to_preedit),
+            (ids.allow_duplicate_single, self.allow_duplicate_single),
             ("full_shape", self.full_shape),
             ("ascii_punct", self.ascii_punct),
-            (OPTION_DIGIT_SELECT, self.digit_select),
+            (ids.digit_select, self.digit_select),
         ]
     }
 
     /// 单项设置缺省（[`Settings::option_defaults`] 的查询形式）。
-    pub fn option_default(&self, name: &str) -> Option<bool> {
-        self.option_defaults()
+    pub fn option_default(&self, ids: &OptionIds, name: &str) -> Option<bool> {
+        self.option_defaults(ids)
             .into_iter()
             .find(|(key, _)| *key == name)
             .map(|(_, value)| value)
     }
 
     /// 存储层缺省：可持久化的核心开关（`options.yaml` 缺失键回退到这些值）。
-    pub fn store_defaults(&self) -> hashbrown::HashMap<String, bool> {
+    pub fn store_defaults(&self, ids: &OptionIds) -> hashbrown::HashMap<String, bool> {
         [
-            (OPTION_EARLY_COMMIT, self.early_commit),
-            (OPTION_EARLY_COMMIT_TO_PREEDIT, self.early_commit_to_preedit),
-            (OPTION_ALLOW_DUPLICATE_SINGLE, self.allow_duplicate_single),
+            (ids.early_commit, self.early_commit),
+            (ids.early_commit_to_preedit, self.early_commit_to_preedit),
+            (ids.allow_duplicate_single, self.allow_duplicate_single),
             ("full_shape", self.full_shape),
-            (OPTION_DIGIT_SELECT, self.digit_select),
+            (ids.digit_select, self.digit_select),
         ]
         .into_iter()
         .map(|(name, value)| (name.to_string(), value))
         .collect()
-    }
-
-    /// 拼学习 mode 串（参照 `prepare_learning`：关闭 Tab 学习 → 空串 = 不记录）。
-    pub fn learning_mode(&self, rules: &str, duplicate: u8) -> String {
-        if !self.tab_learning {
-            return String::new();
-        }
-        format!(
-            "sentence-v1|rules={rules}|optimal={}|dup={duplicate}",
-            self.high_freq_limit
-        )
     }
 
     /// 最短保留码数（钳制到 `0..=`[`MAX_MIN_RETAINED_RAW_LENGTH`]）。
@@ -258,41 +247,22 @@ mod tests {
             full_shape: true,
             ..Default::default()
         };
-        let defaults = settings.option_defaults();
+        let ids = crate::options::test_option_ids();
+        let defaults = settings.option_defaults(&ids);
         assert!(defaults.contains(&("full_shape", true)));
-        assert!(defaults.contains(&(OPTION_EARLY_COMMIT, true)));
+        assert!(defaults.contains(&(ids.early_commit, true)));
     }
 
     #[test]
     fn store_defaults_cover_core_switches() {
-        let store_defaults = Settings::default().store_defaults();
+        let ids = crate::options::test_option_ids();
+        let store_defaults = Settings::default().store_defaults(&ids);
         assert_eq!(
-            store_defaults.get(OPTION_EARLY_COMMIT_TO_PREEDIT),
+            store_defaults.get(ids.early_commit_to_preedit),
             Some(&false)
         );
         assert_eq!(store_defaults.get("full_shape"), Some(&false));
-        assert_eq!(store_defaults.get(OPTION_DIGIT_SELECT), Some(&true));
+        assert_eq!(store_defaults.get(ids.digit_select), Some(&true));
         assert_eq!(store_defaults.len(), 5);
-    }
-
-    #[test]
-    fn learning_mode_disabled_when_tab_learning_off() {
-        let settings = Settings {
-            tab_learning: false,
-            ..Default::default()
-        };
-        assert_eq!(settings.learning_mode("abc", 1), "");
-    }
-
-    #[test]
-    fn learning_mode_encodes_rules_limit_and_duplicate() {
-        let settings = Settings {
-            high_freq_limit: 100,
-            ..Default::default()
-        };
-        assert_eq!(
-            settings.learning_mode("abc", 1),
-            "sentence-v1|rules=abc|optimal=100|dup=1"
-        );
     }
 }

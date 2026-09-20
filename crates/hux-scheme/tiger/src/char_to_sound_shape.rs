@@ -61,13 +61,14 @@ mod tests {
 
     fn index() -> SoundToCharShapeIndex {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../goldens/sound_to_char_shape/tiger_sentence.pinyin.bin");
+            .join("../../../goldens/sound_to_char_shape/tiger_sentence.pinyin.bin");
         SoundToCharShapeIndex::load(&path).expect("fixture index")
     }
 
     fn fixture() -> (SoundToCharShapeIndex, Lexicon) {
         let lexicon = Lexicon::load(
-            &[PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/sound_to_char_shape")],
+            &[PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../../goldens/sound_to_char_shape")],
             0,
         );
         (index(), lexicon)

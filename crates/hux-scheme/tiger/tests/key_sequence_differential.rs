@@ -15,24 +15,22 @@
 //! 再生成：`tools/generators/gen_key_sequence_golden.sh`、`tools/generators/gen_sound_to_char_shape_golden.sh`
 //! （依赖系统 librime + librime-lua）。
 
-mod common;
-
-use common::hex;
 use flate2::read::GzDecoder;
+use hux_test_support::hex;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
-use hux_core::decode::Decoder;
 use hux_core::host::{HostOptions, HostResult, process_key as host_process_key};
-use hux_core::interaction::{
+use hux_core::key::KeyEvent;
+use hux_core::punct::PunctTable;
+use hux_core::session::{Context, Event};
+use hux_scheme_tiger::decode::Decoder;
+use hux_scheme_tiger::interaction::{
     CompositionBuilder, K_SOUND_TO_CHAR_SHAPE_KEY, LiveLearning, OPTION_EARLY_COMMIT,
     OPTION_EARLY_COMMIT_TO_PREEDIT, ProcessorEnv, ProcessorResult, SentenceState, processor,
     update_notifier,
 };
-use hux_core::key::KeyEvent;
-use hux_core::lexicon::{Lexicon, Supplement};
-use hux_core::punct::PunctTable;
-use hux_core::session::{Context, Event};
+use hux_scheme_tiger::lexicon::{Lexicon, Supplement};
 
 struct Step {
     repr: String,
@@ -176,7 +174,6 @@ fn replay(
                 host_process_key(
                     &key,
                     &mut context,
-                    &state,
                     punct.as_mut(),
                     &HostOptions {
                         page_size,
@@ -302,7 +299,7 @@ fn replay(
 
 #[test]
 fn key_sequence_matches_reference() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let cases = load_cases(&root.join("goldens/key_sequence.tsv.gz"));
     assert!(!cases.is_empty(), "empty key_sequence golden");
     let data_dir = root.join("goldens/key_sequence");
@@ -331,7 +328,7 @@ fn key_sequence_matches_reference() {
 /// 音反查金样（⑧-1）：夹具页大小 5（与引擎一致，翻页用例覆盖后续页）；音反查前缀 `` ` ``。
 #[test]
 fn sound_to_char_shape_matches_reference() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let cases = load_cases(&root.join("goldens/sound_to_char_shape.tsv.gz"));
     assert!(!cases.is_empty(), "empty pinyin lookup golden");
     let data_dir = root.join("goldens/sound_to_char_shape");

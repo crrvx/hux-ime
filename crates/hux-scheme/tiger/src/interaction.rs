@@ -14,13 +14,13 @@
 
 use crate::char_to_sound_shape;
 use crate::decode::{DecodeLock, Decoder, Evaluated, Evidence};
-use crate::key::{K_ALT_MASK, K_CONTROL_MASK, K_SUPER_MASK, KeyEvent};
-use crate::learning::{self, DiffEvent, DiffItem, DiffPathNode, Event};
 use crate::lexicon::Lexicon;
-use crate::punct::PunctTable;
-use crate::session::{Candidate, Composition, Context, Segment};
 use crate::sound_to_char_shape;
 use hashbrown::HashMap;
+use hux_core::key::{K_ALT_MASK, K_CONTROL_MASK, K_SUPER_MASK, KeyEvent};
+use hux_core::learning::{self, DiffEvent, DiffItem, DiffPathNode, Event};
+use hux_core::punct::PunctTable;
+use hux_core::session::{Candidate, Composition, Context, Segment};
 
 mod early_commit;
 mod keys;

@@ -77,6 +77,7 @@ n-gram 模型不随包，能明显提升整句质量： \
 | [`docs/refactor.md`](docs/refactor.md)                     | 计划：核心引擎化 / 平台无关 / 码表无关 / 测试正式化 |
 | [`docs/android.md`](docs/android.md)                       | 计划：fcitx5-android 插件适配                       |
 | [`docs/config-options.md`](docs/config-options.md)         | 待定：可配置项扩展（B/C 组记录）                    |
+| [`docs/perf.md`](docs/perf.md)                             | 性能：基准用法、基线数据与优化决定                  |
 | [`platform/fcitx5/README.md`](platform/fcitx5/README.md) | addon 实现：分工、按键语义、反查机制、已知限制      |
 | [`goldens/README.md`](goldens/README.md)                   | 差分金样：清单、来源、复现命令                      |
 | [`data/README.md`](data/README.md)                         | 随包数据说明                                        |

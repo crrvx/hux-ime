@@ -117,12 +117,15 @@ impl SentenceState {
         self.committed_text = committed_text;
         self.committed_raw = committed_raw;
         self.buffered_text = context.get_property(K_BUFFERED).unwrap_or("").to_string();
+        context.set_buffered(!self.buffered_text.is_empty());
         self.locks = read_locks(context);
     }
 
     /// 参照 `save_sentence_state`（含旧属性一次性清理）。
     pub fn save(&mut self, context: &mut Context) {
         set_property_if_changed(context, K_BUFFERED, &self.buffered_text.clone());
+        // 内核视图同步（`live_input` / `live_caret`）：与属性写入同点，避免两处漂移。
+        context.set_buffered(!self.buffered_text.is_empty());
         save_locks(context, &self.locks.clone());
         let combined = format!("{}\t{}", self.committed_raw, self.committed_text);
         set_property_if_changed(context, K_COMMITTED, &combined);
@@ -150,12 +153,8 @@ impl SentenceState {
     }
 }
 
-/// 参照 `set_property_if_changed`。
-pub fn set_property_if_changed(context: &mut Context, key: &str, value: &str) {
-    if context.get_property(key).unwrap_or("") != value {
-        context.set_property(key, value);
-    }
-}
+/// 参照 `set_property_if_changed`（通用属性助手，定义在 core `session`）。
+pub use hux_core::session::set_property_if_changed;
 
 /// 参照 `parse_committed_property`：无制表符时返回空对。
 pub fn parse_committed_property(value: &str) -> (String, String) {

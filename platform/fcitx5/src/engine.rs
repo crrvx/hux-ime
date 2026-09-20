@@ -12,23 +12,12 @@ use crate::abi::{HostCallback, core_modifiers};
 use crate::learning_store::{self, LearningStore};
 use crate::paths::{data_dirs, default_model_path, user_data_dir};
 use crate::session::{CharToSoundShapeState, Session};
-use hux_cfg::{CandidateLayout, OptionsStore, Settings};
+use hux_cfg::{CandidateLayout, OptionIds, OptionsStore, Settings};
 
-use hux_core::char_to_sound_shape;
-use hux_core::decode::Decoder;
-use hux_core::host::{self, HostOptions, HostResult};
-use hux_core::interaction::{
-    CompositionBuilder, K_CHAR_TO_SOUND_SHAPE_KEY, K_SOUND_TO_CHAR_SHAPE_KEY, LearningCommit,
-    LiveLearning, OPTION_ALLOW_DUPLICATE_SINGLE, OPTION_DIGIT_SELECT, OPTION_EARLY_COMMIT,
-    OPTION_EARLY_COMMIT_TO_PREEDIT, ProcessorEnv, ProcessorResult, SentenceState, processor,
-    reset_early_evidence, select_candidate_at, update_notifier,
-};
 use hux_core::key::KeyEvent;
-use hux_core::lexical;
-use hux_core::lexicon::{LEXICAL_FILE, Lexicon, Supplement, candidate_paths};
-use hux_core::ngram::MobileModel;
-use hux_core::punct::PunctTable;
+use hux_core::scheme::{KeyOutcome, Scheme, SchemeConfig};
 use hux_core::session::{Context, Event};
+use hux_scheme_tiger::scheme::{ASSETS, TigerScheme};
 
 pub(crate) fn wall_clock() -> f64 {
     SystemTime::now()
@@ -37,34 +26,53 @@ pub(crate) fn wall_clock() -> f64 {
         .unwrap_or(0.0)
 }
 
-pub(crate) const RUNTIME_OPTIONS: [&str; 5] = [
-    OPTION_EARLY_COMMIT,
-    OPTION_EARLY_COMMIT_TO_PREEDIT,
-    OPTION_ALLOW_DUPLICATE_SINGLE,
-    "full_shape",
-    OPTION_DIGIT_SELECT,
-];
+impl Engine {
+    /// 状态菜单可切换的运行时开关（顺序即菜单顺序）：方案声明的 4 项 + rime 标准的 `full_shape`。
+    pub(crate) fn runtime_options(&self) -> [&'static str; 5] {
+        [
+            self.option_ids.early_commit,
+            self.option_ids.early_commit_to_preedit,
+            self.option_ids.allow_duplicate_single,
+            "full_shape",
+            self.option_ids.digit_select,
+        ]
+    }
+}
+
+/// hux 自身设置 → 方案配置（平台是装配根：只有这里知道两边字段的对应关系）。
+pub(crate) fn scheme_config(settings: &Settings) -> SchemeConfig {
+    let host = settings.host_options();
+    SchemeConfig {
+        high_freq_limit: settings.high_freq_limit,
+        min_retained_raw_length: settings.min_retained(),
+        page_size: host.page_size,
+        page_cycle: host.page_cycle,
+        page_up_keys: settings.page_up_keys.clone(),
+        page_down_keys: settings.page_down_keys.clone(),
+        sound_to_char_shape_keys: settings.sound_to_char_shape_keys.clone(),
+        char_to_sound_shape_keys: settings.char_to_sound_shape_keys.clone(),
+        tab_learning: settings.tab_learning,
+    }
+}
 
 pub struct Engine {
     pub(crate) host: Option<HostCallback>,
-    pub(crate) decoder: Decoder,
+    /// 方案（P4c：平台经 `dyn Scheme` 驱动，不直接引用方案模块；共享资源与会话态都在方案内）。
+    pub(crate) scheme: Box<dyn Scheme>,
     pub(crate) sessions: HashMap<u64, Session>,
     pub(crate) next_session: u64,
     /// 选项存储（用户目录不可用时为 `None`，此时仅用内建缺省）。
     pub(crate) options: Option<OptionsStore>,
     /// 外部配置（fcitx5 配置界面 / 测试；默认 = 内建缺省）。
     pub(crate) settings: Settings,
-    /// 宿主选项（翻页键/页大小；由 `settings` 派生，避免每次按键解析键名）。
-    pub(crate) host_options: HostOptions,
-    /// 标点表（`symbols.yaml`；缺失时标点交宿主）。
-    pub(crate) punct: Option<PunctTable>,
     /// 学习库（用户目录不可用时为禁用占位）。
     pub(crate) learning: LearningStore,
-    /// 学习规则串（来自码表；用于拼 mode）。
+    /// 方案声明的选项 id（P4 收尾：单一来源 = 方案；配置层与状态菜单白名单据此工作）。
+    pub(crate) option_ids: OptionIds,
+    /// 学习规则串（来自方案数据；用于拼 mode）。
     pub(crate) learning_rules: String,
-    /// 当前学习 mode 串与已应用的索引版本。
+    /// 当前学习 mode 串。
     pub(crate) learning_mode: String,
-    pub(crate) applied_learning: Option<u64>,
     /// 本次按键「已提交且未消费」：宿主层应消费该键并以 `forwardKey` 重发，
     /// 保证「提交 → 按键」送达顺序（对齐 fcitx5 核心 `KeyEventOrderFix` 修法）。
     pub forward_after_commit: bool,
@@ -75,7 +83,7 @@ impl Engine {
         let dirs = data_dirs();
         let model = std::env::var_os("HUX_MODEL")
             .map(PathBuf::from)
-            .or_else(|| default_model_path(&dirs));
+            .or_else(|| default_model_path(&dirs, ASSETS));
         // 选项存于标准用户目录（与数据目录的开发覆盖解耦）。
         let options_dir = user_data_dir();
         Self::new_with_dirs(host, dirs, model, options_dir)
@@ -95,43 +103,21 @@ impl Engine {
                 .join(":")
         )];
         let settings = Settings::default();
-        let host_options = settings.host_options();
-        let lexicon = Lexicon::load(&dirs, settings.high_freq_limit);
-        notes.push(format!("lexicon: {}", lexicon.data_status().canonical()));
-        let learning_rules = lexicon.learning_rules.clone();
-        let supplement = Supplement::load_default(dirs.first().map(PathBuf::as_path));
-        let model = model_path.and_then(|path| match MobileModel::load(&path, None) {
-            Ok(model) => Some(model),
-            Err(error) => {
-                notes.push(format!("model: {error}"));
-                None
-            }
-        });
-        let mut decoder = Decoder::new(lexicon, supplement, model);
-        let lexical_paths = candidate_paths(&dirs, LEXICAL_FILE);
-        let (lexical_model, lexical_error) = lexical::load_first(&lexical_paths);
-        decoder.set_lexical_model(lexical_model);
-        if let Some(error) = lexical_error {
-            notes.push(format!("lexical: {error}"));
-        }
-        let (punct, punct_error) = PunctTable::load_first(&candidate_paths(&dirs, "symbols.yaml"));
-        if punct.is_none()
-            && let Some(error) = punct_error
-        {
-            notes.push(format!("punct: {error}"));
-        }
+        let (mut scheme, scheme_notes) =
+            TigerScheme::load(&dirs, model_path, scheme_config(&settings));
+        notes.extend(scheme_notes);
+        let learning_rules = scheme.learning_rules().to_string();
+        let option_ids = scheme.option_ids();
         // 选项：有存储则同步（参照 `M.options.sync`，同步写入由核心抑制观察）；
         // 无存储时直接用内建缺省。会话创建时逐个同步（见 `session_new`）。
         let options = options_dir
             .as_deref()
-            .map(|dir| OptionsStore::load_with_defaults(dir, settings.store_defaults()));
-        // 学习库：`<user dir>/tiger_sentence_learning_<hash>.userdb/`（用户目录不可用则禁用）。
+            .map(|dir| OptionsStore::load_with_defaults(dir, settings.store_defaults(&option_ids)));
+        // 学习库：`<user dir>/<方案 id 哈希>.userdb/`（用户目录不可用则禁用）。
         let learning = match options_dir.as_deref() {
-            Some(dir) => LearningStore::open(
-                dir,
-                &learning_store::store_name(learning_store::DEFAULT_SCHEMA_ID),
-                wall_clock(),
-            ),
+            Some(dir) => {
+                LearningStore::open(dir, &learning_store::store_name(scheme.id()), wall_clock())
+            }
             None => LearningStore::disabled("user data directory unavailable"),
         };
         if let Some(error) = &learning.error {
@@ -139,21 +125,24 @@ impl Engine {
         } else {
             notes.push(format!("learning: {}", learning.name));
         }
-        let learning_mode =
-            settings.learning_mode(&learning_rules, u8::from(settings.allow_duplicate_single));
+        scheme.set_store_ready(learning.store_ready());
+        let learning_mode = scheme.learning_mode(
+            &learning_rules,
+            settings.allow_duplicate_single,
+            settings.high_freq_limit,
+        );
+        scheme.set_learning_mode(&learning_mode);
         Self {
             host,
-            decoder,
+            scheme: Box::new(scheme),
             sessions: HashMap::new(),
             next_session: 1,
             options,
             settings,
-            host_options,
-            punct,
             learning,
+            option_ids,
             learning_rules,
             learning_mode,
-            applied_learning: None,
             forward_after_commit: false,
             status: CString::new(notes.join("; ")).unwrap_or_default(),
         }
@@ -165,7 +154,7 @@ impl Engine {
         // 宿主缺省：`_auto_commit`（librime `express_editor` 默认 true）。
         context.set_option("_auto_commit", true);
         // 先写设置缺省（含不持久化的 `ascii_punct`），再由 `options.yaml` 持久化值覆盖。
-        for (name, value) in self.settings.option_defaults() {
+        for (name, value) in self.settings.option_defaults(&self.option_ids) {
             context.set_option(name, value);
         }
         if let Some(options) = self.options.as_mut() {
@@ -173,27 +162,19 @@ impl Engine {
         }
         // 无存储时运行时开关（状态菜单）以现存会话为模板，避免新会话回退到设置缺省。
         if let Some(existing) = self.sessions.values().next() {
-            for name in RUNTIME_OPTIONS {
+            for name in self.runtime_options() {
                 let value = existing.context.get_option(name);
                 if context.get_option(name) != value {
                     context.set_option(name, value);
                 }
             }
         }
+        let scheme_session = self.scheme.new_session(&mut context);
         let mut session = Session {
             context,
-            state: SentenceState::fresh(1),
-            live: LiveLearning {
-                mode: self.learning_mode.clone(),
-                store_ready: self.learning.store_ready(),
-                ..LiveLearning::default()
-            },
-            dot_armed: false,
-            min_retained: Some(self.settings.min_retained() as i64),
-            builder: CompositionBuilder::default(),
+            scheme_session,
             char_to_sound_shape: CharToSoundShapeState::default(),
         };
-        self.apply_trigger_keys(&mut session);
         self.apply_layout_options(&mut session);
         let id = self.next_session;
         self.next_session += 1;
@@ -203,7 +184,9 @@ impl Engine {
 
     /// 释放会话（输入上下文销毁时）。
     pub fn session_free(&mut self, session_id: u64) {
-        self.sessions.remove(&session_id);
+        if let Some(session) = self.sessions.remove(&session_id) {
+            self.scheme.free_session(session.scheme_session);
+        }
     }
 
     /// 取会话执行闭包后放回（借用拆分：会话与共享状态互不重叠）。
@@ -242,51 +225,25 @@ impl Engine {
         // 字反查段：←/→/↑/↓ **交应用处理**（应用光标随动），本层不消费也不改动输入；
         // 两排在应用回传周边文本后的下一次按键（含 release）时刷新。
         if !release
-            && self.char_to_sound_shape_tagged(session)
+            && self.scheme.auxiliary_lookup_active(&session.context)
             && matches!(key.repr().as_str(), "Left" | "Right" | "Up" | "Down")
         {
             return false;
         }
         let now = wall_clock();
-        let result = {
-            let mut env = ProcessorEnv {
-                now,
-                dot_armed: &mut session.dot_armed,
-                min_retained: session.min_retained,
-                page_size: self.host_options.page_size,
+        // 方案内部完成：处理器（翻译/锁/早提交）→ 未消费则宿主链（含提交点学习）。
+        let consumed =
+            match self
+                .scheme
+                .process_key(session.scheme_session, &mut session.context, &key, now)
+            {
+                Ok(KeyOutcome::Consumed) => true,
+                Ok(KeyOutcome::Forward) => false,
+                Err(error) => {
+                    eprintln!("hux: processor error: {error}");
+                    false
+                }
             };
-            processor(
-                &key,
-                &mut session.context,
-                &mut session.state,
-                &mut self.decoder,
-                &mut session.live,
-                &mut env,
-            )
-        };
-        let consumed = match result {
-            Ok(ProcessorResult::Consume) => true,
-            // 参照链：处理器未消费的键交宿主等价物（selector/navigator/express_editor 等）。
-            Ok(ProcessorResult::Forward) => {
-                let mut learning = LearningCommit {
-                    decoder: &mut self.decoder,
-                    live: &mut session.live,
-                    now,
-                };
-                host::process_key(
-                    &key,
-                    &mut session.context,
-                    &session.state,
-                    self.punct.as_mut(),
-                    &self.host_options,
-                    Some(&mut learning),
-                ) == HostResult::Consumed
-            }
-            Err(error) => {
-                eprintln!("hux: processor error: {error}");
-                false
-            }
-        };
         self.finish(session, now, Some(consumed));
         consumed
     }
@@ -303,14 +260,10 @@ impl Engine {
     pub(crate) fn select_candidate_in(&mut self, session: &mut Session, index: usize) -> bool {
         self.forward_after_commit = false;
         let now = wall_clock();
-        match select_candidate_at(
-            &mut self.decoder,
-            &mut session.context,
-            &mut session.state,
-            &mut session.live,
-            now,
-            index,
-        ) {
+        match self
+            .scheme
+            .select_candidate(session.scheme_session, &mut session.context, index, now)
+        {
             Ok(true) => {}
             Ok(false) => return false,
             Err(error) => {
@@ -357,7 +310,7 @@ impl Engine {
             None => false,
         };
         // 学习：核心暂存 → 落库；刷新打分（未组合时，60 秒节流）；应用索引。
-        let submitted = std::mem::take(&mut session.live.submitted);
+        let submitted = self.scheme.take_learning_events(session.scheme_session);
         if !submitted.is_empty() {
             self.learning.confirm(&submitted);
         }
@@ -365,19 +318,22 @@ impl Engine {
         if !session.context.is_composing() {
             self.learning.refresh_scores(now);
         }
-        self.apply_learning(session);
-        // 组合重建（参照 `ConcreteEngine::Compose`，先于通知器）与 update 通知器
+        let version = self.learning.index_version();
+        let mode = self.learning_mode.clone();
+        self.scheme.apply_learning_index(
+            session.scheme_session,
+            version,
+            self.learning.index(),
+            &mode,
+        );
+        // 组合重建（参照 `ConcreteEngine::Compose`，含 update 通知器）
         // （非组合清暂存；缓冲且实况输入为空时隐藏候选）。
-        if let Err(error) = session.builder.rebuild(
-            &mut self.decoder,
-            &mut session.context,
-            &session.state,
-            invalidated,
-            self.punct.as_mut(),
-        ) {
+        if let Err(error) =
+            self.scheme
+                .rebuild(session.scheme_session, &mut session.context, invalidated)
+        {
             eprintln!("hux: rebuild error: {error}");
         }
-        update_notifier(&mut session.context, &mut session.state, &mut session.live);
         self.refresh_char_to_sound_shape_aux(session);
         self.push_update(session);
     }
@@ -386,34 +342,21 @@ impl Engine {
     /// 进入/退出查码段由 core 处理器负责（触发字符推入/清空组合）。
     /// 当前组合末段是否为字反查段。
     pub(crate) fn char_to_sound_shape_tagged(&self, session: &Session) -> bool {
-        session
-            .context
-            .composition
-            .back()
-            .is_some_and(|segment| segment.has_tag(char_to_sound_shape::TAG))
+        self.scheme.auxiliary_lookup_active(&session.context)
     }
 
     /// 重算两排提示（上排 = 光标左侧拼音、下排 = 虎码）；不在查码段则清空。
     pub(crate) fn refresh_char_to_sound_shape_aux(&mut self, session: &mut Session) {
         let tagged = self.char_to_sound_shape_tagged(session);
         let state = &mut session.char_to_sound_shape;
-        if !tagged {
-            state.aux_up.clear();
-            state.aux_down.clear();
-            return;
-        }
-        if !state.valid {
-            // 周边文本不可用（如终端）：不显示提示——提示能否呈现取决于前端，
+        if !tagged || !state.valid {
+            // 不在查码段，或周边文本不可用（如终端）：提示能否呈现取决于前端，
             // 统一清空两排。
             state.aux_up.clear();
             state.aux_down.clear();
             return;
         }
-        let (text, cursor) = (state.text.clone(), state.cursor);
-        let (up, down) = self
-            .decoder
-            .char_to_sound_shape_rows(&text, cursor)
-            .unwrap_or_default();
+        let (up, down) = self.scheme.auxiliary_rows(&state.text, state.cursor);
         state.aux_up = up;
         state.aux_down = down;
     }
@@ -459,12 +402,8 @@ impl Engine {
         session.context.drain_events();
         session.char_to_sound_shape = CharToSoundShapeState::default();
         session.context.clear();
-        session.state.reset(&mut session.context, false);
-        session.live.pending.clear();
-        session.live.baseline = None;
-        session.live.submitted_raw = None;
-        session.dot_armed = false;
-        session.builder.reset();
+        self.scheme
+            .reset_session(session.scheme_session, &mut session.context);
         if let Some(options) = self.options.as_mut() {
             options.sync(&mut session.context);
         }
@@ -480,7 +419,7 @@ impl Engine {
 
     /// 运行时开关当前值（状态菜单；全局）：任一会话的生效值，无会话时回退存储/设置缺省。
     pub fn option_value(&self, name: &str) -> Option<bool> {
-        if !RUNTIME_OPTIONS.contains(&name) {
+        if !self.runtime_options().contains(&name) {
             return None;
         }
         if let Some(session) = self.sessions.values().next() {
@@ -489,12 +428,12 @@ impl Engine {
         self.options
             .as_ref()
             .and_then(|store| store.value(name))
-            .or_else(|| self.settings.option_default(name))
+            .or_else(|| self.settings.option_default(&self.option_ids, name))
     }
 
     /// 设置运行时开关（状态菜单）：白名单校验 → 写入全部会话 → 持久化（`options.yaml`）。
     pub fn set_option_value(&mut self, name: &str, value: bool) -> bool {
-        if !RUNTIME_OPTIONS.contains(&name) {
+        if !self.runtime_options().contains(&name) {
             return false;
         }
         let ids: Vec<u64> = self.sessions.keys().copied().collect();
@@ -515,10 +454,10 @@ impl Engine {
     /// 作用于全部会话（选项为引擎级）。
     pub fn apply_settings(&mut self, settings: Settings) {
         self.settings = settings;
-        self.host_options = self.settings.host_options();
-        let defaults = self.settings.option_defaults();
+        self.scheme.apply_config(&scheme_config(&self.settings));
+        let defaults = self.settings.option_defaults(&self.option_ids);
         if let Some(store) = self.options.as_mut() {
-            store.set_defaults(self.settings.store_defaults());
+            store.set_defaults(self.settings.store_defaults(&self.option_ids));
         }
         let ids: Vec<u64> = self.sessions.keys().copied().collect();
         for id in ids {
@@ -531,9 +470,7 @@ impl Engine {
                 if let Some(store) = engine.options.as_mut() {
                     store.sync(&mut session.context);
                 }
-                engine.apply_trigger_keys(session);
                 engine.apply_layout_options(session);
-                session.min_retained = Some(engine.settings.min_retained() as i64);
             });
         }
         self.refresh_learning_mode();
@@ -548,53 +485,17 @@ impl Engine {
         }
     }
 
-    /// 触发键（属性）：把两项触发键的 rime 键名列表（逗号分隔）交给 core（解析/匹配均在 core 内）。
-    pub(crate) fn apply_trigger_keys(&self, session: &mut Session) {
-        for (property, value) in [
-            (
-                K_SOUND_TO_CHAR_SHAPE_KEY,
-                self.settings.sound_to_char_shape_keys.join(","),
-            ),
-            (
-                K_CHAR_TO_SOUND_SHAPE_KEY,
-                self.settings.char_to_sound_shape_keys.join(","),
-            ),
-        ] {
-            if session.context.get_property(property).unwrap_or("") != value {
-                session.context.set_property(property, &value);
-            }
-        }
-    }
-
-    /// 按当前规则/选项刷新学习 mode（变化时强制重设 decoder 学习；同步到全部会话）。
+    /// 按当前规则/选项刷新学习 mode（变化时方案会强制重设解码器学习并同步全部会话）。
     pub(crate) fn refresh_learning_mode(&mut self) {
-        let mode = self.settings.learning_mode(
-            &self.learning_rules,
-            u8::from(
-                self.option_value(OPTION_ALLOW_DUPLICATE_SINGLE)
-                    .unwrap_or(true),
-            ),
-        );
-        if mode != self.learning_mode {
-            self.learning_mode = mode.clone();
-            for session in self.sessions.values_mut() {
-                session.live.mode = mode.clone();
-            }
-            self.applied_learning = None;
-        }
-    }
-
-    /// 索引变化时重设 decoder 学习（参照 `active_index` 变化：重置早证据与空码态）。
-    pub(crate) fn apply_learning(&mut self, session: &mut Session) {
-        let version = self.learning.index_version();
-        if self.applied_learning == Some(version) {
-            return;
-        }
-        self.applied_learning = Some(version);
-        self.decoder
-            .set_learning(self.learning.index().clone(), &self.learning_mode);
-        reset_early_evidence(&mut session.state);
-        session.state.empty_code_pending = None;
+        let duplicate = self
+            .option_value(self.option_ids.allow_duplicate_single)
+            .unwrap_or(true);
+        let rules = self.learning_rules.clone();
+        let mode = self
+            .scheme
+            .learning_mode(&rules, duplicate, self.settings.high_freq_limit);
+        self.learning_mode = mode.clone();
+        self.scheme.set_learning_mode(&mode);
     }
 
     /// 提交回调（`engine:commit_text`）。

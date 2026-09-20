@@ -15,7 +15,6 @@
 //!   `Ctrl/Shift+Left|Right` 直接跳到首/尾）；标点段与词组 spans 见 ⑦；
 //! - `speller`/`punctuator` 属 ⑦；`editor/char_handler`（Printables 直接提交）同。
 
-use crate::interaction::{LearningCommit, SentenceState, learning_commit};
 use crate::key::{K_CONTROL_MASK, K_SHIFT_MASK, KeyEvent};
 use crate::punct::PunctTable;
 use crate::session::Context;
@@ -59,29 +58,35 @@ pub enum HostResult {
     Forward,
 }
 
+/// 宿主链提交点回调：由**方案侧**实现（core 不持有方案状态）。
+///
+/// 对应 librime `Context::Commit()` 内、清空组合前的 `commit_notifier`：
+/// `punctuator` / `express_editor` 提交文本时回调，方案据此落学习等。
+pub trait CommitObserver {
+    fn on_commit(&mut self, context: &Context, commit_text: &str);
+}
+
 /// 参照处理器链（`key_binder` → `speller` → `punctuator` → `selector` → `navigator`
 /// → `express_editor`；`speller` 由 core `processor` 承担，见 ⑦）。
 ///
-/// `learning`（可空）供宿主链的提交点记录学习——对应 librime `Context::Commit()`
-/// 内、清空组合前的 `commit_notifier`（`Editor::DirectCommit` 等原生处理器由此落学习）。
+/// `observer`（可空）供宿主链的提交点回调方案（学习等）。
 pub fn process_key(
     key_event: &KeyEvent,
     context: &mut Context,
-    state: &SentenceState,
     punct: Option<&mut PunctTable>,
     options: &HostOptions,
-    learning: Option<&mut LearningCommit<'_>>,
+    observer: Option<&mut dyn CommitObserver>,
 ) -> HostResult {
     if key_event.release() {
         return HostResult::Forward;
     }
-    let mut learning = learning;
+    let mut observer = observer;
     // 依序执行，前一处理器吞键则不再继续（参照引擎的处理器链）。
     let mut result = key_binder(key_event, context, options);
     if result == HostResult::Consumed {
         return result;
     }
-    result = punctuator(key_event, context, state, punct, &mut learning);
+    result = punctuator(key_event, context, punct, &mut observer);
     if result == HostResult::Consumed {
         return result;
     }
@@ -93,28 +98,19 @@ pub fn process_key(
     if result == HostResult::Consumed {
         return result;
     }
-    editor(key_event, context, state, &mut learning)
+    editor(key_event, context, &mut observer)
 }
 
-/// 宿主链提交点学习（对应 librime `Context::Commit()` 的通知器：组合仍完整时记录）；
-/// `learning` 为 `None` 时 no-op。
+/// 宿主链提交点回调（对应 librime `Context::Commit()` 的通知器：组合仍完整时记录）；
+/// `observer` 为 `None` 时 no-op。
 fn commit_notifier(
-    learning: &mut Option<&mut LearningCommit<'_>>,
+    observer: &mut Option<&mut dyn CommitObserver>,
     context: &Context,
-    state: &SentenceState,
     commit_text: &str,
 ) {
-    let Some(learning) = learning.as_deref_mut() else {
-        return;
-    };
-    learning_commit(
-        learning.decoder,
-        context,
-        state,
-        learning.live,
-        learning.now,
-        commit_text,
-    );
+    if let Some(observer) = observer.as_deref_mut() {
+        observer.on_commit(context, commit_text);
+    }
 }
 
 // ---------------------------------------------------------------- punctuator
@@ -127,9 +123,8 @@ fn commit_notifier(
 fn punctuator(
     key_event: &KeyEvent,
     context: &mut Context,
-    state: &SentenceState,
     punct: Option<&mut PunctTable>,
-    learning: &mut Option<&mut LearningCommit<'_>>,
+    observer: &mut Option<&mut dyn CommitObserver>,
 ) -> HostResult {
     let Some(table) = punct else {
         return HostResult::Forward;
@@ -153,7 +148,7 @@ fn punctuator(
         return HostResult::Forward;
     };
     let commit = format!("{}{}", context.get_commit_text(), text);
-    commit_notifier(learning, context, state, &commit);
+    commit_notifier(observer, context, &commit);
     context.clear();
     context.direct_commit(&commit);
     HostResult::Consumed
@@ -545,8 +540,7 @@ fn go_to_end(context: &mut Context) {
 fn editor(
     key_event: &KeyEvent,
     context: &mut Context,
-    state: &SentenceState,
-    learning: &mut Option<&mut LearningCommit<'_>>,
+    observer: &mut Option<&mut dyn CommitObserver>,
 ) -> HostResult {
     if !context.is_composing() {
         return HostResult::Forward;
@@ -556,7 +550,7 @@ fn editor(
             // Confirm：`confirm_current_selection() || commit()`
             if !confirm(context) {
                 let commit_text = context.get_commit_text();
-                commit_notifier(learning, context, state, &commit_text);
+                commit_notifier(observer, context, &commit_text);
                 context.commit();
             }
             true
@@ -571,7 +565,7 @@ fn editor(
         }
         (0xff0d, 0) => {
             let commit_text = context.get_commit_text();
-            commit_notifier(learning, context, state, &commit_text);
+            commit_notifier(observer, context, &commit_text);
             context.commit();
             true
         }
@@ -599,7 +593,7 @@ fn editor(
         && key_event.keycode < 0x7f
     {
         let commit_text = context.get_commit_text();
-        commit_notifier(learning, context, state, &commit_text);
+        commit_notifier(observer, context, &commit_text);
         context.commit();
     }
     HostResult::Forward
@@ -725,14 +719,7 @@ mod tests {
         options: &HostOptions,
     ) -> HostResult {
         let key = KeyEvent::from_repr(repr).expect("key repr");
-        process_key(
-            &key,
-            context,
-            &SentenceState::fresh(1),
-            punct,
-            options,
-            None,
-        )
+        process_key(&key, context, punct, options, None)
     }
 
     fn press(context: &mut Context, repr: &str) -> HostResult {

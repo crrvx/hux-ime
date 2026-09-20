@@ -7,14 +7,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "虎虚（hux-ime）核心逻辑：虎句方案 Rust 直迁与差分验证"
+description = "虎虚（hux-ime）引擎内核：键/会话/宿主链/学习机制，与方案、平台无关"
 
 [dependencies]
-anyhow.workspace = true
-flate2 = "1"
 hashbrown.workspace = true
-memmap2.workspace = true
 yaml-rust2.workspace = true
 
 [dev-dependencies]
+hux-test-support = { path = "../hux-test-support" }
 flate2 = "1"

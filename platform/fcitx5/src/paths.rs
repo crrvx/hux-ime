@@ -10,7 +10,7 @@
 
 use std::path::PathBuf;
 
-use hux_core::lexicon::{MODEL_PATH, candidate_paths};
+use hux_core::scheme::{Asset, AssetKind, find_asset};
 
 /// 只读数据目录（按优先级）；开发可用 `HUX_DATA_DIRS` 覆盖。
 pub(crate) fn data_dirs() -> Vec<PathBuf> {
@@ -35,11 +35,12 @@ pub(crate) fn user_data_dir() -> Option<PathBuf> {
     )
 }
 
-/// 在各数据目录中查找模型文件（`HUX_MODEL` 覆盖在调用处处理）。
-pub(crate) fn default_model_path(dirs: &[PathBuf]) -> Option<PathBuf> {
-    candidate_paths(dirs, MODEL_PATH)
-        .into_iter()
-        .find(|path| path.is_file())
+/// 在各数据目录中查找**方案声明的模型资产**（`HUX_MODEL` 覆盖在调用处处理）。
+pub(crate) fn default_model_path(dirs: &[PathBuf], assets: &[Asset]) -> Option<PathBuf> {
+    assets
+        .iter()
+        .find(|asset| asset.kind == AssetKind::Model)
+        .and_then(|asset| find_asset(dirs, asset.file))
 }
 
 // ---------------------------------------------------------------- 纯函数（可测）

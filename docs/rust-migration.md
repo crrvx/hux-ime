@@ -32,17 +32,18 @@ hux-ime（虎虚）：虎句（`tiger_sentence`）输入方案的 fcitx5 原生 
 ## 2. 仓库结构
 
 ```
-crates/hux-core/         # 纯逻辑，无 fcitx5 依赖
-  cache.rs  ngram.rs                     # K0：缓存、TCSKNM02 模型读取
-  lexicon.rs  decode.rs  learning.rs     # K1：码表、beam 解码、Tab 学习
-  lexical.rs                             # K1.5：紧凑词先验 TCSLEX01
-  key.rs  key_table.rs  session.rs  host.rs   # K2：键事件、会话、宿主链
+crates/hux-core/         # 引擎内核：与方案、平台无关（无 fcitx5 依赖）
+  cache.rs  learning.rs                  # K0/K1：有界缓存、学习机制
+  key.rs  key_table.rs  session.rs  host.rs   # K2：键事件、会话、宿主链（含提交点回调）
+  punct.rs                               # 标点表（symbols.yaml）
+  scheme.rs                              # 方案契约（P4c：dyn Scheme 驱动）
+crates/hux-scheme/tiger/ # 虎句方案（唯一全量实现；hux-scheme/* → hux-core）
+  lexicon.rs  decode.rs  lexical.rs  ngram.rs # K0/K1/K1.5：码表、beam 解码、词先验、TCSKNM02
+  sound_to_char_shape.rs  char_to_sound_shape.rs  # 反查：音反查、字反查
   interaction.rs  interaction/           # K2：交互层根 + 子模块（keys/state/early_commit/
                                          #     select/translate/learning_glue/processor/tests）
-  sound_to_char_shape.rs  char_to_sound_shape.rs  # 反查：音反查、字反查
 crates/hux-cfg/          # hux 自身可配置项：设置与默认值、选项存储与合并顺序
 crates/hux-ffi/          # C ABI 契约：C 布局类型 + include/hux_abi.h（桌面 / Android 共用）
-crates/hux-scheme/       # 方案区：tiger/ 待 P4 迁入（yuhao/wubi/shuangpin/quanpin 仅 README）
 platform/fcitx5/         # K3：C++ 薄壳（shell/hux.cpp）+ Rust 组装（engine/session/ui/
                          #     paths/learning_store/abi，导出 C ABI）
 platform/linux/          # 桌面：构建 / 安装（脚本入口在仓库根；打包待做）
@@ -60,15 +61,15 @@ docs/                    # 本文档、词先验署名
 
 | 参照 | Rust | 差分手段 |
 |---|---|---|
-| `lua/tiger_sentence_cache.lua` | `cache.rs` | fixture 金样（状态/淘汰序） |
-| `lua/tiger_sentence_ngram.lua` | `ngram.rs` | `logp`/`obs`/`status` 逐位 |
-| `lua/tiger_sentence.lua`（词库/解码/证据） | `lexicon.rs` + `decode.rs` | 数据索引 + 解码/证据/学习快照 |
-| `lua/tiger_sentence_learning.lua` | `learning.rs` | 检查重放 + learning 金样 |
-| `lua/tiger_sentence_lexical.lua` | `lexical.rs`（TCSLEX01） | 词先验金样 |
-| `lua/tiger_sentence.lua`（processor/translator/filter/选项） | `key.rs` + `session.rs` + `interaction.rs`（+ `interaction/`） | 键序列金样 |
-| librime `key_event`/`key_table` | `key.rs` + `key_table.rs`（由源码生成） | 键金样（真 librime 探针） |
-| librime `reverse_lookup_translator` | `sound_to_char_shape.rs`（TCSRV01） | 音反查金样 |
-| librime 宿主链 | `host.rs`（含 `punct.rs`） | 键序列金样 |
+| `lua/tiger_sentence_cache.lua` | `hux-core`: `cache.rs` | fixture 金样（状态/淘汰序） |
+| `lua/tiger_sentence_ngram.lua` | `tiger/ngram.rs` | `logp`/`obs`/`status` 逐位 |
+| `lua/tiger_sentence.lua`（词库/解码/证据） | `tiger/lexicon.rs` + `tiger/decode.rs` | 数据索引 + 解码/证据/学习快照 |
+| `lua/tiger_sentence_learning.lua` | `hux-core`: `learning.rs`（机制）+ `tiger/interaction/learning_glue.rs`（策略） | 检查重放 + learning 金样 |
+| `lua/tiger_sentence_lexical.lua` | `tiger/lexical.rs`（TCSLEX01） | 词先验金样 |
+| `lua/tiger_sentence.lua`（processor/translator/filter/选项） | `hux-core`: `key.rs` + `session.rs`；`tiger`: `interaction.rs`（+ `interaction/`） | 键序列金样 |
+| librime `key_event`/`key_table` | `hux-core`: `key.rs` + `key_table.rs`（由源码生成） | 键金样（真 librime 探针） |
+| librime `reverse_lookup_translator` | `tiger/sound_to_char_shape.rs`（TCSRV01） | 音反查金样 |
+| librime 宿主链 | `hux-core`: `host.rs` + `punct.rs`（提交点回调见 `CommitObserver`） | 键序列金样 |
 
 ## 4. 数据与目录
 

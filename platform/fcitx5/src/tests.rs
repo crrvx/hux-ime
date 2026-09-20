@@ -80,10 +80,7 @@ fn fixture_dirs() -> Vec<PathBuf> {
 }
 
 fn temp_user_dir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("hux-user-{}-{tag}", std::process::id()));
-    std::fs::remove_dir_all(&dir).ok();
-    std::fs::create_dir_all(&dir).expect("temp user dir");
-    dir
+    hux_test_support::temp_dir(&format!("user-{tag}"))
 }
 
 /// 最近一次 UI 快照（preedit、字节光标、候选、高亮）。
@@ -150,14 +147,19 @@ fn engine_enables_learning_store() {
     let dir = temp_user_dir("learning");
     let engine = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
     assert!(
-        engine.session().live.store_ready,
+        engine.engine.learning.store_ready(),
         "用户目录可用时学习库应就绪"
     );
-    assert!(engine.session().live.mode.starts_with("sentence-v1|rules="));
+    assert!(
+        engine
+            .engine
+            .learning_mode
+            .starts_with("sentence-v1|rules=")
+    );
     assert!(
         dir.join(format!(
             "{}.userdb",
-            learning_store::store_name(learning_store::DEFAULT_SCHEMA_ID)
+            learning_store::store_name(hux_scheme_tiger::scheme::SCHEME_ID)
         ))
         .is_dir()
     );
@@ -166,11 +168,19 @@ fn engine_enables_learning_store() {
 
 #[test]
 fn engine_applies_learning_after_key() {
+    // 学习索引的「已应用版本」属方案内部状态（见 `crates/hux-scheme/tiger` 的单测）；
+    // 平台侧只验证接线：按键路径把当前库索引交给方案且库保持就绪。
     let _guard = serial();
     let dir = temp_user_dir("learning-apply");
     let mut engine = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
     engine.key(u32::from(b'a'), 0, false);
-    assert!(engine.applied_learning.is_some(), "按键后应已应用学习索引");
+    assert!(engine.engine.learning.store_ready(), "学习库应保持就绪");
+    assert!(
+        engine
+            .engine
+            .learning_mode
+            .starts_with("sentence-v1|rules=")
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -453,7 +463,7 @@ fn digit_select_out_of_page_falls_through() {
 fn runtime_option_roundtrip_and_whitelist() {
     let _guard = serial();
     let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
-    for name in RUNTIME_OPTIONS {
+    for name in engine.runtime_options() {
         let value = engine.option_value(name).expect("白名单选项");
         assert!(engine.set_option_value(name, !value), "{name} 应可设置");
         assert_eq!(engine.option_value(name), Some(!value));
@@ -719,7 +729,7 @@ fn apply_settings_disables_learning_mode() {
         ..Default::default()
     });
     assert!(
-        engine.session().live.mode.is_empty(),
+        engine.engine.learning_mode.is_empty(),
         "关闭 Tab 学习 → 学习 mode 为空"
     );
 }
@@ -776,7 +786,7 @@ fn ffi_apply_settings_maps_engine_options() {
     assert!(session.context.get_option("full_shape"));
     assert!(session.context.get_option("ascii_punct"));
     assert!(
-        session.live.mode.is_empty(),
+        engine.learning_mode.is_empty(),
         "tab_learning=0 → 学习 mode 为空"
     );
     assert_eq!(engine.settings.high_freq_limit, 800);
@@ -802,14 +812,16 @@ fn ffi_apply_settings_maps_new_options() {
     );
     assert_eq!(engine.settings.candidate_layout, CandidateLayout::Vertical);
     assert_eq!(engine.settings.preedit_mode, PreeditMode::Hidden);
-    assert!(engine.host_options.page_cycle);
+    assert!(engine.scheme.host_options().page_cycle);
     let session_id = engine.session_new();
     let session = engine.sessions.get(&session_id).expect("session");
     assert!(
         session.context.get_option("_vertical"),
         "竖排应写入 `_vertical`"
     );
-    assert_eq!(session.min_retained, Some(4));
+    // 最短保留码数属方案会话状态（见 `crates/hux-scheme/tiger`）：
+    // 平台侧只验证配置已按竖排 / 页大小等映射到方案。
+    assert_eq!(engine.scheme.host_options().page_size, 7);
     // 越界钳制（0..=20）。
     let clamped = HuxOptions {
         min_retained_raw_length: 999,
@@ -905,13 +917,13 @@ fn ffi_apply_settings_maps_page_options() {
         vec!["period", "bracketright"]
     );
     assert!(state.settings.digit_select);
-    assert_eq!(state.host_options.page_size, 7);
+    assert_eq!(state.scheme.host_options().page_size, 7);
     assert_eq!(
-        state.host_options.page_up_keys,
+        state.scheme.host_options().page_up_keys,
         vec![KeyEvent::from_repr("comma").unwrap()]
     );
     assert_eq!(
-        state.host_options.page_down_keys,
+        state.scheme.host_options().page_down_keys,
         vec![
             KeyEvent::from_repr("period").unwrap(),
             KeyEvent::from_repr("bracketright").unwrap()

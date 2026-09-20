@@ -3,15 +3,27 @@
 
 use hashbrown::HashMap;
 
+use hux_core::scheme::OptionIds;
 use hux_core::session::Context;
 
-/// 参照 `M.options` 的内建缺省表。
-pub fn option_defaults() -> HashMap<String, bool> {
+/// 参照 `M.options` 的内建缺省表（键 = 方案声明的选项 id；本层不硬编码方案选项名）。
+pub fn option_defaults(ids: &OptionIds) -> HashMap<String, bool> {
     HashMap::from([
-        ("tiger_sentence_early_commit".to_string(), true),
-        ("tiger_sentence_allow_duplicate_single".to_string(), true),
-        ("tiger_sentence_early_commit_to_preedit".to_string(), false),
+        (ids.early_commit.to_string(), true),
+        (ids.allow_duplicate_single.to_string(), true),
+        (ids.early_commit_to_preedit.to_string(), false),
     ])
+}
+
+/// 测试用选项 id（与 `hux-scheme-tiger` 的实际值一致；生产路径由平台从方案取得）。
+#[cfg(test)]
+pub(crate) fn test_option_ids() -> OptionIds {
+    OptionIds {
+        early_commit: "tiger_sentence_early_commit",
+        early_commit_to_preedit: "tiger_sentence_early_commit_to_preedit",
+        allow_duplicate_single: "tiger_sentence_allow_duplicate_single",
+        digit_select: "tiger_sentence_digit_select",
+    }
 }
 
 /// 参照 `M.options` 的配置存储（文件读写、错误属性由 K3 承担）。
@@ -83,7 +95,7 @@ mod tests {
     fn options_sync_applies_defaults() {
         let mut context = Context::new();
 
-        let mut options = Options::new(option_defaults());
+        let mut options = Options::new(option_defaults(&test_option_ids()));
 
         options.sync(&mut context);
 
@@ -99,7 +111,7 @@ mod tests {
     fn options_observe_ignores_synced_writes() {
         let mut context = Context::new();
 
-        let mut options = Options::new(option_defaults());
+        let mut options = Options::new(option_defaults(&test_option_ids()));
 
         options.sync(&mut context);
 
@@ -115,7 +127,7 @@ mod tests {
     fn options_observe_records_user_change_once() {
         let mut context = Context::new();
 
-        let mut options = Options::new(option_defaults());
+        let mut options = Options::new(option_defaults(&test_option_ids()));
 
         options.sync(&mut context);
 
@@ -137,7 +149,7 @@ mod tests {
     fn options_sync_prefers_persisted_values() {
         let mut context = Context::new();
 
-        let mut options = Options::new(option_defaults());
+        let mut options = Options::new(option_defaults(&test_option_ids()));
 
         options.sync(&mut context);
 

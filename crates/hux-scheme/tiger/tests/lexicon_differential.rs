@@ -7,10 +7,8 @@
 //! * present：`goldens/lexicon/` 数据 + `goldens/lexicon.tsv.gz`；
 //! * missing：数据缺失路径 + `goldens/lexicon_missing.tsv.gz`。
 
-mod common;
-
-use common::{decode_hex as decode, hex as encode, open_golden, repo_path};
-use hux_core::lexicon::{Lexicon, Supplement};
+use hux_scheme_tiger::lexicon::{Lexicon, Supplement};
+use hux_test_support::{decode_hex as decode, hex as encode, open_golden, repo_path};
 use std::io::BufRead;
 
 fn run_transcript(lexicon: &mut Lexicon, supplement: &Supplement, reader: impl BufRead) -> usize {

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use super::*;
-use crate::session::Segment;
+use hux_core::session::Segment;
 
 fn state_with_lock(raw: &str, text: &str) -> (Context, SentenceState) {
     let mut context = Context::new();
@@ -94,9 +94,9 @@ fn cycle_highlight_wraps_both_directions() {
         ..Segment::default()
     };
     for text in ["甲", "乙", "丙"] {
-        segment
-            .candidates
-            .push(crate::session::Candidate::new("sentence", 0, 2, text, ""));
+        segment.candidates.push(hux_core::session::Candidate::new(
+            "sentence", 0, 2, text, "",
+        ));
     }
     context.composition.segments.push(segment);
     assert!(cycle_candidate_highlight(&mut context, 1));
@@ -117,7 +117,7 @@ fn plain_char_key_accepts_printable_chars() {
     assert_eq!(is_plain_char_key(&key, "KP_3"), Some('3'));
     assert_eq!(is_plain_char_key(&key, "A"), None);
     assert_eq!(is_plain_char_key(&key, "space"), None);
-    let ctrl = KeyEvent::new(0x61, crate::key::K_CONTROL_MASK);
+    let ctrl = KeyEvent::new(0x61, hux_core::key::K_CONTROL_MASK);
     assert_eq!(is_plain_char_key(&ctrl, "a"), None);
 }
 
@@ -402,7 +402,7 @@ fn auto_commit_matches_visible_top_guard() {
 
 #[test]
 fn code_comment_formats() {
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../goldens/lexicon");
     let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
     // 来：codes.txt 源序 a, ah, ahb
     assert_eq!(
@@ -427,7 +427,7 @@ fn buffer_filter_keeps_only_buffered() {
 
 #[test]
 fn translate_produces_sentence_candidates() {
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../goldens/lexicon");
     let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
     let supplement = crate::lexicon::Supplement::load_default(Some(&dir));
     let mut decoder = Decoder::new(lexicon, supplement, None);
@@ -442,7 +442,7 @@ fn translate_produces_sentence_candidates() {
 
 #[test]
 fn translate_emits_buffered_candidate() {
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../goldens/lexicon");
     let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
     let supplement = crate::lexicon::Supplement::load_default(Some(&dir));
     let mut decoder = Decoder::new(lexicon, supplement, None);
@@ -475,7 +475,7 @@ fn translate_emits_buffered_candidate() {
 
 #[test]
 fn translate_skips_lookup_segments() {
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../goldens/lexicon");
     let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
     let supplement = crate::lexicon::Supplement::load_default(Some(&dir));
     let mut decoder = Decoder::new(lexicon, supplement, None);
@@ -489,7 +489,7 @@ fn translate_skips_lookup_segments() {
 
 #[test]
 fn translate_requires_buffer_marker() {
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../goldens/lexicon");
     let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
     let supplement = crate::lexicon::Supplement::load_default(Some(&dir));
     let mut decoder = Decoder::new(lexicon, supplement, None);
@@ -525,7 +525,7 @@ fn translate_requires_buffer_marker() {
 }
 
 fn lexicon_fixture() -> Decoder {
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../goldens/lexicon");
     let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
     let supplement = crate::lexicon::Supplement::load_default(Some(&dir));
     Decoder::new(lexicon, supplement, None)
@@ -981,8 +981,8 @@ fn processor_forwards_release_and_idle_punct() {
     let mut h = Harness::new();
     // 释放事件交宿主
     let release = KeyEvent::new(
-        crate::key::keycode_by_name("a").expect("a"),
-        crate::key::K_RELEASE_MASK,
+        hux_core::key::keycode_by_name("a").expect("a"),
+        hux_core::key::K_RELEASE_MASK,
     );
     assert_eq!(h.press_event(&release), ProcessorResult::Forward);
     // 空闲分号/引号交标点处理器
@@ -1031,13 +1031,13 @@ fn processor_escape_clears_composition() {
 
 #[test]
 fn lexicon_learning_rules_matches_oracle() {
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon");
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../goldens/lexicon");
     let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
     // oracle：参照 `learning.hash(codes.."\0"..ranks.."\0"..whitelist)`（pin 版 Lua 直算）。
     assert_eq!(lexicon.learning_rules, "99f336c6e74e055e");
     // 数据缺失时三份内容均为空串。
     let missing = Lexicon::load(&[], 1500);
-    assert_eq!(missing.learning_rules, crate::learning::hash("\0\0"));
+    assert_eq!(missing.learning_rules, hux_core::learning::hash("\0\0"));
 }
 
 fn segment_with_candidate(candidate: Candidate) -> Segment {

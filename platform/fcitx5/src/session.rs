@@ -3,7 +3,7 @@
 
 //! 会话：每个输入上下文（窗口/输入框）一份，互不干扰（fcitx5 `InputContextProperty`）。
 
-use hux_core::interaction::{CompositionBuilder, LiveLearning, SentenceState};
+use hux_core::scheme::SessionId;
 use hux_core::session::Context;
 
 /// 字反查（⑧-2）会话态：周边文本（字符制光标）+ 窗口起点 + 已算好的提示。
@@ -18,12 +18,8 @@ pub(crate) struct CharToSoundShapeState {
 
 pub(crate) struct Session {
     pub(crate) context: Context,
-    pub(crate) state: SentenceState,
-    pub(crate) live: LiveLearning,
-    pub(crate) dot_armed: bool,
-    pub(crate) min_retained: Option<i64>,
-    /// 组合重建（提交或输入变化时重建，保留段状态含菜单高亮）。
-    pub(crate) builder: CompositionBuilder,
-    /// 字反查（⑧-2）会话态。
+    /// 方案会话句柄（组合、学习暂存、锁、早提交等状态都在方案内，平台只透传）。
+    pub(crate) scheme_session: SessionId,
+    /// 字反查（⑧-2）会话态：应用侧周边文本 + 算好的两排提示。
     pub(crate) char_to_sound_shape: CharToSoundShapeState,
 }
