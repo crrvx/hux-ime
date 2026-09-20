@@ -1,10 +1,13 @@
 <!-- SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com> -->
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 
-# hux-addon（K3）
+# platform/fcitx5（K3）
 
-hux-ime（虎虚）fcitx5 addon：**C++ 薄壳**（`shell/`，只做 fcitx5 接口适配）+ **Rust 逻辑**（`src/`，经 C ABI 调用
-`hux-core`）。按键 → core（`processor`/`translate`）→ 提交 / preedit / 候选 → fcitx5。
+hux-ime（虎虚）fcitx5 平台适配：**C++ 薄壳**（`shell/`，只做 fcitx5 接口适配）+ **Rust 组装**（`src/`）。
+C ABI 契约在 [`../../crates/hux-ffi/`](../../crates/hux-ffi/)（CI 校验 `hux_abi.h` 声明 ↔ `libhux.so` 导出一致）；
+逻辑在 [`../../crates/hux-core/`](../../crates/hux-core/) 与 `hux-cfg`。按键 → core（`processor`/`translate`）→ 提交 / preedit / 候选 → fcitx5。
+桌面与 Android **共用本层**（两端同为 fcitx5；Android 接线见 [`../android/README.md`](../android/README.md)）；
+数据目录与模型解析见 [`src/paths.rs`](src/paths.rs)。
 
 按键语义与参照（librime）一致：组合中的可打印字符（如大写字母）先提交当前组合，再交应用；
 为保证上屏顺序，宿主层会消费该键并以 `forwardKey` 重发——客户端先收到提交、后收到按键。

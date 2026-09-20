@@ -24,6 +24,12 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test -p hux-core
+      - name: Core platform-clean (no env/XDG/clock/logging)
+        run: |
+          if grep -RnE 'std::env::var|SystemTime|/usr/share|eprintln!|println!' crates/hux-core/src; then
+            echo "::error::hux-core 不得包含平台痕迹（环境变量 / XDG / 系统时钟 / 直接打印）"
+            exit 1
+          fi
       - name: Verify lexical prior data (provenance)
         run: |
           echo "8dbc884b6cb719d07e4cef153c8048db19a11f8224f75a4ed87853e688a27393  data/tiger_sentence.lexical.bin" | sha256sum -c -
@@ -35,6 +41,44 @@ jobs:
           python3 tools/generators/gen_pinyin_index.py \
             --source goldens/sound_to_char_shape/PY_c.dict.yaml --out /tmp/pinyin.bin
           cmp /tmp/pinyin.bin goldens/sound_to_char_shape/tiger_sentence.pinyin.bin
+
+  # C++ 侧（fcitx5 addon）：configure → 构建/链接 → C ABI 符号一致 → 安装布局（DESTDIR，免 sudo）。
+  # 结构性迁移（如拆 crate / 挪目录）与 ABI 契约漂移（crates/hux-ffi/include/hux_abi.h）在此暴露。
+  addon:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install fcitx5 core dev files
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfcitx5core-dev
+      - name: Configure & build addon (cargo + cmake)
+        run: |
+          cmake -S platform/fcitx5 -B build/addon \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr
+          cmake --build build/addon -j"$(nproc)"
+      - name: Verify C ABI symbols (hux_abi.h ↔ libhux.so)
+        run: |
+          nm -D --defined-only build/addon/libhux.so \
+            | awk '$2=="T"||$2=="i"{print $3}' | grep '^hux_' | sort -u > /tmp/so.txt
+          grep -oE '\bhux_[a-z_0-9]+[[:space:]]*\(' crates/hux-ffi/include/hux_abi.h \
+            | tr -d ' (' | sort -u > /tmp/hdr.txt
+          test -s /tmp/hdr.txt && test -s /tmp/so.txt
+          if ! diff -u /tmp/hdr.txt /tmp/so.txt; then
+            echo "::error::hux_abi.h 声明与 libhux.so 导出不一致（C ABI 漂移）"
+            exit 1
+          fi
+          echo "C ABI 符号一致：$(wc -l < /tmp/so.txt) 个"
+      - name: Verify install layout (DESTDIR)
+        run: |
+          DESTDIR=/tmp/stage cmake --install build/addon
+          for f in usr/lib/fcitx5/libhux.so \
+                   usr/share/fcitx5/addon/hux.conf \
+                   usr/share/fcitx5/inputmethod/hux.conf; do
+            test -f "/tmp/stage/$f" || { echo "::error::缺少安装文件 /$f"; exit 1; }
+          done
 
   # 一般金样校验：使用 runner 系统提供的 Lua（Ubuntu 当前可用的最新 lua 包）。
   golden:

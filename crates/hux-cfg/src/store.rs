@@ -8,9 +8,10 @@
 use hashbrown::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::Options;
 #[cfg(test)]
-use hux_core::interaction::option_defaults;
-use hux_core::interaction::{Options, set_property_if_changed};
+use crate::option_defaults;
+use hux_core::interaction::set_property_if_changed;
 use hux_core::session::Context;
 use yaml_rust2::{Yaml, YamlEmitter, YamlLoader};
 

@@ -9,7 +9,7 @@
 依赖：Rust 1.85+（edition 2024）。
 
 ```sh
-cargo test -p hux-core -p hux-addon  # 逐位差分 + addon 测试（本地抽样缺失自动跳过）
+cargo test  # 全工作区：逐位差分 + 配置 + 平台适配测试（本地抽样缺失自动跳过）
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all --check
 ```
@@ -25,7 +25,9 @@ HUX_MODEL="$HOME/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin" \
 fcitx5 -r -d
 ```
 
-运行时数据目录查找顺序：`~/.local/share/fcitx5/hux` → `/usr/share/fcitx5/hux`； \
+运行时数据目录查找顺序（平台层解析）：`HUX_DATA_DIRS`（覆盖）→ `$XDG_DATA_HOME/fcitx5/hux`
+（缺省 `~/.local/share/fcitx5/hux`）→ `$XDG_DATA_DIRS/*/fcitx5/hux`
+（缺省 `/usr/local/share`、`/usr/share`）；选项 / 学习库 / 模型写入用户目录； \
 模型另在 `models/sentence-ngram-mobile.bin` 查找。
 
 ## 安装
@@ -43,7 +45,7 @@ fcitx5 -r -d
 （Arch：`fcitx5`；Fedora：`fcitx5-devel`；Debian/Ubuntu：`libfcitx5core-dev`）
 
 ```sh
-cmake -S crates/hux-addon -B build/addon \
+cmake -S platform/fcitx5 -B build/addon \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=/usr
 cmake --build build/addon -j

@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+[package]
+name = "hux-platform-fcitx5"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "虎虚（hux-ime）fcitx5 平台适配：宿主组装与 C ABI 导出（桌面/Android 共用）"
+
+[lib]
+# 静态库：由 C++ 薄壳（shell/hux.cpp）链入 addon .so。
+name = "hux_platform_fcitx5"
+crate-type = ["staticlib"]
+
+[dependencies]
+rusty-leveldb = "4.0.1"
+hux-cfg = { path = "../../crates/hux-cfg" }
+hux-core = { path = "../../crates/hux-core" }
+hux-ffi = { path = "../../crates/hux-ffi" }

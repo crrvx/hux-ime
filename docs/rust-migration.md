@@ -19,7 +19,8 @@ hux-ime（虎虚）：虎句（`tiger_sentence`）输入方案的 fcitx5 原生 
 | K4 | 验收与打包 | 进行中：验收随开发持续进行；打包与下述遗留待做 |
 
 遗留（后续）：
-- **打包**：PKGBUILD（AUR `fcitx5-hux`）与随包数据安装（`/usr/share/fcitx5/hux/`，CMake 默认装）；
+- **打包**：PKGBUILD（AUR `fcitx5-hux`）待做；随包数据安装到 `/usr/share/fcitx5/hux/`
+  （CMake 只装插件与 conf，数据由 [`../install.sh`](../install.sh) 安装）；
   模型不随包（文档 + 安装提示指向上游 model release）。
 
 已收口（设计取舍，不实现）：**`Ctrl+Delete` 删除候选**——参照无删除通道，本实现仅消费该键
@@ -35,16 +36,25 @@ crates/hux-core/         # 纯逻辑，无 fcitx5 依赖
   cache.rs  ngram.rs                     # K0：缓存、TCSKNM02 模型读取
   lexicon.rs  decode.rs  learning.rs     # K1：码表、beam 解码、Tab 学习
   lexical.rs                             # K1.5：紧凑词先验 TCSLEX01
-  key.rs  key_table.rs  session.rs  interaction.rs  host.rs   # K2：键事件、会话、交互层、宿主链
+  key.rs  key_table.rs  session.rs  host.rs   # K2：键事件、会话、宿主链
+  interaction.rs  interaction/           # K2：交互层根 + 子模块（keys/state/early_commit/
+                                         #     select/translate/learning_glue/processor/tests）
   sound_to_char_shape.rs  char_to_sound_shape.rs  # 反查：音反查、字反查
-crates/hux-addon/        # K3：C++ 薄壳（shell/）+ Rust FFI（src/）→ core
+crates/hux-cfg/          # hux 自身可配置项：设置与默认值、选项存储与合并顺序
+crates/hux-ffi/          # C ABI 契约：C 布局类型 + include/hux_abi.h（桌面 / Android 共用）
+crates/hux-scheme/       # 方案区：tiger/ 待 P4 迁入（yuhao/wubi/shuangpin/quanpin 仅 README）
+platform/fcitx5/         # K3：C++ 薄壳（shell/hux.cpp）+ Rust 组装（engine/session/ui/
+                         #     paths/learning_store/abi，导出 C ABI）
+platform/linux/          # 桌面：构建 / 安装（脚本入口在仓库根；打包待做）
+platform/android/        # Android：fcitx5-android 插件接线（待启动，见 android.md）
 data/                    # 随包数据源
 goldens/                 # 差分金样与夹具
 tools/                   # 金样生成器（generators/）、探针与基准（probes/）、探针用例（cases/）
 docs/                    # 本文档、词先验署名
 ```
 
-依赖方向：`addon → core`；core 不依赖 fcitx5、不依赖 Lua。
+依赖方向：`platform/* → hux-ffi / hux-cfg / hux-core`，`hux-scheme/* → hux-core`；
+内核不依赖方案与平台、不依赖 fcitx5、不依赖 Lua。目标结构与「结构正义」规则见 [`refactor.md`](refactor.md)。
 
 ## 3. 模块映射（参照 → Rust）
 
@@ -55,15 +65,18 @@ docs/                    # 本文档、词先验署名
 | `lua/tiger_sentence.lua`（词库/解码/证据） | `lexicon.rs` + `decode.rs` | 数据索引 + 解码/证据/学习快照 |
 | `lua/tiger_sentence_learning.lua` | `learning.rs` | 检查重放 + learning 金样 |
 | `lua/tiger_sentence_lexical.lua` | `lexical.rs`（TCSLEX01） | 词先验金样 |
-| `lua/tiger_sentence.lua`（processor/translator/filter/选项） | `key.rs` + `session.rs` + `interaction.rs` | 键序列金样 |
+| `lua/tiger_sentence.lua`（processor/translator/filter/选项） | `key.rs` + `session.rs` + `interaction.rs`（+ `interaction/`） | 键序列金样 |
 | librime `key_event`/`key_table` | `key.rs` + `key_table.rs`（由源码生成） | 键金样（真 librime 探针） |
 | librime `reverse_lookup_translator` | `sound_to_char_shape.rs`（TCSRV01） | 音反查金样 |
 | librime 宿主链 | `host.rs`（含 `punct.rs`） | 键序列金样 |
 
 ## 4. 数据与目录
 
-- 用户目录 `~/.local/share/fcitx5/hux`，共享目录 `/usr/share/fcitx5/hux`；
-  开发可用 `HUX_DATA_DIRS`（冒号分隔）与 `HUX_MODEL` 覆盖。
+- 目录解析在平台层（`platform/fcitx5/src/paths.rs`；内核不读环境变量）：
+  只读目录 `HUX_DATA_DIRS`（覆盖）> `$XDG_DATA_HOME/fcitx5/hux`（缺省 `~/.local/share/fcitx5/hux`）
+  > `$XDG_DATA_DIRS/*/fcitx5/hux`（缺省 `/usr/local/share`、`/usr/share`）；
+  可写数据（选项 / 学习库 / 模型）落用户目录；开发可用 `HUX_DATA_DIRS`（冒号分隔）
+  与 `HUX_MODEL` 覆盖。
 - 运行数据：码表四件套（`tiger_sentence.{codes,char_ranks,full_code_whitelist,supplement}.txt`）、
   `models/sentence-ngram-mobile.bin`（TCSKNM02）、`symbols.yaml`、词先验（TCSLEX01）、音反查索引（TCSRV01）、
   `tiger_sentence.options.yaml`、学习库 `<hash>.userdb/`（LevelDB 同构）。
@@ -92,7 +105,7 @@ docs/                    # 本文档、词先验署名
 
 - **英文模式不实现**（设计取舍）：英文输入交由 fcitx5 切换输入法；大写字母经 `char_handler` 直通（先提交组合）。
 - **提交与按键顺序**：可打印字符的 `char_handler` 在核心语义为「提交组合 + 不消费」（同 librime）；宿主层
-  （addon）据此消费该键并以 `forwardKey` 重发，保证客户端先收到提交、后收到按键
+  （`platform/fcitx5`）据此消费该键并以 `forwardKey` 重发，保证客户端先收到提交、后收到按键
   （与 fcitx5 核心 `KeyEventOrderFix` 修法一致）。**例外**：布局转换键（核心 `KeyEvent::forward()`，
   如系统 colemak + 方案 `Layout=us`）不自行转发，交回核心在 `ReservedLast` 提交转换后的字符——
   否则客户端会按系统布局重新解释该键。
@@ -103,7 +116,7 @@ docs/                    # 本文档、词先验署名
 - **反查**：音反查（`sound_to_char_shape.rs`）语义对齐 librime 词典反查——拼写缩写罚 `log 0.5`、全拼可达时
   缩写路径剪枝、补全罚 `log 0.05`、排序 = 可信度 + `ln(权重)`、上限 20；字反查（`char_to_sound_shape.rs`）
   取光标左侧 1 字，上排拼音（排头「咅」）、下排虎码（排头「虍」）。两者触发键可配置，**仅单字符触发键**
-  给默认可上屏候选。详见 [`../crates/hux-addon/README.md`](../crates/hux-addon/README.md)。
+  给默认可上屏候选。详见 [`../platform/fcitx5/README.md`](../platform/fcitx5/README.md)。
 - **候选点击**：面板候选为自定义 `CandidateWord`，点击经 `hux_engine_select_candidate` 按全局索引
   选中并上屏（与空格同一条确认/学习链）。
 - **学习**：提交点通知器（参照 `Context::Commit` 的 `commit_notifier`）内建于核心路径

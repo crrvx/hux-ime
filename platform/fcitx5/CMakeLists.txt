@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 cmake_minimum_required(VERSION 3.20)
-project(hux-addon VERSION 0.1.0 LANGUAGES CXX)
+project(hux-platform-fcitx5 VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -19,17 +19,18 @@ else()
 endif()
 set(HUX_WORKSPACE "${CMAKE_CURRENT_SOURCE_DIR}/../..")
 set(HUX_RUST_LIB
-    "${HUX_WORKSPACE}/target/${HUX_CARGO_PROFILE}/libhux_addon.a")
+    "${HUX_WORKSPACE}/target/${HUX_CARGO_PROFILE}/libhux_platform_fcitx5.a")
 add_custom_target(hux-rust ALL
-    COMMAND cargo build -p hux-addon ${HUX_CARGO_FLAGS}
+    COMMAND cargo build -p hux-platform-fcitx5 ${HUX_CARGO_FLAGS}
     WORKING_DIRECTORY "${HUX_WORKSPACE}"
-    COMMENT "cargo build -p hux-addon (${HUX_CARGO_PROFILE})"
+    COMMENT "cargo build -p hux-platform-fcitx5 (${HUX_CARGO_PROFILE})"
     VERBATIM)
 
-add_library(hux SHARED shell/hux.cpp
-    shell/hux_abi.h)
+add_library(hux SHARED shell/hux.cpp)
 add_dependencies(hux hux-rust)
-target_include_directories(hux PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/shell")
+target_include_directories(hux PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/shell"
+    "${HUX_WORKSPACE}/crates/hux-ffi/include")
 target_link_libraries(hux PRIVATE Fcitx5::Core "${HUX_RUST_LIB}" dl pthread m)
 set_target_properties(hux PROPERTIES OUTPUT_NAME "hux")
 

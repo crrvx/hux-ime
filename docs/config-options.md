@@ -36,7 +36,8 @@ A 组四项（候选排列、预编辑内容、翻页循环、最短保留码数
 - **成本/风险**：中 / 中。
 
 ### B4 码表 / 标点表自定义
-- **现状**：**用户目录同名文件覆盖已可用**（`<user>/fcitx5/hux/` 放 `tiger_sentence.*.txt` 或 `symbols.yaml` 即生效），无需代码。
+- **现状**：**用户目录同名文件覆盖已可用**（`$XDG_DATA_HOME/fcitx5/hux/`，缺省 `~/.local/share/fcitx5/hux/`，
+  放 `tiger_sentence.*.txt` 或 `symbols.yaml` 即生效），无需代码。
 - **路线**：先补文档（`usage.md` / `data/README.md`）；若需 UI 指定路径（`String` 项 + 重启）再排期。
 - **成本**：文档 = 小；UI = 中。
 

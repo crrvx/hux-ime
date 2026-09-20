@@ -8,8 +8,8 @@
 
 ## 1. 结构正义（硬规则）
 
-1. **依赖单向**：`platform/* → hux-ffi → hux-core → hux-cfg`；`hux-scheme/* → hux-core`。
-   内核不依赖任何方案、不依赖任何平台。
+1. **依赖单向**：`platform/*` 依赖 `hux-ffi` / `hux-cfg` / `hux-core`；`hux-cfg → hux-core`；
+   `hux-scheme/* → hux-core`；内核不依赖任何方案、不依赖任何平台。
 2. **core 零平台**：不得出现 `std::env`、XDG / 绝对数据路径、`SystemTime::now`、`eprintln!`、
    平台文件 API；路径 / 时钟 / 日志由平台构造并注入（`Paths` / `Clock` / `Log`）。
 3. **职责归位**：只读数据（码表 / 模型 / 索引）属方案；可写数据（选项 / 学习库）属 `hux-cfg` 与平台存储实现；
@@ -41,29 +41,47 @@ platform/                     # 平台适配
 平台层分工：`platform/fcitx5` 是**共用适配**（两端都是 fcitx5，环境变量与路径解析同一套）；
 `platform/linux`、`platform/android` 只管各自的**构建与分发**。
 
-## 3. 现 → 新 迁移映射
+> **现状（P3 后）**：`crates/hux-cfg`、`crates/hux-ffi`、`platform/fcitx5`、`platform/linux` 均已落地，
+> 骨架 README 已建；`crates/hux-scheme/tiger/` **尚未落地**——虎码模块仍在 `crates/hux-core`，P4 迁入。
+
+## 3. 迁移映射
 
 | 现位置 | 去向 |
 | --- | --- |
 | `hux-core` 通用部分（key / session / punct / 处理器骨架 / host / 学习机制 / cache） | `crates/hux-core` |
-| `hux-core` 方案部分（lexicon / decode / lexical / ngram / sound_to_char_shape / char_to_sound_shape / 虎码规则） | `crates/hux-scheme/tiger` |
+| `hux-core` 方案部分（lexicon / decode / lexical / ngram / sound_to_char_shape / char_to_sound_shape / 虎码规则） | `crates/hux-scheme/tiger`（**P4 待做**） |
 | `hux-addon/src/settings.rs`、`options.rs` | `crates/hux-cfg` |
 | `hux-addon` 的 C ABI 段 | `crates/hux-ffi` |
 | `hux-addon` 的 Engine / Session / UI 快照 / 存储实现（learning_store） | `platform/fcitx5`（Rust crate） |
 | `crates/hux-addon/shell`（C++ 壳）与 `CMakeLists.txt` | `platform/fcitx5`（C++）+ `platform/linux`（构建） |
-| 根目录 `install.sh` / `uninstall.sh` | `platform/linux`（P3 时决定是否移动） |
+| 根目录 `install.sh` / `uninstall.sh` | **保留在仓库根**（P3 结论：脚本即构建入口，不移入 `platform/linux`） |
 
 ## 4. 批次
 
 | 批 | 内容 | 验收 |
 | --- | --- | --- |
 | P0 | 本文档 | 评审通过 |
-| P1 | 机械解耦：`hux-addon` 拆模块、`interaction.rs` 拆目录 | 行为 / API 不变；255 用例 + 金样全绿 |
+| P1 | 机械解耦：`hux-addon` 拆模块、`interaction.rs` 拆目录 | 行为 / API 不变；用例 + 金样全绿 |
 | P2 | 平台注入 `Paths` / `Clock` / `Log`，清 core 的 env / XDG 硬编码 | 同一批验收；桌面与 Android 路径均由平台构造 |
-| P3 | 拆 crate 与 `platform/` 目录；init 骨架 README | workspace 编译通过；金样全绿 |
-| P4 | `hux_core::scheme` 最小契约 + 虎码 profile | 契约落地；不实现新方案 |
-| P5 | 测试正式化：`hux-test-support`（克制版）+ 单元 / 集成分离 + CI 分层 | CI 全绿 |
+| P3 | 拆 crate 与 `platform/`：`hux-cfg`、`hux-ffi`、`platform/fcitx5`、`platform/linux` + 骨架 README | workspace 编译通过；金样全绿 |
+| P4 | `hux_core::scheme` 最小契约；`hux-scheme/tiger` 物理拆分 + 虎码 profile | 契约落地；不实现新方案 |
+| P5 | 测试正式化：`hux-test-support`（收编 `tests/common/mod.rs`）+ 单元 / 集成分离 + CI 分层 | CI 全绿 |
 | P6 | 性能（按需）：新建 `hux-bench`、增量解码缓存等 | 金样不变 + 有对比数据 |
+
+> 进度：P0 ✅ → P1 ✅（`hux-addon` 拆模块、`interaction` 拆目录）→ P2 ✅（平台注入，core 去环境耦合）→
+> P3 ✅（`hux-cfg` / `hux-ffi` / `platform/fcitx5` / `platform/linux` + 骨架 README）；P4 起待做。
+>
+> 当前基线：`cargo test` 258 用例全绿（core 182 / cfg 18 / platform-fcitx5 58），
+> `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`reuse lint` 均干净。
+
+> **P4 开工提示**（`hux-scheme/tiger` 物理拆分）：
+> 1. 先定 `hux_core::scheme` 最小契约（内核必须回调的动作：数据资产 / `translate` / 证据 / 学习策略 / 按键策略），
+>    不把虎码特有语义（缓冲态、锁、早提交启发式）泛化进契约；
+> 2. 迁入 `crates/hux-scheme/tiger`：`decode` / `lexicon` / `lexical` / `ngram` / `sound_to_char_shape` /
+>    `char_to_sound_shape`，以及交互中的虎码策略（`early_commit` 等，边界按契约定）；
+> 3. 平台装配（`platform/fcitx5/src/engine.rs`）改为经契约注入 tiger；
+> 4. 全程金样 + 用例守护（`cargo test`、`reuse lint`、C++ 链接）。
+> 方向约束：`hux-scheme/* → hux-core`，内核不 import 任何方案（可加 CI 校验）。
 
 ## 5. 方案契约（`hux_core::scheme`）
 
@@ -74,25 +92,33 @@ platform/                     # 平台适配
   **不把虎码特有语义**（缓冲态、锁、早提交启发式）泛化进契约——先留在 `tiger` profile，
   等第二个同族方案落地后再抽象。
 - 形码族（虎码 / 宇浩 / 五笔）优先；拼音族（双拼 / 全拼）只留接口。
-- **内核不 import 任何 `hux-scheme/*`**（CI 校验）。
+- **内核不 import 任何 `hux-scheme/*`**（校验方式见 §7）。
 
 ## 6. 测试与性能
 
 - 单元测试随模块；集成 / 差分测试独立 `tests/`；金样只读，持续作为行为 oracle。
-- `hux-test-support`（P5，视需要）：只放金样 / 夹具路径定位、临时目录、`TestEngine` 包装与少量断言助手；
-  若超过约 200 行或开始承载业务逻辑，立即停手、退回各 crate 内 `#[cfg(test)]` 助手。
+- `hux-test-support`（P5，**已定**）：承载各集成测试的共享助手，**收编 `crates/hux-core/tests/common/mod.rs`**
+  （消除全仓最后的 `mod.rs`，见 `AGENTS.md`「代码约定」）；只放金样 / 夹具路径定位、临时目录、
+  `TestEngine` 包装与少量断言助手；若超过约 200 行或开始承载业务逻辑，立即停手、退回各 crate 内
+  `#[cfg(test)]` 助手。
 - `hux-bench` **延后**（P6 按需新建，或各 crate `benches/`）；临时量数据可用 `--release` example。
 - 优化只允许「金样不变」的改动，且须有前后对比数据。
+- CI 现状：`rust` 作业（fmt / clippy / `cargo test -p hux-core` 全部差分 / core 平台痕迹 /
+  数据溯源）+ `addon` 作业（cmake configure 与构建链接、`hux_abi.h` ↔ `libhux.so` 符号一致、
+  `DESTDIR` 安装布局）+ 金样重生成比对；
+  **待补**：`hux-cfg` 与 `platform/fcitx5` 的单测尚未入 CI（P5 分层时补）、`cargo tree` 依赖校验。
 
-## 7. 依赖校验（拟入 CI）
+## 7. 依赖校验
 
-- `crates/hux-core` 源码不得出现 `std::env` / `SystemTime` / `eprintln!` / `/usr/share` 等平台痕迹（脚本检查）；
-- `cargo tree` 校验：`hux-core` 不依赖 `hux-scheme/*` 与 `platform/*`；`hux-scheme/*` 不依赖 `platform/*`；
+- ✅ 已入 CI（`.github/workflows/ci.yml` 的 Core platform-clean）：`crates/hux-core` 源码不得出现
+  环境变量读取 / `SystemTime` / `/usr/share` / `eprintln!` / `println!` 等平台痕迹；
+- 待做（P4 起才有对象）：`cargo tree` 校验 `hux-core` 不依赖 `hux-scheme/*` 与 `platform/*`；
+  `hux-scheme/*` 不依赖 `platform/*`；
 - 后续可选 `cargo-deny`。
 
-## 8. 未做（骨架）
+## 8. 骨架（已落地）
 
-- 方案骨架：`crates/hux-scheme/{yuhao,wubi,shuangpin,quanpin}/README.md`；
+- 方案骨架：`crates/hux-scheme/{yuhao,wubi,shuangpin,quanpin}/README.md`（+ `crates/hux-scheme/README.md`）；
 - 平台骨架：`platform/{windows,macos,ios}/README.md`。
 
 每个骨架 README 写明：目标、与 tiger / fcitx5 的差异、数据与 API 需求、依赖方向；

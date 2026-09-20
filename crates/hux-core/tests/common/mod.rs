@@ -4,6 +4,7 @@
 //! 差分测试共用工具。
 //!
 //! cargo 约定：`tests/` 子目录不构成独立测试目标；各测试文件以 `mod common;` 引入。
+//! P5 由 `hux-test-support` crate 承载（见 `docs/refactor.md` §6），届时本文件移除。
 #![allow(dead_code)] // 各测试二进制只使用其中一部分
 
 use flate2::read::GzDecoder;

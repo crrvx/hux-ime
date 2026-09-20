@@ -182,13 +182,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "hux-addon"
+name = "hux-cfg"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "hashbrown 0.15.5",
  "hux-core",
- "rusty-leveldb",
  "yaml-rust2",
 ]
 
@@ -201,6 +200,20 @@ dependencies = [
  "hashbrown 0.15.5",
  "memmap2",
  "yaml-rust2",
+]
+
+[[package]]
+name = "hux-ffi"
+version = "0.1.0"
+
+[[package]]
+name = "hux-platform-fcitx5"
+version = "0.1.0"
+dependencies = [
+ "hux-cfg",
+ "hux-core",
+ "hux-ffi",
+ "rusty-leveldb",
 ]
 
 [[package]]

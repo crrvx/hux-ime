@@ -54,7 +54,7 @@ EOF
 done
 
 echo "[1/4] 构建 addon（cargo + cmake，首次较慢）……"
-run cmake -S crates/hux-addon -B build/addon \
+run cmake -S platform/fcitx5 -B build/addon \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=/usr
 run cmake --build build/addon -j "$(nproc)"

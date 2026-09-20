@@ -3,7 +3,7 @@
 
 /*
  * hux-ime（虎虚）fcitx5 addon 的 C ABI（Rust 侧实现，C++ 薄壳调用）。
- * 头文件与 `crates/hux-addon/src/lib.rs` 的导出符号一一对应。
+ * 布局定义见 `crates/hux-ffi/src/lib.rs`（类型）与 `platform/fcitx5/src/abi.rs`（导出函数）。
  */
 #ifndef HUX_ABI_H_
 #define HUX_ABI_H_

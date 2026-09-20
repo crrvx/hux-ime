@@ -2,20 +2,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 [package]
-name = "hux-addon"
+name = "hux-cfg"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "虎虚（hux-ime）fcitx5 addon：虎句方案 C ABI 与宿主适配（K3）"
-
-[lib]
-# 静态库：由 C++ 薄壳（shell/hux.cpp）链入 addon .so。
-crate-type = ["staticlib"]
+description = "虎虚（hux-ime）配置：设置项、选项存储与合并顺序"
 
 [dependencies]
 anyhow.workspace = true
 hashbrown.workspace = true
-rusty-leveldb = "4.0.1"
 hux-core = { path = "../hux-core" }
 yaml-rust2.workspace = true
