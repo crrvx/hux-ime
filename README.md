@@ -69,16 +69,17 @@ n-gram 模型不随包，能明显提升整句质量： \
 
 ## 文档
 
-| 文档                                                       | 内容                                             |
-| ---------------------------------------------------------- | ------------------------------------------------ |
-| [`docs/usage.md`](docs/usage.md)                           | 开发 / 安装 / 使用 / 卸载                        |
-| [`docs/config.md`](docs/config.md)                         | 配置项：行为 / 快捷键 / 选项与学习存储           |
-| [`docs/rust-migration.md`](docs/rust-migration.md)         | 设计：路线与状态、模块映射、数据、集成要点       |
-| [`docs/config-options.md`](docs/config-options.md)         | 待定：可配置项扩展（B/C 组记录）                 |
-| [`docs/android.md`](docs/android.md)                       | 计划：fcitx5-android 插件适配                    |
-| [`crates/hux-addon/README.md`](crates/hux-addon/README.md) | addon 实现：分工、按键语义、反查机制、已知限制   |
-| [`goldens/README.md`](goldens/README.md)                   | 差分金样：清单、来源、复现命令                   |
-| [`data/README.md`](data/README.md)                         | 随包数据说明                                     |
+| 文档                                                       | 内容                                                |
+| ---------------------------------------------------------- | --------------------------------------------------- |
+| [`docs/usage.md`](docs/usage.md)                           | 指南：开发 / 安装 / 使用 / 卸载                     |
+| [`docs/config.md`](docs/config.md)                         | 配置项：行为 / 快捷键 / 选项与学习存储              |
+| [`docs/rust-migration.md`](docs/rust-migration.md)         | 设计：路线与状态、模块映射、数据、集成要点          |
+| [`docs/refactor.md`](docs/refactor.md)                     | 计划：核心引擎化 / 平台无关 / 码表无关 / 测试正式化 |
+| [`docs/android.md`](docs/android.md)                       | 计划：fcitx5-android 插件适配                       |
+| [`docs/config-options.md`](docs/config-options.md)         | 待定：可配置项扩展（B/C 组记录）                    |
+| [`crates/hux-addon/README.md`](crates/hux-addon/README.md) | addon 实现：分工、按键语义、反查机制、已知限制      |
+| [`goldens/README.md`](goldens/README.md)                   | 差分金样：清单、来源、复现命令                      |
+| [`data/README.md`](data/README.md)                         | 随包数据说明                                        |
 
 ## 虎码信息汇总
 
