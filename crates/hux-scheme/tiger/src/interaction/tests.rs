@@ -235,6 +235,50 @@ fn common_text_prefix_returns_shared_prefix() {
     assert_eq!(common_text_prefix("甲", "乙"), "");
 }
 
+/// 参照 `d30867a`：竞争切分前瞻的三条向量取自上游
+/// `tools/test_tiger_sentence_incremental.lua`（真实码表：`nv`=有、`nvt`=郁、`tah`=衅、`ahx`=闷）。
+/// 用入库码表夹具（`goldens/lexicon`）加载，等价于参照的 `lexicon_state.codes`。
+#[test]
+fn competing_boundary_end_aligns_competing_paths_by_text_elements() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../goldens/lexicon");
+    // `high_freq_limit` 只影响码表条目过滤，不改变 `codes` 键；用 0 保留全部条目。
+    let lexicon = Lexicon::load(std::slice::from_ref(&dir), 0);
+    let texts = |code: &str| {
+        lexicon.codes.get(code).map(|entries| {
+            entries
+                .iter()
+                .map(|entry| entry.text.clone())
+                .collect::<Vec<_>>()
+        })
+    };
+    assert_eq!(texts("nv"), Some(vec!["有".to_string()]));
+    assert_eq!(texts("nvt"), Some(vec!["郁".to_string()]));
+    assert_eq!(texts("tah"), Some(vec!["衅".to_string()]));
+    assert_eq!(texts("ahx"), Some(vec!["闷".to_string()]));
+    // `nv` 提交「有」（1 字素）时必须等到 `nvt`（1 字素）⇒ 边界前移到 7。
+    assert_eq!(
+        competing_boundary_end(b"jreynvtah", &lexicon, 4, 6, 1),
+        7,
+        "aligned retention missed nv | nvt competition"
+    );
+    // `nv|tah` 已输出两个字素，不得拖延一字提交。
+    assert_eq!(
+        competing_boundary_end(b"jreynvtahx", &lexicon, 4, 7, 1),
+        7,
+        "second output element incorrectly delayed a one-element boundary"
+    );
+    // 两字素保留：`nv|tah` 对 `nvt|ahx` ⇒ 边界前移到 10。
+    assert_eq!(
+        competing_boundary_end(b"jreynvtahx", &lexicon, 4, 9, 2),
+        10,
+        "two-element retention missed nv|tah versus nvt|ahx"
+    );
+    // 参数非法一律原样返回（参照的三条前置守卫；不触碰码表）。
+    assert_eq!(competing_boundary_end(b"jreynvtah", &lexicon, 4, 4, 1), 4);
+    assert_eq!(competing_boundary_end(b"jreynvtah", &lexicon, 4, 20, 1), 20);
+    assert_eq!(competing_boundary_end(b"jreynvtah", &lexicon, 4, 6, 0), 6);
+}
+
 #[test]
 fn tracker_better_prefers_chars_share_then_short_boundary() {
     let base = Tracker {
@@ -265,6 +309,7 @@ fn prefix_evidence() -> crate::decode::Evidence {
         text: text.to_string(),
         raw_length: raw,
         share,
+        base_share: share,
         boundary_share: share,
         boundary_closed: share >= 0.99999,
         text_char_count: text.chars().count(),
@@ -316,15 +361,68 @@ fn retain_trackers_drops_missing_or_contradicted() {
     let mut trackers = HashMap::new();
     trackers.insert("keep".to_string(), tracker("甲丙", 0.2));
     trackers.insert("gone".to_string(), tracker("不存在", 0.2));
-    let retained = retain_trackers_without_counting(&trackers, &evidence);
+    let retained = retain_trackers_without_counting(&trackers, &evidence, false);
     assert!(retained.is_empty());
     // gap_count 超过上限（3）应丢弃
     let mut stable = tracker("甲乙", 0.3);
     stable.gap_count = 3;
     let mut map = HashMap::new();
     map.insert("stable".to_string(), stable);
-    let retained = retain_trackers_without_counting(&map, &evidence);
+    let retained = retain_trackers_without_counting(&map, &evidence, false);
     assert!(retained.is_empty(), "gap_count 超过上限应丢弃");
+}
+
+/// 参照 `d30867a` + 上游增量测试：低置信度（`neutral_low_confidence`）的比较型缺口
+/// 只保住 tracker 的**身份**，把成熟度（`evidence_count`/`strong_count`）清零；
+/// 普通比较型缺口保留成熟度（上游 `a low-confidence gap preserved stale maturity` 的反例）。
+#[test]
+fn retain_trackers_resets_maturity_only_for_low_confidence_gaps() {
+    use crate::decode::{Evidence, PrefixEvidence};
+    // 上游 `stale_prefixes`：单条同名前缀（不与 tracker 矛盾），份额 0.99。
+    let stale = Evidence {
+        prefixes: vec![PrefixEvidence {
+            text: "甲乙".to_string(),
+            raw_length: 2,
+            share: 0.99,
+            base_share: 0.99,
+            boundary_share: 0.99,
+            boundary_closed: false,
+            text_char_count: 2,
+        }],
+        by_boundary: [(2usize, [("甲乙".to_string(), 0)].into_iter().collect())]
+            .into_iter()
+            .collect(),
+        proposal: String::new(),
+        proposal_share: 0.0,
+        raw_lengths: Default::default(),
+        neutral_incomplete_tail: false,
+        merged_incomplete_tail: false,
+        neutral_low_confidence: true,
+        confidence_truncated: false,
+    };
+    let mature = || {
+        let mut tracker = tracker("甲乙", 0.99);
+        tracker.raw_length = 2;
+        tracker.evidence_count = 3;
+        tracker.strong_count = 2;
+        tracker.gap_count = 0;
+        tracker
+    };
+    let mut map = HashMap::new();
+    map.insert("mature".to_string(), mature());
+    let kept = retain_trackers_without_counting(&map, &stale, true);
+    let kept = kept.get("mature").expect("低置信度缺口仍保留身份");
+    assert_eq!(kept.gap_count, 1);
+    assert_eq!(kept.evidence_count, 0, "低置信度缺口不得带走成熟度");
+    assert_eq!(kept.strong_count, 0, "强证据计数同样清零");
+    assert_eq!(kept.last_share, 0.99);
+
+    let mut map = HashMap::new();
+    map.insert("mature".to_string(), mature());
+    let kept = retain_trackers_without_counting(&map, &stale, false);
+    let kept = kept.get("mature").expect("普通比较型缺口保留");
+    assert_eq!(kept.evidence_count, 3, "普通比较型缺口保留成熟度");
+    assert_eq!(kept.strong_count, 2);
 }
 
 fn evaluated_candidate() -> Evaluated {
@@ -332,12 +430,16 @@ fn evaluated_candidate() -> Evaluated {
         text: "甲乙".to_string(),
         score: 0.0,
         confidence_score: 0.0,
+        early_commit_confidence_score: 0.0,
         code_score: 0.0,
         lexical_score: 0.0,
         max_rank: 2,
         supplement_score: 0.0,
         learning_score: 0.0,
         edge_count: 1,
+        // 未标记来源（判定上既非 Direct 也非 Composed-only）。
+        source_mask: 0,
+        direct_rank: f64::INFINITY,
         path: 0,
         segmented: String::new(),
         previous_raw_length: 2,
@@ -588,6 +690,9 @@ fn selected_item(text: &str) -> Selected {
         raw_length: 4,
         diff: diff_item(text),
         buffered_fallback: false,
+        // 参照测试的 composed 场景：`source_mask = 2`（composed-only）。
+        source_mask: 2,
+        fusion_ahead: Vec::new(),
     }
 }
 
@@ -607,7 +712,7 @@ fn learning_live(mode: &str) -> LiveLearning {
 
 #[test]
 fn learning_stage_pends_event_with_offsets() {
-    let mode = "sentence-v1|rules=|optimal=1500|dup=1";
+    let mode = "sentence-v2|rules=|optimal=1500|dup=1";
     let baseline = selected_item("交交");
     let selected = selected_item("交疒");
     let state = learning_state();
@@ -630,9 +735,48 @@ fn learning_stage_pends_event_with_offsets() {
     assert!(live.baseline.is_none());
 }
 
+/// 参照 `7b220ce`：删除「稳定确认」增量路线（`learning.reinforce`）——未按 Tab、
+/// 提交项即本菜单首个可见候选时，`learning_stage` 仍走 `diff`，而
+/// `before.text == selected.text` 使 `diff` 恒为空 ⇒ **不再产出学习事件**
+/// （上游 `tools/test_sentence_learning.lua`：`ordinary learned first choice never reinforces`）。
+#[test]
+fn learning_stage_does_not_reinforce_stable_first_choice() {
+    let mode = "m";
+    let selected = selected_item("交疒");
+    let state = learning_state();
+    let mut live = learning_live(mode);
+    learning_stage(
+        &mut live,
+        &state,
+        Some(&selected),
+        b"abab",
+        Some(&selected),
+        100.0,
+    );
+    assert!(
+        live.pending.is_empty(),
+        "首选重复确认不再是纠错事件（等级只由人工纠错推进）"
+    );
+
+    // 提交项与首选不同 → 仍走 diff（人工纠错）。
+    let mut live = learning_live(mode);
+    let baseline = selected_item("交交");
+    learning_stage(
+        &mut live,
+        &state,
+        Some(&selected),
+        b"abab",
+        Some(&baseline),
+        100.0,
+    );
+    assert_eq!(live.pending.len(), 1);
+    assert_eq!(live.pending[0].text, "疒");
+    assert_eq!(live.pending[0].raw_start, 2);
+}
+
 #[test]
 fn learning_submit_accepts_matching_and_drops_mismatch() {
-    let mode = "sentence-v1|rules=|optimal=1500|dup=1";
+    let mode = "sentence-v2|rules=|optimal=1500|dup=1";
     let baseline = selected_item("交交");
     let selected = selected_item("交疒");
     let state = learning_state();
@@ -668,7 +812,7 @@ fn learning_submit_accepts_matching_and_drops_mismatch() {
 
 #[test]
 fn buffered_fallback_produces_no_learning_events() {
-    let mode = "sentence-v1|rules=|optimal=1500|dup=1";
+    let mode = "sentence-v2|rules=|optimal=1500|dup=1";
     let baseline = selected_item("交交");
     let fallback = Selected::buffered("ab", "交");
     let mut state = SentenceState::fresh(1);
@@ -679,14 +823,17 @@ fn buffered_fallback_produces_no_learning_events() {
         baseline: Some(baseline.clone()),
         ..LiveLearning::default()
     };
-    // stage：兜底项不产出事件，baseline 保留（参照 pcall 吞错的有效行为）
+    // stage：兜底项没有来源标记（mask 0），被 composed 门挡下 ⇒ 不产出事件。
+    // 注意 `c69c1a8` 之后门在 `learning.diff` 之前短路，参照函数末尾的
+    // `live.baseline = nil` 因此照常执行（旧版是 diff 报错被 pcall 吞掉，
+    // 于是这一句没跑到、baseline 被保留）。
     learning_stage(&mut live, &state, Some(&fallback), b"ab", None, 100.0);
     assert!(live.pending.is_empty());
-    assert!(live.baseline.is_some());
-    // submit：不消费 pending/baseline
+    assert!(live.baseline.is_none(), "参照末尾无条件清空 baseline");
+    // submit：参照对兜底项无特判；pending 为空 ⇒ 无接受事件，且同样无条件清空 baseline。
     let accepted = learning_submit(&mut live, Some(&fallback), "交", "交");
     assert!(accepted.is_empty());
-    assert!(live.baseline.is_some());
+    assert!(live.baseline.is_none());
 }
 
 fn rebuild(
@@ -976,6 +1123,78 @@ impl Harness {
     }
 }
 
+/// 参照 `d30867a` 的回归场景（上游 `jreynvtahx` 用例）：`nv` 提交「有」时，
+/// 必须把保留量算到竞争切分 `nvt`（郁）的边界上，而不是 tracker 自己的 raw 边界。
+///
+/// 金样覆盖不到该路径（`key_sequence`/`sound_to_char_shape` 的合成夹具里竞争边界
+/// 恒等于 tracker 边界），故这里直接驱动 `try_commit_mature_prefix` 的调用点：
+/// 同一 tracker 在 `jreynvtah`（竞争边界 7 ⇒ 只剩 2 键前瞻）下不得上屏，
+/// 在 `jreynvtahx`（再多 1 键 ⇒ 满足 retain=3）下才上屏。
+#[test]
+fn mature_prefix_waits_for_the_competing_boundary() {
+    let separator = '\u{1f}';
+    let mk_state = || {
+        let mut state = SentenceState::fresh(1);
+        state.committed_raw = "jrey".to_string();
+        state.trackers.insert(
+            format!("有{separator}6"),
+            Tracker {
+                text: "有".to_string(),
+                text_char_count: 1,
+                raw_length: 6,
+                evidence_count: 3,
+                strong_count: 0,
+                gap_count: 0,
+                last_share: 0.995,
+            },
+        );
+        state
+    };
+    // 竞争边界 `nv|tvt`：`jreynvtah` 只给到 7，9-7=2 < retain(3) ⇒ 不上屏。
+    let mut state = mk_state();
+    let mut context = Context::new();
+    let mut dot_armed = false;
+    let mut decoder = lexicon_fixture();
+    let mut live = LiveLearning::default();
+    let mut learning = LearningCommit {
+        decoder: &mut decoder,
+        live: &mut live,
+        now: 0.0,
+    };
+    assert!(!try_commit_mature_prefix(
+        &mut learning,
+        &mut context,
+        &mut state,
+        b"jreynvtah",
+        0,
+        None,
+        &mut dot_armed,
+    ));
+    assert_eq!(state.committed_text, "", "竞争边界未满足前不得提前上屏");
+    // 再多 1 键：10-7=3 ≥ retain ⇒ 上屏「有」并停在竞争边界 `jreynvt`。
+    let mut state = mk_state();
+    let mut context = Context::new();
+    let mut decoder = lexicon_fixture();
+    let mut live = LiveLearning::default();
+    let mut learning = LearningCommit {
+        decoder: &mut decoder,
+        live: &mut live,
+        now: 0.0,
+    };
+    assert!(try_commit_mature_prefix(
+        &mut learning,
+        &mut context,
+        &mut state,
+        b"jreynvtahx",
+        0,
+        None,
+        &mut dot_armed,
+    ));
+    assert_eq!(state.committed_text, "有");
+    // 上屏边界仍是 tracker 自己的 raw 边界（竞争边界只作「是否够前瞻」的闸门）。
+    assert_eq!(state.committed_raw, "jreynv");
+}
+
 #[test]
 fn processor_forwards_release_and_idle_punct() {
     let mut h = Harness::new();
@@ -1027,6 +1246,113 @@ fn processor_escape_clears_composition() {
     assert_eq!(h.press("Escape"), ProcessorResult::Consume);
     assert!(h.context.input().is_empty());
     assert!(h.state.committed_raw.is_empty());
+}
+
+/// 回归（既有缺陷）：Tab 锁确认路径必须**在清 `state.tab_pending` 之前** stage 学习事件。
+///
+/// 参照 `processor` 的 Tab 确认分支顺序是
+/// `learning_stage(env, state, selected, full_before)` → `state.tab_pending = false`；
+/// `learning_stage` 用该标志选基线（`tab_pending and live.baseline or submitted_first`），
+/// 且稳定确认（`reinforce`）路线要求 `!tab_pending`。本仓曾只用分支末尾的提交点补 stage，
+/// 于是基线取成 `submitted_first` 并可能误走 reinforce——金样覆盖不到（探针
+/// `store_ready == false` 使该路径短路），故这里经 `processor` 走端到端。
+#[test]
+fn processor_tab_confirm_stages_against_live_baseline() {
+    let mode = "sentence-v2|rules=|optimal=1500|dup=1";
+    let mut h = Harness::new();
+    h.live.mode = mode.to_string();
+    h.live.store_ready = true;
+    for repr in ["a", "b", "a", "b"] {
+        assert_eq!(h.press(repr), ProcessorResult::Consume);
+    }
+    assert_eq!(h.context.input(), b"abab");
+    // 真实会话里菜单由 translator 建立（交交 / 交疒 = 两条 2 码边，均为 composed-only）。
+    h.push_segment(b"abab", &["交交", "交疒"]);
+    // Tab：写基线（本菜单首个可见候选）并把高亮移到下一项
+    assert_eq!(h.press("Tab"), ProcessorResult::Consume);
+    assert!(h.state.tab_pending);
+    let baseline = h.live.baseline.clone().expect("Tab 按下时应写入基线");
+    assert_eq!(baseline.text, "交交");
+    // 高亮已在第 2 项：此刻按同一解码取到的 selected 就是确认分支将选中的候选。
+    let selection = learning_selection(&mut h.decoder, &h.context, &h.state).expect("selection");
+    let selected = selection.selected.clone().expect("第 2 个候选");
+    assert_eq!(selected.text, "交疒");
+    let expected = learning::diff(
+        b"abab",
+        Some(&baseline.diff),
+        Some(&selected.diff),
+        0,
+        mode,
+        0.0,
+    );
+    assert_eq!(expected.len(), 1, "夹具前提：交交 / 交疒 仅末段不同");
+    // 字母确认走 Tab 确认分支（候选 raw 长度超过已确认前缀）
+    assert_eq!(h.press("c"), ProcessorResult::Consume);
+    assert!(!h.state.tab_pending);
+    assert!(
+        h.live.baseline.is_none(),
+        "stage 必须已按 tab_pending 分支消费基线"
+    );
+    // 早提交选项关闭 ⇒ 不触发提交点通知器：pending 只能来自 Tab 分支里的 stage。
+    assert_eq!(h.live.pending.len(), expected.len());
+    for (got, want) in h.live.pending.iter().zip(expected.iter()) {
+        assert_eq!(got, want);
+    }
+    // 融合事件不参与：DiffEvent 的模式仍是实时模式，而非 `fusion-v1|…`。
+    assert_eq!(h.live.pending[0].mode, mode);
+}
+
+/// 参照 `abad411`：**菜单可见**（不要求缓冲态）时遇可打印 ASCII 标点，必须先按当前选中项
+/// stage 学习、确认组合（`_auto_commit` 下即上屏），再把原键交标点表。
+///
+/// 参照依据（提交信息）：标点段一旦被 punctuator 追加进组合，`learning_selection` 就再也
+/// 解不出该输入（如 `zhhbi,`）或取不回句子的选中项；故判据由 `state.buffered_text ~= ""`
+/// 改为 `context:has_menu()`。金样覆盖不到该学习路径（探针 `store_ready == false` 短路），
+/// 故这里经 `processor` 端到端钉住：本用例的 `buffered_text` 为空，旧判据**不**成立。
+#[test]
+fn processor_menu_punctuation_stages_learning_before_the_punctuator() {
+    let mode = "sentence-v2|rules=|optimal=1500|dup=1";
+    let mut h = Harness::new();
+    h.context.set_option("_auto_commit", true);
+    h.live.mode = mode.to_string();
+    h.live.store_ready = true;
+    for repr in ["a", "b", "a", "b"] {
+        assert_eq!(h.press(repr), ProcessorResult::Consume);
+    }
+    // 真实会话里菜单由 translator 建立（交交 / 交疒 = 两条 2 码边，均为 composed-only）。
+    h.push_segment(b"abab", &["交交", "交疒"]);
+    assert!(h.state.buffered_text.is_empty(), "旧判据在此不成立");
+    h.context.highlight(1); // 人工纠错：选中第二项
+    let selection = learning_selection(&mut h.decoder, &h.context, &h.state).expect("selection");
+    let selected = selection.selected.clone().expect("第 2 个候选");
+    let first = selection.first.clone().expect("首个候选");
+    let expected = learning::diff(
+        b"abab",
+        Some(&first.diff),
+        Some(&selected.diff),
+        0,
+        mode,
+        0.0,
+    );
+    assert_eq!(expected.len(), 1, "夹具前提：交交 / 交疒 仅末段不同");
+    // 逗号：确认组合（上屏「交疒」）后原键仍交标点表。
+    assert_eq!(h.press("comma"), ProcessorResult::Forward);
+    assert!(h.context.input().is_empty());
+    assert_eq!(h.context.last_commit_text(), "交疒");
+    assert!(h.live.pending.is_empty(), "提交点已消费 pending");
+    assert_eq!(
+        h.live.submitted.len(),
+        expected.len(),
+        "标点路径的纠错必须落学习"
+    );
+    for (got, want) in h.live.submitted.iter().zip(expected.iter()) {
+        assert_eq!(got.time, want.time);
+        assert_eq!(got.mode, want.mode);
+        assert_eq!(got.code, want.code);
+        assert_eq!(got.text, want.text);
+        assert_eq!(got.context, want.context);
+    }
+    assert_eq!(h.live.submitted[0].mode, mode);
 }
 
 #[test]

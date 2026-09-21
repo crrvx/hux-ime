@@ -14,7 +14,14 @@
 --   index <name> <kind:full|runtime> <now> <corpus>
 --   confirmed <index> <base-corpus> <accepted-corpus> <now>    # 经 M.open/M.confirm 的更新路径
 --   codes <index> <n> <hex code>...
---   score / prefix / update / trim / chain / node / reward / diffcase / diffpath / diff / diffevent
+--   score / prefix / update / trim / chain / node / reward / maturity / contribution
+--   diffcase / diffpath / diff / diffevent
+--   fusionmode <hex mode> <hex out>                      # M.fusion_mode
+--   paircode <hex raw> <hex direct> <hex composed> <hex code>   # M.fusion_pair_code
+--   fusion <index> <hex mode> <hex raw> <hex direct> <hex composed> <bits score>
+--   fusionnone <hex mode> <hex raw> <hex direct> <hex composed> <0|1> <raw_end>
+--   fusionevent <hex mode> <hex raw> <hex direct> <hex composed> <0|1> <raw_end> <time>
+--               <hex out-mode> <hex code> <hex text> <hex ctx> <raw_start> <text_start> <text_end>
 
 local function parse_args(argv)
     local opts = {}
@@ -115,6 +122,14 @@ local corpora = {
         ev(8000, "m5", "z", "壬", ""),
     },
 }
+-- 人工纠错等级（7b220ce）：同一 (code, mode, context) 连记 12 次 ⇒ 等级在第 10 级封顶
+-- （同上下文 27 / 跨上下文 24，而非 12 级的 31 / 28）；另一上下文组只有 1 次 ⇒ L1（9 / 6），
+-- 用于反证「等级按 (mode, context) 组独立累计」。
+corpora.levels = {}
+for i = 1, 12 do
+    corpora.levels[#corpora.levels + 1] = ev(1000 + i, "m1", "lv", "甲", "")
+end
+corpora.levels[#corpora.levels + 1] = ev(2000, "m1", "lv", "乙", "乙")
 local function sorted_keys(table_)
     local keys = {}
     for key in pairs(table_) do keys[#keys + 1] = key end
@@ -148,6 +163,22 @@ local function build_named(name, corpus_name, events, kind, now)
 end
 build_named("full_base", "base", corpora.base, "full", NOW)
 build_named("runtime_base", "base", corpora.base, "runtime", NOW)
+
+-- 等级语义：full/runtime 两条路径 + 「时间推后 10 年分值不变」（无衰减）。
+build_named("levels_full", "levels", corpora.levels, "full", NOW)
+build_named("levels_runtime", "levels", corpora.levels, "runtime", NOW)
+build_named("levels_aged", "levels", corpora.levels, "full", NOW + 3650 * 86400)
+for _, name in ipairs({ "levels_full", "levels_runtime", "levels_aged" }) do
+    local index = indexes[name]
+    for _, text in ipairs({ "甲", "乙" }) do
+        for _, ctx in ipairs({ "", "乙", "丙" }) do
+            emit("score", name, hex("m1"), hex("lv"), hex(text), hex(ctx),
+                bits(learning.score(index, "m1", "lv", text, ctx)))
+            emit("prefix", name, hex("m1"), hex("lv"), hex(text), hex(ctx),
+                bits(learning.prefix_score(index, "m1", "lv", text, ctx)))
+        end
+    end
+end
 
 local query_codes = { "a", "ab", "abc", "b", "z", "abcd", "" }
 local query_modes = { "m1", "m2", "m3", "m9", "" }
@@ -238,11 +269,15 @@ emit_queries("runtime_base")
 local chains = {
     root = { text = "", text_length = 0, raw_length = 0, learning_score = 0 },
     one = { text = "甲乙", text_length = 6, raw_length = 4, learning_score = 2.5,
+        learning_early_commit_bonus = 0.2,
         previous = { text = "甲", text_length = 3, raw_length = 2, learning_score = 1.0,
-            previous = { text = "", text_length = 0, raw_length = 0, learning_score = 0 } } },
+            learning_early_commit_bonus = 0.1,
+            previous = { text = "", text_length = 0, raw_length = 0, learning_score = 0,
+                learning_early_commit_bonus = 0.0 } } },
     compat = { text = "甲乙", text_length = 6, raw_length = 4, learning_score = 0.5,
         previous = { text = "甲", text_length = 99, raw_length = 2, learning_score = 0.25 } },
     sleep = { text = "甲乙丙", text_length = 9, raw_length = 6, learning_score = 0,
+        learning_early_commit_bonus = 0.5,
         previous = { text = "甲乙", text_length = 6, raw_length = 4, learning_score = 0,
             previous = { text = "甲", text_length = 3, raw_length = 2, learning_score = 0 } } },
 }
@@ -255,7 +290,8 @@ local function emit_chain(name, node)
     emit("chain", name, tostring(#nodes))
     for _, item in ipairs(nodes) do
         emit("node", tostring(item.text_length), tostring(item.raw_length),
-            bits(item.learning_score), hex(item.text))
+            bits(item.learning_score),
+            bits(item.learning_early_commit_bonus or 0), hex(item.text))
     end
 end
 for _, name in ipairs(sorted_keys(chains)) do emit_chain(name, chains[name]) end
@@ -268,12 +304,24 @@ local reward_cases = {
     { "full_base", "one", "", "ab", "甲乙", 2 },
     { "runtime_base", "one", "m1", "ab", "甲乙", 2 },
     { "runtime_confirmed", "sleep", "m2", "abc", "甲乙丙", 4 },
+    -- 奖励分 > 9（首次稳定观测）：触发 early_commit_contribution 的正贡献，
+    -- 并与种子节点的 learning_early_commit_bonus 取较大者。
+    { "runtime_future", "root", "m1", "a", "甲", 1 },
+    { "runtime_future", "one", "m9", "b", "辛", 1 },
 }
 for _, case in ipairs(reward_cases) do
     local index = indexes[case[1]]
-    local best, potential = learning.reward(index, case[3], case[4], case[5], case[6], chains[case[2]])
+    local best, potential, early_bonus =
+        learning.reward(index, case[3], case[4], case[5], case[6], chains[case[2]])
     emit("reward", case[1], case[2], hex(case[3]), hex(case[4]), hex(case[5]), tostring(case[6]),
-        bits(best), bits(potential))
+        bits(best), bits(potential), bits(early_bonus))
+end
+
+-- 早提交成熟度 / 单条奖励贡献（5ce1ca2 新增的纯计算）。
+for _, score in ipairs({ 0, 8, 9, 9 + 2 * math.log(2), 9 + 2 * math.log(3), 9.5, 10,
+    10.39, 11, 11.2, 12, 13, 20, 24, 27 }) do
+    emit("maturity", bits(score), bits(learning.early_commit_maturity(score)))
+    emit("contribution", bits(score), bits(learning.early_commit_contribution(score)))
 end
 
 -- ---------------------------------------------------------------- diff
@@ -315,6 +363,89 @@ for _, run in ipairs(diff_runs) do
     for _, e in ipairs(events) do
         emit("diffevent", hex(e.text), hex(e.code), hex(e.context),
             tostring(e.raw_start), tostring(e.raw_end), tostring(e.text_start), tostring(e.text_end))
+    end
+end
+
+-- ---------------------------------------------------------------- 融合偏好（24e633e / 59fc87a）
+for _, mode in ipairs({ "", "m1", "sentence-v2|rules=|optimal=1500|dup=1" }) do
+    emit("fusionmode", hex(mode), hex(learning.fusion_mode(mode)))
+end
+for _, pair in ipairs({
+    { "ii", "C", "A" },
+    { "", "", "" },
+    { "ab", "疒否", "交否" },
+    { "abab", "交交", "交疒" },
+}) do
+    emit("paircode", hex(pair[1]), hex(pair[2]), hex(pair[3]),
+        hex(learning.fusion_pair_code(pair[1], pair[2], pair[3])))
+end
+
+-- 融合语料：同一 `(raw, direct, composed)` 三元组的 D/C 竞争 + 未记录的 pair。
+local FUSION_TIME = 1700000000
+local fusion_specs = {
+    { "m1", "ii", "C", "A", true },
+    { "m1", "ii", "C", "A", true },
+    { "m1", "ii", "B", "A", true },
+    { "m1", "ii", "D", "E", false },
+}
+os.time = function() return FUSION_TIME end
+local fusion_events = {}
+for _, spec in ipairs(fusion_specs) do
+    local e = learning.fusion_event(spec[1], spec[2], spec[3], spec[4], spec[5], #spec[2])
+    assert(e, "fusion_event 不应返回 nil")
+    fusion_events[#fusion_events + 1] = e
+end
+-- 编码事件（落库只带五元组）与事件构造分开验证。
+local fusion_corpus = {}
+for _, e in ipairs(fusion_events) do
+    fusion_corpus[#fusion_corpus + 1] =
+        ev(e.time, e.mode, e.code, e.text, e.context)
+end
+corpora.fusion = fusion_corpus
+os.time = function() return NOW end
+
+emit("corpus", "fusion", tostring(#fusion_corpus))
+for _, e in ipairs(fusion_corpus) do
+    emit("event", tostring(e.time), hex(e.mode), hex(e.code), hex(e.text), hex(e.context))
+end
+build_named("fusion_base", "fusion", fusion_corpus, "full", NOW)
+build_named("fusion_runtime", "fusion", fusion_corpus, "runtime", NOW)
+for _, name in ipairs({ "fusion_base", "fusion_runtime" }) do
+    for _, spec in ipairs({
+        { "m1", "ii", "C", "A" },
+        { "m1", "ii", "B", "A" },
+        { "m1", "ii", "A", "C" },
+        { "m1", "ii", "D", "E" },
+        { "m1", "ii", "E", "D" },
+        { "m1", "ii", "Z", "A" },
+        { "", "ii", "C", "A" },
+        { "m1", "", "C", "A" },
+    }) do
+        emit("fusion", name, hex(spec[1]), hex(spec[2]), hex(spec[3]), hex(spec[4]),
+            bits(learning.fusion_score(indexes[name], spec[1], spec[2], spec[3], spec[4])))
+    end
+end
+
+local fusion_runs = {
+    { "m1", "ii", "C", "A", true, 2 },
+    { "m1", "ii", "B", "A", false, 2 },
+    { "m1", "abab", "交交", "交疒", true, 4 },
+    { "m1", "", "", "", true, 0 },
+    { "", "ii", "C", "A", true, 2 },
+}
+for _, run in ipairs(fusion_runs) do
+    local mode, raw, direct, composed, wins, raw_end = run[1], run[2], run[3], run[4], run[5], run[6]
+    os.time = function() return FUSION_TIME end
+    local e = learning.fusion_event(mode, raw, direct, composed, wins, raw_end)
+    os.time = function() return NOW end
+    if e then
+        emit("fusionevent", hex(mode), hex(raw), hex(direct), hex(composed),
+            wins and 1 or 0, tostring(raw_end), tostring(FUSION_TIME),
+            hex(e.mode), hex(e.code), hex(e.text), hex(e.context),
+            tostring(e.raw_start), tostring(e.text_start), tostring(e.text_end))
+    else
+        emit("fusionnone", hex(mode), hex(raw), hex(direct), hex(composed),
+            wins and 1 or 0, tostring(raw_end))
     end
 end
 

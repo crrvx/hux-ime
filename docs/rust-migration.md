@@ -105,6 +105,12 @@ docs/                    # 设计/重构/使用/配置/性能/Android 等，索�
   | `express_editor` | space 确认/提交、BackSpace 撤销编辑、Delete 删光标处、Return 提交原文、Escape 取消；可打印字符先提交组合再交宿主 |
   | `punctuator` | 单键可打印 ASCII 查 `symbols.yaml`；组合中提交「组合文本 + 标点」；`{pair}` 交替 |
 
+  > **方案侧遮蔽（追平上游 `abad411`）**：方案处理器现在对「菜单可见 + 可打印 ASCII 标点」
+  > 先确认组合（`_auto_commit` 下即上屏）再把原键 Forward 给宿主，因此上面 `selector` 的
+  > `-`/`=`/`[`/`]` 翻页绑定在这条路径上不再生效（`Page_Up`/`Page_Down` 与 `Tab` 循环不受影响）；
+  > 参照依据：`lua/tiger_sentence.lua` @ `abad411` 的 `context:has_menu()` 标点分支，
+  > 金样 `goldens/key_sequence.tsv.gz` 的 `punct_menu_equal`/`punct_menu_minus`。
+
 - **英文模式不实现**（设计取舍）：英文输入交由 fcitx5 切换输入法；大写字母经 `char_handler` 直通（先提交组合）。
 - **提交与按键顺序**：可打印字符的 `char_handler` 在核心语义为「提交组合 + 不消费」（同 librime）；宿主层
   （`platform/fcitx5`）据此消费该键并以 `forwardKey` 重发，保证客户端先收到提交、后收到按键

@@ -3,8 +3,9 @@
 
 use super::*;
 
-pub(crate) const EARLY_COMMIT_MINIMUM_SHARE: f64 = 0.995;
-pub(crate) const EARLY_COMMIT_STRONG_SHARE: f64 = 0.99999;
+pub(crate) const EARLY_COMMIT_MINIMUM_SHARE: f64 = 0.99;
+/// 强证据（`strong_count`）看**纯模型**份额 `base_share`；个性化不再制造强证据。
+pub(crate) const EARLY_COMMIT_STRONG_SHARE: f64 = 0.999;
 pub(crate) const EARLY_COMMIT_REQUIRED_EVIDENCE: usize = 3;
 pub(crate) const EARLY_COMMIT_REQUIRED_STRONG: usize = 2;
 pub(crate) const EARLY_COMMIT_MAXIMUM_NEUTRAL_GAP: usize = 3;
@@ -64,9 +65,14 @@ pub(crate) fn prefix_contradicted(tracker: &Tracker, evidence: &Evidence) -> boo
 }
 
 /// 参照 `retain_trackers_without_counting`。
+///
+/// `reset_maturity`（`d30867a` 新增）为真时把保留下来的 tracker 的
+/// `evidence_count`/`strong_count` 清零：低置信度缺口只能保住「身份」，
+/// 不能把缺口前的成熟度带到缺口之后。
 pub(crate) fn retain_trackers_without_counting(
     trackers: &HashMap<String, Tracker>,
     evidence: &Evidence,
+    reset_maturity: bool,
 ) -> HashMap<String, Tracker> {
     let mut next = HashMap::new();
     for (key, tracker) in trackers {
@@ -80,10 +86,72 @@ pub(crate) fn retain_trackers_without_counting(
         tracker.gap_count += 1;
         if tracker.gap_count <= EARLY_COMMIT_MAXIMUM_NEUTRAL_GAP {
             tracker.last_share = current.share;
+            if reset_maturity {
+                tracker.evidence_count = 0;
+                tracker.strong_count = 0;
+            }
             next.insert(key.clone(), tracker);
         }
     }
     next
+}
+
+/// 参照 `competing_boundary_end`（`d30867a`）：竞争切分的前瞻保护边界。
+///
+/// 保留量必须按**已输出的文本元素数**对齐比较，而不是按同一个 raw 边界：
+/// 在 `nv` 提交 `有` 时，也必须等到 `nvt` 处的一字替代 `郁` 攒够 K 个 raw 键的
+/// 后缀证据；而 `nv|tah` 这类已经输出两个字素的第二条边不得拖延一字提交。
+///
+/// 返回「从 `committed_raw_length` 起，用码表分段恰好凑出 `target_text_elements`
+/// 个字素时能到达的最远 raw 边界」与 `proposed_raw_length` 的较大者。
+/// 参数非法（含 `target_text_elements < 1`）时原样返回 `proposed_raw_length`。
+pub(crate) fn competing_boundary_end(
+    raw: &[u8],
+    lexicon: &Lexicon,
+    committed_raw_length: usize,
+    proposed_raw_length: usize,
+    target_text_elements: usize,
+) -> usize {
+    if proposed_raw_length <= committed_raw_length
+        || proposed_raw_length > raw.len()
+        || target_text_elements < 1
+    {
+        return proposed_raw_length;
+    }
+    let Ok(text) = std::str::from_utf8(raw) else {
+        return proposed_raw_length;
+    };
+    // `reachable[start]` = 从 committed 起点分段走到 start 时，已输出字素数的集合。
+    let mut reachable: HashMap<usize, HashSet<usize>> = HashMap::new();
+    reachable.insert(committed_raw_length, HashSet::from([0]));
+    let mut furthest = proposed_raw_length;
+    for start in committed_raw_length..text.len() {
+        let Some(counts) = reachable.get(&start) else {
+            continue;
+        };
+        let counts: Vec<usize> = counts.iter().copied().collect();
+        let maximum = lexicon.max_code_len.min(text.len() - start);
+        for length in 1..=maximum {
+            let finish = start + length;
+            let Some(entries) = text
+                .get(start..finish)
+                .and_then(|code| lexicon.codes.get(code))
+            else {
+                continue;
+            };
+            for count in &counts {
+                for entry in entries {
+                    let next_count = count + entry.text.chars().count();
+                    if next_count == target_text_elements {
+                        furthest = furthest.max(finish);
+                    } else if next_count < target_text_elements {
+                        reachable.entry(finish).or_default().insert(next_count);
+                    }
+                }
+            }
+        }
+    }
+    furthest
 }
 
 /// 参照 `tracker_better`。
@@ -117,12 +185,14 @@ pub fn implicit_rank_allowed(
         || (allow_duplicate_single && previous_nonempty)
 }
 
-/// 参照 `strong_empty_code_candidate`：未截断池中的强置信候选。
+/// 参照 `strong_empty_code_candidate`：未截断池中的强置信候选
+/// （阈值取排序先验的 `empty_code_strong_share`，比普通强阈值更严）。
 pub(crate) fn strong_empty_code_candidate(
     eligible: &[&Evaluated],
     candidate_index: usize,
     visible_top: Option<&str>,
     pool_truncated: bool,
+    empty_code_strong_share: f64,
 ) -> bool {
     if pool_truncated {
         return false;
@@ -146,7 +216,7 @@ pub(crate) fn strong_empty_code_candidate(
             candidate_mass += mass;
         }
     }
-    total > 0.0 && candidate_mass / total >= EARLY_COMMIT_STRONG_SHARE
+    total > 0.0 && candidate_mass / total >= empty_code_strong_share
 }
 
 /// 参照 `capture_empty_code_candidate`。
@@ -207,12 +277,14 @@ pub fn capture_empty_code_candidate(
         return Ok(None);
     }
     let pool_truncated = decoded.evidence.confidence_truncated;
+    let empty_code_strong_share = decoder.ranking_prior_parameters().empty_code_strong_share;
     if eligible.len() > 1
         && !strong_empty_code_candidate(
             &eligible,
             candidate_index,
             visible_top.as_deref(),
             pool_truncated,
+            empty_code_strong_share,
         )
     {
         return Ok(None);
@@ -275,14 +347,26 @@ pub fn try_commit_mature_prefix(
     // 哈希表迭代序不确定：按 key 排序后再比较，保证平局时的确定性。
     let mut keys: Vec<&String> = state.trackers.keys().collect();
     keys.sort();
+    let committed_text_elements = state.committed_text.chars().count();
+    let committed_raw_length = state.committed_raw.len();
     let mut selected: Option<&Tracker> = None;
     for key in keys {
         let tracker = &state.trackers[key];
         if (tracker.evidence_count >= EARLY_COMMIT_REQUIRED_EVIDENCE
             || tracker.strong_count >= EARLY_COMMIT_REQUIRED_STRONG)
-            && tracker.raw_length > state.committed_raw.len()
+            && tracker.raw_length > committed_raw_length
             && tracker.raw_length <= evidence_raw.len()
-            && evidence_raw.len() - tracker.raw_length >= retain
+            && evidence_raw.len()
+                - competing_boundary_end(
+                    evidence_raw,
+                    learning.decoder.lexicon(),
+                    committed_raw_length,
+                    tracker.raw_length,
+                    tracker
+                        .text_char_count
+                        .saturating_sub(committed_text_elements),
+                )
+                >= retain
             && tracker.text.len() > state.committed_text.len()
             && tracker.text.starts_with(&state.committed_text)
             && auto_commit_matches_visible_top(visible_top, &tracker.text)
@@ -381,7 +465,10 @@ pub fn try_early_commit(
         state.synchronize_model_state(params.generation);
         return Ok(false);
     }
-    if decoded.learning_affected || decoded.evidence.confidence_truncated {
+    // 学习会改变哪些路径留在 beam 里；这种池再截断时连纯模型 BaseShare 也
+    // 可能被条件性抬高，故一并拒绝。
+    let truncated = decoded.evidence.confidence_truncated;
+    if decoded.learning_affected && truncated {
         reset_early_evidence(state);
         return Ok(false);
     }
@@ -416,9 +503,12 @@ pub fn try_early_commit(
     let merged_incomplete_tail = decoded.evidence.merged_incomplete_tail;
     let mut qualifying: HashMap<String, &crate::decode::PrefixEvidence> = HashMap::new();
     for prefix in &decoded.evidence.prefixes {
+        // 截断池下只接受纯模型份额已达强阈值的证据（个性化不得制造强证据）。
+        let base_share = prefix.base_share;
         if !prefix.text.is_empty()
             && prefix.boundary_closed
             && prefix.share >= EARLY_COMMIT_MINIMUM_SHARE
+            && (!truncated || base_share >= EARLY_COMMIT_STRONG_SHARE)
             && prefix.raw_length > state.committed_raw.len()
             && prefix.text.len() > state.committed_text.len()
             && prefix.text.starts_with(&state.committed_text)
@@ -438,7 +528,12 @@ pub fn try_early_commit(
     let retain_without_counting = qualifying.is_empty()
         && (decoded.evidence.neutral_low_confidence || merged_incomplete_tail);
     if retain_without_counting {
-        state.trackers = retain_trackers_without_counting(&state.trackers, &decoded.evidence);
+        // 参照 `d30867a`：比较型缺口按 evidence 的低置信度决定是否清零成熟度。
+        state.trackers = retain_trackers_without_counting(
+            &state.trackers,
+            &decoded.evidence,
+            decoded.evidence.neutral_low_confidence,
+        );
         return Ok(try_commit_mature_prefix(
             learning,
             context,
@@ -462,7 +557,8 @@ pub fn try_early_commit(
             last_share: 0.0,
         });
         tracker.evidence_count = EARLY_COMMIT_REQUIRED_EVIDENCE.min(tracker.evidence_count + 1);
-        tracker.strong_count = if prefix.share >= EARLY_COMMIT_STRONG_SHARE {
+        // 强证据判定同样只看纯模型份额。
+        tracker.strong_count = if prefix.base_share >= EARLY_COMMIT_STRONG_SHARE {
             EARLY_COMMIT_REQUIRED_STRONG.min(tracker.strong_count + 1)
         } else {
             0
@@ -561,7 +657,20 @@ pub fn try_empty_code_commit(
     {
         return Ok(false);
     }
-    if params.min_retained > 0 && full_raw.len() - pending.base_raw_length < params.min_retained {
+    // 参照 `d30867a`：保留量边界改按竞争切分的前瞻保护边界计算
+    // （`pending.candidate_text:sub(#committed_text + 1)` 的字符数即目标字素数）。
+    let pending_commit = pending
+        .candidate_text
+        .get(pending.committed_text.len()..)
+        .unwrap_or_default();
+    let protected_boundary = competing_boundary_end(
+        &full_raw,
+        learning.decoder.lexicon(),
+        state.committed_raw.len(),
+        pending.base_raw_length,
+        pending_commit.chars().count(),
+    );
+    if params.min_retained > 0 && full_raw.len() - protected_boundary < params.min_retained {
         return Ok(false);
     }
     if pending.requires_uniqueness_check

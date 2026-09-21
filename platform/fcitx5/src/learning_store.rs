@@ -3,7 +3,8 @@
 
 //! 学习库（参照 `tiger_sentence_learning.lua` 的 `M.open`/`M.confirm`/`M.refresh_scores`）：
 //! `<user dir>/<name>.userdb/`（LevelDB，键 `e/%010d`、值 = frame 五元组）；
-//! 上限 1 万条 / 16 MiB；`refresh_scores` 60 秒节流。
+//! 上限 1 万条 / 16 MiB。`7b220ce` 起学习**不再随时间衰减**，故 `refresh_scores`
+//! 不再重建索引（参照同函数直接返回 `store.index`）。
 
 use std::path::Path;
 
@@ -14,8 +15,6 @@ use rusty_leveldb::{DB, LdbIterator, Options};
 pub const MAX_COUNT: usize = 10000;
 /// 字节上限（参照 `16 * 1024 * 1024`）。
 pub const MAX_BYTES: usize = 16 * 1024 * 1024;
-/// `refresh_scores` 节流秒数（参照 `now - store.scored_at >= 60`）。
-pub const REFRESH_SECONDS: f64 = 60.0;
 
 const EVENT_PREFIX: &str = "e/";
 
@@ -217,15 +216,11 @@ impl LearningStore {
         changed
     }
 
-    /// 参照 `M.refresh_scores`：60 秒节流重建运行时索引；返回索引是否变化。
-    pub fn refresh_scores(&mut self, now: f64) -> bool {
-        if self.db.is_none() || !(now - self.scored_at >= REFRESH_SECONDS || now < self.scored_at) {
-            return false;
-        }
-        self.index = LearningIndex::runtime(&self.events, now);
-        self.index_version += 1;
-        self.scored_at = now;
-        true
+    /// 参照 `M.refresh_scores`：`7b220ce` 起该函数只返回 `store.index`
+    /// （「安静的时钟不得改变已发布的学习分」），故索引恒不变、恒返回 `false`。
+    /// 保留该入口以对齐参照的调用点（`if not context:is_composing() then …`）。
+    pub fn refresh_scores(&mut self, _now: f64) -> bool {
+        false
     }
 }
 
@@ -284,16 +279,21 @@ mod tests {
     }
 
     #[test]
-    fn refresh_scores_throttles_by_60s() {
+    fn refresh_scores_never_republishes_the_index() {
         let dir = temp_dir("refresh");
         let base = crate::wall_clock();
         let mut store = LearningStore::open(&dir, &store_name("x"), base);
         store.confirm(&[event(base, "甲")]);
         let version = store.index_version();
+        let epoch = store.index().now;
+        assert_eq!(epoch, store.scored_at);
+        // 参照 `7b220ce`：无时间衰减 ⇒ 无论过多久（含时钟回退）都不重建、不换 epoch。
         assert!(!store.refresh_scores(base + 30.0));
+        assert!(!store.refresh_scores(base + 61.0));
+        assert!(!store.refresh_scores(base - 1000.0));
         assert_eq!(store.index_version(), version);
-        assert!(store.refresh_scores(base + 61.0));
-        assert!(store.index_version() > version);
+        assert_eq!(store.index().now, epoch, "索引 epoch 不得被刷新改写");
+        assert_eq!(store.scored_at, epoch);
         std::fs::remove_dir_all(&dir).ok();
     }
 

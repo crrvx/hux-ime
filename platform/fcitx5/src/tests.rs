@@ -154,7 +154,7 @@ fn engine_enables_learning_store() {
         engine
             .engine
             .learning_mode
-            .starts_with("sentence-v1|rules=")
+            .starts_with("sentence-v2|rules=")
     );
     assert!(
         dir.join(format!(
@@ -179,7 +179,7 @@ fn engine_applies_learning_after_key() {
         engine
             .engine
             .learning_mode
-            .starts_with("sentence-v1|rules=")
+            .starts_with("sentence-v2|rules=")
     );
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -341,6 +341,9 @@ fn candidate_click_out_of_range_ignored() {
 }
 
 /// 宿主自发提交接学习：Tab 选字后由宿主链提交（组合中大写字母），事件应落库。
+///
+/// 输入取 `abab`（两条 2 码边 ⇒ composed-only）：`c69c1a8` 起差异学习只对
+/// composed-only 的基线与选中项成对，整串直出（Direct）的确认不再产生事件。
 #[test]
 fn host_commit_records_tab_learning() {
     let _guard = serial();
@@ -348,14 +351,15 @@ fn host_commit_records_tab_learning() {
     COMMITS.lock().unwrap().clear();
     UPDATES.lock().unwrap().clear();
     let mut engine = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
-    for code in *b"ab" {
+    for code in *b"abab" {
         engine.key(u32::from(code), 0, false);
     }
     assert!(engine.key(0xff09, 0, false), "Tab 应被消费");
     let before = engine.learning.index_version();
     // 大写 A（0x41）：core 交宿主链 `char_handler`，先提交组合再交应用。
     engine.key(0x41, 0, false);
-    assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "乙");
+    // 第 2 个可见候选：`甲乙`/`乙甲` 同分时按文本字节序（`乙` < `甲`）取后者。
+    assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "乙甲");
     assert_ne!(
         engine.learning.index_version(),
         before,
@@ -364,11 +368,39 @@ fn host_commit_records_tab_learning() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// 翻页键条件（参照 `key_binder`）：下翻页 `when: has_menu`、上翻页 `when: paging`。
-///
-/// 上翻页键在**未翻页**时不消费——落作标点/输入；翻过页后才生效。
+/// 整串直出（Direct）的 Tab 确认不再是纠错证据（参照 `78bfaf3` 的探针期望：
+/// 「Direct→Direct 学习计数不变」）。`ab` 只有一条整串边 ⇒ 两个候选都是 Direct。
 #[test]
-fn page_keys_follow_reference_conditions() {
+fn host_commit_direct_choice_records_no_learning() {
+    let _guard = serial();
+    let dir = temp_user_dir("host-learning-direct");
+    COMMITS.lock().unwrap().clear();
+    UPDATES.lock().unwrap().clear();
+    let mut engine = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
+    for code in *b"ab" {
+        engine.key(u32::from(code), 0, false);
+    }
+    assert!(engine.key(0xff09, 0, false), "Tab 应被消费");
+    let before = engine.learning.index_version();
+    engine.key(0x41, 0, false);
+    assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "乙");
+    assert_eq!(
+        engine.learning.index_version(),
+        before,
+        "Direct → Direct 不产生学习事件"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// 菜单可见时的 ASCII 标点（参照 `abad411` 的 `context:has_menu()` 分支）：处理器
+/// 先按当前选中项暂存学习、确认组合（`_auto_commit` 下即上屏），再把原键交标点表；
+/// schema 的 key_binder `=`/`-` 翻页绑定因此在该路径上被遮蔽。
+///
+/// 参照依据：`crates/hux-scheme/tiger/src/interaction/processor.rs` 的标点分支（`abad411:3756`），
+/// 金样 `goldens/key_sequence.tsv.gz` 的 `punct_menu_equal`/`punct_menu_minus`
+/// （两步各为「组合上屏 + 标点落字」，不再翻页）；显式 `Page_Down`/`Page_Up` 仍是翻页路径。
+#[test]
+fn menu_punctuation_confirms_before_the_punctuator() {
     let _guard = serial();
     COMMITS.lock().unwrap().clear();
     UPDATES.lock().unwrap().clear();
@@ -376,26 +408,35 @@ fn page_keys_follow_reference_conditions() {
     for code in *b"ja" {
         engine.key(u32::from(code), 0, false);
     }
-    // 未翻页：`-` 不由翻页消费，而是落作标点——**由 punctuator 消费并提交**（参照行为）。
-    assert!(engine.key(0x2d, 0, false), "落作标点时由 punctuator 消费");
-    assert!(
-        !COMMITS.lock().unwrap().is_empty(),
-        "未翻页时该键应落作标点/输入"
-    );
-
-    // 翻过页后：`-` 由 key_binder 当作上翻页消费，不再提交标点。
-    COMMITS.lock().unwrap().clear();
-    let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
+    let sentence = last_update().2.first().cloned().expect("ja 候选");
+    // 参照注释「Highlight + confirm mirrors Space」：同一夹具下 `space` 的提交应与 `=` 的首笔一致。
+    let mut space_engine = TestEngine::new(host(), fixture_dirs(), None, None);
     for code in *b"ja" {
-        engine.key(u32::from(code), 0, false);
+        space_engine.key(u32::from(code), 0, false);
     }
-    assert!(engine.key(0x3d, 0, false), "下翻页键（has_menu）应被消费");
-    let before = COMMITS.lock().unwrap().len();
-    assert!(engine.key(0x2d, 0, false), "翻过页后上翻页键应被消费");
+    COMMITS.lock().unwrap().clear();
+    assert!(space_engine.key(0x20, 0, false), "space 应被消费");
     assert_eq!(
-        COMMITS.lock().unwrap().len(),
-        before,
-        "翻过页后应只翻页，不再落标点"
+        COMMITS.lock().unwrap().clone(),
+        vec![sentence.clone()],
+        "`=` 的首笔提交应与 space 上屏的候选相同"
+    );
+    COMMITS.lock().unwrap().clear();
+    assert!(
+        engine.key(0x3d, 0, false),
+        "`=` 先确认组合再交标点表（消费）"
+    );
+    assert_eq!(
+        COMMITS.lock().unwrap().clone(),
+        vec![sentence, "=".to_string()],
+        "`=` 不再翻页：组合上屏 + 标点落字"
+    );
+    COMMITS.lock().unwrap().clear();
+    assert!(engine.key(0x2d, 0, false), "`-` 由标点表消费");
+    assert_eq!(
+        COMMITS.lock().unwrap().clone(),
+        vec!["-".to_string()],
+        "组合已上屏，此处仅落 `-`"
     );
 }
 
@@ -670,7 +711,12 @@ fn punctuation_appends_to_composition() {
     assert!(engine.key(u32::from(b'a'), 0, false));
     assert!(engine.key(u32::from(b'b'), 0, false));
     assert!(engine.key(0x2c, 0, false), "comma 应被消费");
-    assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "甲，");
+    // 参照 `abad411`：菜单可见时处理器先确认组合（librime `ConcreteEngine::OnSelect`
+    // 在 `_auto_commit` 下同步 `Commit()`），标点随后独立落字；提交文本合计不变。
+    assert_eq!(
+        COMMITS.lock().unwrap().clone(),
+        vec!["甲".to_string(), "，".to_string()]
+    );
     assert!(engine.session().context.input().is_empty());
 }
 

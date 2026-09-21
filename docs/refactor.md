@@ -86,8 +86,14 @@ platform/                     # 平台适配
 > 故**不做**参照的增量解码缓存（其收益集中于长输入，且牵涉解码 arena 路径下标生命周期），
 > 复核触发条件记在 `perf.md`。
 >
-> 当前基线（复核收尾时实测）：`cargo test --workspace` **276 用例全绿**
-> （core 66 / tiger 125 / cfg 16 / platform 64 / support 4 / ffi 1），
+> 当前基线（B2 追平后实测）：`cargo test --workspace` **288 用例全绿**
+> （core 72 / tiger 130 / cfg 16 / platform 65 / support 4 / ffi 1；
+> 较 B1 的 281 增加 7 个：core 的 `fusion_keys_match_reference_vectors` /
+> `fusion_score_is_pairwise_difference` / `fusion_event_encodes_direction_and_offsets`，
+> tiger 的 `fusion_ordering_matches_reference_cases` /
+> `fusion_ordering_preserves_direct_order_and_reverse_preference` /
+> `processor_tab_confirm_stages_against_live_baseline`，
+> platform 的 `host_commit_direct_choice_records_no_learning`），
 > `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`reuse lint`（152/152）均干净；
 > CI `rust` 作业 11 步本机逐步通过；C++ 侧构建链接 + `DESTDIR` 安装 3 文件 + 导出 **14** 个 `hux_*`。
 
@@ -178,12 +184,159 @@ platform/                     # 平台适配
 > 2026-09-21 全仓复核（5 路并行审计 + 人工核实）已修项见提交 `chore(review)` 三批与
 > `fix(review)`；下列为**已核实、尚未实施**的项，连同证据一并登记，避免遗失。
 
-**方案（tiger）追平上游**
-- 证据层仍为单权重（等价上游 `12d2ecc`）：参照自 `5ce1ca2` 拆 `base_weight`/`early_weight`
-  并引入个性化 `early_commit_confidence_score`，`strong_count` 改看 `base_share`。
-- 保留量边界仍用裸 raw 长度：参照自 `d30867a` 改用 `competing_boundary_end`（本 crate 零命中），
-  竞争路径更远时本实现会比参照更早提前上屏。
-- 两者均**晚于本轮金样 pin（`8b615235`）**，故差分全绿守护不到；追平需升 pin + 重生成金样。
+**方案（tiger）追平上游 ✅ 已完成**（分批推进：**B1 ✅ → B2 ✅ → B3 ✅ → B4 ✅ → B5 ✅**；
+起点 pin `8b615235`，区间共 **31 笔**（24 笔非合并提交）。收尾时**两个 pin**：
+
+- **主干 pin `abad411750f79cfca750985fa266689b5d9b865f`**（`origin/main` 尖端）；15 份由 Lua 核心生成的
+  夹具 / decode / learning / lexical 金样与键序列探针金样 `key_sequence.tsv.gz` 取自该 pin；
+- **反查分支尖端 `92a0b54b53114e7e5aa6a1ff48efa95db0e21f9c`**（`feat/reverse-lookup`；`4ff37c4` 数字选择器
+  提交反查候选、`92a0b54` 撇号音节分隔），它是主干 pin 的**后代**，故音反查金样 `sound_to_char_shape.tsv.gz`
+  单独取自它、**不再做「分支 + 主干本地合并」**（生成器已简化为单 `PIN` + 显式失败护栏）。
+
+详见 `_tmp/批次1..5-追平记录.md`；金样来源与 sha 表见 `goldens/README.md`。
+
+- **丙：模型与格式侦察 ✅ 已完成**
+  - **格式未变**：上游 README 仍写「TCSKNM02 分页格式」；`lua/tiger_sentence_ngram.lua`
+    在 pin..HEAD 间**仅 2 行差异，且均为 Windows 开发路径字面量**（非格式改动）。
+    ⇒ 本实现「只接受 TCSKNM02 mobile」的约束**无需任何新格式支持**。
+  - **模型为同名新训练**：默认模型自 2026-09-20 起为 `full-kn-m5-v2`
+    （469,886,928 B / 448.12 MiB，sha256 `c0063898fdff27c1fb00c1c72fa28d…`），
+    另有文档化的 fused 变体（224,475,584 B / 214.08 MiB）；**是否换模型由用户决定**，与代码追平解耦。
+    上游 README 第 74 行仍称模型文件为 `sentence-ngram-mobile.bin`（TCSKNM02，**约 448 MiB**）——
+    文件名、格式、量级三者与上述新默认一致，故**换模型 = 替换同名文件，零代码改动**。
+- **B1 ✅ 已完成（pin `8b615235` → `201eb79`）**——只移植 `5ce1ca2`（+其后的测试提交 `ff3895d`
+  与 PR #17 合并 `201eb79`），**跳过融合特性**：
+  - 阈值 `early_commit_minimum_share` 0.995→**0.99**、`early_commit_strong_share` 0.99999→**0.999**
+    （后者只用于 `base_share`；空码强阈值另立 `empty_code_strong_share` = 0.99999）；
+  - 新增 `supplement_early_commit_scale` / `supplement_early_commit_cap` /
+    `personalized_early_commit_cap` / `empty_code_strong_share`，以及
+    `supplement_early_commit_contribution()` 与 `early_confidence()`
+    （优先 `early_commit_confidence_score`，回退 `confidence_score`）；
+  - `evaluate_state` 新增 `early_commit_confidence_score` = 置信度 + `min(0.80, 补充码表贡献 + 学习奖励)`；
+    `build_prefix_evidence` 拆 `base_weight`/`early_weight`（`share` 用早提交权重、`base_share` 用基础权重，
+    `boundary_share` 仍用基础权重）；截断池不再早退（保留 `BaseShare` 供强证据策略），
+    `try_early_commit` 只在「学习生效且截断」时拒绝，且截断时要求 `base_share ≥ 强阈值`；
+  - `learning.reward()` 改**三元返回**（新增 `learning_early_bonus` → item 的
+    `learning_early_commit_bonus`），并新增 `early_commit_maturity`/`early_commit_contribution`
+    与 `reinforce()`（未按 Tab、提交项即本菜单首选时走稳定观测增量，不再记成纠错）；
+  - **金样**：pin 推进到 `201eb79` 并重生成全部参照金样；`ngram_fixture`/`lexicon`×4/`lexical`
+    逐字节不变，`decode*.tsv.gz` 仅新增 `early_commit_confidence_score` 字段，
+    `decode_evidence*`（截断池证据）与 `learning`（三元奖励 + 成熟度 + `reinforce`）按上述行为变更；
+    `key_sequence`/`sound_to_char_shape` 仅头部 pin/sha 变化（行为内容逐字节一致）。
+    反查分支（`2c53111`/`f3b3049`/`ce5b840`/`898579f`）**不在 `201eb79` 的祖先链上**
+    （上游至今未并入 main），本实现仍按 `8b615235..898579f` 的单文件 +48/−18 逐处核对为「已覆盖」。
+- **B2 ✅ 已完成（pin `201eb79` → `bd83900`）**——区间 `201eb79..bd83900` 的**运行时代码只有 6 笔**
+  （其余 7 笔为测试/CI/合并提交，逐笔判定依据见 `_tmp/批次2-融合偏好-分析.md` §1）：
+  - `24e633e`：`learning` 侧新增 `fusion_mode`/`fusion_pair_code`/`fusion_score`/`fusion_event`
+    （成对偏好：`D`/`C` 两个 choice 竞争，单次确认权重 1 ⇒ `min(16, 9+2ln w)`）；
+  - `a3fc009`：**直接序保持 + 跨来源融合**——`State` 记 `source_mask`/`direct_rank`
+    （`direct_edge = previous == nil and position == 0 and whole_input_edge`）、
+    同文本多路径 `source_union`/`min` 聚合并回写 arena、`evaluate_state` 对 Direct 剥离学习分、
+    `emit` 末尾按 `direct_rank` 重排 Direct 列后与 Composed 列做**两指针归并**（前缀前瞻；
+    两侧都不 `> 0` 或差值 ≤ `1e-12` 时回退原下标序）；
+  - `c69c1a8`：**与 composed 自学习分离**——差异/稳定确认只在 composed-only↔composed-only 之间产生，
+    模式串 `sentence-v1` → `sentence-v2`（旧记录仍留在库中但索引不再命中）；
+  - `6ece735`：Tab 锁确认分支携带 `_fusion_ahead`（竞争者随 `seen` 浅拷贝）；
+  - `681c9c8`：把上述 helper 挂到 `learning.*` 表——**Lua 每函数 200 local 上限的技术搬迁，无语义差**
+    （Rust 侧未复刻该写法）；
+  - `59fc87a`：`fusion_pair_code` 加 `"~f"` 前缀，把融合码移出 raw 前缀索引命名空间
+    （虎码 raw 只含 `a-z`，而 `~` > `z` ⇒ 融合码恒排在 raw 码之后、`code_window` 遇首个 `~` 即停）。
+  - **顺带修的既有缺陷**（独立提交）：Tab 锁确认路径**先清 `tab_pending` 再补 stage** 导致学习基线取成
+    `submitted_first` 并可能误走 `reinforce`；现照参照在清标志前 stage，并有 `processor` 端到端用例
+    `processor_tab_confirm_stages_against_live_baseline`（金样覆盖不到该路径：探针 `store_ready == false`）。
+  - **金样**：pin 推进到 `bd83900` 并重生成全部参照金样。实证与预期一致：
+    `ngram_fixture`/`lexicon`×4/`lexical`/`decode`/`decode_model`/`decode_rank_first`/
+    `decode_evidence`/`decode_evidence_model` **逐字节不变**；
+    `decode_learning`/`decode_learning_model` 按 Direct 剥离与排序变化（`learning=<0|1>` 与
+    `score`/`learning_score`/`early_commit_confidence_score` 字段），并在生成器里多播一条
+    「Composed 胜」的成对偏好（`zzzz` 的 `哥哥` 越过 `𨰻`），使归并分支在解码金样里可见；
+    `key_sequence`/`sound_to_char_shape` 仅头部 pin/sha 变化（行为内容逐字节一致）；
+    `learning` 新增融合记录（`fusionmode`/`paircode`/`fusion`/`fusionnone`/`fusionevent`，
+    含 `full` 与 `runtime` 两种索引形态；生成器与差分解析同批扩展）。
+- **B3 ✅ 已完成（pin `bd83900` → `b2bbd23`）**——区间内**运行时代码只有 1 笔**：
+  `b228c2d` perf(lua) reduce evidence allocation and repeated fusion work（`b30187c` 只改 README 的模型说明，
+  `b2bbd23` 为 PR #19 合并）。逐行判定为**纯分配/重复计算优化、行为中性**，**Rust 侧无代码改动**
+  （仅 `crates/hux-core/src/learning.rs` 一条注释里的 pin 更新）；细节见 `_tmp/批次3-追平记录.md` §2：
+  - `dedup_limit`：本调用私有的 `result` 数组直接发布（不再复制第二份 `limited`），
+    `reserved`/`kept` 表只在真有保留项时构造——空表 `table.sort` 与空 `ipairs` 本就是空操作；
+  - `build_prefix_evidence`：权重改为「边遍历边累加」（候选迭代序与浮点加法序不变），
+    `base_total/early_total <= 0` 早退从遍历前移到遍历后（两项各 ≥ `exp(0)=1`，该分支恒不成立——已实测 847 用例 0 次触发）；
+  - `evaluate_evidence_state`：部分尾证据改用只算置信度的轻量求值器（不再算 `path_isolation_penalty`/
+    `max_rank`/`score`）；证据池只读 `text`/`path`/`confidence_score`/`early_commit_confidence_score`，
+    两个置信度字段与 `evaluate_state` 逐位相同（上游 `tools/test_allocation.lua` 直接断言这一点）；
+  - `State.text_char_count`：字符数与字节长度并行累加（`utf8.len` 可用时才填，否则回落 `utf_length`，LuaJIT 路径不变），
+    消除 `build_prefix_evidence`/tracker 处的重复 `utf_length`；
+  - `apply_fusion_ordering`：无 Direct 的菜单直接早退（原路径该分支本就原样返回），
+    并对同一次合并内的 `(direct, composed)` 对做记忆化（键 `(d-1)*#composed+c` 无碰撞，零值同样入缓存，
+    表随调用私有、不跨合并复用）。
+  - **金样零变化**：pin 推进到 `b2bbd23` 并重生成全部由 Lua 核心生成的 17 份金样，**非注释内容逐字节一致**
+    （14 份 fixture/decode/learning/lexical 的 `gunzip | cmp` 与 `ngram_fixture.bin` 全部相同）；
+    只有 `key_sequence`/`sound_to_char_shape` 的头部 pin 与 lua sha **各 2 行**变化（行为内容逐字节一致）。
+  - **覆盖负向验证**（实测）：把 `expand_range` 的字符数 `+1` ⇒ `decode_evidence` 失败；
+    污染融合对缓存值 ⇒ `decode_learning` 失败（144 条 `mit=1` 证据用例覆盖部分尾求值路径）。
+  - **工具**：`gen_sound_to_char_shape_golden.sh` 的本地合并新增冲突处理——主干与反查分支都往
+    `tools/run_regressions.py` 的用例清单追加过条目而必然冲突，该文件不参与生成故取分支侧版本；
+    **其余任何**冲突一律显式失败，避免静默产出与主干行为不符的金样。
+  - **门槛**：`cargo test --workspace --locked` **288 用例 0 失败**（与 B2 基线同数；本批无 Rust 改动，故未新增用例）；
+    fmt/clippy/reuse 152/152/CI 分层守卫全绿；pin/sha 程序化自验 0 处不一致。
+
+- **B4 ✅ 已完成（pin `b2bbd23` → `d7b01e5`）**——区间内**运行时代码只有 2 笔**：
+  `7b220ce`（经 `068936b` 分支合并落地）与 `d30867a`（`d7b01e5` 合并）；两个合并提交相对各自父提交在 `lua/` 上无独立差异
+  （`068936b -p1` 即 `7b220ce` 的净效果，`d7b01e5 -p1` 即 `d30867a` 的净效果）。细节见 `_tmp/批次4-追平记录.md`。
+  - `7b220ce` **持久化人工纠错等级**：`lua/tiger_sentence_learning.lua` 由「时间衰减 + 连续权重」改为
+    **离散等级**——每次人工纠错 `weight = min(10, weight + 1)`，同上下文分 `7 + 2L`（L1=9…L10=27）、
+    跨上下文分 `4 + 2L`（L1=6…L10=24），等级之外手工竞争项仍 `×0.25` 降权；
+    **学习不再随时间衰减**（时间戳只作持久化元数据），`M.build` 的 `now` 参数与 `refresh_scores` 因此都退化为元数据，
+    `update_index` 删除「时钟回退/未来事件 ⇒ 全量重放」判据，`early_commit_maturity` 改为 `clamp((score-9)/4)`（L1/L2/L3 → 0/0.5/1）；
+    **删除 `M.reinforce`**——未按 Tab 的首选重复确认不再计入等级（上游测试 `ordinary learned first choice never reinforces`）。
+    **持久化格式未变**：仍是「时间 / mode / code / text / context」五元组 frame，`#f == 5` 校验原样，
+    等级由事件条数即时推导，故旧库直接兼容（无需新字段/版本/迁移）。
+  - `d30867a` **竞争切分前瞻保护**：新增 `competing_boundary_end(raw, committed_raw, proposed, target_text_elements)`——
+    保留量必须按**已输出的文本元素数**对齐比较（`nv` 提交「有」时要等到 `nvt` 的「郁」也攒够前瞻）；
+    两处调用点（`try_commit_mature_prefix` 的 retain 判据、`try_empty_code_commit` 的 `min_retained` 判据）
+    由裸 raw 长度改为该边界；`retain_trackers_without_counting` 新增 `reset_maturity`：
+    低置信度（`neutral_low_confidence`）的比较型缺口把 `evidence_count`/`strong_count` 清零（只保身份）。
+  - **金样**：pin 推进到 `d7b01e5` 并重生成全部 Lua 核心金样。`ngram_fixture`/`lexicon`×4/`lexical`/`decode`/
+    `decode_model`/`decode_rank_first`/`decode_evidence`/`decode_evidence_model`/`ngram_fixture.bin` **逐字节不变**；
+    `decode_learning`/`decode_learning_model` 按「无时间衰减」重算学习分（单笔纠错由 `9+2ln(w)` 的衰减值恢复为整 9，
+    13 边长句的 `learning_score` 由 ≈14.3 变为 84.0 = 各段等级分之和）；
+    `learning` 改为等级语义并新增 `levels_full`/`levels_runtime`/`levels_aged` 三个索引
+    （守护 +2/级、10 级封顶、以及「时间推后 10 年分值不变」），`reinforce*` 记录随 `M.reinforce` 一并移除；
+    `key_sequence`/`sound_to_char_shape` 仅头部 pin/sha 变化（行为内容逐字节一致）。
+  - **覆盖缺口已补**：`key_sequence`/`sound_to_char_shape` 的合成夹具里竞争边界恒等于 tracker 边界，
+    故 `d30867a` 的调用点金样覆盖不到 —— 补了 3 个单测：`competing_boundary_end` 用上游
+    `tools/test_tiger_sentence_incremental.lua` 的三条真实向量（`jreynvtah`/`jreynvtahx`），
+    `mature_prefix_waits_for_the_competing_boundary` 直接驱动 `try_commit_mature_prefix`
+    （负向控制：改回裸 raw 长度即失败），`retain_trackers_resets_maturity_only_for_low_confidence_gaps`。
+  - **门槛**：`cargo test --workspace --locked` **291 用例 0 失败**（B3 基线 288；+4 新用例、−1 随 `M.reinforce` 删除的用例；
+    分项：core 72 / tiger 133 / cfg 16 / platform 65 / support 4 / ffi 1；
+    `learning_stage_reinforces_stable_first_choice` 改写为 `learning_stage_does_not_reinforce_stable_first_choice`）；
+    fmt/clippy/reuse 152/152/CI 分层守卫全绿；pin/sha 程序化自验 0 处不一致。
+- **B5 ✅ 已完成（收尾批；主干 `d7b01e5` → `abad411`，反查支线 `898579f` → `92a0b54`）**——本批两个来源
+  （详见 `_tmp/批次5-追平记录.md`）：
+  - **主干 `abad411`**（`fix(rime): preserve punctuation learning and default to full-m5`，区间仅此 1 笔）：
+    处理器把「缓冲态标点先冲组合」的判据由 `state.buffered_text ~= ""` 改为 `context:has_menu()`，
+    并在确认前补 `learning_selection` + `learning_stage`——标点段一旦追加进组合，`learning_selection`
+    就无法再解码该输入（如 `zhhbi,`）或取回句子的选中项，故**标点路径的人工纠错得以保留**。
+    另：默认模型改为 `full-kn-m5-v2`（469,886,928 B，sha256 `c0063898…`，文件名与 TCSKNM02 格式不变；
+    **本仓不捆绑模型**，只同步文档表述）；`lua/tiger_sentence_ngram.lua` 的改动仅 Windows 开发路径字面量。
+  - **反查两笔**（`4ff37c4` 数字选择器提交反查候选、`92a0b54` 撇号音节分隔）：反查段内数字直选
+    （`index = digit-1`，越界惰性消费）、`;` 惰性不并入拼音；识别模式改为 `^`[a-z']*$`
+    （撇号可出现在任意位置，`speller/delimiter` 增加 `'`），处理器保留撇号。
+  - **金样**：15 份 Lua 核心金样与 `ngram_fixture.bin` 在 `abad411` 下**逐字节不变**；
+    `key_sequence` 仅新增用例（`punct_menu_equal`/`punct_menu_minus`，钉住下面的遮蔽行为）；
+    `sound_to_char_shape` 取 `92a0b54`：`digit-zhong` 由「数字并入拼音」变为**直选提交**，
+    `nav-page-equal`/`nav-page-minus`/`nav-page-zho` 由「`=`/`-` 翻页」变为「先上屏组合再落标点」，
+    并新增撇号/数字/分号用例（31 例 / 164 步）。
+  - **⚠️ 需要用户决策的参照行为变化**：`abad411` 的标点分支使**所有**可打印 ASCII 标点（含 `-`/`=`/`[`/`]`）
+    在菜单可见时先确认组合、再交标点表 ⇒ 方案侧 `key_binder` 的 `-/=`、`[/]` 翻页绑定在这条路径上被遮蔽
+    （`Page_Up`/`Page_Down` 与 `Tab` 循环不受影响）。这是上游参照的实测行为（探针金样 `punct_menu_*` 与
+    `nav-page-*`），本仓如实移植并同步了 `README.md`/`docs/usage.md`/`docs/config.md`/`docs/rust-migration.md`；
+    若判定为上游缺陷，应在上游修正后随下一批同步。
+  - **门槛**：`cargo test --workspace --locked` **291 用例 0 失败**（与 B4 同数：仅改写 2 个平台用例、
+    扩 1 个断言表、金样用例内新增覆盖，无净增删）；fmt/clippy/reuse/CI 分层守卫全绿；
+    另复验 C++ addon 的 configure→构建→`DESTDIR` 安装布局与 **14 个** `hux_*` 导出符号、
+    `gen_pinyin_index.py --check`。
 
 **平台（fcitx5）**
 - ✅ 已修：C++ 壳不再硬编码方案选项名——ABI 新增 `hux_engine_option_role_count` /

@@ -2,15 +2,16 @@
 # SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-# 生成音反查金样（⑧-1）：参照分支（含 PY_c 音反查）的 Lua 核心 + 系统 librime + librime-lua。
-# 参照态 = 分支提交 PIN 与主干提交 BASE 的**本地合并**（上游未合并该分支；合并保证
-# 音反查特性与主干修复（如自动上屏对齐）同时生效；生成器自建临时 worktree，可复现）。
+# 生成音反查金样（⑧-1）：参照 `feat/reverse-lookup` 尖端 pin 的 Lua 核心 + 系统 librime + librime-lua。
+# 该 pin **已包含主干**（`abad411` 等主干提交都在其祖先链上），故金样即 pin 树本身，
+# 不再需要「分支 pin + 主干 pin 本地合并」；`PIN` 取分支尖端（当前 92a0b54）。
+# 仍保留原合并护栏的精神：参与生成的文件只要与声明 pin 不符（工作区被改动、或有人
+# 重新引入本地合并），就**显式失败**，绝不静默产出与声明 pin 不符的金样。
 #
 # 用法：tools/generators/gen_sound_to_char_shape_golden.sh [输出文件]
 #   REF  参照仓库本地检出（默认仓库内 external/tiger-sentense-rime，已 gitignore）
 #   REF_URL  写入金样头部的参照仓库线上地址（默认 https://github.com/lvyww/tiger-sentense-rime）
-#   PIN  音反查分支提交（默认 898579f833df53f1dec5639d56e685751a8a7f71，含 PY_c 与音反查接线）
-#   BASE 主干提交（默认 8b615235c17c858e1eca8f1a41fbc74e202f8bbe；与 PIN 合并后生成）
+#   PIN  参照提交（默认 92a0b54b53114e7e5aa6a1ff48efa95db0e21f9c = feat/reverse-lookup 尖端，含主干）
 #   CASES 用例文件（默认 tools/cases/sound_to_char_shape_cases.txt）
 #
 # 夹具（goldens/sound_to_char_shape/）：小 PY_c 词典 + 合成码表 + symbols.yaml（pin 同文件）；
@@ -21,8 +22,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 REF="${REF:-$ROOT/external/tiger-sentense-rime}"
 REF_URL="${REF_URL:-https://github.com/lvyww/tiger-sentense-rime}"
-PIN="${PIN:-898579f833df53f1dec5639d56e685751a8a7f71}"
-BASE="${BASE:-8b615235c17c858e1eca8f1a41fbc74e202f8bbe}"
+PIN="${PIN:-92a0b54b53114e7e5aa6a1ff48efa95db0e21f9c}"
 OUT="${1:-$ROOT/goldens/sound_to_char_shape.tsv.gz}"
 CASES="${CASES:-$ROOT/tools/cases/sound_to_char_shape_cases.txt}"
 FIXTURE="$ROOT/goldens/sound_to_char_shape"
@@ -34,10 +34,16 @@ user="$WORK/user"
 shared="$WORK/shared"
 mkdir -p "$user/lua" "$shared"
 
-# 本地合并（detached worktree，不触碰参照仓库的分支/引用）。
+# pin 树（detached worktree，不触碰参照仓库的分支/引用）。
 git -C "$REF" worktree add --detach --force "$WT" "$PIN" >/dev/null
-git -C "$WT" -c user.name=golden -c user.email=golden@localhost \
-    merge --no-ff --no-edit "$BASE" >/dev/null
+# 护栏：生成输入必须**就是**该 pin——HEAD 不是 pin（例如有人重新引入本地合并）
+# 或工作区不干净（参与生成的文件被改动/冲突残留）时显式失败。
+if [ "$(git -C "$WT" rev-parse HEAD)" != "$PIN" ] ||
+    [ -n "$(git -C "$WT" status --porcelain)" ]; then
+    echo "生成失败：$WT 不是干净的 $PIN（本地合并或工作区改动会产出与声明 pin 不符的金样）" >&2
+    git -C "$WT" status --porcelain >&2 || true
+    exit 1
+fi
 
 for name in tiger_sentence.lua tiger_sentence_learning.lua tiger_sentence_ngram.lua \
     tiger_sentence_cache.lua tiger_sentence_lexical.lua; do
@@ -85,7 +91,7 @@ pyc_sha="$(sha256sum "$FIXTURE/PY_c.dict.yaml" | cut -d' ' -f1)"
 librime_version="$(pkg-config --modversion rime 2>/dev/null || true)"
 {
     printf '# pinyin lookup golden (⑧-1)\n'
-    printf '# reference: %s @ %s + %s (local merge)\n' "$REF_URL" "$PIN" "$BASE"
+    printf '# reference: %s @ %s (feat/reverse-lookup tip; includes main)\n' "$REF_URL" "$PIN"
     printf '# tiger_sentence.lua sha256: %s\n' "$lua_sha"
     printf '# PY_c.dict.yaml sha256: %s\n' "$pyc_sha"
     printf '# librime: %s; plugin: %s\n' "${librime_version:-unknown}" "$plugin"

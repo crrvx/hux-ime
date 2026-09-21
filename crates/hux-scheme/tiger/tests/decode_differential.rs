@@ -141,6 +141,7 @@ fn replay(mut decoder: Decoder, reader: impl BufRead, early: bool) -> usize {
             let edge_count: usize = fields.next().expect("edge_count").parse().expect("edges");
             let supplement = parse_bits(fields.next().expect("supplement"));
             let learning_score = parse_bits(fields.next().expect("learning"));
+            let early_confidence = parse_bits(fields.next().expect("early confidence"));
 
             let context = format!("{input:?} #{position}");
             assert_eq!(expected.text, text, "text mismatch for {context}");
@@ -176,6 +177,11 @@ fn replay(mut decoder: Decoder, reader: impl BufRead, early: bool) -> usize {
                 expected.learning_score.to_bits(),
                 learning_score,
                 "learning mismatch for {context}"
+            );
+            assert_eq!(
+                expected.early_commit_confidence_score.to_bits(),
+                early_confidence,
+                "early confidence mismatch for {context}"
             );
             records += 1;
         }
@@ -232,6 +238,7 @@ fn replay(mut decoder: Decoder, reader: impl BufRead, early: bool) -> usize {
                 let text = decode_hex(fields.next().expect("text"));
                 let raw_length: usize = fields.next().expect("raw_length").parse().expect("len");
                 let prefix_share = parse_bits(fields.next().expect("share"));
+                let base_share = parse_bits(fields.next().expect("base share"));
                 let boundary_share = parse_bits(fields.next().expect("boundary share"));
                 let closed: u8 = fields.next().expect("closed").parse().expect("closed");
                 let chars: usize = fields.next().expect("chars").parse().expect("chars");
@@ -245,6 +252,11 @@ fn replay(mut decoder: Decoder, reader: impl BufRead, early: bool) -> usize {
                     expected.share.to_bits(),
                     prefix_share,
                     "prefix share for {context}"
+                );
+                assert_eq!(
+                    expected.base_share.to_bits(),
+                    base_share,
+                    "prefix base share for {context}"
                 );
                 assert_eq!(
                     expected.boundary_share.to_bits(),

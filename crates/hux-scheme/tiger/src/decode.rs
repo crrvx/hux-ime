@@ -32,8 +32,36 @@ const WHOLE_INPUT_SINGLE_CHARACTER_REWARD: f64 = 5.0;
 const ISOLATION_THRESHOLD: usize = 3000;
 const ISOLATION_LAMBDA: f64 = 2.0;
 const AGGREGATE_DURING_EXPANSION_THRESHOLD: usize = 128;
-const EARLY_COMMIT_MINIMUM_SHARE: f64 = 0.995;
+const EARLY_COMMIT_MINIMUM_SHARE: f64 = 0.99;
 const EARLY_COMMIT_CLOSED_BOUNDARY_SHARE: f64 = 0.99999;
+
+/// 来源标记（参照 `learning.source_direct` / `learning.source_composed`）。
+const SOURCE_DIRECT: u8 = 1;
+const SOURCE_COMPOSED: u8 = 2;
+/// Direct 与 Composed 皆有的聚合标记（参照 `source_union` 的冲突结果）。
+const SOURCE_BOTH: u8 = 3;
+/// 未标记来源（参照状态表缺 `source_mask` 字段：锁定重放的种子）。
+const SOURCE_UNSET: u8 = 0;
+
+/// 参照 `learning.source_union`：合并两条路径的来源标记。
+fn source_union(left: u8, right: u8) -> u8 {
+    match (left, right) {
+        (SOURCE_UNSET, other) => other,
+        (value, SOURCE_UNSET) => value,
+        (left, right) if left == right => left,
+        _ => SOURCE_BOTH,
+    }
+}
+
+/// 参照 `learning.candidate_is_direct`：`source_mask ∈ {1,3}`。
+pub(crate) fn candidate_is_direct(source_mask: u8) -> bool {
+    source_mask == SOURCE_DIRECT || source_mask == SOURCE_BOTH
+}
+
+/// 参照 `learning.candidate_is_composed_only`：`source_mask == 2`。
+pub(crate) fn candidate_is_composed_only(source_mask: u8) -> bool {
+    source_mask == SOURCE_COMPOSED
+}
 
 /// 排序先验参数（对应参照 `ranking_prior` 表；参照经
 /// `M.set_decoder_parameters_for_test` 调整这些值做消融）。
@@ -47,6 +75,14 @@ pub struct RankingPriorParameters {
     /// 生僻字保护系数（`< 1.0` 时启用；4 码及以上单字边免罚）。
     pub canonical_isolation_factor: f64,
     pub canonical_isolation_min_code_length: usize,
+    /// 补充码表先验转早提交置信度的斜率（`supplement_early_commit_scale`）。
+    pub supplement_early_commit_scale: f64,
+    /// 该转换的上限（`supplement_early_commit_cap`）。
+    pub supplement_early_commit_cap: f64,
+    /// 个性化早提交置信度的总上限（`personalized_early_commit_cap`）。
+    pub personalized_early_commit_cap: f64,
+    /// 空码自动上屏的强置信阈值（`empty_code_strong_share`；比普通强阈值更严）。
+    pub empty_code_strong_share: f64,
 }
 
 impl Default for RankingPriorParameters {
@@ -57,7 +93,19 @@ impl Default for RankingPriorParameters {
             lexical_candidate_limit: 5,
             canonical_isolation_factor: 0.0,
             canonical_isolation_min_code_length: 4,
+            supplement_early_commit_scale: 0.05,
+            supplement_early_commit_cap: 0.75,
+            personalized_early_commit_cap: 0.80,
+            empty_code_strong_share: 0.99999,
         }
+    }
+}
+
+impl RankingPriorParameters {
+    /// 参照 `ranking_prior.supplement_early_commit_contribution`。
+    pub fn supplement_early_commit_contribution(&self, score: f64) -> f64 {
+        self.supplement_early_commit_cap
+            .min(score.max(0.0) * self.supplement_early_commit_scale)
     }
 }
 
@@ -87,6 +135,13 @@ struct State {
     edge_count: usize,
     learning_score: f64,
     learning_potential: f64,
+    /// 该边的学习奖励对早提交置信度的贡献（参照 `learning_early_commit_bonus`）。
+    learning_early_commit_bonus: f64,
+    /// 来源标记（参照 `source_mask`）：0 = 未标记（锁定的重放种子）、
+    /// [`SOURCE_DIRECT`] = Direct（整串直出边）、[`SOURCE_COMPOSED`] = Composed、3 = 两者皆有。
+    source_mask: u8,
+    /// Direct 来源的原始菜单排名（参照 `direct_rank`；非 Direct 为 `f64::INFINITY`）。
+    direct_rank: f64,
     isolation_penalty: Option<f64>,
     isolation_last_char: Option<char>,
     /// 最近被隔离字符的权重（`canonical_isolation_factor`；0 表示未隔离）。
@@ -114,6 +169,8 @@ pub struct Evaluated {
     pub text: String,
     pub score: f64,
     pub confidence_score: f64,
+    /// 早提交置信度（`confidence_score` + 补充码表/学习的有界个性化加分）。
+    pub early_commit_confidence_score: f64,
     /// 码形证据分（参照 `item.code_score`；只参与排序比较）。
     pub code_score: f64,
     /// 词先验加权分（参照 `item.lexical_score`；emit 重排时写入）。
@@ -122,6 +179,10 @@ pub struct Evaluated {
     pub supplement_score: f64,
     pub learning_score: f64,
     pub edge_count: usize,
+    /// 来源标记（参照 `source_mask`）：Direct / Composed / 两者皆有 / 未标记（0）。
+    pub source_mask: u8,
+    /// Direct 来源的原始菜单排名（参照 `direct_rank`；非 Direct 为 `f64::INFINITY`）。
+    pub direct_rank: f64,
     /// 本次解码 arena 的路径下标；仅对产生它的那次 `decode*` 返回值有效。
     pub path: usize,
     pub segmented: String,
@@ -169,7 +230,10 @@ pub struct DecodeLock<'a> {
 pub struct PrefixEvidence {
     pub text: String,
     pub raw_length: usize,
+    /// 早提交份额（个性化置信度口径；`entry.share`）。
     pub share: f64,
+    /// 纯模型（基础置信度）份额（`entry.base_share`；截断池下强证据判定用它）。
+    pub base_share: f64,
     pub boundary_share: f64,
     pub boundary_closed: bool,
     pub text_char_count: usize,
@@ -205,13 +269,6 @@ impl Evidence {
         }
     }
 
-    fn truncated() -> Self {
-        Self {
-            confidence_truncated: true,
-            ..Self::default_for(false)
-        }
-    }
-
     /// 参照 `find_prefix_evidence`。
     pub fn find(&self, text: &str, raw_length: usize) -> Option<&PrefixEvidence> {
         self.by_boundary
@@ -225,7 +282,16 @@ impl Evidence {
 struct EvidenceCandidate {
     text: String,
     confidence_score: f64,
+    /// 合并/新建时冻结的早提交置信度（参照 `early_confidence(entry)`）。
+    early_commit_confidence_score: f64,
     path: usize,
+}
+
+impl EvidenceCandidate {
+    /// 参照 `ranking_prior.early_confidence`。
+    fn early_confidence(&self) -> f64 {
+        self.early_commit_confidence_score
+    }
 }
 
 /// 解码器：持有数据与可选 n-gram 模型（`None` = 无模型回退）。
@@ -387,6 +453,11 @@ impl Decoder {
     /// 参照 `M.set_decoder_parameters_for_test`（排序先验部分）。
     pub fn set_ranking_prior_parameters(&mut self, parameters: RankingPriorParameters) {
         self.ranking_prior = parameters;
+    }
+
+    /// 参照 `live.store.index`：当前生效的学习索引（未接入学习时为 `None`）。
+    pub fn learning_index_mut(&mut self) -> Option<&mut LearningIndex> {
+        self.learning.as_mut().map(|wiring| &mut wiring.index)
     }
 
     /// 参照 `lexicon_state.lexical_model`：紧凑词先验模型（缺省关闭）。
@@ -626,7 +697,7 @@ impl Decoder {
                 .to_string();
             let supplement_score = seed_supplement_score + supplement_added;
             let mass_score = score - supplement_score - seed_learning_score;
-            let (learned, potential) = match &mut self.learning {
+            let (learned, potential, learning_early_bonus) = match &mut self.learning {
                 Some(wiring) => learning_reward(
                     &mut wiring.index,
                     &wiring.mode,
@@ -636,7 +707,7 @@ impl Decoder {
                     raw_length,
                     seed_index,
                 ),
-                None => (seed_learning_score, 0.0),
+                None => (seed_learning_score, 0.0, 0.0),
             };
             if learned > 0.0 || potential > 0.0 {
                 self.learning_affected = true;
@@ -658,6 +729,11 @@ impl Decoder {
                 edge_count: seed_edge_count + 1,
                 learning_score: learned,
                 learning_potential: potential,
+                learning_early_commit_bonus: learning_early_bonus,
+                // 参照锁定重放的种子表没有 `source_mask`/`direct_rank` 字段：
+                // 既不 Direct 也不 Composed-only，合并时让位给另一个来源。
+                source_mask: SOURCE_UNSET,
+                direct_rank: f64::INFINITY,
                 edge_primary_single,
                 edge_code_length,
                 isolation_penalty: None,
@@ -703,6 +779,9 @@ impl Decoder {
             edge_count: 0,
             learning_score: 0.0,
             learning_potential: 0.0,
+            learning_early_commit_bonus: 0.0,
+            source_mask: SOURCE_UNSET,
+            direct_rank: f64::INFINITY,
             isolation_penalty: None,
             isolation_last_char: None,
             isolation_last_weight: 0.0,
@@ -857,8 +936,20 @@ impl Decoder {
                 let mass = bucket.mass.get(&text).copied().unwrap_or(item_mass);
                 let combined = logsumexp(mass, item_mass);
                 bucket.mass.insert(text.clone(), combined);
+                // 同文本多路径的来源合并先算，再写入「当前最佳项」（参照 `add_aggregated`）。
+                let source = source_union(
+                    self.arena[previous].source_mask,
+                    self.arena[item].source_mask,
+                );
+                let direct_rank = self.arena[previous]
+                    .direct_rank
+                    .min(self.arena[item].direct_rank);
                 if self.duplicate_better(item, previous) {
                     bucket.best.insert(text.clone(), item);
+                }
+                if let Some(&best) = bucket.best.get(&text) {
+                    self.arena[best].source_mask = source;
+                    self.arena[best].direct_rank = direct_rank;
                 }
             }
         }
@@ -998,6 +1089,7 @@ impl Decoder {
                     states[consumed_end].truncated = true;
                 }
                 for &item_index in &current {
+                    let item_is_root = self.arena[item_index].previous.is_none();
                     let item = self.arena[item_index].view();
                     for candidate in &eligible {
                         let mut score = item.score;
@@ -1043,18 +1135,24 @@ impl Decoder {
                             - item.score
                             - supplement_added
                             - whole_input_bonus;
-                        // 参照：`learning.reward(learning_index, learning_mode, raw, text, consumed_end, item)`。
-                        let (learned, potential) = match &mut self.learning {
-                            Some(wiring) => learning_reward(
-                                &mut wiring.index,
-                                &wiring.mode,
-                                &self.arena,
-                                raw,
-                                &text,
-                                consumed_end,
-                                item_index,
-                            ),
-                            None => (item.learning_score, 0.0),
+                        // 整串直出边（Direct）：不参与学习（保留路径既有学习分，
+                        // 不另计奖励，也不置 `learning_affected`）；参照 `expand_range`。
+                        let direct_edge = item_is_root && position == 0 && whole_input_edge;
+                        let (learned, potential, learning_early_bonus) = if direct_edge {
+                            (item.learning_score, 0.0, item.learning_early_commit_bonus)
+                        } else {
+                            match &mut self.learning {
+                                Some(wiring) => learning_reward(
+                                    &mut wiring.index,
+                                    &wiring.mode,
+                                    &self.arena,
+                                    raw,
+                                    &text,
+                                    consumed_end,
+                                    item_index,
+                                ),
+                                None => (item.learning_score, 0.0, 0.0),
+                            }
                         };
                         if learned > 0.0 || potential > 0.0 {
                             self.learning_affected = true;
@@ -1076,6 +1174,17 @@ impl Decoder {
                             edge_count: item.edge_count + 1,
                             learning_score: learned,
                             learning_potential: potential,
+                            learning_early_commit_bonus: learning_early_bonus,
+                            source_mask: if direct_edge {
+                                SOURCE_DIRECT
+                            } else {
+                                SOURCE_COMPOSED
+                            },
+                            direct_rank: if direct_edge {
+                                candidate.rank as f64
+                            } else {
+                                f64::INFINITY
+                            },
                             edge_primary_single: protect_primary_rare
                                 && candidate.chars.len() == 1
                                 && (candidate.primary_single || selected_rank > 0),
@@ -1103,16 +1212,35 @@ impl Decoder {
         let confidence_ending_adjustment = eos_score - self.isolation_penalty(&text)?;
         let state = &self.arena[index];
         let previous = state.previous;
+        let confidence_score = state.mass_score + confidence_ending_adjustment;
+        // 直接项（Direct）剥离学习分：整串直出候选按字典序排，学习历史不得改其排序；
+        // 学习奖励也不进它的早提交个性化加分（参照 `evaluate_state`）。
+        let direct = candidate_is_direct(state.source_mask);
+        // 早提交置信度 = 基础置信度 + 有界的个性化加分（补充码表 + 学习），
+        // 参照 `evaluate_state` 的 `personalization`。
+        let personalization = self.ranking_prior.personalized_early_commit_cap.min(
+            self.ranking_prior
+                .supplement_early_commit_contribution(state.supplement_score)
+                + if direct {
+                    0.0
+                } else {
+                    state.learning_early_commit_bonus
+                },
+        );
         Ok(Evaluated {
             text: state.text.clone(),
-            score: state.score + ending_adjustment,
-            confidence_score: state.mass_score + confidence_ending_adjustment,
+            score: state.score + ending_adjustment
+                - if direct { state.learning_score } else { 0.0 },
+            confidence_score,
+            early_commit_confidence_score: confidence_score + personalization,
             code_score: state.code_score,
             lexical_score: 0.0,
             max_rank: state.max_rank.max(1),
             supplement_score: state.supplement_score,
-            learning_score: state.learning_score,
+            learning_score: if direct { 0.0 } else { state.learning_score },
             edge_count: state.edge_count,
+            source_mask: state.source_mask,
+            direct_rank: state.direct_rank,
             path: index,
             segmented: String::new(),
             previous_raw_length: previous.map(|i| self.arena[i].raw_length).unwrap_or(0),
@@ -1274,8 +1402,17 @@ impl Decoder {
                 }
             });
         }
+        // 跨来源偏好融合（参照 `learning.apply_fusion_ordering(raw, result)`）：
+        // 在词先验重排之后、证据构建之前重排展示 Top-K。
+        {
+            let (index, mode) = match &mut self.learning {
+                Some(wiring) => (Some(&mut wiring.index), wiring.mode.as_str()),
+                None => (None, ""),
+            };
+            apply_fusion_ordering(index, mode, raw, &mut items);
+        }
         let mut evidence = Evidence::default_for(completed_truncated);
-        if include_early_commit && !self.learning_affected {
+        if include_early_commit {
             evidence = self.build_early_commit_evidence(
                 raw,
                 states,
@@ -1319,9 +1456,139 @@ impl Decoder {
     }
 }
 
+// ---------------------------------------------------------------- 跨来源融合
+
+/// 参照 `learning.fusion_score`；无学习库（`None`，对应参照的 `learning_index == nil`）
+/// 或空模式时恒 0。
+fn fusion_score(
+    index: &mut Option<&mut LearningIndex>,
+    mode: &str,
+    raw: &[u8],
+    direct: &str,
+    composed: &str,
+) -> f64 {
+    match index {
+        None => 0.0,
+        Some(index) => index.fusion_score(mode, raw, direct, composed),
+    }
+}
+
+/// 参照 `learning.apply_fusion_ordering`：保持 Direct 的原始菜单序，
+/// 再按成对偏好把 Direct / Composed 两列做**两指针归并**。
+///
+/// - 分列：`candidate_is_direct` 为真进 Direct 列，否则（含锁定重放的未标记来源）
+///   进 Composed 列。仅当候选**全为 Direct** 时用重排后的 Direct 列回写
+///   ——这就是「直接序保持」的落点；全为 Composed 时保持既有顺序。
+/// - 每步前缀前瞻：Direct 侧 `max fusion_score(raw, direct[i], c)`，
+///   Composed 侧 `max −fusion_score(raw, d, composed[i])`。两侧都不 `> 0`，
+///   或差值落在 `1e-12` 内（含完全相等）时，回退到 `base`（原始下标）较小者，
+///   即保持原交错序。
+/// - 无学习库时所有 `fusion_score` 恒 0 ⇒ 归并退化为「全 Direct 时按 `direct_rank`
+///   重排、其余保持原序」。
+fn apply_fusion_ordering(
+    mut index: Option<&mut LearningIndex>,
+    mode: &str,
+    raw: &[u8],
+    candidates: &mut [Evaluated],
+) {
+    if candidates.len() < 2 {
+        return;
+    }
+    let mut base: HashMap<String, usize> = HashMap::new();
+    let mut direct: Vec<usize> = Vec::new();
+    let mut composed: Vec<usize> = Vec::new();
+    for (position, item) in candidates.iter().enumerate() {
+        base.entry(item.text.clone()).or_insert(position);
+        if candidate_is_direct(item.source_mask) {
+            direct.push(position);
+        } else {
+            composed.push(position);
+        }
+    }
+    // `table.sort` 的比较器在此处是全序（`direct_rank` 同值回退 `base` 下标），
+    // 故与参照的不稳定排序等价。
+    direct.sort_by(|&left, &right| {
+        let left_rank = candidates[left].direct_rank;
+        let right_rank = candidates[right].direct_rank;
+        if left_rank != right_rank {
+            return left_rank
+                .partial_cmp(&right_rank)
+                .unwrap_or(std::cmp::Ordering::Equal);
+        }
+        base_index(&base, &candidates[left].text).cmp(&base_index(&base, &candidates[right].text))
+    });
+    if direct.is_empty() || composed.is_empty() {
+        if composed.is_empty() {
+            let reordered: Vec<Evaluated> = direct
+                .iter()
+                .map(|&position| candidates[position].clone())
+                .collect();
+            candidates.clone_from_slice(&reordered);
+        }
+        return;
+    }
+    let mut merged: Vec<usize> = Vec::with_capacity(candidates.len());
+    let (mut di, mut ci) = (0usize, 0usize);
+    while di < direct.len() && ci < composed.len() {
+        let d = direct[di];
+        let c = composed[ci];
+        let mut direct_prefix = 0.0f64;
+        for &ahead in &direct[di..] {
+            direct_prefix = direct_prefix.max(fusion_score(
+                &mut index,
+                mode,
+                raw,
+                &candidates[ahead].text,
+                &candidates[c].text,
+            ));
+        }
+        let mut composed_prefix = 0.0f64;
+        for &ahead in &composed[ci..] {
+            composed_prefix = composed_prefix.max(-fusion_score(
+                &mut index,
+                mode,
+                raw,
+                &candidates[d].text,
+                &candidates[ahead].text,
+            ));
+        }
+        let by_base =
+            || base_index(&base, &candidates[d].text) < base_index(&base, &candidates[c].text);
+        let take_direct = if direct_prefix > 0.0 || composed_prefix > 0.0 {
+            if (direct_prefix - composed_prefix).abs() > 1e-12 {
+                direct_prefix > composed_prefix
+            } else {
+                by_base()
+            }
+        } else {
+            by_base()
+        };
+        if take_direct {
+            merged.push(d);
+            di += 1;
+        } else {
+            merged.push(c);
+            ci += 1;
+        }
+    }
+    merged.extend_from_slice(&direct[di..]);
+    merged.extend_from_slice(&composed[ci..]);
+    let reordered: Vec<Evaluated> = merged
+        .iter()
+        .map(|&position| candidates[position].clone())
+        .collect();
+    candidates.clone_from_slice(&reordered);
+}
+
+/// 参照 `base[text] or math.huge`：缺失文本排到最后。
+fn base_index(base: &HashMap<String, usize>, text: &str) -> usize {
+    base.get(text).copied().unwrap_or(usize::MAX)
+}
+
 // ---------------------------------------------------------------- 学习奖励
 
 /// 参照 `learning.reward`，但沿解码状态链（arena）读取节点。
+/// 返回 `(best, potential, early_bonus)`（参照三元返回）。
 fn learning_reward(
     index: &mut LearningIndex,
     mode: &str,
@@ -1330,7 +1597,7 @@ fn learning_reward(
     text: &str,
     finish: usize,
     start: usize,
-) -> (f64, f64) {
+) -> (f64, f64, f64) {
     // 算法只在 core 维护一份（`learning::reward`）：此处把 arena 的路径物化为其链表示。
     let mut chain = Vec::new();
     let mut current = Some(start);
@@ -1338,6 +1605,7 @@ fn learning_reward(
         let state = &arena[position];
         chain.push(hux_core::learning::RewardNode {
             learning_score: state.learning_score,
+            learning_early_commit_bonus: state.learning_early_commit_bonus,
             text_length: state.text_length,
             raw_length: state.raw_length,
         });
@@ -1360,6 +1628,7 @@ impl Decoder {
         pool_index: &mut HashMap<usize, HashMap<String, usize>>,
         text: String,
         confidence_score: f64,
+        early_commit_confidence_score: f64,
         path: usize,
     ) {
         if text.is_empty() {
@@ -1372,6 +1641,7 @@ impl Decoder {
                 pool.push(EvidenceCandidate {
                     text: text.clone(),
                     confidence_score,
+                    early_commit_confidence_score,
                     path,
                 });
                 boundary.insert(text, pool.len() - 1);
@@ -1379,7 +1649,10 @@ impl Decoder {
             Some(position) => {
                 let previous = &pool[position];
                 let combined = logsumexp(previous.confidence_score, confidence_score);
-                let best_path = if confidence_score > previous.confidence_score {
+                let combined_early =
+                    logsumexp(previous.early_confidence(), early_commit_confidence_score);
+                // 参照：`best` 按早提交置信度（而非基础置信度）择优。
+                let best_path = if early_commit_confidence_score > previous.early_confidence() {
                     path
                 } else {
                     previous.path
@@ -1387,6 +1660,7 @@ impl Decoder {
                 pool[position] = EvidenceCandidate {
                     text,
                     confidence_score: combined,
+                    early_commit_confidence_score: combined_early,
                     path: best_path,
                 };
             }
@@ -1416,9 +1690,7 @@ impl Decoder {
         completed_truncated: bool,
         required_text_prefix: &str,
     ) -> Result<Evidence> {
-        if completed_truncated {
-            return Ok(Evidence::truncated());
-        }
+        // 截断池不再早退：保留已算出的质量用于「强证据」策略（强证据只认 BaseShare）。
         let mut pool: Vec<EvidenceCandidate> = Vec::new();
         let mut pool_index: HashMap<usize, HashMap<String, usize>> = HashMap::new();
         let mut visible: Vec<&Evaluated> = Vec::new();
@@ -1436,11 +1708,12 @@ impl Decoder {
                 &mut pool_index,
                 candidate.text.clone(),
                 candidate.confidence_score,
+                candidate.early_commit_confidence_score,
                 candidate.path,
             );
         }
 
-        let truncated = completed_truncated;
+        let mut truncated = completed_truncated;
         let mut merged_incomplete_tail = false;
         let maximum_tail_length = self
             .lexicon
@@ -1476,15 +1749,14 @@ impl Decoder {
                     &mut pool_index,
                     candidate.text.clone(),
                     candidate.confidence_score,
+                    candidate.early_commit_confidence_score,
                     candidate.path,
                 );
                 added = true;
             }
             if added {
                 merged_incomplete_tail = true;
-                if partial_truncated {
-                    return Ok(Evidence::truncated());
-                }
+                truncated = truncated || partial_truncated;
             }
         }
 
@@ -1549,28 +1821,40 @@ impl Decoder {
 }
 
 /// 参照 `build_prefix_evidence`：按 (前缀文本, raw 边界) 汇总证据。
+/// 基础权重（模型置信度）与早提交权重（个性化置信度）各算一套份额。
 fn build_prefix_evidence(pool: &[EvidenceCandidate], arena: &[State]) -> Vec<PrefixEvidence> {
     if pool.is_empty() {
         return Vec::new();
     }
-    let max_score = pool
+    let base_max = pool
         .iter()
         .map(|candidate| candidate.confidence_score)
         .fold(f64::NEG_INFINITY, f64::max);
-    let weights: Vec<f64> = pool
+    let early_max = pool
         .iter()
-        .map(|candidate| (candidate.confidence_score - max_score).exp())
+        .map(EvidenceCandidate::early_confidence)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let base_weights: Vec<f64> = pool
+        .iter()
+        .map(|candidate| (candidate.confidence_score - base_max).exp())
         .collect();
-    let total: f64 = weights.iter().sum();
-    if total <= 0.0 {
+    let early_weights: Vec<f64> = pool
+        .iter()
+        .map(|candidate| (candidate.early_confidence() - early_max).exp())
+        .collect();
+    let base_total: f64 = base_weights.iter().sum();
+    let early_total: f64 = early_weights.iter().sum();
+    if base_total <= 0.0 || early_total <= 0.0 {
         return Vec::new();
     }
     let mut entries: Vec<PrefixEvidence> = Vec::new();
-    let mut entry_weights: Vec<f64> = Vec::new();
+    let mut entry_base_weights: Vec<f64> = Vec::new();
+    let mut entry_early_weights: Vec<f64> = Vec::new();
     let mut entry_index: HashMap<(usize, String), usize> = HashMap::new();
-    let mut boundary_mass: HashMap<usize, f64> = HashMap::new();
+    let mut base_boundary_mass: HashMap<usize, f64> = HashMap::new();
     for (position, item) in pool.iter().enumerate() {
-        let weight = weights[position];
+        let base_weight = base_weights[position];
+        let early_weight = early_weights[position];
         let mut current = Some(item.path);
         while let Some(index) = current {
             let prefix_text = arena[index].text.clone();
@@ -1585,26 +1869,34 @@ fn build_prefix_evidence(pool: &[EvidenceCandidate], arena: &[State]) -> Vec<Pre
                             text: prefix_text,
                             raw_length,
                             share: 0.0,
+                            base_share: 0.0,
                             boundary_share: 0.0,
                             boundary_closed: false,
                             text_char_count: 0,
                         });
-                        entry_weights.push(0.0);
+                        entry_base_weights.push(0.0);
+                        entry_early_weights.push(0.0);
                         entry_index.insert(key, slot);
                         slot
                     }
                 };
-                entry_weights[slot] += weight;
-                *boundary_mass.entry(raw_length).or_insert(0.0) += weight;
+                entry_base_weights[slot] += base_weight;
+                entry_early_weights[slot] += early_weight;
+                *base_boundary_mass.entry(raw_length).or_insert(0.0) += base_weight;
             }
             current = arena[index].previous;
         }
     }
     for (position, entry) in entries.iter_mut().enumerate() {
-        let boundary = boundary_mass.get(&entry.raw_length).copied().unwrap_or(0.0);
-        entry.share = entry_weights[position] / total;
-        entry.boundary_share = boundary / total;
-        entry.boundary_closed = entry.boundary_share >= EARLY_COMMIT_CLOSED_BOUNDARY_SHARE;
+        let boundary = base_boundary_mass
+            .get(&entry.raw_length)
+            .copied()
+            .unwrap_or(0.0);
+        let boundary_share = boundary / base_total;
+        entry.share = entry_early_weights[position] / early_total;
+        entry.base_share = entry_base_weights[position] / base_total;
+        entry.boundary_share = boundary_share;
+        entry.boundary_closed = boundary_share >= EARLY_COMMIT_CLOSED_BOUNDARY_SHARE;
         entry.text_char_count = entry.text.chars().count();
     }
     entries
@@ -1675,6 +1967,7 @@ struct StateView {
     supplement_score: f64,
     edge_count: usize,
     learning_score: f64,
+    learning_early_commit_bonus: f64,
 }
 
 impl State {
@@ -1691,6 +1984,7 @@ impl State {
             supplement_score: self.supplement_score,
             edge_count: self.edge_count,
             learning_score: self.learning_score,
+            learning_early_commit_bonus: self.learning_early_commit_bonus,
         }
     }
 }
@@ -2056,6 +2350,110 @@ mod tests {
         Decoder::new(lexicon, supplement, None)
     }
 
+    /// 融合排序用例的最小候选（其余字段与排序无关）。
+    fn fusion_candidate(text: &str, source_mask: u8, direct_rank: f64) -> Evaluated {
+        Evaluated {
+            text: text.to_string(),
+            score: 0.0,
+            confidence_score: 0.0,
+            early_commit_confidence_score: 0.0,
+            code_score: 0.0,
+            lexical_score: 0.0,
+            max_rank: 1,
+            supplement_score: 0.0,
+            learning_score: 0.0,
+            edge_count: 1,
+            source_mask,
+            direct_rank,
+            path: 0,
+            segmented: String::new(),
+            previous_raw_length: 0,
+            previous_text: None,
+        }
+    }
+
+    fn fusion_texts(candidates: &[Evaluated]) -> Vec<&str> {
+        candidates.iter().map(|item| item.text.as_str()).collect()
+    }
+
+    /// 融合排序索引：一条 `fusion_event` 落到 `mode` 的融合分区里。
+    fn fusion_index(
+        mode: &str,
+        raw: &[u8],
+        direct: &str,
+        composed: &str,
+        direct_wins: bool,
+    ) -> LearningIndex {
+        let event = hux_core::learning::fusion_event(
+            mode,
+            raw,
+            direct,
+            composed,
+            direct_wins,
+            raw.len(),
+            1000.0,
+        )
+        .expect("融合事件");
+        LearningIndex::build(
+            &[hux_core::learning::Event {
+                time: event.time,
+                mode: event.mode,
+                code: event.code,
+                text: event.text,
+                context: event.context,
+            }],
+            1000.0,
+        )
+    }
+
+    /// 照抄上游 `tools/test_sentence_learning.lua` 的融合用例：
+    /// 无事件保持原交错序；一条 `C > A` 的 Direct 偏好只把 Direct 前缀提到 A 之前。
+    #[test]
+    fn fusion_ordering_matches_reference_cases() {
+        let mode = "sentence-v2|test";
+        let cases = || {
+            vec![
+                fusion_candidate("A", SOURCE_COMPOSED, f64::INFINITY),
+                fusion_candidate("B", SOURCE_DIRECT, 1.0),
+                fusion_candidate("C", SOURCE_DIRECT, 2.0),
+            ]
+        };
+        // 无学习库：两侧前缀分都是 0 ⇒ 回退原始下标顺序。
+        let mut items = cases();
+        apply_fusion_ordering(None, mode, b"ii", &mut items);
+        assert_eq!(fusion_texts(&items), ["A", "B", "C"]);
+        // 空模式（未接入学习）同样退化为原序。
+        let mut items = cases();
+        apply_fusion_ordering(None, "", b"ii", &mut items);
+        assert_eq!(fusion_texts(&items), ["A", "B", "C"]);
+        // 一条 `Direct C > Composed A`：Direct 列的 B、C 一起前移，A 退到最后。
+        let mut index = fusion_index(mode, b"ii", "C", "A", true);
+        let mut items = cases();
+        apply_fusion_ordering(Some(&mut index), mode, b"ii", &mut items);
+        assert_eq!(fusion_texts(&items), ["B", "C", "A"]);
+    }
+
+    #[test]
+    fn fusion_ordering_preserves_direct_order_and_reverse_preference() {
+        let mode = "sentence-v2|test";
+        // 全为 Direct：与学习库无关地按 `direct_rank` 重排（「直接序保持」）。
+        let mut items = vec![
+            fusion_candidate("C", SOURCE_DIRECT, 2.0),
+            fusion_candidate("A", SOURCE_DIRECT, f64::INFINITY),
+            fusion_candidate("B", SOURCE_DIRECT, 1.0),
+        ];
+        apply_fusion_ordering(None, mode, b"ii", &mut items);
+        assert_eq!(fusion_texts(&items), ["B", "C", "A"]);
+        // 反向偏好（Composed 胜）：Composed 列先出。
+        let mut index = fusion_index(mode, b"ii", "B", "A", false);
+        let mut items = vec![
+            fusion_candidate("B", SOURCE_DIRECT, 1.0),
+            fusion_candidate("A", SOURCE_COMPOSED, f64::INFINITY),
+        ];
+        apply_fusion_ordering(Some(&mut index), mode, b"ii", &mut items);
+        assert_eq!(fusion_texts(&items), ["A", "B"]);
+    }
+
     #[test]
     fn normalize_strips_whitespace_and_control() {
         assert_eq!(normalize("A B\tC\r\n"), b"abc");
@@ -2408,6 +2806,13 @@ mod tests {
         assert_eq!(parameters.lexical_prior_weight, 0.1);
         assert_eq!(parameters.lexical_candidate_limit, 5);
         assert_eq!(parameters.canonical_isolation_min_code_length, 4);
+        // 5ce1ca2 新增的早提交先验（参照 `ranking_prior.*` 默认值）。
+        assert_eq!(parameters.supplement_early_commit_scale, 0.05);
+        assert_eq!(parameters.supplement_early_commit_cap, 0.75);
+        assert_eq!(parameters.personalized_early_commit_cap, 0.80);
+        assert_eq!(parameters.empty_code_strong_share, 0.99999);
+        // 空码强阈值比普通强阈值（0.999）更严。
+        assert!(parameters.empty_code_strong_share > 0.999);
         // decoder 默认即内建参数。
         let decoder = fixture_decoder();
         assert_eq!(decoder.ranking_prior_parameters(), parameters);
@@ -2424,6 +2829,26 @@ mod tests {
             decoder.ranking_prior_parameters().canonical_code_reward,
             1.0
         );
+    }
+
+    #[test]
+    fn supplement_early_commit_contribution_matches_reference() {
+        // 参照 `min(supplement_early_commit_cap, max(0, score) * scale)`。
+        let parameters = RankingPriorParameters::default();
+        assert_eq!(parameters.supplement_early_commit_contribution(0.0), 0.0);
+        assert_eq!(parameters.supplement_early_commit_contribution(-3.0), 0.0);
+        assert_eq!(parameters.supplement_early_commit_contribution(4.0), 0.2);
+        assert_eq!(parameters.supplement_early_commit_contribution(15.0), 0.75);
+        assert_eq!(
+            parameters.supplement_early_commit_contribution(1000.0),
+            0.75
+        );
+        // 消融：放大斜率后仍受上限约束。
+        let scaled = RankingPriorParameters {
+            supplement_early_commit_scale: 0.5,
+            ..parameters
+        };
+        assert_eq!(scaled.supplement_early_commit_contribution(2.0), 0.75);
     }
 
     #[test]

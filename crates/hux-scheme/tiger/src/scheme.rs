@@ -236,11 +236,13 @@ impl Scheme for TigerScheme {
 
     fn learning_mode(&self, rules: &str, duplicate: bool, high_freq_limit: usize) -> String {
         // 参照 `prepare_learning`：关闭 Tab 学习 → 空串 = 不记录。
+        // 模式串自带版本号（`c69c1a8` 起 v1→v2）：事件与索引按 mode 分区，
+        // 旧版记录仍留在库中但不再命中。
         if !self.config.tab_learning {
             return String::new();
         }
         format!(
-            "sentence-v1|rules={rules}|optimal={high_freq_limit}|dup={}",
+            "sentence-v2|rules={rules}|optimal={high_freq_limit}|dup={}",
             u8::from(duplicate)
         )
     }
@@ -525,7 +527,7 @@ mod tests {
         let scheme = fixture_scheme();
         assert_eq!(
             scheme.learning_mode("abc", true, 1500),
-            "sentence-v1|rules=abc|optimal=1500|dup=1"
+            "sentence-v2|rules=abc|optimal=1500|dup=1"
         );
         let mut off = fixture_scheme();
         off.apply_config(&SchemeConfig {
@@ -542,11 +544,11 @@ mod tests {
         let mut context = Context::new();
         let session = scheme.new_session(&mut context);
         let index = LearningIndex::build(&[], 0.0);
-        scheme.apply_learning_index(session, 7, &index, "sentence-v1");
+        scheme.apply_learning_index(session, 7, &index, "sentence-v2");
         assert_eq!(scheme.applied_learning, Some(7));
-        scheme.apply_learning_index(session, 7, &index, "sentence-v1");
+        scheme.apply_learning_index(session, 7, &index, "sentence-v2");
         assert_eq!(scheme.applied_learning, Some(7), "同版本不重复应用");
-        scheme.apply_learning_index(session, 8, &index, "sentence-v1");
+        scheme.apply_learning_index(session, 8, &index, "sentence-v2");
         assert_eq!(scheme.applied_learning, Some(8));
     }
 
@@ -585,7 +587,7 @@ mod tests {
         let mut context = Context::new();
         let session = scheme.new_session(&mut context);
         assert!(scheme.take_learning_events(session).is_empty());
-        scheme.set_learning_mode("sentence-v1");
+        scheme.set_learning_mode("sentence-v2");
         scheme.set_store_ready(true);
         scheme.reset_session(session, &mut context);
         scheme.free_session(session);

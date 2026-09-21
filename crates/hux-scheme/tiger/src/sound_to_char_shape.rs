@@ -592,24 +592,16 @@ fn punct_shape_comment(punct: &str) -> String {
     }
 }
 
-/// 音反查输入模式：`<前缀>[a-z]*'?`（参照 schema `recognizer/patterns/reverse_lookup`）。
+/// 音反查输入模式：`<前缀>[a-z']*`（参照 schema `recognizer/patterns/reverse_lookup`
+/// = `^` + 前缀 + `[a-z']*$`）：撇号可出现在任意位置，供引擎按 schema 声明的
+/// `speller/delimiter`（`" '"`）切分音节。
 pub fn matches_pattern(input: &[u8], prefix: char) -> bool {
     let prefix = prefix as u8;
     let Some(rest) = input.strip_prefix(&[prefix][..]) else {
         return false;
     };
-    let mut quote = false;
-    for &byte in rest {
-        if byte.is_ascii_lowercase() && !quote {
-            continue;
-        }
-        if byte == b'\'' && !quote {
-            quote = true;
-            continue;
-        }
-        return false;
-    }
-    true
+    rest.iter()
+        .all(|&byte| byte.is_ascii_lowercase() || byte == b'\'')
 }
 
 struct Reader<'a> {
@@ -658,14 +650,22 @@ mod tests {
 
     #[test]
     fn pattern_matches_reference_recognizer() {
+        // 参照 `tiger_sentence.schema.yaml` @92a0b54：`^`[a-z']*$`；
+        // 上游 `tools/test_reverse_lookup.lua` 同一批断言。
         assert!(matches_pattern(b"`", '`'));
         assert!(matches_pattern(b"`zhong", '`'));
         assert!(matches_pattern(b"`xi'", '`'));
-        assert!(!matches_pattern(b"`xi'a", '`'));
+        assert!(matches_pattern(b"`xi'a", '`'));
+        assert!(matches_pattern(b"`xi'an", '`'));
+        assert!(matches_pattern(b"`xi'an'", '`'));
         assert!(!matches_pattern(b"`Z", '`'));
         assert!(!matches_pattern(b"a`", '`'));
         assert!(!matches_pattern(b"``", '`'));
         assert!(!matches_pattern(b"`1", '`'));
+        assert!(!matches_pattern(b"`ni2", '`'));
+        assert!(!matches_pattern(b"`xi'an2", '`'));
+        assert!(!matches_pattern(b"`xi a", '`'));
+        assert!(!matches_pattern(b"xi'an", '`'));
     }
 
     #[test]

@@ -83,7 +83,8 @@ cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
 - 鼠标点击候选：选中并上屏
 - `Left/Right` 光标移动（字节偏移）
 - `Up/Down` 或 `Tab / Shift+Tab` 高亮选择
-- `-/=` 或 `[/]` 或 `PgUp/PgDn` 翻页
+- `PgUp/PgDn` 翻页；`-`/`=`、`[`/`]` 同为翻页键，但**菜单可见时**它们会先上屏当前组合
+  再落对应标点（追平上游 `abad411` 的「标点学习保留」行为，见 [`config.md`](config.md)）
 - `Enter` 提交原文，`Esc` 取消。
 - `Alt+:` 音反查
 - `Alt+"` 字反查

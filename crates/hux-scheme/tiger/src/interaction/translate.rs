@@ -167,7 +167,7 @@ pub fn translate(
 /// 分段常量（参照 schema `speller/alphabet|initials|delimiter`；`finals` 未设置）。
 pub(crate) const SEGMENTATION_ALPHABET: &str = "zyxwvutsrqponmlkjihgfedcba;';0123456789~";
 pub(crate) const SEGMENTATION_INITIALS: &str = "abcdefghijklmnopqrstuvwxyz~";
-pub(crate) const SEGMENTATION_DELIMITER: &str = " ";
+pub(crate) const SEGMENTATION_DELIMITER: &str = " '";
 
 /// 组合重建器：参照 `ConcreteEngine::Compose`（分段输入随光标；增量重置保留未变段的
 /// 菜单与高亮），供宿主在每次按键后调用。
@@ -285,7 +285,7 @@ pub(crate) fn calculate_segmentation(
 }
 
 /// 参照 `Matcher::Proceed`（`recognizer/patterns`）：活跃输入匹配
-/// `^<前缀>[a-z]*'?$` 时，由本段独占剩余输入（标签 [`sound_to_char_shape::SOUND_TO_CHAR_SHAPE_TAG`]）。
+/// `^<前缀>[a-z']*$` 时，由本段独占剩余输入（标签 [`sound_to_char_shape::SOUND_TO_CHAR_SHAPE_TAG`]）。
 pub(crate) fn matcher(
     composition: &mut Composition,
     input: &[u8],

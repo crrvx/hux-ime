@@ -258,6 +258,43 @@ pub fn processor(
             return Ok(ProcessorResult::Consume);
         }
         let is_letter = ch.is_ascii_lowercase();
+        // 音反查段（`` ` `` 前缀）不得把选择键并入拼音：拼写表会把它追加进输入并打断
+        // 反查段。数字在此直选提交，分号惰性；撇号由识别模式放行（供引擎按 schema
+        // 声明的 `speller/delimiter` 切分音节，见 `sound_to_char_shape::matches_pattern`）。
+        if !is_letter
+            && context.composition.back().is_some_and(|segment| {
+                segment.has_tag(sound_to_char_shape::SOUND_TO_CHAR_SHAPE_TAG)
+            })
+        {
+            if ch.is_ascii_digit() {
+                live.pending.clear();
+                live.baseline = None;
+                let index = (ch as u8 - b'0') as isize - 1;
+                let count = context
+                    .composition
+                    .back()
+                    .map(|segment| segment.candidates.len())
+                    .unwrap_or(0);
+                if index >= 0 && (index as usize) < count {
+                    // 高亮 + 确认与 Space 同路（`Context::select` 可能提交整句）。
+                    context.highlight(index as usize);
+                    confirm_selection(
+                        Some(&mut LearningCommit {
+                            decoder: &mut *decoder,
+                            live: &mut *live,
+                            now: env.now,
+                        }),
+                        context,
+                        state,
+                    );
+                }
+                state.reset(context, false);
+                return Ok(ProcessorResult::Consume);
+            }
+            if ch == ';' {
+                return Ok(ProcessorResult::Consume);
+            }
+        }
         let live_before = live_input(context);
         let caret = input_caret(context);
         let mut full_before = state.committed_raw.as_bytes().to_vec();
@@ -289,6 +326,7 @@ pub fn processor(
             let decoded =
                 decoder.decode_with_lock(&raw_text, false, &state.committed_text, lock)?;
             let mut candidate: Option<Selected> = None;
+            let mut seen: Vec<FusionAhead> = Vec::new();
             let mut visible = 0usize;
             for item in &decoded.items {
                 if implicit_rank_allowed(
@@ -306,14 +344,28 @@ pub fn processor(
                             raw_length,
                             diff,
                             buffered_fallback: false,
+                            source_mask: item.source_mask,
+                            // 参照：命中即 `break`，`_fusion_ahead` = 此前通过过滤的候选。
+                            fusion_ahead: seen,
                         });
                         break;
                     }
+                    seen.push(FusionAhead {
+                        text: item.text.clone(),
+                        source_mask: item.source_mask,
+                    });
                     visible += 1;
                 }
             }
             if let Some(candidate) = candidate {
                 if candidate.raw_length > state.committed_raw.len() {
+                    // 参照 `processor` 的 Tab 确认分支：**先** stage、**再**清 `tab_pending`。
+                    // `learning_stage` 以该标志选择基线（`tab_pending and live.baseline or
+                    // submitted_first`），且 `reinforce_eligible` 要求 `!tab_pending`；
+                    // 清标志后再 stage 会把基线取成 `submitted_first` 并误走 reinforce 路线。
+                    // 参照此处不传 `submitted_first`（nil）；清理后分支即 `return`，本调用不与
+                    // 提交点的 `learning_commit` 重复（后者对应参照的 commit 通知器，参照同样会走）。
+                    learning_stage(live, state, Some(&candidate), &full_before, None, env.now);
                     state.tab_pending = false;
                     let boundaries: String = candidate
                         .diff
@@ -414,15 +466,26 @@ pub fn processor(
         }
         return Ok(ProcessorResult::Forward);
     }
-    // 缓冲态遇可打印标点：先确认组合，再把原键交标点表。
+    // 菜单可见（不必处于缓冲态）时遇可打印标点：先按当前选中项暂存学习、确认组合，
+    // 再把原键交标点处理器（参照 `abad411`：标点段一旦追加进组合，
+    // `learning_selection` 就再也不能解码该输入——例如 `zhhbi,`——或取回句子的选中项）。
     let codepoint = key_event.keycode;
-    if !state.buffered_text.is_empty()
+    if context.has_menu()
         && (33..=126).contains(&codepoint)
         && (codepoint as u8 as char).is_ascii_punctuation()
         && !key_event.ctrl()
         && !key_event.alt()
         && !key_event.super_modifier()
     {
+        let selection = learning_selection(decoder, context, state)?;
+        learning_stage(
+            live,
+            state,
+            selection.selected.as_ref(),
+            &selection.raw,
+            None,
+            env.now,
+        );
         confirm_selection(
             Some(&mut LearningCommit {
                 decoder: &mut *decoder,

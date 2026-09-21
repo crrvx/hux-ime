@@ -13,10 +13,12 @@
 //!   其解析对异常输入（空白/浮点）比参照宽容，实际不会出现该差异。
 
 use crate::char_to_sound_shape;
-use crate::decode::{DecodeLock, Decoder, Evaluated, Evidence};
+use crate::decode::{
+    DecodeLock, Decoder, Evaluated, Evidence, candidate_is_composed_only, candidate_is_direct,
+};
 use crate::lexicon::Lexicon;
 use crate::sound_to_char_shape;
-use hashbrown::HashMap;
+use hashbrown::{HashMap, HashSet};
 use hux_core::key::{K_ALT_MASK, K_CONTROL_MASK, K_SUPER_MASK, KeyEvent};
 use hux_core::learning::{self, DiffEvent, DiffItem, DiffPathNode, Event};
 use hux_core::punct::PunctTable;

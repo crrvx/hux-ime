@@ -77,8 +77,8 @@ jobs:
           # 故按 goldens/README.md 的校验和表逐个校验（防替换/腐坏）。
           sha256sum -c - <<'SUMS'
           e939a077cd0825f7b454a4af300ed50fb6a2f2609c71583525d44f2f8fb3fd33  goldens/key.tsv.gz
-          10faace7790c73c3fcb8334b4deff90028dfbfa87694cd5a1fa36db1a6ec0584  goldens/key_sequence.tsv.gz
-          e2d39ba2344f30d795530b621dbf683d7f55bfb69672875d53a48ca18e839547  goldens/sound_to_char_shape.tsv.gz
+          486897c902c23dffe1bc7bdc457f81ca49c2d1689ed3e9d921f94acd457367fe  goldens/key_sequence.tsv.gz
+          e9d48698bf73807a37933b7c2324afbc27fffe7b0492f0dd2787116ec06a7545  goldens/sound_to_char_shape.tsv.gz
           SUMS
 
       - name: Verify lexical prior data (provenance)
@@ -147,7 +147,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       REFERENCE_REPO: https://github.com/lvyww/tiger-sentense-rime
-      REFERENCE_COMMIT: 8b615235c17c858e1eca8f1a41fbc74e202f8bbe
+      REFERENCE_COMMIT: abad411750f79cfca750985fa266689b5d9b865f
       LIBRIME_RAW: https://raw.githubusercontent.com/rime/librime
       LIBRIME_COMMIT: 33e78140250125871856cdc5b42ddc6a5fcd3cd4
     steps:
@@ -258,7 +258,7 @@ jobs:
         shell: bash
     env:
       REFERENCE_REPO: https://github.com/lvyww/tiger-sentense-rime
-      REFERENCE_COMMIT: 8b615235c17c858e1eca8f1a41fbc74e202f8bbe
+      REFERENCE_COMMIT: abad411750f79cfca750985fa266689b5d9b865f
     steps:
       - name: Install toolchain
         run: pacman -Sy --noconfirm git lua gzip diffutils

@@ -64,6 +64,10 @@ punct_full_shape_space	full_shape=1	space
 punct_half_shape_at	full_shape=0	@
 punct_half_shape_minus	full_shape=0	-
 punct_buffered_period	tiger_sentence_early_commit_to_preedit=1,full_shape=0	a b Tab c period
+# 参照 abad411：菜单可见时的 ASCII 标点先确认组合（`_auto_commit` 下即上屏）再交标点表，
+# 故 schema 的 key_binder `=`/`-` 翻页绑定在这条路径上被遮蔽（显式 Page_* 键不受影响）。
+punct_menu_equal		j a equal
+punct_menu_minus		j a minus
 # K3 ⑦b：大写字母（editor char_handler：DirectCommit 先提交组合再交宿主）
 upper_composing		a b A
 upper_idle		A

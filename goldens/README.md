@@ -20,15 +20,15 @@
 | `decode.tsv.gz` | decode 金样（无模型）：`decode`/`result` | 1980 行 |
 | `decode_model.tsv.gz` | decode 金样（fixture 模型，抽样） | 351 行 |
 | `decode_rank_first.tsv.gz` | decode 金样（fixture 模型 + 关闭单字重码，抽样） | 330 行 |
-| `decode_evidence.tsv.gz` | 早提交证据金样（无模型；含 `has_complete_candidate` 的 `complete` 用例） | 11002 行 |
-| `decode_evidence_model.tsv.gz` | 早提交证据金样（fixture 模型，抽样；同上） | 1824 行 |
-| `learning.tsv.gz` | 学习金样：`hash`/`score`/`prefix`/`confirmed`/`reward`/`diff`/日志编码 | 10164 行 |
-| `decode_learning.tsv.gz` | 解码接入学习（无模型） | 1987 行 |
-| `decode_learning_model.tsv.gz` | 解码接入学习（fixture 模型，抽样） | 358 行 |
+| `decode_evidence.tsv.gz` | 早提交证据金样（无模型；含 `has_complete_candidate` 的 `complete` 用例） | 12241 行 |
+| `decode_evidence_model.tsv.gz` | 早提交证据金样（fixture 模型，抽样；同上） | 2861 行 |
+| `learning.tsv.gz` | 学习金样：`hash`/`score`/`prefix`/`confirmed`/`reward`/成熟度/`diff`/融合偏好/人工纠错等级/日志编码 | 10289 行 |
+| `decode_learning.tsv.gz` | 解码接入学习（无模型；含一条成对融合偏好） | 1988 行 |
+| `decode_learning_model.tsv.gz` | 解码接入学习（fixture 模型，抽样；同上） | 359 行 |
 | `key.tsv.gz` | 键名/键事件金样（librime 探针）：`name`/`repr`/`parse`/`modifier` | 5132 行 |
-| `key_sequence.tsv.gz` | 键序列金样（真 librime 探针）：逐步 `consumed`/输入/光标/提交/候选/注释/高亮 | 55 例 / 236 步（含空码自动上屏、编辑/导航键、标点表、大写字母直接提交） |
+| `key_sequence.tsv.gz` | 键序列金样（真 librime 探针；主干 pin）：逐步 `consumed`/输入/光标/提交/候选/注释/高亮 | 57 例 / 242 步（含空码自动上屏、编辑/导航键、标点表、大写字母直接提交；`punct_menu_equal`/`punct_menu_minus` 钉住「菜单可见的 ASCII 标点先确认组合再交标点表」） |
 | `key_sequence/` | 键序列夹具（合成码表 + `symbols.yaml`＝参照 pin 同文件；探针与 Rust 重放共用；发布默认见 `data/symbols.yaml`） | 2 文件 |
-| `sound_to_char_shape.tsv.gz` | 音反查金样（真 librime 探针，pin `898579f`）：逐步 `consumed`/输入/光标/提交/候选/注释/高亮 | 24 例 / 127 步（裸前缀标点候选、缩写/全拼剪枝、多音节词、翻页 `=`/`-`/Page 键、导航/退格/Escape/上屏） |
+| `sound_to_char_shape.tsv.gz` | 音反查金样（真 librime 探针；反查分支尖端 pin，已含主干）：逐步 `consumed`/输入/光标/提交/候选/注释/高亮 | 31 例 / 164 步（裸前缀标点候选、缩写/全拼剪枝、多音节词、Page 键翻页、导航/退格/Escape/上屏、数字直选与分号惰性、撇号保留） |
 | `sound_to_char_shape/` | 音反查夹具（小 `PY_c.dict.yaml` + 合成码表 + `symbols.yaml` + `gen_pinyin_index.py` 生成的 `tiger_sentence.pinyin.bin`；探针与 Rust 重放共用） | 4 文件 + 生成物 |
 | `lexical.tsv.gz` | 词先验金样（TCSLEX01 读取/Bloom/打分；真实位图 + 码表语料） | 753 行 |
 | `local/`（不入库） | 真实模型抽样金样（224 MB 模型） | 62,777 条 |
@@ -53,20 +53,25 @@ supp    count=<n> error=<0|1>
 
 # decode（冷路径；include_early_commit=false，未接入学习）
 decode <hex input> count=<n> learning=<0|1> truncated=<0|1> required=<hex prefix|->
-result <hex text> <hex segmented> <bits score> <bits confidence_score> <max_rank> <edge_count> <bits supplement_score> <bits learning_score>
+result <hex text> <hex segmented> <bits score> <bits confidence_score> <max_rank> <edge_count> <bits supplement_score> <bits learning_score> <bits early_commit_confidence_score>
 # decode + 早提交证据（--early-commit 1）
 evidence <hex proposal> <bits proposal_share> nit= mit= nlc= trunc= prefixes= raws=
-prefix <hex text> <raw_length> <bits share> <bits boundary_share> <closed> <chars>
+prefix <hex text> <raw_length> <bits share> <bits base_share> <bits boundary_share> <closed> <chars>
 rawlen <hex text> <raw_length>
 # decode + 学习接入（--learning 1）
 learningsetup <now> <hex mode> <n>   # 后接 n 条 levent
 levent <time> <hex mode> <hex code> <hex text> <hex ctx>
+                                     # 其中一条是成对融合偏好（mode 为 `fusion-v1|…`、
+                                     # text 为 `D`/`C`），用于让跨来源融合排序在解码金样里可见
 
 # learning（纯计算；见生成器头部注释的完整字段表）
 hash <hex text> <value>
 corpus / event / index / confirmed / codes / score / prefix / trim
-chain / node / reward / diffcase / diffpath / diff / diffevent
+chain / node / reward / maturity / contribution / diffcase / diffpath / diff / diffevent
+fusionmode / paircode / fusion / fusionnone / fusionevent
 journalrecords / journalrecord / journalevents / journalevent
+#   （`reinforce*` 记录随参照 `7b220ce` 删除 `M.reinforce` 一并移除；
+#    `levels_*` 索引守护人工纠错等级的 +2/级、10 级封顶与「无时间衰减」）
 
 # key（librime 探针）
 name <keyval> <name|->
@@ -81,6 +86,15 @@ step <case> <index> <repr> <consumed 0/1> <input> <caret> <commit> <preedit>
 ```
 
 ## 重新生成
+
+> **先决条件（实测踩坑）**：夹具类生成器（`gen_ngram_/lexicon_/decode_/learning_/lexical_golden.lua`）
+> 通过 `package.path = <reference>/lua/?.lua` 读参照仓库的**工作区**，**不认 pin**。
+> 因此生成前必须把参照检出租到目标 pin（CI 的做法是
+> `git -C "$REF" fetch --depth 1 origin "$REFERENCE_COMMIT" && git -C "$REF" checkout --detach FETCH_HEAD`），
+> 否则会静默读到工作区里更靠后的核心版本，产出与本次追平无关的金样差异。
+> 探针脚本（`gen_key_sequence_golden.sh` / `gen_sound_to_char_shape_golden.sh`）用 `git show PIN:`
+> 或 `git worktree add --detach PIN` 自建临时工作区，本身是 pin 精确的；后者另有护栏：
+> HEAD 不是 `PIN`（例如有人重新引入本地合并）或工作区不干净时**显式失败**。
 
 ```sh
 # 参照仓库：https://github.com/lvyww/tiger-sentense-rime
@@ -136,7 +150,7 @@ gzip -9 -n -c /tmp/decode_rank_first.tsv > goldens/decode_rank_first.tsv.gz
 gzip -9 -n -c /tmp/decode_evidence.tsv > goldens/decode_evidence.tsv.gz
 gzip -9 -n -c /tmp/decode_evidence_model.tsv > goldens/decode_evidence_model.tsv.gz
 
-# decode + 学习（入库）
+# decode + 学习（入库；`--learning 1` 的学习索引由真实候选纠错事件 + 一条成对融合偏好构成）
 lua tools/generators/gen_decode_golden.lua --reference "$REF" \
   --data "goldens/lexicon" --out /tmp/decode_learning.tsv --learning 1
 lua tools/generators/gen_decode_golden.lua --reference "$REF" \
@@ -162,6 +176,7 @@ bash tools/generators/gen_key_sequence_golden.sh
 # CASES=/tmp/explore.txt bash tools/generators/gen_key_sequence_golden.sh /tmp/explore.tsv.gz
 
 # sound_to_char_shape（入库；同上；夹具索引由生成器顺带重建）
+#   默认 PIN = 反查分支尖端 92a0b54（已含主干 pin，故不再做本地合并；PIN 可覆盖）
 bash tools/generators/gen_sound_to_char_shape_golden.sh
 
 # lexical（入库；需要参照的词先验模块与 data/ 位图；CI 已接入）
@@ -185,29 +200,42 @@ lua tools/probes/bench_ngram.lua --reference "$REF" --model <model.bin> --transc
 
 ## 来源与校验和
 
-- **主干**：[`lvyww/tiger-sentense-rime`](https://github.com/lvyww/tiger-sentense-rime) @ `8b615235c17c858e1eca8f1a41fbc74e202f8bbe`（main）。
-- **音反查**：`feat/reverse-lookup` @ `898579f833df53f1dec5639d56e685751a8a7f71` + 上述 main **本地合并**
-  （上游未合并该分支；`tools/generators/gen_sound_to_char_shape_golden.sh` 自建临时 worktree 合并，`PIN`/`BASE` 可覆盖）。
+- **主干 pin**：[`lvyww/tiger-sentense-rime`](https://github.com/lvyww/tiger-sentense-rime) @
+  `abad411750f79cfca750985fa266689b5d9b865f`（main 尖端，`fix(rime): preserve punctuation learning and default to full-m5`）。
+  **由 Lua 核心生成的 15 份夹具 / decode / learning / lexical 金样，以及键序列探针金样 `key_sequence.tsv.gz`，
+  都取自该 pin。**
+- **反查分支 pin**：[`lvyww/tiger-sentense-rime`](https://github.com/lvyww/tiger-sentense-rime) @
+  `92a0b54b53114e7e5aa6a1ff48efa95db0e21f9c`（`feat/reverse-lookup` 尖端：`4ff37c4` 数字选择器提交反查候选、
+  `92a0b54` 撇号音节分隔）。该 pin 是**主干 pin 的后代**（`abad411` 在其祖先链上），因此音反查探针金样
+  `sound_to_char_shape.tsv.gz` 单独取自它，**不再需要「分支 + 主干本地合并」**：
+  `tools/generators/gen_sound_to_char_shape_golden.sh` 已简化为单 `PIN` + 护栏
+  （HEAD 必须等于 `PIN` 且工作区干净，否则显式失败）。
 - **键名表**：librime `src/rime/key_table.cc`（sha256 `2f7c6a8b4f2aa474d700a87bd4bd1baa48a2655cd6ce4d2ba05b768f284d9d78`，固定提交 `33e78140`）；
   `key_table.rs` 由 `tools/generators/gen_key_table.py` 生成（CI 单文件下载源码后重生成比对）；`key.tsv.gz` 由系统 librime 1.17.0 探针生成，**CI 不重生成**。
 - **键序列 / 音反查**：`key_sequence.tsv.gz`、`sound_to_char_shape.tsv.gz` 由 `tools/probes/rime_sequence_probe.cpp` 驱动
-  **真 librime + librime-lua** 与 pin 版 Lua 核心生成（探针头部记录参照提交与源文件 sha256），**CI 不重生成**；
+  **真 librime + librime-lua** 与对应 pin 版 Lua 核心生成（探针头部记录参照提交与源文件 sha256），**CI 不重生成**；
   夹具入库并与 Rust 重放共用，其中音反查夹具索引由 `tools/generators/gen_pinyin_index.py` 生成（CI 重生成比对）。
+  两者都依赖探针所用 librime/librime-lua 版本；音反查金样的撇号用例尤其如此——`92a0b54` 的
+  「按 `speller/delimiter` 切分音节」依赖上游 librime 的 delimiter 修复
+  （[rime/librime#1233](https://github.com/rime/librime/pull/1233)），
+  本机 librime 1.17.0 未含该修复，故输入撇号后反查段**无候选**（金样如实记录该行为）。
   真实索引（`data/tiger_sentence.pinyin.bin.gz`，sha256 `18a0931a…`）由同一生成器产出，本地复验可重新生成并比对：
   `python3 tools/generators/gen_pinyin_index.py --source external/tiger-sentense-rime/PY_c.dict.yaml --out /tmp/pinyin.bin.gz && cmp /tmp/pinyin.bin.gz data/tiger_sentence.pinyin.bin.gz`
   （参照检出须含 `898579f` 的 `PY_c.dict.yaml`）。
 - **词先验**：`lexical.tsv.gz` 由 `tools/generators/gen_lexical_golden.lua` 以参照 main（词先验模块自 `35a10b9` 起提供）与
   入库位图生成（CC BY 4.0，见 [`../docs/LEXICAL_PRIOR_ATTRIBUTION.md`](../docs/LEXICAL_PRIOR_ATTRIBUTION.md)）；
   **已在 CI 中再生成比对**。
-- 参照仓库文件（生成时；`lua/`、`tools/` 均为参照仓库路径）：
+- 参照仓库文件（生成时；`lua/`、`tools/` 均为参照仓库路径；两 pin 相同的文件只列一行）：
 
-| 文件 | sha256 |
-|---|---|
-| `lua/tiger_sentence.lua` | `dfcc687ea28d1174a99c37aaf1d3de7d0dc69332a8aaf4bfac3079506efa2047` |
-| `lua/tiger_sentence_learning.lua` | `335e530bb42b8fa2c432b900a0e5ff9d7509e74a8674d099456083088b36f85e` |
-| `lua/tiger_sentence_ngram.lua` | `a3d59e09fbff3b09b0ac79ef66b7560210b5503c2af38eb5615069d6465cb361` |
-| `lua/tiger_sentence_cache.lua` | `8ebd209588fb62d0bf888e752b95d8588ecbcdef2af40f8b009865fc3c41da7c` |
-| `tools/model_fixture.lua` | `ed5c771ee29835c20b46476635809ed37d70ad0c79d14df0ae13233f5da7d45a` |
+| 文件 | 来源 pin | sha256 |
+|---|---|---|
+| `lua/tiger_sentence.lua`（主干金样） | 主干 `abad411` | `b77a747597a140e6fec315d8bc78344b8d8d3bdc007132bc7c53a9c6a3f22dd3` |
+| `lua/tiger_sentence.lua`（音反查金样） | 反查 `92a0b54` | `f33cee28f78a612d77570297a6949732f46eeb3c4011b7fe760f43c3b3120b89` |
+| `lua/tiger_sentence_learning.lua` | 两 pin 相同 | `0f685ae57fb4e70662492b7a3e56b91b5e8e9592cc64d881db181c9bf7acd9c6` |
+| `lua/tiger_sentence_ngram.lua` | 两 pin 相同 | `fd7b2337d5215f51ffea092c76f07951a8e2172087e823d8a4b1641f11d8bf4e` |
+| `lua/tiger_sentence_cache.lua` | 两 pin 相同 | `8ebd209588fb62d0bf888e752b95d8588ecbcdef2af40f8b009865fc3c41da7c` |
+| `lua/tiger_sentence_lexical.lua` | 两 pin 相同 | `d49f45f0ee0033fd2466269d967b4784f508da220ec62215806e227ea590fe8d` |
+| `tools/model_fixture.lua` | 主干 `abad411` | `ed5c771ee29835c20b46476635809ed37d70ad0c79d14df0ae13233f5da7d45a` |
 
 - 数据夹具（`lexicon/`，取自参照仓库同名文件）：
 
@@ -235,17 +263,17 @@ lua tools/probes/bench_ngram.lua --reference "$REF" --model <model.bin> --transc
 | `lexicon_missing.tsv.gz` | `f5b8256deeb41b4403ca26074deec659807c4313ffe5cf727987b78be15c7a26` |
 | `lexicon_variants.tsv.gz` | `05923b1433f00bf2e9fbb6270e6b28e1f4d1cca6a93507c74dc80b48fde69ef5` |
 | `lexicon_codes_only.tsv.gz` | `3cd72cca880754ecd3744a26ecc5b70d8b5575ab268654937326bb4925b3805e` |
-| `decode.tsv.gz` | `0fb6182ec3379a1eac865870cfa8b214ecb0eab044fc6ec3f4bf07783a6c92f6` |
-| `decode_model.tsv.gz` | `9fcdf60ce2eaa0a07e0a7749b04a8abfe586e259feb1b2002bd14d1cf08e8c35` |
-| `decode_rank_first.tsv.gz` | `6df164942f6de48c48921118e32dff9297d4fdc381524baebeca6562a98c0ae0` |
-| `decode_evidence.tsv.gz` | `357e782cb2e1528e76e9e066fbc2c0dacaf7b77ea8b21f71659769cad4d938ec` |
-| `decode_evidence_model.tsv.gz` | `96289e3254228c9dec63806db2ab738da2d3cb11bd0adad2e0eb672210a3e766` |
-| `learning.tsv.gz` | `d8eff6b6b67cf8803f9965e71d171ec9fb88f3e7e3bc61368c11e19ac70358cf` |
-| `decode_learning.tsv.gz` | `41a9894d233c32348e42164d4d29fc698c3037741c141ac0b58404094c9e9354` |
-| `decode_learning_model.tsv.gz` | `8a64e6e3d28b101a57075b03233e62c4b03e8c4a8d2a979399a91a00e2d8e806` |
+| `decode.tsv.gz` | `79c6316038d9b18feb42214e8fef20853d9f3a1ae963b792064367d9ef72757d` |
+| `decode_model.tsv.gz` | `a81bc37713b293deaab17ee4a8c51dfe2c244ff1e8729f7bb21514f98b895dc2` |
+| `decode_rank_first.tsv.gz` | `4359b9276805e99433e9787ac35abf37ae3eab7d11aa49bce2549dedb1799fc6` |
+| `decode_evidence.tsv.gz` | `bd857dade791a040d6a0d4ffc9a6e302524cd6fd7095f2aea967193ec280d7af` |
+| `decode_evidence_model.tsv.gz` | `fb45281a2c1eae7e3d9910e346adcbfb9c6af60a452636ce7347bd6c2d8987d5` |
+| `learning.tsv.gz` | `d70c69b29a37761bcadd87dd2d3bd3a9679eaaadf658827036cdb1c104186d4d` |
+| `decode_learning.tsv.gz` | `1e46d3fbb4788e36b92d92ac931b343ad2d7f394e9611e1a04f36bf034f90cdd` |
+| `decode_learning_model.tsv.gz` | `13797b96097bcc133f862528350f4765d2c021f88c9f8e7ad56d5e6e02de881c` |
 | `key.tsv.gz` | `e939a077cd0825f7b454a4af300ed50fb6a2f2609c71583525d44f2f8fb3fd33` |
-| `key_sequence.tsv.gz` | `10faace7790c73c3fcb8334b4deff90028dfbfa87694cd5a1fa36db1a6ec0584` |
-| `sound_to_char_shape.tsv.gz` | `e2d39ba2344f30d795530b621dbf683d7f55bfb69672875d53a48ca18e839547` |
+| `key_sequence.tsv.gz` | `486897c902c23dffe1bc7bdc457f81ca49c2d1689ed3e9d921f94acd457367fe` |
+| `sound_to_char_shape.tsv.gz` | `e9d48698bf73807a37933b7c2324afbc27fffe7b0492f0dd2787116ec06a7545` |
 | `lexical.tsv.gz` | `5b559b2504e21c69b4f702678a96d2947abfe7d7c26adcd2b25c3d4de761e0c3` |
 
 CI 以同一参照提交重生成全部 fixture 金样并与入库内容比对（见 `.github/workflows/ci.yml`）。

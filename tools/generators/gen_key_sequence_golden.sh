@@ -7,7 +7,8 @@
 # 用法：tools/generators/gen_key_sequence_golden.sh [输出文件]
 #   REF  参照仓库本地检出（默认仓库内 external/tiger-sentense-rime，已 gitignore）
 #   REF_URL  写入金样头部的参照仓库线上地址（默认 https://github.com/lvyww/tiger-sentense-rime）
-#   PIN  参照固定提交（默认 8b615235c17c858e1eca8f1a41fbc74e202f8bbe，与入库金样一致；见 goldens/README.md）
+#   PIN  参照固定提交（默认 abad411750f79cfca750985fa266689b5d9b865f＝主干 pin，与入库金样一致；
+#        音反查金样取「反查分支尖端」92a0b54，见 goldens/README.md 与 gen_sound_to_char_shape_golden.sh）
 #   CASES 用例文件（默认 tools/cases/key_sequence_cases.txt；可指向临时用例做探索）
 #
 # 依赖：git、g++、python3、系统 librime（rime_api.h + librime-lua.so）。
@@ -17,7 +18,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 REF="${REF:-$ROOT/external/tiger-sentense-rime}"
 REF_URL="${REF_URL:-https://github.com/lvyww/tiger-sentense-rime}"
-PIN="${PIN:-8b615235c17c858e1eca8f1a41fbc74e202f8bbe}"
+PIN="${PIN:-abad411750f79cfca750985fa266689b5d9b865f}"
 OUT="${1:-$ROOT/goldens/key_sequence.tsv.gz}"
 CASES="${CASES:-$ROOT/tools/cases/key_sequence_cases.txt}"
 

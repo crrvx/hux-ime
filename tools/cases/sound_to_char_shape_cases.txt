@@ -21,8 +21,20 @@ abbrev-zhonggu		` z h o n g g u
 abbrev-zhongguo		` z h o n g g u o
 commit-zho		` z h o space
 digit-zhong		` z h o n g 1
+# 参照 4ff37c4：反查段内数字直选提交（越界数字惰性消费）、分号惰性不并入拼音；
+# `92a0b54`：撇号保留在输入中（模式 `^`[a-z']*$`），本机 librime 1.17.0 尚无
+# delimiter 修复（rime/librime#1233）⇒ 输入撇号后反查段无候选（README 已注明依赖）。
+digit-bare		` 1
+digit-second		` z h o n g 2
+digit-out-of-range		` z h o n g 9
+semicolon-inert		` z h semicolon
+apostrophe-tail		` x i apostrophe
+apostrophe-inner		` x i apostrophe a n
+apostrophe-commit		` x i apostrophe a n space
 mixed-after-letter		a ` z h
 upper-after-prefix		` Z
+# `=`/`-` 在反查段内同样被 abad411 的标点分支遮蔽：不再翻页，改为先上屏再落标点；
+# 显式 Page_Down/Page_Up（`nav-page-keys`）仍是翻页路径。
 nav-page-equal		` z = =
 nav-page-minus		` z = = -
 nav-page-keys		` z Page_Down Page_Down Page_Up

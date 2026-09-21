@@ -5,6 +5,14 @@ use super::*;
 
 // ---------------------------------------------------------------- 学习暂存
 
+/// 融合竞争者（参照 `selected._fusion_ahead` 中的一项）：判定来源与文本即可。
+#[derive(Clone, Debug)]
+pub struct FusionAhead {
+    pub text: String,
+    /// 来源标记（`decode::SOURCE_*`）。
+    pub source_mask: u8,
+}
+
 /// 参照 `learning_selection` 的选中项：文本 + 路径末节点 raw 长度 + `learning.diff` 路径。
 #[derive(Clone, Debug)]
 pub struct Selected {
@@ -14,6 +22,10 @@ pub struct Selected {
     /// 缓冲兜底项（参照 `{text=committed_text, path={raw_length=...}}`，缺 `text_length`）：
     /// 参照在该形态下 `learning.diff` 报错并被 commit 通知器的 pcall 吞掉，不产出学习事件。
     pub buffered_fallback: bool,
+    /// 来源标记（参照 `source_mask`）：只有 composed-only 项参与差异学习。
+    pub source_mask: u8,
+    /// 选中该项时，此前通过过滤的可见候选（参照 `_fusion_ahead`；不含自身）。
+    pub fusion_ahead: Vec<FusionAhead>,
 }
 
 impl Selected {
@@ -34,6 +46,9 @@ impl Selected {
                 }],
             },
             buffered_fallback: true,
+            // 兜底项没有来源标记与竞争者（参照兜底表两个字段皆缺）。
+            source_mask: 0,
+            fusion_ahead: Vec::new(),
         }
     }
 }
@@ -86,6 +101,7 @@ pub fn learning_selection(
     let decoded = decoder.decode_with_lock(&raw_text, false, &state.committed_text, lock)?;
     let mut first: Option<Selected> = None;
     let mut selected: Option<Selected> = None;
+    let mut seen: Vec<FusionAhead> = Vec::new();
     let mut visible = 0usize;
     for item in &decoded.items {
         if implicit_rank_allowed(
@@ -102,13 +118,23 @@ pub fn learning_selection(
                 raw_length,
                 diff,
                 buffered_fallback: false,
+                source_mask: item.source_mask,
+                fusion_ahead: Vec::new(),
             };
             if first.is_none() {
                 first = Some(candidate.clone());
             }
             if visible == target {
-                selected = Some(candidate);
+                // 参照在此**不 break**：`seen` 是「此前通过过滤的候选」。
+                selected = Some(Selected {
+                    fusion_ahead: seen.clone(),
+                    ..candidate
+                });
             }
+            seen.push(FusionAhead {
+                text: item.text.clone(),
+                source_mask: item.source_mask,
+            });
             visible += 1;
         }
     }
@@ -140,19 +166,64 @@ pub fn learning_stage(
     let Some(selected) = selected else {
         return;
     };
+    // 跨来源偏好是成对的：选中较低的 Direct 而非更靠前的 Composed（或反之）
+    // 只记录 `Direct > Composed`（或反向）一条，不改任一来源的内部顺序。
+    // 参照把它放在函数最前，先于基线与兜底判定。
+    for ahead in &selected.fusion_ahead {
+        let event = if candidate_is_direct(selected.source_mask)
+            && candidate_is_composed_only(ahead.source_mask)
+        {
+            learning::fusion_event(
+                &live.mode,
+                raw,
+                &selected.text,
+                &ahead.text,
+                true,
+                selected.raw_length,
+                now,
+            )
+        } else if candidate_is_composed_only(selected.source_mask)
+            && candidate_is_direct(ahead.source_mask)
+        {
+            learning::fusion_event(
+                &live.mode,
+                raw,
+                &ahead.text,
+                &selected.text,
+                false,
+                selected.raw_length,
+                now,
+            )
+        } else {
+            None
+        };
+        if let Some(event) = event
+            && live.pending.len() < 256
+        {
+            live.pending.push(event);
+        }
+    }
     let baseline = if state.tab_pending {
         live.baseline.as_ref()
     } else {
         submitted_first
     };
-    if let Some(baseline) = baseline {
+    // 与 composed 自学习分离：直接项之间、直接 vs composed 的差异不再是纠错证据
+    // （参照 `candidate_is_composed_only(baseline) and candidate_is_composed_only(selected)`）。
+    if let Some(baseline) = baseline
+        && candidate_is_composed_only(baseline.source_mask)
+        && candidate_is_composed_only(selected.source_mask)
+    {
         if selected.buffered_fallback {
-            // 参照：兜底项缺 `path.text_length`，`learning.diff` 在 boundaries() 报错、
-            // 被 commit 通知器的 pcall 吞掉：不产出事件，且 baseline 不被清空。
+            // 兜底项没有来源标记（mask 0），上面的 composed 门本已排除它；
+            // 这条守卫保留为显式契约：参照的兜底项缺 `path.text_length`，
+            // `learning.diff` 会在 boundaries() 报错（旧版由 pcall 吞掉）。
             return;
         }
         let lock_floor = state.active_lock().map(|lock| lock.raw.len()).unwrap_or(0);
         let floor = state.committed_raw.len().max(lock_floor);
+        // 参照 `7b220ce`：删除「稳定确认」增量路线（`learning.reinforce`），
+        // 未按 Tab 的首选重复确认不再计入等级（等级只由人工纠错推进）。
         let events = learning::diff(
             raw,
             Some(&baseline.diff),
@@ -179,24 +250,29 @@ pub fn learning_submit(
 ) -> Vec<Event> {
     let mut accepted = Vec::new();
     let mut remaining = Vec::new();
-    if let Some(selected) = selected {
-        if selected.buffered_fallback {
-            // 参照：兜底项在 stage 阶段即中止，提交不执行（pending/baseline 均不动）。
-            return Vec::new();
-        }
-        if !actual.is_empty() && actual == expected && !live.mode.is_empty() {
-            for event in &live.pending {
-                if event.raw_end > selected.raw_length {
-                    remaining.push(event.clone());
-                } else if event.mode == live.mode
-                    && event.text_start >= selected.text.len().saturating_sub(expected.len())
-                    && selected
-                        .text
-                        .get(event.text_start..event.text_end)
-                        .is_some_and(|text| text == event.text.as_str())
-                {
-                    accepted.push(event.clone());
-                }
+    // 参照 `learning_submit` 对兜底项无特判：条件成立就按同一规则筛选，
+    // 末尾**无条件**消费 pending 并清空 baseline。
+    if let Some(selected) = selected
+        && !actual.is_empty()
+        && actual == expected
+        && !live.mode.is_empty()
+    {
+        // 融合事件只受 `raw_end` 约束，不参与 composed 分支的文本子串匹配。
+        // （参照是 `if raw_end … elseif mode == fusion_mode … elseif mode == live.mode and …`，
+        // 两个接受分支的结果相同，此处合并为一个条件。）
+        let fusion_mode = learning::fusion_mode(&live.mode);
+        for event in &live.pending {
+            let accepted_by_fusion = event.mode == fusion_mode;
+            let accepted_by_diff = event.mode == live.mode
+                && event.text_start >= selected.text.len().saturating_sub(expected.len())
+                && selected
+                    .text
+                    .get(event.text_start..event.text_end)
+                    .is_some_and(|text| text == event.text.as_str());
+            if event.raw_end > selected.raw_length {
+                remaining.push(event.clone());
+            } else if accepted_by_fusion || accepted_by_diff {
+                accepted.push(event.clone());
             }
         }
     }
@@ -302,6 +378,8 @@ impl LearningCommit<'_> {
                 path: Vec::new(),
             },
             buffered_fallback: false,
+            source_mask: 0,
+            fusion_ahead: Vec::new(),
         };
         let accepted = learning_submit(self.live, Some(&auto), commit_text, commit_text);
         self.live.submitted.extend(accepted);
