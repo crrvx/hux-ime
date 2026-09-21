@@ -25,9 +25,12 @@
 | `learning.tsv.gz` | 学习金样：`hash`/`score`/`prefix`/`confirmed`/`reward`/成熟度/`diff`/融合偏好/人工纠错等级/日志编码 | 10289 行 |
 | `decode_learning.tsv.gz` | 解码接入学习（无模型；含一条成对融合偏好） | 1988 行 |
 | `decode_learning_model.tsv.gz` | 解码接入学习（fixture 模型，抽样；同上） | 359 行 |
-| `key.tsv.gz` | 键名/键事件金样（librime 探针）：`name`/`repr`/`parse`/`modifier` | 5132 行 |
-| `key_sequence.tsv.gz` | 键序列金样（真 librime 探针；主干 pin）：逐步 `consumed`/输入/光标/提交/候选/注释/高亮 | 57 例 / 242 步（含空码自动上屏、编辑/导航键、标点表、大写字母直接提交；`punct_menu_equal`/`punct_menu_minus` 记录**上游行为**「菜单可见的 ASCII 标点先确认组合再交标点表」——其中 `punct_menu_equal` 因上游缺陷（翻页绑定被标点分支遮蔽）被本仓**有意偏离**、在差分测试中登记跳过，`punct_menu_minus` 仍逐位一致，见 `docs/refactor.md` §8「有意偏离上游」） |
+| `decode_learning_evidence.tsv.gz` | 早提交证据 **+ 学习接入**（`--early-commit 1 --required 1 --learning 1`，无模型；遗留②：学习 × 证据抑制的交互——`learning=1 && truncated=1` 的截断池与 `share`/`base_share` 双权重） | 12257 行 |
+| `key.tsv.gz` | 键名/键事件金样（librime 探针）：`name`/`repr`/`parse`/`modifier` | 5136 行（5132 条记录 + 4 行头部） |
+| `key_sequence.tsv.gz` | 键序列金样（真 librime 探针；主干 pin）：逐步 `consumed`/输入/光标/提交/候选/注释/高亮 | 68 例 / 285 步（含空码自动上屏、编辑/导航键、标点表、大写字母直接提交、`Return` 修饰键变体（`Ctrl(+Shift)+Return`）、标点表 caret 语义、selector 首页上翻、数字直选、撇号分段；`punct_menu_equal`/`punct_menu_minus`/`nav_page_home_minus` 记录**上游行为**「菜单可见的 ASCII 标点先确认组合再交标点表」——其中 `punct_menu_equal` 与 `nav_page_home_minus` 因上游缺陷（翻页绑定被标点分支遮蔽）被本仓**有意偏离**、在差分测试中按期望值登记，`punct_menu_minus` 仍逐位一致；`digit_menu_select`（addon 数字直选）、`apostrophe_digit_page`/`apostrophe_semicolon_page`（本仓分段常量追踪反查分支尖端 `92a0b54` 的 `delimiter: " '"`）同样按期望值登记，见 `docs/refactor.md` §8「有意偏离上游」） |
 | `key_sequence/` | 键序列夹具（合成码表 + `symbols.yaml`＝参照 pin 同文件；探针与 Rust 重放共用；发布默认见 `data/symbols.yaml`） | 2 文件 |
+| `key_sequence_tab.tsv.gz` | Tab 锁路径键序列金样（真 librime 探针；主干 pin；**夹具 `tab_learning: true`** ⇒ 参照学习库就绪、走 `learned.store.db` 的 Tab 基线捕获分支——遗留③；逐步同 `key_sequence` 字段） | 8 例 / 44 步（`tab_lock`/`tab_confirm_space`/`tab_confirm_buffer`/`tab_buffer_space`/`nav_tab_binder`/`tab_lock_left`/`tab_lock_backspace`/`tab_lock_up_down`） |
+| `key_sequence_tab/` | Tab 金样夹具（`symbols.yaml` 与合成码表与 `key_sequence/` **逐字节相同**，另含 `tiger_sentence.custom.yaml` 把 `tab_learning: true` 这一**条件本身**入库） | 3 文件 |
 | `sound_to_char_shape.tsv.gz` | 音反查金样（真 librime 探针；反查分支尖端 pin，已含主干）：逐步 `consumed`/输入/光标/提交/候选/注释/高亮 | 31 例 / 164 步（裸前缀标点候选、缩写/全拼剪枝、多音节词、Page 键翻页、导航/退格/Escape/上屏、数字直选与分号惰性、撇号保留；`nav-page-equal`/`nav-page-minus`/`nav-page-zho` 记录**上游行为**「`=`/`-` 被标点分支遮蔽」，因上游缺陷被本仓**有意偏离**、在差分测试中登记跳过，其余（含 `nav-page-keys`）逐位一致，见 `docs/refactor.md` §8「有意偏离上游」） |
 | `sound_to_char_shape/` | 音反查夹具（小 `PY_c.dict.yaml` + 合成码表 + `symbols.yaml` + `gen_pinyin_index.py` 生成的 `tiger_sentence.pinyin.bin`；探针与 Rust 重放共用） | 4 文件 + 生成物 |
 | `lexical.tsv.gz` | 词先验金样（TCSLEX01 读取/Bloom/打分；真实位图 + 码表语料） | 753 行 |
@@ -89,20 +92,42 @@ step <case> <index> <repr> <consumed 0/1> <input> <caret> <commit> <preedit>
 
 > **先决条件（实测踩坑）**：夹具类生成器（`gen_ngram_/lexicon_/decode_/learning_/lexical_golden.lua`）
 > 通过 `package.path = <reference>/lua/?.lua` 读参照仓库的**工作区**，**不认 pin**。
-> 因此生成前必须把参照检出租到目标 pin（CI 的做法是
-> `git -C "$REF" fetch --depth 1 origin "$REFERENCE_COMMIT" && git -C "$REF" checkout --detach FETCH_HEAD`），
+> 因此生成前必须把参照检出租到目标 pin——下面的命令块**第一件事就是
+> `git -C "$REF" checkout --detach abad411750f79cfca750985fa266689b5d9b865f`（主干 pin）**，
 > 否则会静默读到工作区里更靠后的核心版本，产出与本次追平无关的金样差异。
+> 参照检出**只读**（无法 `checkout`，例如发行版打包目录 / 只读挂载）时的替代做法：
+> 在**工作区内**放一个可写克隆（本仓实践用 `_tmp/b1-ref`，`_tmp/` 已 gitignore），
+> 然后 `git fetch origin <sha> && git -C "$REF" checkout --detach <sha>`（主干 pin 与反查 pin 都取）：
+>
+> ```sh
+> git clone https://github.com/lvyww/tiger-sentense-rime _tmp/b1-ref   # 或 cp -r 已有检出
+> git -C _tmp/b1-ref fetch origin abad411750f79cfca750985fa266689b5d9b865f
+> git -C _tmp/b1-ref fetch origin 92a0b54b53114e7e5aa6a1ff48efa95db0e21f9c
+> ```
+>
+> **不要用 `--depth 1` / `--shallow`**：浅克隆会让需要「分支 pin + 主干 pin 本地合并」的历史操作
+> 被判为**无关历史**（`fatal: refusing to merge unrelated histories`），也会让 `git show <pin>:` 失败。
+> （CI 的 `golden` 作业是另一次性的只读检出，用 `git init` + `git fetch --depth 1 origin <sha>` +
+> `checkout --detach FETCH_HEAD` 逐个 pin 取；那里不合并，故可用浅克隆。）
 > 探针脚本（`gen_key_sequence_golden.sh` / `gen_sound_to_char_shape_golden.sh`）用 `git show PIN:`
-> 或 `git worktree add --detach PIN` 自建临时工作区，本身是 pin 精确的；后者另有护栏：
-> HEAD 不是 `PIN`（例如有人重新引入本地合并）或工作区不干净时**显式失败**。
+> 或 `git worktree add --detach PIN` 自建临时工作区，本身是 pin 精确的、**不需要**上面的 checkout；
+> 后者另有护栏：HEAD 不是 `PIN`（例如有人重新引入本地合并）或工作区不干净时**显式失败**。
+> `gen_key_golden.sh` 只依赖系统 librime 与 pin 版 `key_table.cc` 单文件，与参照检出无关。
 
 ```sh
 # 参照仓库：https://github.com/lvyww/tiger-sentense-rime
-# 本地检出（金样生成用；命令均在仓库根目录执行；外部检出统一放 external/，已 gitignore）
+# 命令均在仓库根目录执行；外部检出统一放 external/（已 gitignore）。
+# `set -e`：中途失败即停，避免把不完整 TSV 压进入库金样（复核整改第 4 批 M10 的口径）。
+set -euo pipefail
 git clone https://github.com/lvyww/tiger-sentense-rime external/tiger-sentense-rime
 REF=external/tiger-sentense-rime
 
-# ngram fixture（入库）
+# ① 检出主干 pin（**必须**：以下 5 段夹具类生成器读参照工作区，不认 pin）
+git -C "$REF" checkout --detach abad411750f79cfca750985fa266689b5d9b865f
+# ② 生成前自检：HEAD 必须是该 pin（检出失败/被切走即停）
+test "$(git -C "$REF" rev-parse HEAD)" = abad411750f79cfca750985fa266689b5d9b865f
+
+# ③ ngram fixture（入库）
 lua tools/generators/gen_ngram_golden.lua --reference "$REF" \
   --model goldens/ngram_fixture.bin --out /tmp/ngram_fixture.tsv --mode fixture
 gzip -9 -n -c /tmp/ngram_fixture.tsv > goldens/ngram_fixture.tsv.gz
@@ -160,34 +185,61 @@ lua tools/generators/gen_decode_golden.lua --reference "$REF" \
 gzip -9 -n -c /tmp/decode_learning.tsv > goldens/decode_learning.tsv.gz
 gzip -9 -n -c /tmp/decode_learning_model.tsv > goldens/decode_learning_model.tsv.gz
 
+# decode + 学习 + 早提交证据（入库；两个开关本来就可在生成器里并用，此处补齐**组合覆盖**）
+lua tools/generators/gen_decode_golden.lua --reference "$REF" \
+  --data "goldens/lexicon" --out /tmp/decode_learning_evidence.tsv \
+  --early-commit 1 --required 1 --learning 1
+gzip -9 -n -c /tmp/decode_learning_evidence.tsv > goldens/decode_learning_evidence.tsv.gz
+
 # learning（入库；生成器对 corpora/chains/diffcases 按名排序迭代，输出与 Lua 进程哈希序无关）
 lua tools/generators/gen_learning_golden.lua --reference "$REF" --out /tmp/learning.tsv
 gzip -9 -n -c /tmp/learning.tsv > goldens/learning.tsv.gz
 
-# key（入库；只需要系统 librime；pin 版 key_table.cc 单文件下载即可，无需克隆）
+# key（入库；只需要系统 librime；pin 版 key_table.cc 单文件下载即可，无需参照检出）
 mkdir -p external/librime/src/rime
 curl -fsSL -o external/librime/src/rime/key_table.cc \
   https://raw.githubusercontent.com/rime/librime/33e78140250125871856cdc5b42ddc6a5fcd3cd4/src/rime/key_table.cc
 bash tools/generators/gen_key_golden.sh external/librime    # 脚本校验文件 sha 与 key_table.rs 头部一致
 
-# key_sequence（入库；需要系统 librime + librime-lua，构建 pin 版隔离环境）
+# key_sequence（入库；需要系统 librime + librime-lua；脚本自建 `PIN=abad411` 隔离工作区，
+# 与上面的检出状态无关——不必先 checkout）
 bash tools/generators/gen_key_sequence_golden.sh
 # 探索新用例时可用 CASES 指向临时用例文件（输出默认仍写入入库文件，建议显式给输出路径）：
 # CASES=/tmp/explore.txt bash tools/generators/gen_key_sequence_golden.sh /tmp/explore.tsv.gz
 
+# key_sequence_tab（入库；Tab 锁路径：夹具 `tab_learning: true` ⇒ 参照学习库就绪；
+#   与 key_sequence 同一探针/pin，脚本自建隔离工作区，不需要上面的 checkout）
+bash tools/generators/gen_key_sequence_tab_golden.sh
+
 # sound_to_char_shape（入库；同上；夹具索引由生成器顺带重建）
-#   默认 PIN = 反查分支尖端 92a0b54（已含主干 pin，故不再做本地合并；PIN 可覆盖）
+#   默认 PIN = 反查分支尖端 92a0b54（已含主干 pin，故不再做本地合并；PIN 可覆盖）；
+#   同样自建隔离工作区，不需要上面的 checkout
 bash tools/generators/gen_sound_to_char_shape_golden.sh
 
-# lexical（入库；需要参照的词先验模块与 data/ 位图；CI 已接入）
+# lexical（入库；需要参照的词先验模块与 data/ 位图；**要主线 pin 的工作区**；CI 已接入）
 lua tools/generators/gen_lexical_golden.lua --reference "$REF" --model data/tiger_sentence.lexical.bin --out /tmp/lexical.tsv
 gzip -9 -n -c /tmp/lexical.tsv > goldens/lexical.tsv.gz
+```
+
+生成后（或在 CI / 本地复核时）用校验器确认产物与本文档的校验和表一致：
+
+```sh
+# 表 ↔ 文件、三份探针金样的内部头部 ↔ 声明的 pin（无需网络 / 参照检出）
+python3 tools/checks/verify_golden_shas.py
+# 追加校验参照仓库文件（lua/*、tools/*）与各自 pin 的 sha256；需要完整检出（勿用 --depth 1）
+python3 tools/checks/verify_golden_shas.py --reference external/tiger-sentense-rime
 ```
 
 ## 校验
 
 ```sh
 cargo test --workspace        # 全部差分（本地 sample 缺失自动跳过）
+
+# 强制真实模型差分（缺 sample 金样或模型即失败；复核整改 3b / B5）：
+HUX_REQUIRE_SAMPLE=1 cargo test -p hux-scheme-tiger --test ngram_differential
+
+# 金样 sha 表 / 内部头部 / 参照文件溯源（复核整改第 4 批 M2；CI 两个作业各跑一次）
+python3 tools/checks/verify_golden_shas.py [--reference external/tiger-sentense-rime]
 
 # 基准（ngram，真实模型 + 本地抽样金样）
 cargo run --release -q --example ngram_bench -- <model.bin> <transcript.tsv>
@@ -202,17 +254,19 @@ lua tools/probes/bench_ngram.lua --reference "$REF" --model <model.bin> --transc
 
 - **主干 pin**：[`lvyww/tiger-sentense-rime`](https://github.com/lvyww/tiger-sentense-rime) @
   `abad411750f79cfca750985fa266689b5d9b865f`（main 尖端，`fix(rime): preserve punctuation learning and default to full-m5`）。
-  **由 Lua 核心生成的 15 份夹具 / decode / learning / lexical 金样，以及键序列探针金样 `key_sequence.tsv.gz`，
-  都取自该 pin。**
+  **由 Lua 核心生成的 16 份夹具 / decode / learning / lexical 金样，以及两份键序列探针金样
+  （`key_sequence.tsv.gz`、`key_sequence_tab.tsv.gz`），都取自该 pin。**
 - **反查分支 pin**：[`lvyww/tiger-sentense-rime`](https://github.com/lvyww/tiger-sentense-rime) @
   `92a0b54b53114e7e5aa6a1ff48efa95db0e21f9c`（`feat/reverse-lookup` 尖端：`4ff37c4` 数字选择器提交反查候选、
   `92a0b54` 撇号音节分隔）。该 pin 是**主干 pin 的后代**（`abad411` 在其祖先链上），因此音反查探针金样
   `sound_to_char_shape.tsv.gz` 单独取自它，**不再需要「分支 + 主干本地合并」**：
   `tools/generators/gen_sound_to_char_shape_golden.sh` 已简化为单 `PIN` + 护栏
   （HEAD 必须等于 `PIN` 且工作区干净，否则显式失败）。
-- **键名表**：librime `src/rime/key_table.cc`（sha256 `2f7c6a8b4f2aa474d700a87bd4bd1baa48a2655cd6ce4d2ba05b768f284d9d78`，固定提交 `33e78140`）；
-  `key_table.rs` 由 `tools/generators/gen_key_table.py` 生成（CI 单文件下载源码后重生成比对）；`key.tsv.gz` 由系统 librime 1.17.0 探针生成，**CI 不重生成**。
-- **键序列 / 音反查**：`key_sequence.tsv.gz`、`sound_to_char_shape.tsv.gz` 由 `tools/probes/rime_sequence_probe.cpp` 驱动
+- **键名表**：librime `src/rime/key_table.cc`（sha256 `2f7c6a8b4f2aa474d700a87bd4bd1baa48a2655cd6ce4d2ba05b768f284d9d78`，固定提交
+  `33e78140250125871856cdc5b42ddc6a5fcd3cd4`）；
+  `key_table.rs` 由 `tools/generators/gen_key_table.py` 生成（CI 单文件下载源码后重生成比对）；`key.tsv.gz` 由系统 librime 1.17.0 探针生成，**CI 不重生成**
+  （其内部头部记录本行的 pin 与 sha256，由 `tools/checks/verify_golden_shas.py` 核对）。
+- **键序列 / 音反查 / Tab 锁**：`key_sequence.tsv.gz`、`key_sequence_tab.tsv.gz`、`sound_to_char_shape.tsv.gz` 由 `tools/probes/rime_sequence_probe.cpp` 驱动
   **真 librime + librime-lua** 与对应 pin 版 Lua 核心生成（探针头部记录参照提交与源文件 sha256），**CI 不重生成**；
   夹具入库并与 Rust 重放共用，其中音反查夹具索引由 `tools/generators/gen_pinyin_index.py` 生成（CI 重生成比对）。
   两者都依赖探针所用 librime/librime-lua 版本；音反查金样的撇号用例尤其如此——`92a0b54` 的
@@ -249,6 +303,8 @@ lua tools/probes/bench_ngram.lua --reference "$REF" --model <model.bin> --transc
 | `tiger_sentence.full_code_whitelist.txt` | `05d257457898146262f7dbf264103c70a8cf2ee92d188b770ad13232b293f566` |
 | `tiger_sentence.supplement.txt` | `f229832bc92f89d87e4b1d29984aec53e627cedb23dda5074ad03cbcabdf0900`（**本地改动**：仅注释中方案名「虎整句」→「虎句」，与上游 pin 的 `538f7d60…` 不同；见 `../data/README.md`） |
 | `key_sequence/symbols.yaml` | `9b45c4a2f179d42585d5cc1439bfbcb5a585520f0de3ce83232180990e5cc9b1` |
+| `key_sequence_tab/symbols.yaml`（与上同一文件） | `9b45c4a2f179d42585d5cc1439bfbcb5a585520f0de3ce83232180990e5cc9b1` |
+| `key_sequence_tab/tiger_sentence.custom.yaml`（夹具条件：`tab_learning: true`） | `c610834a73205b5d584ad752c31b557df9547225e8924a9eb1fccc99cbd42ca7` |
 | `sound_to_char_shape/symbols.yaml`（与上同一文件） | `9b45c4a2f179d42585d5cc1439bfbcb5a585520f0de3ce83232180990e5cc9b1` |
 | `sound_to_char_shape/PY_c.dict.yaml`（夹具） | `96e8b34adebf5ea478a1cbce2c9ee8f333c264690abfffadd2d31642a30360ee` |
 | `sound_to_char_shape/tiger_sentence.codes.txt`（夹具） | `4e2b7596db232e12ad997613155e067354652288270b55852d3fd2f16ab18709` |
@@ -274,11 +330,21 @@ lua tools/probes/bench_ngram.lua --reference "$REF" --model <model.bin> --transc
 | `learning.tsv.gz` | `d70c69b29a37761bcadd87dd2d3bd3a9679eaaadf658827036cdb1c104186d4d` |
 | `decode_learning.tsv.gz` | `1e46d3fbb4788e36b92d92ac931b343ad2d7f394e9611e1a04f36bf034f90cdd` |
 | `decode_learning_model.tsv.gz` | `13797b96097bcc133f862528350f4765d2c021f88c9f8e7ad56d5e6e02de881c` |
-| `key.tsv.gz` | `e939a077cd0825f7b454a4af300ed50fb6a2f2609c71583525d44f2f8fb3fd33` |
-| `key_sequence.tsv.gz` | `486897c902c23dffe1bc7bdc457f81ca49c2d1689ed3e9d921f94acd457367fe` |
+| `decode_learning_evidence.tsv.gz` | `86dec38d94f05e57de281e254262a40aef86176965d739afee6eb6b644464398` |
+| `key.tsv.gz` | `7fae4983ab69e36ebd2e5cac267df81e9bc325731deaefcaa22873aeca8660c0` |
+| `key_sequence.tsv.gz` | `8ce095cf98bae0bbfbd561e6b1e3aa7f1961af6e8e3c3b62b692a7e89e325aa1` |
+| `key_sequence_tab.tsv.gz` | `3c89618d0fb067bb0ce5562646a62924576c0610226aed3fa70689b6549da9bc` |
 | `sound_to_char_shape.tsv.gz` | `e9d48698bf73807a37933b7c2324afbc27fffe7b0492f0dd2787116ec06a7545` |
 | `lexical.tsv.gz` | `5b559b2504e21c69b4f702678a96d2947abfe7d7c26adcd2b25c3d4de761e0c3` |
 
+- **内部头部（四份探针金样各带一份，供无人值守核对）**：`key.tsv.gz`、`key_sequence.tsv.gz`、
+  `key_sequence_tab.tsv.gz`、`sound_to_char_shape.tsv.gz` 的开头是 `#` 注释行，形如
+  `# reference: <仓库> @ <40 位 pin>` + `# <来源文件> sha256: <64 位>`（`key.tsv.gz` 的来源文件是
+  librime `key_table.cc`，另两份是 `lua/tiger_sentence.lua`，音反查金样另有 `PY_c.dict.yaml`）。
+  这些值必须与本表的「来源与校验和」一致——换 pin 重生成后只改表、不改头部即被
+  `tools/checks/verify_golden_shas.py` 拦下（**CI 两个作业各跑一次**：`rust` 作业校验表与头部，
+  `golden` 作业另用 `--reference` 校验参照检出的 `lua/*`、`tools/*` 溯源）。
+
 CI 以同一参照提交重生成全部 fixture 金样并与入库内容比对（见 `.github/workflows/ci.yml`）。
-`key.tsv.gz`、`key_sequence.tsv.gz`、`sound_to_char_shape.tsv.gz` 依赖具体 librime/librime-lua 版本，**CI 不重生成**
-（改由 CI 按上表校验其 sha256）。
+`key.tsv.gz`、`key_sequence.tsv.gz`、`key_sequence_tab.tsv.gz`、`sound_to_char_shape.tsv.gz` 依赖具体 librime/librime-lua 版本，**CI 不重生成**
+（改由 CI 按上表校验其 sha256——内联 `sha256sum -c` 的三条与上面的校验器**互为独立来源**，两者都须通过）。

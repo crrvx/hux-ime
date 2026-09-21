@@ -62,9 +62,16 @@ pub(crate) fn select_page_candidate(
     select_candidate_at(decoder, context, state, live, now, page_start + position)
 }
 
-/// 候选点击 / 数字直选共用：按**全局索引**选中候选，走与 `space` 相同的确认/学习链
+/// 候选点击 / 数字直选共用：按**全局索引**选中候选，走与 `space` 相同的确认链
 /// 并直接上屏（对齐参照 `ConcreteEngine::OnSelect` + `RimeState::selectCandidate`：
 /// 点选后提交整个组合）。索引越界（候选未生成）或无可选段时返回 `false`。
+///
+/// 学习：候选点击在参照里**只经提交通知器**一次「暂存 + 提交」
+/// （`lua/tiger_sentence.lua` 的 `commit_notifier` 回调；参照的候选点击不经过方案处理器），
+/// 故这里**不得**再显式 `learning_stage` 一次——否则同一次点击会在 `pending` 里留下
+/// 两条完全相同的成对偏好事件（`learning_submit` 全部接受 ⇒ 权重记两次）。
+/// 对照：参照 `space`/标点分支确有「处理器先暂存 + 通知器再暂存」的两段（本仓照搬），
+/// 反查段数字直选则同样只走通知器一次。
 pub fn select_candidate_at(
     decoder: &mut Decoder,
     context: &mut Context,
@@ -82,15 +89,6 @@ pub fn select_candidate_at(
         }
     }
     context.highlight(index);
-    let selection = learning_selection(decoder, context, state)?;
-    learning_stage(
-        live,
-        state,
-        selection.selected.as_ref(),
-        &selection.raw,
-        None,
-        now,
-    );
     confirm_selection(
         Some(&mut LearningCommit {
             decoder: &mut *decoder,
@@ -232,40 +230,19 @@ pub fn processor(
         if live_input(context).len() >= MAX_RAW_LENGTH {
             return Ok(ProcessorResult::Consume);
         }
-        // 数字直选（`OPTION_DIGIT_SELECT`；addon 扩展）：菜单可见时直接上屏当前页候选。
-        if context.get_option(OPTION_DIGIT_SELECT)
-            && ch.is_ascii_digit()
-            && context.has_menu()
-            && let Some(position) = digit_page_position(ch)
-            && select_page_candidate(
-                decoder,
-                context,
-                state,
-                live,
-                env.now,
-                env.page_size,
-                position,
-            )?
-        {
-            return Ok(ProcessorResult::Consume);
-        }
-        // 空闲数字直接上屏（全角选项下为全角）。
-        if ch.is_ascii_digit() && !context.is_composing() {
-            if context.get_option("full_shape") {
-                const FULL_SHAPE_DIGITS: [char; 10] =
-                    ['０', '１', '２', '３', '４', '５', '６', '７', '８', '９'];
-                let index = (ch as u8 - b'0') as usize;
-                context.direct_commit(&FULL_SHAPE_DIGITS[index].to_string());
-            } else {
-                context.direct_commit(&ch.to_string());
-            }
-            *env.dot_armed = true;
-            return Ok(ProcessorResult::Consume);
-        }
         let is_letter = ch.is_ascii_lowercase();
         // 音反查段（`` ` `` 前缀）不得把选择键并入拼音：拼写表会把它追加进输入并打断
-        // 反查段。数字在此直选提交，分号惰性；撇号由识别模式放行（供引擎按 schema
-        // 声明的 `speller/delimiter` 切分音节，见 `sound_to_char_shape::matches_pattern`）。
+        // 反查段。数字在此按**上游的绝对索引**（`index = digit - 1`，越界惰性消费）
+        // 高亮 + 确认后提交，分号惰性；撇号由识别模式放行（是否参与音节切分见
+        // `sound_to_char_shape::matches_pattern` 的说明）。
+        //
+        // 该判据必须**先于**下方的 addon 数字直选：后者是**页相对**落点
+        // （`page_start + position`），二者仅在「反查段菜单停在第 1 页且
+        // `page_size >= digit`」时巧合一致；菜单翻到第 2 页起（或 `page_size >= 10`）
+        // 时上游按绝对索引选、addon 按本页位置选，结果不同。
+        // 参照 `lua/tiger_sentence.lua` @ `92a0b54`（`local index = tonumber(ch) - 1`）；
+        // 上游该分支位于 `max_raw_length` 早退与「空闲数字直接上屏」之后，
+        // 本仓同序（空闲数字要求 `!is_composing`，与反查段互斥）。
         if !is_letter
             && context.composition.back().is_some_and(|segment| {
                 segment.has_tag(sound_to_char_shape::SOUND_TO_CHAR_SHAPE_TAG)
@@ -299,6 +276,36 @@ pub fn processor(
             if ch == ';' {
                 return Ok(ProcessorResult::Consume);
             }
+        }
+        // 数字直选（`OPTION_DIGIT_SELECT`；addon 扩展）：菜单可见时直接上屏当前页候选。
+        if context.get_option(OPTION_DIGIT_SELECT)
+            && ch.is_ascii_digit()
+            && context.has_menu()
+            && let Some(position) = digit_page_position(ch)
+            && select_page_candidate(
+                decoder,
+                context,
+                state,
+                live,
+                env.now,
+                env.page_size,
+                position,
+            )?
+        {
+            return Ok(ProcessorResult::Consume);
+        }
+        // 空闲数字直接上屏（全角选项下为全角）。
+        if ch.is_ascii_digit() && !context.is_composing() {
+            if context.get_option("full_shape") {
+                const FULL_SHAPE_DIGITS: [char; 10] =
+                    ['０', '１', '２', '３', '４', '５', '６', '７', '８', '９'];
+                let index = (ch as u8 - b'0') as usize;
+                context.direct_commit(&FULL_SHAPE_DIGITS[index].to_string());
+            } else {
+                context.direct_commit(&ch.to_string());
+            }
+            *env.dot_armed = true;
+            return Ok(ProcessorResult::Consume);
         }
         let live_before = live_input(context);
         let caret = input_caret(context);

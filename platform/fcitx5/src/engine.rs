@@ -69,7 +69,26 @@ impl Engine {
         self.applied_duplicate = Some(duplicate);
         let config =
             scheme_config(&self.settings).with(ROLE_ALLOW_DUPLICATE_SINGLE, Value::Bool(duplicate));
-        self.scheme.apply_config(&config);
+        self.apply_scheme_config(config);
+    }
+
+    /// 下发一个配置袋并收录诊断（审计 F7）。
+    ///
+    /// 方案的 `apply_config` 返回逐角色诊断（角色缺失 / 类型不符）：方案已按缺省值回退，
+    /// 平台把诊断并入状态串（与装配期 `config:` 诊断同风格），避免运行期静默降级。
+    pub(crate) fn apply_scheme_config(&mut self, config: SchemeConfig) {
+        let result = self.scheme.apply_config(&config);
+        let notes: Vec<String> = match result {
+            Ok(()) => Vec::new(),
+            Err(errors) => errors
+                .iter()
+                .map(|error| format!("config: {error}"))
+                .collect(),
+        };
+        if notes != self.config_notes {
+            self.config_notes = notes;
+            self.refresh_status();
+        }
     }
 }
 
@@ -78,13 +97,47 @@ pub(crate) const EVENT_PUMP_ROUNDS: usize = 4;
 
 /// 解析方案的选项声明：返回（角色 → 键表, 可选错误诊断）。
 ///
-/// **缺角色即报错**（诊断进状态串），且失败时不静默接线——空表使相关角色无键，
-/// 宿主菜单与持久化都会跳过它们，而不是落到别的键上。
+/// **全有或全无**：`OptionKeys::resolve` 只要发现任一问题（缺角色 / 重复 / 空声明）即 `Err`，
+/// 本函数随之返回 `OptionKeys::default()`——**所有**角色都不接线（诊断进状态串，列出问题清单），
+/// 而不是「只让出问题的那个角色不接线」。宿主菜单与持久化于是跳过全部角色选项，
+/// 绝不静默落到别的键上。
 pub(crate) fn resolve_option_roles(declarations: &[OptionDecl]) -> (OptionKeys, Option<String>) {
     match OptionKeys::resolve(declarations) {
         Ok(roles) => (roles, None),
         Err(error) => (OptionKeys::default(), Some(error.to_string())),
     }
+}
+
+/// 配置页热键绑定里**无法解析为 rime 键名**的项（返回 `角色=键名` 列表）。
+///
+/// 反向路径：ABI 把 fcitx5 的 `keysym + 状态位` 经 `KeyEvent::repr()` 转成键名交给本层，
+/// 而配置页可以绑到**没有名字的 keysym**（媒体键 / 厂商扩展键）：`repr()` 只能输出
+/// `0x1008ff14` / `(unknown)` 这类形式，`KeyEvent::from_repr` 不认 ⇒ 该绑定在
+/// `Settings::host_options` 与方案 `host_options_from` 的 `filter_map` 处**静默消失**。
+/// 这里点名，进 `hux_engine_status`（`hotkeys:` 前缀；C++ 壳在应用设置后落日志）——
+/// 复核整改第 4 批 F15。
+pub(crate) fn unparsable_key_bindings(settings: &Settings) -> Vec<String> {
+    let mut notes = Vec::new();
+    for (role, reprs) in [
+        (
+            ROLE_REVERSE_LOOKUP_PRONUNCIATION_KEYS,
+            &settings.reverse_lookup_pronunciation_keys,
+        ),
+        (
+            ROLE_REVERSE_LOOKUP_CHARACTER_KEYS,
+            &settings.reverse_lookup_character_keys,
+        ),
+        (ROLE_PAGE_UP_KEYS, &settings.page_up_keys),
+        (ROLE_PAGE_DOWN_KEYS, &settings.page_down_keys),
+    ] {
+        for repr in reprs
+            .iter()
+            .filter(|repr| KeyEvent::from_repr(repr).is_none())
+        {
+            notes.push(format!("{role}={repr}"));
+        }
+    }
+    notes
 }
 
 /// hux 自身设置 → 方案配置袋（平台是装配根：只有这里知道「设置 → 角色」的对应关系）。
@@ -149,6 +202,15 @@ pub struct Engine {
     pub(crate) status_base: String,
     /// 选项保存失败的最近一条诊断（来自 [`hux_cfg::OPTIONS_ERROR_PROPERTY`]）。
     pub(crate) option_error: Option<String>,
+    /// 学习库的**当前**诊断（构造期读一次，运行期落库失败由 [`Engine::observe_learning_error`] 跟进）。
+    pub(crate) learning_error: Option<String>,
+    /// 构造期已并入 `status_base` 的那条学习诊断（避免与运行期条目重复拼接）。
+    pub(crate) learning_error_baseline: Option<String>,
+    /// 配置页热键绑定里无法解析的项（`角色=键名`，见 [`unparsable_key_bindings`]）。
+    pub(crate) hotkey_notes: Vec<String>,
+    /// 最近一次配置下发的逐角色诊断（角色缺失 / 类型不符，`config:` 前缀）。
+    /// 方案已按缺省值回退，此串只是把「设置没生效」的原因暴露到状态里（审计 F7）。
+    pub(crate) config_notes: Vec<String>,
 }
 impl Engine {
     pub(crate) fn new(host: Option<HostCallback>) -> Self {
@@ -199,6 +261,9 @@ impl Engine {
             }
             None => LearningStore::disabled("user data directory unavailable"),
         };
+        // 构造期诊断进 `status_base`；运行期变化由 `observe_learning_error` 补进状态串
+        // （此处留一份基线快照，避免同一条错误被拼两次）。
+        let learning_error = learning.error.clone();
         if let Some(error) = &learning.error {
             notes.push(format!("learning: {error}"));
         } else {
@@ -227,6 +292,10 @@ impl Engine {
             status: crate::ui::cstring_lossy(&status_base),
             status_base,
             option_error: None,
+            learning_error_baseline: learning_error.clone(),
+            learning_error,
+            hotkey_notes: Vec::new(),
+            config_notes: Vec::new(),
         }
     }
 
@@ -252,7 +321,10 @@ impl Engine {
         if let Some(options) = self.options.as_mut() {
             options.sync(&mut context);
         }
-        // 无存储时运行时开关（状态菜单）以现存会话为模板，避免新会话回退到设置缺省。
+        // 运行时开关（状态菜单切换、不落盘的项）一律**以现存会话为模板**，避免新会话回退到设置缺省。
+        // 本块与是否存在存储**无关**（上面的 `store.covers` 门只作用于设置项），故不能读作「无存储时才走」。
+        // 取 `values().next()`（任一会话）是安全的：运行时开关在同一引擎内由同一份状态菜单维护、各会话恒等，
+        // 因此结果与选取哪个会话无关（幂等）。若将来运行时开关允许按会话分叉，这里必须换成显式单一来源。
         if let Some(existing) = self.sessions.values().next() {
             for name in self.runtime_options() {
                 let value = existing.context.get_option(name);
@@ -299,10 +371,18 @@ impl Engine {
     /// [`Engine::forward_after_commit`]：宿主层据此消费该键并以 `forwardKey` 重发，
     /// 保证客户端先收到提交、后收到按键。
     pub fn key(&mut self, session_id: u64, keysym: u32, states: u32, release: bool) -> bool {
-        self.with_session(session_id, |engine, session| {
+        match self.with_session(session_id, |engine, session| {
             engine.key_in(session, keysym, states, release)
-        })
-        .unwrap_or(false)
+        }) {
+            Some(consumed) => consumed,
+            None => {
+                // F13：未知 / 已释放会话不得沿用**上一次**按键留下的粘性转发位——否则
+                // `hux_engine_key` 会只回 `HUX_KEY_FORWARD_AFTER_COMMIT`（无 CONSUMED），
+                // 宿主据此 `filterAndAccept` + `forwardKey` 一个并不存在的提交。
+                self.forward_after_commit = false;
+                false
+            }
+        }
     }
 
     pub(crate) fn key_in(
@@ -343,10 +423,16 @@ impl Engine {
     /// 候选点击（面板候选 `CandidateWord::select`，按会话）：按全局索引选中并上屏。
     /// 走与 `space` 相同的确认/学习链；越界/无可选段返回 `false`。
     pub fn select_candidate(&mut self, session_id: u64, index: usize) -> bool {
-        self.with_session(session_id, |engine, session| {
+        match self.with_session(session_id, |engine, session| {
             engine.select_candidate_in(session, index)
-        })
-        .unwrap_or(false)
+        }) {
+            Some(selected) => selected,
+            None => {
+                // 同 `key`：候选点击也走 `hux_engine_key` 之外的路径，粘性位必须清掉（F13）。
+                self.forward_after_commit = false;
+                false
+            }
+        }
     }
 
     pub(crate) fn select_candidate_in(&mut self, session: &mut Session, index: usize) -> bool {
@@ -407,6 +493,9 @@ impl Engine {
         if !submitted.is_empty() {
             self.learning.confirm(&submitted);
         }
+        // 运行期落库失败（磁盘满 / 库被改成只读 / 锁异常）不进状态串的话，用户只看到
+        // 「学习不生效」（复核整改第 4 批 F6）。
+        self.observe_learning_error();
         self.push_scheme_config();
         if !session.context.is_composing() {
             self.learning.refresh_scores(now);
@@ -515,13 +604,43 @@ impl Engine {
         }
     }
 
-    /// 重建状态串（基线 + 选项保存错误，若有）。
+    /// 重建状态串（基线 + 配置诊断 + 选项保存错误 + 运行期学习库错误 + 热键绑定诊断，若有）。
     pub(crate) fn refresh_status(&mut self) {
-        let status = match &self.option_error {
-            Some(error) => format!("{}; options: {error}", self.status_base),
-            None => self.status_base.clone(),
-        };
+        let mut status = self.status_base.clone();
+        if !self.config_notes.is_empty() {
+            status.push_str("; ");
+            status.push_str(&self.config_notes.join("; "));
+        }
+        if let Some(error) = &self.option_error {
+            status.push_str("; options: ");
+            status.push_str(error);
+        }
+        // 学习库：构造期那条已在基线里，只有**运行期新增/变化**的诊断在此拼接（F6）。
+        if let Some(error) = &self.learning_error
+            && Some(error) != self.learning_error_baseline.as_ref()
+        {
+            status.push_str("; learning: ");
+            status.push_str(error);
+        }
+        // 配置页绑到无名字 keysym（媒体键等）时该绑定会被丢弃，此处点名（F15）。
+        if !self.hotkey_notes.is_empty() {
+            status.push_str("; hotkeys: 忽略无法识别的绑定 ");
+            status.push_str(&self.hotkey_notes.join(", "));
+        }
         self.status = crate::ui::cstring_lossy(&status);
+    }
+
+    /// 学习库诊断变化 → 并入状态串（复核整改第 4 批 F6）。
+    ///
+    /// 此前 `learning.error` 只在 `new_with_dirs` 里读一次：打开失败可见，而**运行期写盘失败**
+    /// （LevelDB `put` 返回错误）既无日志也不进 `hux_engine_status`。这里在落库路径上调一次，
+    /// 诊断变化即刷新状态串（与 `*_options_error` 同风格）。
+    pub(crate) fn observe_learning_error(&mut self) {
+        let current = self.learning.error.clone();
+        if current != self.learning_error {
+            self.learning_error = current;
+            self.refresh_status();
+        }
     }
 
     /// 运行时开关当前值（状态菜单；全局）：任一会话的生效值，无会话时回退存储/设置缺省。
@@ -571,6 +690,12 @@ impl Engine {
     pub fn apply_settings(&mut self, settings: Settings) {
         self.settings = settings;
         self.config_dirty = true;
+        // 配置页热键绑定里无法解析的项：点名（此前在 `filter_map` 处静默消失，F15）。
+        let hotkey_notes = unparsable_key_bindings(&self.settings);
+        if hotkey_notes != self.hotkey_notes {
+            self.hotkey_notes = hotkey_notes;
+            self.refresh_status();
+        }
         let defaults = self.settings.option_defaults(&self.option_roles);
         if let Some(store) = self.options.as_mut() {
             store.set_defaults(self.settings.store_defaults(&self.option_roles));

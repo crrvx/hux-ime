@@ -645,6 +645,13 @@ private:
         if (hux_engine_apply_settings(engine_, &options) == 0) {
             FCITX_WARN() << "hux: apply settings failed";
         }
+        // 配置页可能绑到**没有名字的 keysym**（媒体键 / 厂商扩展键）：Rust 侧无法把它解析成
+        // rime 键名，该绑定会被丢弃——诊断经状态串的 `hotkeys:` 前缀送出（复核整改 F15）。
+        // 这里把最新状态串落到日志，使「绑定静默消失」变得可诊断；按契约指针只用一次
+        // （`hux_engine_status` 在下一次状态刷新后失效，见 `hux_abi.h`）。
+        if (const char *status = hux_engine_status(engine_)) {
+            FCITX_INFO() << "hux: " << status;
+        }
     }
 
     HuxConfig config_;

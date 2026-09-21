@@ -37,8 +37,37 @@ C ABI 契约在 [`../../crates/hux-ffi/`](../../crates/hux-ffi/)（CI 校验 `hu
   ←/→/↑/↓ 交应用处理（应用光标随动，本层不消费；查码段不下发预编辑，避免应用端 marked text 锁住光标）；
   Esc / 再次触发 / 其它键退出（打字照常输入）。展示面为输入面板辅助文本条（auxUp/auxDown）。
 
+## 安装（`cmake --install` 与 `install.sh` 等价）
+
+`cmake --install`（前缀 `/usr`）装 **3 个插件文件 + `data/MANIFEST` 列出的全部随包数据**：
+
+- `lib/<libdir>/fcitx5/libhux.so`（`FCITX_INSTALL_ADDONDIR` 优先，Fedora 等为 `lib64`）；
+- `share/fcitx5/addon/hux.conf`、`share/fcitx5/inputmethod/hux.conf`；
+- `share/fcitx5/hux/`：码表四件套 + 词先验 + 拼音索引 + 标点表（`data/MANIFEST` 单一来源，
+  `install.sh` 装后逐条核对、`uninstall.sh` 按同一清单删除）。
+
+**复核整改第 4 批 F5**：此前 CMake 只装 3 个插件文件，数据仅由 `install.sh` 安装 ⇒ 只走
+`cmake --install`（发行版打包 / `DESTDIR` 流程）会得到**无词库引擎**（`Lexicon`/`PunctTable`
+静默降级）。现由 CMake 按 `data/MANIFEST` 一并安装；`tools/checks/check_data_manifest.sh`
+与 CI 的 `DESTDIR` 步骤守护「装 / 卸 / CMake 三处清单一致」。**n-gram 模型仍不随包**（用户自取；
+`uninstall.sh --purge` 才删）。
+
 ## 已知限制
 
 会话按输入上下文隔离；失焦时由 fcitx5 核心/前端把客户端预编辑以**原文提交**（fcitx5 惯例，
 不保留组合）；切换输入法/重置由本层**直接丢弃**（不提交）。上游默认在切换输入法时提交
-候选/预编辑，本实现有意取「丢弃」契约；打包待做。
+候选/预编辑，本实现有意取「丢弃」契约；打包待做（发行版打包脚本，不影响上面的安装布局）。
+
+- **配置页热键绑定的名字要求（复核整改第 4 批 F15）**：快捷键分区的四项（音反查 / 字反查 /
+  上翻页 / 下翻页）经 ABI 以 `keysym + 状态位` 交给引擎，引擎按 librime 键名表解释。配置页若绑到
+  **没有名字的 keysym**（媒体键、厂商扩展键，如 `XF86AudioPlay`），该绑定无法解析，
+  **会被丢弃**——不再静默：引擎把 `hotkeys: 忽略无法识别的绑定 <角色>=<键名>` 写进状态串
+  （`hux_engine_status`），本层在应用设置后把状态串落到日志（`FCITX_INFO`，`journalctl -t fcitx5` 可见）。
+  请绑常用键（字母 / 数字 / `minus` / `bracketleft` / `Page_Up` …）。
+- **状态串指针（F8）**：`hux_engine_status` 返回的指针**在下一次状态刷新前有效**
+  （选项保存失败 / 配置诊断 / 学习库错误 / 热键诊断都会替换内部串）——每次需要时重新调用，
+  不要缓存；本层只在构造与应用设置后立即读取并落日志。
+- **诊断前缀**：状态串除构造期的加载说明（`dirs:` / `lexicon:` / `model:` / `punct:` / `learning:`）
+  外，运行期还会出现 `config:`（配置袋角色缺失/类型不符）、`options:`（`options.yaml` 保存失败）、
+  `learning:`（运行期学习库写入失败，复核整改第 4 批 F6）、`hotkeys:`（无法识别的键绑定，F15）。
+  排查用户报障时先看 `journalctl -t fcitx5 | grep 'hux:'`。

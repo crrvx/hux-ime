@@ -40,7 +40,10 @@ pub struct HostOptions {
     pub page_up_keys: Vec<KeyEvent>,
     /// 下翻页键列表：菜单可用（`has_menu`）时生效。
     pub page_down_keys: Vec<KeyEvent>,
-    /// 翻页循环（参照 `menu/page_down_cycle`，默认关）：末页再翻回首页、首页向上翻到末页。
+    /// 翻页循环（参照 `menu/page_down_cycle`，默认关）：**末页再下翻回首页**。
+    ///
+    /// 只有下翻方向与参照一致：参照 `Selector::PreviousPage` 没有循环分支
+    /// （首页上翻恒 `Highlight(0)` 并写 `paging` 标签），故本项不作用于上翻（审计 F3）。
     pub page_cycle: bool,
 }
 
@@ -121,9 +124,12 @@ fn commit_notifier(
 
 /// 参照 `Punctuator::ProcessKeyEvent`（`digit_separators: ""`，`use_space` 缺省 false）。
 ///
-/// 命中标点表后：把当前组合文本（选中候选或原始输入）与标点一并提交并清空
-/// （参照 `PushInput` → `punct` 段翻译 → `ConfirmUniquePunct`/`AutoCommitPunct`/`PairPunct`
-/// 的净效果；候选菜单形态参照表未使用）。
+/// 命中标点表后：**在 caret 处 `PushInput(ch)`**，再按「caret 之前的前缀 + 该标点」计算提交文本
+/// ——参照引擎按 `ConcreteEngine::Compose` 的 `active_input = input.substr(0, caret_pos)`
+/// 分段，故光标居中时标点段就是末段，提交文本**只取到该段末尾**，其后的剩余输入随
+/// `Clear()` 丢弃（实测 `x x Left comma` → 提交「x，」，`a b Left comma` → 「a，」）；
+/// 光标在输入末尾时二者等价，与 `ConfirmUniquePunct`/`AutoCommitPunct`/`PairPunct`
+/// 在 `_auto_commit` 下的净效果一致（候选菜单形态参照表未使用）。
 fn punctuator(
     key_event: &KeyEvent,
     context: &mut Context,
@@ -152,7 +158,11 @@ fn punctuator(
     else {
         return HostResult::Forward;
     };
-    let commit = format!("{}{}", context.get_commit_text(), text);
+    // 前缀取 `PushInput` 之前的 caret：标点段起点即 caret，段末即 caret + 1。
+    let caret = context.caret().min(context.input().len());
+    let head = context.composition.commit_text(&context.input()[..caret]);
+    context.push_input(&[keycode as u8]);
+    let commit = format!("{head}{text}");
     commit_notifier(observer, context, &commit);
     context.clear();
     context.direct_commit(&commit);
@@ -170,11 +180,14 @@ pub enum PagingDir {
     Down,
 }
 
-/// `key_binder` 的翻页判据：菜单可用（非 `ascii_mode` + `has_menu`）时，该键是否会被判为翻页。
+/// `key_binder` 的翻页判据：该键是否会被判为翻页。
 ///
-/// - 命中 `page_up_keys` 且末段带 `paging` 标签（参照 `when: paging`）→ [`PagingDir::Up`]；
-/// - 命中 `page_down_keys`（参照 `when: has_menu`）→ [`PagingDir::Down`]；
-/// - 其余（含无菜单 / `ascii_mode` / 上翻页键未翻过页）→ `None`。
+/// 两侧条件**分别**对齐参照 `KeyBindingConditions`（`key_binder.cc:248-266`，审计 F11）：
+/// - 命中 `page_up_keys` 且末段带 `paging` 标签（`kWhenPaging`：**只看标签**，
+///   不带 `has_menu` / `!ascii_mode` 前置）→ [`PagingDir::Up`]；
+/// - 命中 `page_down_keys` 且菜单可用（`kWhenHasMenu` = `HasMenu() && !ascii_mode`）
+///   → [`PagingDir::Down`]；
+/// - 其余（未命中绑定 / 上翻页键未翻过页 / 下翻页键无菜单）→ `None`。
 ///
 /// 宿主绑定与方案处理器共用本判据（避免两处条件漂移）。方案侧在「菜单可见 + 可打印 ASCII 标点」
 /// 分支入口先问一次：被宿主判为翻页的键（如缺省 `=`/`-`，以及 schema 绑到翻页的 `[`/`]`）
@@ -184,21 +197,28 @@ pub fn paging_action(
     options: &HostOptions,
     key_event: &KeyEvent,
 ) -> Option<PagingDir> {
+    // 参照 `key_binder.cc` 的绑定查表（`map<KeyEvent,…>::find(key_event)`）是**精确**的
+    // `(keycode, modifier)` 比较；此前用 `repr()` 字符串比较（每次按键多一次分配，
+    // 且 `K_MODIFIER_MASK` 内的**无名位**（16-20/24/25）会让不同修饰状态的键在字符串上
+    // 碰撞）——审计 F13.1。
+    let bound = |keys: &[KeyEvent]| {
+        keys.iter()
+            .any(|key| key.keycode == key_event.keycode && key.modifier == key_event.modifier)
+    };
+    if bound(&options.page_up_keys) {
+        return has_paging_tag(context).then_some(PagingDir::Up);
+    }
     if !menu_available(context) {
         return None;
     }
-    let repr = key_event.repr();
-    if options.page_up_keys.iter().any(|key| key.repr() == repr) {
-        return has_paging_tag(context).then_some(PagingDir::Up);
-    }
-    if options.page_down_keys.iter().any(|key| key.repr() == repr) {
+    if bound(&options.page_down_keys) {
         return Some(PagingDir::Down);
     }
     None
 }
 
-/// 参照 `KeyBinder` 的前置条件：非 `ascii_mode` 且 `has_menu`（[`paging_action`] 与
-/// [`key_binder`] 共用，保证「判为翻页」与「执行翻页」条件一致）。
+/// 参照 `KeyBinder` 的前置条件：非 `ascii_mode` 且 `has_menu`（下翻页判据与
+/// [`key_binder`] 的 Tab/Ctrl 绑定共用；上翻页判据只有 `paging` 标签，见 [`paging_action`]）。
 fn menu_available(context: &Context) -> bool {
     !context.get_option("ascii_mode") && context.has_menu()
 }
@@ -207,20 +227,25 @@ fn menu_available(context: &Context) -> bool {
 /// 翻页判据统一走 [`paging_action`]（上翻页键的 `when: paging` 标签未置位时**不消费**——
 /// 交后续处理器落作标点/输入，与参照一致）。
 fn key_binder(key_event: &KeyEvent, context: &mut Context, options: &HostOptions) -> HostResult {
-    if !menu_available(context) {
-        return HostResult::Forward;
-    }
     if let Some(dir) = paging_action(context, options, key_event) {
         return match dir {
             PagingDir::Up => selector_action(SelectorAction::PreviousPage, context, options),
             PagingDir::Down => selector_action(SelectorAction::NextPage, context, options),
         };
     }
-    match key_event.repr().as_str() {
-        "Tab" => selector_action(SelectorAction::NextCandidate, context, options),
-        "Shift+Tab" => selector_action(SelectorAction::PreviousCandidate, context, options),
-        _ => HostResult::Forward,
+    if !menu_available(context) {
+        return HostResult::Forward;
     }
+    // 固定绑定表同样是精确的 `(keycode, modifier)` 比较（F13.1）：`{Tab,0}` → 下一候选、
+    // `{Tab,Shift}` → 上一候选。注意 X11 的 `ISO_Left_Tab`（0xfe20）**不在**该表里
+    // （与参照一致）：它由方案处理器/Tab 循环处理，落到宿主链时照旧 Forward。
+    if key_event.keycode == 0xff09 && key_event.modifier == 0 {
+        return selector_action(SelectorAction::NextCandidate, context, options);
+    }
+    if key_event.keycode == 0xff09 && key_event.modifier == K_SHIFT_MASK {
+        return selector_action(SelectorAction::PreviousCandidate, context, options);
+    }
+    HostResult::Forward
 }
 
 // ---------------------------------------------------------------- selector
@@ -327,22 +352,17 @@ fn selector_action(
             if !segment.translated {
                 return HostResult::Forward;
             }
-            let selected = segment.selected_index;
-            if selected < page_size {
-                // 已在首页：默认停在首页（吞键）；开启循环则回到末页。
-                if options.page_cycle {
-                    let total = segment.prepare(usize::MAX);
-                    let last_page_start = total.saturating_sub(1) / page_size * page_size;
-                    context.highlight(last_page_start);
-                    mark_paging(context);
-                }
-                true
-            } else {
-                let index = selected.saturating_sub(page_size);
-                context.highlight(index);
-                mark_paging(context);
-                true
-            }
+            // 参照 `Selector::PreviousPage`（`gear/selector.cc`）：
+            // `index = selected_index < page_size ? 0 : selected_index - page_size` ——
+            // **已在首页也照常改写高亮**（归 0，不是「不动」），随后**无条件**写 `paging` 标签
+            // （即便停在首页：`when: paging` 的上翻页绑定据此成立，审计 F2）；
+            // 参照的 `menu/page_down_cycle` 只在 `NextPage` 被读，上翻方向**不循环**（审计 F3）。
+            // `saturating_sub` 即参照三元式 `selected < page_size ? 0 : selected - page_size`：
+            // 已在首页（含第一页内的任意高亮）时归 0。
+            let index = segment.selected_index.saturating_sub(page_size);
+            context.highlight(index);
+            mark_paging(context);
+            true
         }
         SelectorAction::NextPage => {
             let Some(segment) = context.composition.back() else {
@@ -634,26 +654,31 @@ fn editor(
             true
         }
         (0xff0d, K_CONTROL_MASK) => {
-            // 参照 `{XK_Return, kControlMask}` = `CommitScriptText`（ExpressEditor 绑定）：
-            // 提交「脚本文本」——即按当前组合原样提交（**不清未确认段**；注意 `Context::GetScriptText`
-            // 的准确定义尚未从参照源码核对，此处按「脚本文本 = 组合文本」实现，待复核见 docs/refactor.md §8）。
-            let commit_text = context.get_commit_text();
-            commit_notifier(observer, context, &commit_text);
-            context.commit();
+            // 参照 `{XK_Return, kControlMask}` = `Editor::CommitScriptText`（`gear/editor.cc`）：
+            // `engine_->sink()(ctx->GetScriptText()); ctx->Clear();`
+            // ——提交**脚本文本**（每段 preedit 优先且去首个 `\t`，否则原始输入切片；
+            // 已确认段在 `keep_selection = true`（`composition.h` 默认实参）下取候选文字），
+            // 且**不经 `Commit()`**：不发提交通知 ⇒ 不产生学习事件（审计 F4）。
+            let text = context.get_script_text();
+            context.direct_commit(&text);
+            context.clear();
             true
         }
         // 注意：模式里的 `|` 是**或模式**而非按位或，故组合修饰键必须用 match guard。
         (0xff0d, modifier) if modifier == K_CONTROL_MASK | K_SHIFT_MASK => {
-            // 参照 `{XK_Return, kControlMask | kShiftMask}` = `CommitComment`：
-            // 提交高亮候选的注释（如反查候选的虎码）并清空组合。
+            // 参照 `{XK_Return, kControlMask | kShiftMask}` = `Editor::CommitComment`
+            // （`gear/editor.cc`）：**仅当**高亮候选存在且注释非空时 `sink(comment) + Clear()`；
+            // 注释为空则只吞键——不清组合、不提交空串（审计 F5）。
             let comment = context
                 .composition
                 .back()
                 .and_then(|segment| segment.selected_candidate())
                 .map(|candidate| candidate.comment.clone())
-                .unwrap_or_default();
-            context.clear();
-            context.direct_commit(&comment);
+                .filter(|comment| !comment.is_empty());
+            if let Some(comment) = comment {
+                context.direct_commit(&comment);
+                context.clear();
+            }
             true
         }
         (0xffff, 0) | (0xffff, K_SHIFT_MASK) => {
@@ -924,6 +949,24 @@ mod tests {
         );
     }
 
+    /// 审计 F6：光标居中时参照在 caret 处插入标点，提交文本**只取到该段末尾**
+    /// （`ConcreteEngine::Compose` 的 `active_input = input[..caret]`），标点后的剩余输入丢弃。
+    #[test]
+    fn punctuator_at_mid_caret_commits_only_up_to_the_punctuation() {
+        let table = punct_table();
+        let mut context = Context::new();
+        context.set_input(b"ab");
+        context.set_caret(1);
+        context.drain_events();
+        assert_eq!(
+            process(&mut context, "comma", Some(&table), &HostOptions::default()),
+            HostResult::Consumed
+        );
+        assert_eq!(context.last_commit_text(), "a，", "只提交 caret 之前的前缀");
+        assert!(context.input().is_empty());
+        assert_eq!(context.caret(), 0);
+    }
+
     #[test]
     fn selector_moves_highlight_without_wrapping() {
         let mut context = context_with_menu(&["甲", "乙"], 0);
@@ -959,9 +1002,11 @@ mod tests {
         assert_eq!(selected(&small), 0);
     }
 
-    /// 翻页循环（`page_cycle`）：末页再下回首页、首页向上翻到末页。
+    /// 翻页循环（`page_cycle`）：**只作用于下翻**（参照 `menu/page_down_cycle` 仅在
+    /// `Selector::NextPage` 被读）；首页上翻恒停在首页并写 `paging` 标签（参照
+    /// `Selector::PreviousPage` 无循环分支，审计 F3）。
     #[test]
-    fn selector_page_cycle_wraps_at_ends() {
+    fn selector_page_cycle_wraps_next_page_only() {
         let mut options = custom_page_options(2);
         options.page_cycle = true;
         let mut context = context_with_menu(&["a", "b", "c", "d", "e"], 0);
@@ -975,18 +1020,74 @@ mod tests {
             HostResult::Consumed
         );
         assert_eq!(selected(&context), 4);
-        // 末页再下 → 首页。
+        // 末页再下 → 首页（`menu/page_down_cycle`）。
         assert_eq!(
             press_with(&mut context, "period", &options),
             HostResult::Consumed
         );
         assert_eq!(selected(&context), 0);
-        // 首页再上 → 末页起点。
+        // 首页再上：参照不循环，只归零高亮 + 写 `paging` 标签。
         assert_eq!(
             press_with(&mut context, "comma", &options),
             HostResult::Consumed
         );
-        assert_eq!(selected(&context), 4);
+        assert_eq!(selected(&context), 0, "上翻方向不循环（参照无该分支）");
+    }
+
+    /// 参照 `Selector::PreviousPage`：`selected_index < page_size` 时 `index = 0`
+    /// ——**已在首页也照常归零高亮**（不是「不动」），并**无条件**写 `paging` 标签。
+    #[test]
+    fn selector_page_up_home_resets_highlight_and_marks_paging() {
+        // 显式 `Page_Up`（selector keymap，不经 `when: paging` 绑定）。
+        let options = custom_page_options(2);
+        let mut context = context_with_menu(&["a", "b", "c", "d", "e"], 1);
+        assert_eq!(
+            press_with(&mut context, "Page_Up", &options),
+            HostResult::Consumed
+        );
+        assert_eq!(
+            selected(&context),
+            0,
+            "首页上翻归零高亮（参照 Highlight(0)）"
+        );
+        assert!(
+            context
+                .composition
+                .back()
+                .is_some_and(|segment| segment.has_tag("paging")),
+            "首页上翻同样写 `paging` 标签（参照无条件 insert，审计 F2）"
+        );
+    }
+
+    /// 审计 F2：`Page_Up` 停在首页后，默认上翻页键 `-`（`when: paging`）必须成立，
+    /// 不得落标点分支把组合提前上屏。
+    #[test]
+    fn page_up_at_first_page_arms_the_paging_binding() {
+        let options = HostOptions::default();
+        let mut context = context_with_menu(&["a", "b", "c", "d", "e", "f"], 0);
+        assert_eq!(
+            paging_action(&context, &options, &key_of("minus")),
+            None,
+            "未翻页时 `when: paging` 不成立"
+        );
+        assert_eq!(press(&mut context, "Page_Up"), HostResult::Consumed);
+        assert!(
+            context
+                .composition
+                .back()
+                .is_some_and(|segment| segment.has_tag("paging")),
+            "Page_Up 停在首页也必须写 `paging` 标签"
+        );
+        assert_eq!(
+            paging_action(&context, &options, &key_of("minus")),
+            Some(PagingDir::Up),
+            "标签置位后上翻页键判为翻页"
+        );
+        // 宿主链：`-` 走翻页（消费、不提交、输入不变）。
+        assert_eq!(press(&mut context, "minus"), HostResult::Consumed);
+        assert_eq!(context.last_commit_text(), "");
+        assert_eq!(context.input(), b"ab");
+        assert_eq!(selected(&context), 0);
     }
 
     /// 默认不循环：末页/首页翻页只吞键、不动。
@@ -1107,12 +1208,24 @@ mod tests {
             "翻过页后 `paging` 标签置位"
         );
 
-        // 无菜单 / `ascii_mode`：一律不判为翻页。
+        // 无菜单 / `ascii_mode`：下翻页（`when: has_menu`）一律不成立。
         let idle = Context::new();
         assert_eq!(paging_action(&idle, &options, &key_of("equal")), None);
         let mut ascii = context_with_menu(&["a", "b"], 0);
         ascii.set_option("ascii_mode", true);
         assert_eq!(paging_action(&ascii, &options, &key_of("equal")), None);
+        // 上翻页判据只有 `paging` 标签（参照 `kWhenPaging` 不带 `has_menu`/`ascii_mode`
+        // 前置，审计 F11）：`ascii_mode` 下标签置位仍判为翻页。
+        ascii
+            .composition
+            .back_mut()
+            .expect("段")
+            .tags
+            .push("paging".to_string());
+        assert_eq!(
+            paging_action(&ascii, &options, &key_of("minus")),
+            Some(PagingDir::Up)
+        );
 
         // schema 绑定的其它翻页键按 options 生效（`[`/`]`），未绑定的键不判翻页。
         let custom = HostOptions {
@@ -1326,14 +1439,19 @@ mod tests {
 
     #[test]
     fn editor_ctrl_return_commits_script_text() {
-        // 参照 `{XK_Return, kControlMask}` = `CommitScriptText`：提交**脚本文本**（候选文字），
-        // 与 `{XK_Return, 0}`（`CommitRawInput`，提交原始输入码）区分开。
+        // 参照 `{XK_Return, kControlMask}` = `CommitScriptText`：提交**脚本文本**
+        // （`Composition::GetScriptText`：preedit 优先，否则原始输入切片），
+        // 与 `{XK_Return, 0}`（`CommitRawInput`）区分开；**不发提交通知**（不写学习）。
         let mut context = context_with_menu(&["甲", "乙"], 0);
         assert_eq!(
             press_raw(&mut context, 0xff0d, K_CONTROL_MASK),
             HostResult::Consumed
         );
-        assert_eq!(context.last_commit_text(), "甲", "脚本文本 = 高亮候选文字");
+        assert_eq!(
+            context.last_commit_text(),
+            "ab",
+            "候选无 preedit ⇒ 原始输入"
+        );
 
         let mut context = context_with_menu(&["甲", "乙"], 0);
         assert_eq!(press_raw(&mut context, 0xff0d, 0), HostResult::Consumed);
@@ -1342,6 +1460,101 @@ mod tests {
             "ab",
             "原始输入 = 未确认段的原文"
         );
+    }
+
+    /// `CommitScriptText` 不经 `Commit()`：不产生提交通知（学习事件）。
+    #[test]
+    fn editor_ctrl_return_does_not_notify_commit() {
+        #[derive(Default)]
+        struct Recorder {
+            calls: usize,
+        }
+        impl CommitObserver for Recorder {
+            fn on_commit(&mut self, _context: &Context, _commit_text: &str) {
+                self.calls += 1;
+            }
+        }
+        let mut recorder = Recorder::default();
+        let mut context = context_with_menu(&["甲", "乙"], 0);
+        let key = KeyEvent::new(0xff0d, K_CONTROL_MASK);
+        assert_eq!(
+            process_key(
+                &key,
+                &mut context,
+                None,
+                &HostOptions::default(),
+                Some(&mut recorder)
+            ),
+            HostResult::Consumed
+        );
+        assert_eq!(recorder.calls, 0, "`Clear()` 不触发提交通知");
+        // 对照：普通 `Return`（`CommitRawInput`）走 `Commit()`，通知照发。
+        let mut context = context_with_menu(&["甲", "乙"], 0);
+        assert_eq!(
+            process_key(
+                &KeyEvent::new(0xff0d, 0),
+                &mut context,
+                None,
+                &HostOptions::default(),
+                Some(&mut recorder)
+            ),
+            HostResult::Consumed
+        );
+        assert_eq!(recorder.calls, 1);
+    }
+
+    /// `CommitScriptText` 的 preedit 优先与去首个 `\t`（生产候选带 preedit）。
+    #[test]
+    fn editor_ctrl_return_prefers_candidate_preedit() {
+        let mut context = Context::new();
+        context.set_input(b"ab");
+        let mut segment = Segment {
+            start: 0,
+            end: 2,
+            tags: vec!["abc".to_string()],
+            translated: true,
+            ..Segment::default()
+        };
+        let mut candidate = Candidate::new("sentence", 0, 2, "先", "");
+        candidate.preedit = "xi\tan".to_string();
+        segment.candidates.push(candidate);
+        context.composition.segments.push(segment);
+        context.drain_events();
+        assert_eq!(
+            press_raw(&mut context, 0xff0d, K_CONTROL_MASK),
+            HostResult::Consumed
+        );
+        assert_eq!(context.last_commit_text(), "xian");
+    }
+
+    #[test]
+    fn editor_ctrl_shift_return_keeps_composition_without_comment() {
+        // 参照 `Editor::CommitComment`：注释为空 ⇒ 只吞键（不清组合、不提交）。审计 F5。
+        let mut context = context_with_menu(&["甲", "乙"], 0);
+        assert_eq!(
+            press_raw(&mut context, 0xff0d, K_CONTROL_MASK | K_SHIFT_MASK),
+            HostResult::Consumed
+        );
+        assert_eq!(context.last_commit_text(), "", "空注释不提交空串");
+        assert_eq!(context.input(), b"ab", "空注释不清组合");
+        assert!(context.is_composing());
+        // 无候选段同理：不 clear、不提交。
+        let mut empty = Context::new();
+        empty.set_input(b"xx");
+        empty.composition.segments.push(Segment {
+            start: 0,
+            end: 2,
+            tags: vec!["abc".to_string()],
+            translated: true,
+            ..Segment::default()
+        });
+        empty.drain_events();
+        assert_eq!(
+            press_raw(&mut empty, 0xff0d, K_CONTROL_MASK | K_SHIFT_MASK),
+            HostResult::Consumed
+        );
+        assert_eq!(empty.input(), b"xx");
+        assert_eq!(empty.last_commit_text(), "");
     }
 
     #[test]

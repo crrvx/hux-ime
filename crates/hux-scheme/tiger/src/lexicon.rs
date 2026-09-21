@@ -30,6 +30,7 @@ pub const MODEL_PATH: &str = "models/sentence-ngram-mobile.bin";
 /// 依次在各数据目录下探测相对路径（是否存在交由调用方的加载器处理）。
 ///
 /// 目录本身由平台层解析（桌面/Android 各自构造），内核不读取环境变量。
+#[cfg(test)]
 pub fn candidate_paths(dirs: &[PathBuf], relative: &str) -> Vec<PathBuf> {
     dirs.iter().map(|dir| dir.join(relative)).collect()
 }
@@ -156,11 +157,10 @@ pub struct Lexicon {
     pub ranks_count: usize,
     pub unknown_character_rank: usize,
     pub isolation_enabled: bool,
-    pub codes_path: Option<String>,
+
     pub codes_entries: usize,
     pub codes_count: usize,
-    pub ranks_path: Option<String>,
-    pub whitelist_path: Option<String>,
+
     pub whitelist_count: usize,
     /// 参照 `lexicon_state.learning_rules`：数据文件内容的 `learning.hash`（NUL 分隔）。
     pub learning_rules: String,
@@ -183,11 +183,8 @@ impl Lexicon {
             ranks_count: 0,
             unknown_character_rank: UNKNOWN_CHARACTER_RANK_FALLBACK,
             isolation_enabled: false,
-            codes_path: None,
             codes_entries: 0,
             codes_count: 0,
-            ranks_path: None,
-            whitelist_path: None,
             whitelist_count: 0,
             learning_rules: String::new(),
             errors: Vec::new(),
@@ -206,31 +203,31 @@ impl Lexicon {
         let mut errors = Vec::new();
 
         let codes_file = self.read_data_file(CODES_FILE);
-        let (entries, codes_path) = match &codes_file {
-            Some((content, path)) => (parse_codes_content(content), Some(path.clone())),
+        let entries = match &codes_file {
+            Some((content, _)) => parse_codes_content(content),
             None => {
                 errors.push(format!("missing {CODES_FILE}"));
-                (Vec::new(), None)
+                Vec::new()
             }
         };
 
         let ranks_file = self.read_data_file(RANKS_FILE);
-        let (character_ranks, ranks_count, ranks_path) = match &ranks_file {
-            Some((content, path)) => {
+        let (character_ranks, ranks_count) = match &ranks_file {
+            Some((content, _)) => {
                 let (ranks, count) = parse_ranks_content(content);
                 if count == 0 {
-                    (None, 0, Some(path.clone()))
+                    (None, 0)
                 } else {
-                    (Some(ranks), count, Some(path.clone()))
+                    (Some(ranks), count)
                 }
             }
-            None => (None, 0, None),
+            None => (None, 0),
         };
 
         let whitelist_file = self.read_data_file(WHITELIST_FILE);
-        let (whitelist, whitelist_path) = match &whitelist_file {
-            Some((content, path)) => (parse_whitelist_content(content), Some(path.clone())),
-            None => (HashSet::new(), None),
+        let whitelist = match &whitelist_file {
+            Some((content, _)) => parse_whitelist_content(content),
+            None => HashSet::new(),
         };
         let whitelist_count = whitelist.len();
 
@@ -251,11 +248,8 @@ impl Lexicon {
         };
         self.isolation_enabled = character_ranks.is_some();
         self.character_ranks = character_ranks;
-        self.codes_path = codes_path;
         self.codes_entries = entries.len();
         self.codes_count = self.codes.len();
-        self.ranks_path = ranks_path;
-        self.whitelist_path = whitelist_path;
         self.whitelist_count = whitelist_count;
         // 参照 `build_lexicon_index` 末尾：以三份文件内容（缺失视为空串）计算规则指纹。
         let codes_content = codes_file
@@ -496,6 +490,11 @@ pub const SUPPLEMENT_BASELINE_WEIGHT: f64 = 1000.0;
 pub const SUPPLEMENT_MAXIMUM_REWARD: f64 = 16.0;
 
 /// 参照 `reward_for_weight`：重量 → 补充奖励。
+///
+/// NaN 口径（复核整改 3b / A7）：Lua 的 `math.max(1, math.min(1e9, nan))` 返回 `1e9`，
+/// Rust 的 `clamp` 对 NaN 返回 NaN ⇒ 两端相反。此处**保持 Rust 语义**：正常数据不可达
+/// （`parse_supplement_content` 的 `weight > 0.0` 已排除 NaN），唯一可达面是
+/// [`Supplement::build`] 的公开入参（畸形输入、无金样支撑），故只注明差异、不改行为。
 pub fn reward_for_weight(weight: f64) -> f64 {
     let bounded = weight.clamp(1.0, 1_000_000_000.0);
     let reward = SUPPLEMENT_BASELINE_REWARD

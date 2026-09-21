@@ -179,6 +179,53 @@ impl Composition {
         }
         String::from_utf8_lossy(&out).into_owned()
     }
+
+    /// 参照 `Composition::GetScriptText(keep_selection)`：**脚本文本**（`Ctrl+Return` 提交）。
+    ///
+    /// 每段按参照的三级判据取文本：① `keep_selection` 且段已确认（`status >= kSelected`）
+    /// 且候选文字非空 ⇒ 候选文字；② 否则候选 `preedit` 非空 ⇒ `preedit` **去掉首个 `\t`**
+    /// （`erase_first_copy`）；③ 否则非 `phony` 段 ⇒ 原始输入切片。末尾追加未被段覆盖的输入。
+    ///
+    /// 与 [`Composition::commit_text`] 的差异即「脚本文本 ≠ 提交文本」：确认段取候选文字
+    /// （`keep_selection`）或 preedit，而不是候选 `text`；与参照一致地**不**按候选 `end`
+    /// 截断段的原始切片。候选 `end` 超出输入时按输入长度钳制（参照无此护栏；此处与
+    /// `commit_text` 同口径，避免越界切片）。
+    pub fn script_text(&self, input: &[u8], keep_selection: bool) -> String {
+        let mut out = Vec::new();
+        let mut end = 0usize;
+        for segment in &self.segments {
+            let start = end;
+            let candidate = segment.selected_candidate();
+            end = candidate
+                .map(|candidate| candidate.end)
+                .unwrap_or(segment.end)
+                .min(input.len());
+            let stop = start.min(end);
+            if keep_selection
+                && let Some(candidate) = candidate
+                && !candidate.text.is_empty()
+                && segment.selected
+            {
+                out.extend_from_slice(candidate.text.as_bytes());
+            } else if let Some(candidate) = candidate
+                && !candidate.preedit.is_empty()
+            {
+                match candidate.preedit.split_once('\t') {
+                    Some((head, tail)) => {
+                        out.extend_from_slice(head.as_bytes());
+                        out.extend_from_slice(tail.as_bytes());
+                    }
+                    None => out.extend_from_slice(candidate.preedit.as_bytes()),
+                }
+            } else if !segment.has_tag("phony") {
+                out.extend_from_slice(&input[stop..end]);
+            }
+        }
+        if input.len() > end {
+            out.extend_from_slice(&input[end..]);
+        }
+        String::from_utf8_lossy(&out).into_owned()
+    }
 }
 
 /// 运行时不变量/事件（调用方在每个操作后取走）。
@@ -276,6 +323,15 @@ impl Context {
     /// 参照 `Context::GetCommitText`：按当前组合即时计算（未组合时为空串）。
     pub fn get_commit_text(&self) -> String {
         self.composition.commit_text(&self.input)
+    }
+
+    /// 参照 `Context::GetScriptText`（`context.cc`）：`composition_.GetScriptText()`
+    /// ——`Ctrl+Return`（`Editor::CommitScriptText`）提交的「脚本文本」。
+    ///
+    /// 参照不带实参调用，故取 `composition.h` 的默认实参 `keep_selection = true`
+    /// （**不是**审计草稿里的 `false`；pin `33e78140` 实读）。
+    pub fn get_script_text(&self) -> String {
+        self.composition.script_text(&self.input, true)
     }
 
     /// 最近一次组合提交文本（诊断用；事件文本以 [`Event::Commit`] 为准）。
@@ -397,10 +453,17 @@ impl Context {
     // ------------------------------------------------------------ 菜单操作
 
     /// 参照 `Context::Highlight`：截断到 `count-1`；空菜单归 0；索引未变化返回 false。
+    ///
+    /// 段**未建立菜单**（本模型的 [`Segment::translated`] ⇒ 参照 `!back().menu`）时
+    /// 直接返回 false：不改写 `selected_index`、不推 `Update`（审计 F12；参照 `context.cc`
+    /// 首行即 `if (composition_.empty() || !composition_.back().menu) return false;`）。
     pub fn highlight(&mut self, index: usize) -> bool {
         let Some(segment) = self.composition.back_mut() else {
             return false;
         };
+        if !segment.translated {
+            return false;
+        }
         if segment.candidates.is_empty() {
             let changed = segment.selected_index != 0;
             segment.selected_index = 0;
@@ -488,6 +551,8 @@ mod tests {
             end: 2,
             tags: vec!["abc".to_string()],
             prompt: String::new(),
+            // 有候选即「已建立菜单」（参照 `menu` 非空）；`highlight` 依此判据（审计 F12）。
+            translated: true,
             ..Segment::default()
         };
         for text in texts {
@@ -566,8 +631,83 @@ mod tests {
         let mut context = Context::new();
         context.composition.segments.push(Segment::default());
         context.composition.segments[0].selected_index = 2;
+        // 未翻译段（参照 `menu == null`）不改写、不通知（审计 F12）。
+        assert!(!context.highlight(0));
+        assert_eq!(context.composition.segments[0].selected_index, 2);
+        // 已建立菜单但候选为空（参照 `menu` 存在、`Prepare` 返回 0）：归 0 并在变化时通知。
+        context.composition.segments[0].translated = true;
         assert!(context.highlight(0));
         assert_eq!(context.composition.segments[0].selected_index, 0);
+    }
+
+    #[test]
+    fn highlight_skips_untranslated_segment_without_update() {
+        let mut context = Context::new();
+        context.composition.segments.push(Segment {
+            selected_index: 3,
+            ..Segment::default()
+        });
+        context.drain_events();
+        assert!(!context.highlight(0), "参照 `Highlight` 在无菜单时不动作");
+        assert_eq!(context.composition.back().unwrap().selected_index, 3);
+        assert!(
+            context.drain_events().is_empty(),
+            "无菜单时不得推 Update（审计 F12）"
+        );
+    }
+
+    #[test]
+    fn script_text_prefers_preedit_then_raw_input() {
+        // 参照 `Composition::GetScriptText`：① 确认段 + `keep_selection` ⇒ 候选文字；
+        // ② 候选 preedit 非空 ⇒ preedit（去掉首个 `\t`）；③ 否则原始输入切片。
+        let mut context = Context::new();
+        context.set_input(b"abcd");
+        let mut segment = Segment {
+            start: 0,
+            end: 2,
+            translated: true,
+            ..Segment::default()
+        };
+        let mut candidate = Candidate::new("sentence", 0, 2, "甲", "");
+        candidate.preedit = "xi\tan".to_string();
+        segment.candidates.push(candidate);
+        context.composition.segments.push(segment);
+        assert_eq!(
+            context.get_script_text(),
+            "xiancd",
+            "preedit 优先且去首个 \\t"
+        );
+        // 段已确认：`keep_selection = true`（`Context::GetScriptText` 的默认实参）取候选文字。
+        context.composition.segments[0].selected = true;
+        assert_eq!(context.get_script_text(), "甲cd");
+        // `keep_selection = false`：确认段仍走 preedit 分支（候选 `text` 不参与）。
+        assert_eq!(
+            context.composition.script_text(context.input(), false),
+            "xiancd"
+        );
+        // 候选既无 preedit 也不保留选中：退回原始输入切片。
+        context.composition.segments[0].candidates[0]
+            .preedit
+            .clear();
+        assert_eq!(
+            context.composition.script_text(context.input(), false),
+            "abcd"
+        );
+    }
+
+    #[test]
+    fn script_text_skips_phony_segments_and_appends_tail() {
+        let mut context = Context::new();
+        context.set_input(b"abcd");
+        context.composition.segments.push(Segment {
+            start: 0,
+            end: 2,
+            translated: true,
+            tags: vec!["phony".to_string()],
+            ..Segment::default()
+        });
+        // `phony` 段不产出原文；末尾未被段覆盖的输入照常追加。
+        assert_eq!(context.get_script_text(), "cd");
     }
 
     #[test]

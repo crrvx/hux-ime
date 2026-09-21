@@ -5,8 +5,8 @@ use super::*;
 use hux_core::host::HostOptions;
 use hux_core::session::Segment;
 
-fn state_with_lock(raw: &str, text: &str) -> (Context, SentenceState) {
-    let mut context = Context::new();
+/// 建态：一个已确认的锁 + 已确认 raw/text（属性层只保留缓冲前缀，故无需 context）。
+fn state_with_lock(raw: &str, text: &str) -> SentenceState {
     let mut state = SentenceState::fresh(1);
     state.locks.push(Lock {
         raw: raw.to_string(),
@@ -15,51 +15,7 @@ fn state_with_lock(raw: &str, text: &str) -> (Context, SentenceState) {
     });
     state.committed_raw = raw.to_string();
     state.committed_text = text.to_string();
-    state.save(&mut context);
-    (context, state)
-}
-
-#[test]
-fn locks_round_trip_with_framing() {
-    let (context, state) = state_with_lock("ab", "甲");
-    let loaded = read_locks(&context);
-    assert_eq!(loaded.len(), 1);
-    assert_eq!(loaded[0].raw, "ab");
-    assert_eq!(loaded[0].text, "甲");
-    assert_eq!(loaded[0].boundaries, "2,3;");
-    assert_eq!(state.locks[0].text, "甲");
-}
-
-#[test]
-fn locks_round_trip_with_empty_raw() {
-    // 空字段同样可往返（0: 帧）。
-    let (mut context, mut state) = (Context::new(), SentenceState::fresh(1));
-    state.locks.push(Lock {
-        raw: String::new(),
-        text: "甲".to_string(),
-        boundaries: "0,3;".to_string(),
-    });
-    state.save(&mut context);
-    assert_eq!(read_locks(&context), state.locks);
-}
-
-#[test]
-fn read_locks_rejects_malformed_framing() {
-    let mut context = Context::new();
-    context.set_property(K_LOCKS, "9:ab");
-    assert!(read_locks(&context).is_empty());
-}
-
-#[test]
-fn committed_property_parses_or_empties() {
-    assert_eq!(
-        parse_committed_property("ab\t甲"),
-        ("ab".to_string(), "甲".to_string())
-    );
-    assert_eq!(
-        parse_committed_property("no-tab"),
-        (String::new(), String::new())
-    );
+    state
 }
 
 #[test]
@@ -73,16 +29,6 @@ fn buffered_property_derives_live_input_and_caret() {
     assert_eq!(input_caret(&context), 1);
     restore_composition_input(&mut context, b"ab");
     assert_eq!(context.input(), b"~ab");
-}
-
-#[test]
-fn read_locks_rejects_overflowing_length() {
-    let mut context = Context::new();
-    // 长度字段溢出/超范围：严格解析返回空表，不得 panic。
-    set_property_if_changed(&mut context, K_LOCKS, "18446744073709551615:x");
-    assert!(read_locks(&context).is_empty());
-    set_property_if_changed(&mut context, K_LOCKS, "99999999999999999999:x");
-    assert!(read_locks(&context).is_empty());
 }
 
 #[test]
@@ -147,9 +93,48 @@ fn min_retained_raw_length_clamps() {
     assert_eq!(min_retained_raw_length(None), 0);
 }
 
+/// 分段常量口径（复核整改 3b / B2）：`speller/delimiter` 追踪反查分支尖端 `92a0b54`
+/// 的 `" '"`——撇号按音节分隔符处理 ⇒ 段内 `'` 之后必须是首字母，数字/`;` 在此断开。
+/// 主干 pin `abad411`（`" "`）下 `ab'1` 是**单段**；该差异在金样层登记为本仓偏离
+/// （`tests/key_sequence_differential.rs` 的 `DEVIATIONS`：`apostrophe_digit_page` 等）。
+#[test]
+fn abc_segmentor_splits_after_a_delimiter_before_a_digit() {
+    assert_eq!(SEGMENTATION_DELIMITER, " '");
+    // `'` + 数字：abc 段止于撇号，数字落 raw 段（末段是 raw ⇒ 宿主导航键不消费）。
+    let mut composition = Composition::default();
+    calculate_segmentation(&mut composition, b"ab'1", 4, &[], &[]);
+    assert_eq!(composition.segments.len(), 2);
+    assert_eq!(
+        (composition.segments[0].start, composition.segments[0].end),
+        (0, 3)
+    );
+    assert!(composition.segments[1].has_tag("raw"));
+    assert_eq!(
+        (composition.segments[1].start, composition.segments[1].end),
+        (3, 4)
+    );
+    // `'` + `;`：同理（分号在 alphabet 内但不是首字母）。
+    let mut composition = Composition::default();
+    calculate_segmentation(&mut composition, b"ab';", 4, &[], &[]);
+    assert_eq!(composition.segments.len(), 2);
+    assert_eq!(
+        (composition.segments[0].start, composition.segments[0].end),
+        (0, 3)
+    );
+    // `'` + 首字母：单段（与上游主干一致 ⇒ 金样 `apostrophe_*_split` 逐位通过）。
+    let mut composition = Composition::default();
+    calculate_segmentation(&mut composition, b"ab'c", 4, &[], &[]);
+    assert_eq!(composition.segments.len(), 1);
+    assert_eq!(
+        (composition.segments[0].start, composition.segments[0].end),
+        (0, 4)
+    );
+}
+
 #[test]
 fn invalidate_removes_affected_locks_only() {
-    let (mut context, mut state) = state_with_lock("ab", "甲");
+    let mut context = Context::new();
+    let mut state = state_with_lock("ab", "甲");
     // 第二个锁延伸到已提交范围之外（可被编辑失效）。
     state.locks.push(Lock {
         raw: "abcd".to_string(),
@@ -175,35 +160,8 @@ fn invalidate_removes_affected_locks_only() {
 }
 
 #[test]
-fn load_migrates_legacy_committed_properties() {
-    let mut context = Context::new();
-    context.set_property(K_COMMITTED_RAW_LEGACY, "ab");
-    context.set_property(K_COMMITTED_TEXT_LEGACY, "甲");
-    let mut state = SentenceState::fresh(1);
-    state.load(&mut context, 1);
-    assert_eq!(state.committed_raw, "ab");
-    assert_eq!(state.committed_text, "甲");
-    assert_eq!(context.get_property(K_COMMITTED), Some("ab\t甲"));
-    assert_eq!(context.get_property(K_COMMITTED_RAW_LEGACY), None);
-    assert_eq!(context.get_property(K_COMMITTED_TEXT_LEGACY), None);
-}
-
-#[test]
-fn save_clears_legacy_keys_once() {
-    let mut context = Context::new();
-    context.set_property(K_CONFIDENCE_LEGACY, "x");
-    context.set_property(K_EVIDENCE_RAW_LEGACY, "y");
-    let mut state = SentenceState::fresh(1);
-    state.save(&mut context);
-    assert!(state.legacy_cleared);
-    assert_eq!(context.get_property(K_CONFIDENCE_LEGACY), None);
-    assert_eq!(context.get_property(K_EVIDENCE_RAW_LEGACY), None);
-}
-
-#[test]
 fn model_generation_change_resets_transients() {
-    let (context, mut state) = state_with_lock("ab", "甲");
-    let _ = context;
+    let mut state = state_with_lock("ab", "甲");
     state.last_seen_raw = "raw".to_string();
     assert!(state.synchronize_model_state(2));
     assert!(state.last_seen_raw.is_empty());
@@ -302,6 +260,15 @@ fn tracker_better_prefers_chars_share_then_short_boundary() {
     let mut shorter_boundary = base.clone();
     shorter_boundary.raw_length = 1;
     assert!(tracker_better(&shorter_boundary, &base));
+    // 三元全等（复核整改 3b / A8）：参照在此对两者都返回 false ⇒ 胜者取决于哈希迭代序；
+    // 本仓按 text 字典序兜底 ⇒ 判据自身反对称、与迭代序无关。
+    let mut tied_earlier = base.clone();
+    tied_earlier.text = "乙".to_string(); // U+4E59 < 甲 U+7532
+    let mut tied_later = base.clone();
+    tied_later.text = "甲".to_string();
+    assert!(tracker_better(&tied_earlier, &tied_later));
+    assert!(!tracker_better(&tied_later, &tied_earlier));
+    assert!(!tracker_better(&tied_earlier, &tied_earlier));
 }
 
 fn prefix_evidence() -> crate::decode::Evidence {
@@ -433,7 +400,6 @@ fn evaluated_candidate() -> Evaluated {
         confidence_score: 0.0,
         early_commit_confidence_score: 0.0,
         code_score: 0.0,
-        lexical_score: 0.0,
         max_rank: 2,
         supplement_score: 0.0,
         learning_score: 0.0,
@@ -476,13 +442,18 @@ fn submit_early_commits_or_buffers() {
 
 #[test]
 fn reset_empties_committed_and_locks() {
-    let (mut context, mut state) = state_with_lock("ab", "甲");
+    let mut context = Context::new();
+    let mut state = state_with_lock("ab", "甲");
+    state.buffered_text = "甲".to_string();
+    state.save(&mut context);
+    assert_eq!(buffered_text(&context), "甲");
     state.reset(&mut context, true);
     assert!(state.committed_raw.is_empty());
     assert!(state.locks.is_empty());
     assert!(state.continuation_after_auto_commit);
-    assert_eq!(context.get_property(K_COMMITTED), Some("\t"));
-    assert_eq!(context.get_property(K_LOCKS), None);
+    // 属性层只剩缓冲前缀：重置后同步清空（A3 后不再有 committed/locks 快照）。
+    assert_eq!(buffered_text(&context), "");
+    assert!(state.buffered_text.is_empty());
 }
 
 #[test]
@@ -837,6 +808,248 @@ fn buffered_fallback_produces_no_learning_events() {
     assert!(live.baseline.is_none());
 }
 
+// ------------------------------------------------- 融合事件（产出侧 + 接受侧，B6）
+
+/// 融合学习（复核整改 3b / B6）：`learning_stage` 的融合事件构造与 `learning_submit`
+/// 的融合放行分支原先在 tiger crate 内**零覆盖**（`fusion_ahead` 处处是 `Vec::new()`）。
+/// 下面两条走**真实链路**（`processor` → 未消费交宿主 → `CompositionBuilder::rebuild`
+/// → `update_notifier`，与 `TigerScheme::process_key` + `rebuild` 同序），
+/// 由真实解码菜单产出 `fusion_ahead`；其余各条驱动 `learning_stage`/`learning_submit`
+/// 的真实入参（上限与保留语义无法经按键到达：单次暂存最多并入「选中项之前的可见候选」条，
+/// 且每个提交点都会消费 pending）。
+///
+/// 夹具事实（`goldens/lexicon`）：`zzzz → 𨰻`（Direct，rank 1）、`zz → 哥哥`（Composed）、
+/// `abqt → 瘤`（Direct，rank 1）+ `交田`/`疒田`（Composed）。
+fn fusion_decoder() -> Decoder {
+    use hux_core::learning::{Event, LearningIndex, fusion_event};
+    let mut decoder = lexicon_fixture();
+    // 与 `decode_learning` 金样同源的一条成对偏好（Composed「哥哥」胜 Direct「𨰻」），
+    // 使 `zzzz` 的菜单变成 [哥哥(C), 𨰻(D)] —— Direct 项之前确有 Composed 项。
+    let staged = fusion_event("t", b"zzzz", "𨰻", "哥哥", false, 4, 1000.0).expect("fusion event");
+    let event = Event {
+        time: staged.time,
+        mode: staged.mode,
+        code: staged.code,
+        text: staged.text,
+        context: staged.context,
+    };
+    decoder.set_learning(LearningIndex::build(&[event], 3_456_000.0), "t");
+    decoder
+}
+
+/// 真实链路宿主：出厂缺省选项（数字直选开、`_auto_commit` 开：与 librime 一致）。
+struct FusionHarness {
+    decoder: Decoder,
+    context: Context,
+    state: SentenceState,
+    live: LiveLearning,
+    dot_armed: bool,
+    builder: CompositionBuilder,
+}
+
+impl FusionHarness {
+    fn new(decoder: Decoder) -> Self {
+        let mut context = Context::new();
+        context.set_option("_auto_commit", true);
+        context.set_option(OPTION_DIGIT_SELECT, true);
+        let live = LiveLearning {
+            mode: "t".to_string(),
+            store_ready: true,
+            ..LiveLearning::default()
+        };
+        Self {
+            decoder,
+            context,
+            state: SentenceState::fresh(1),
+            live,
+            dot_armed: false,
+            builder: CompositionBuilder::default(),
+        }
+    }
+
+    /// 一次按键的完整平台序：处理器 →（Forward 时）宿主链 → 组合重建 → update 通知器。
+    fn press(&mut self, repr: &str) -> ProcessorResult {
+        let key = key_of(repr);
+        let host_options = HostOptions::default();
+        let mut env = ProcessorEnv {
+            now: 0.0,
+            dot_armed: &mut self.dot_armed,
+            min_retained: None,
+            page_size: 5,
+            host_options: &host_options,
+        };
+        let result = processor(
+            &key,
+            &mut self.context,
+            &mut self.state,
+            &mut self.decoder,
+            &mut self.live,
+            &mut env,
+        )
+        .expect("processor");
+        if result == ProcessorResult::Forward {
+            hux_core::host::process_key(&key, &mut self.context, None, &host_options, None);
+        }
+        self.builder
+            .rebuild(
+                &mut self.decoder,
+                &mut self.context,
+                &self.state,
+                false,
+                None,
+            )
+            .expect("rebuild");
+        update_notifier(&mut self.context, &mut self.state, &mut self.live);
+        result
+    }
+}
+
+#[test]
+fn fusion_event_records_direct_win_and_is_accepted() {
+    use hux_core::learning::{fusion_mode, fusion_pair_code};
+    let mut harness = FusionHarness::new(fusion_decoder());
+    for repr in ["z", "z", "z", "z"] {
+        assert_eq!(harness.press(repr), ProcessorResult::Consume);
+    }
+    // 菜单 [哥哥(C), 𨰻(D)]：`2` 直选第 2 项（直选走 `select_candidate_at` 的真实路径）。
+    assert_eq!(harness.press("2"), ProcessorResult::Consume);
+    assert_eq!(harness.context.last_commit_text(), "𨰻");
+    assert_eq!(harness.live.submitted.len(), 1, "融合事件必须被提交点接受");
+    let event = &harness.live.submitted[0];
+    assert_eq!(event.mode, fusion_mode("t"));
+    assert_eq!(
+        event.text, "D",
+        "选中项是 Direct，之前是 Composed ⇒ Direct 胜"
+    );
+    assert_eq!(event.code, fusion_pair_code(b"zzzz", "𨰻", "哥哥"));
+    assert_eq!(event.time, 0.0);
+    assert!(harness.live.pending.is_empty(), "提交点无条件消费 pending");
+}
+
+#[test]
+fn fusion_event_records_composed_win_and_is_accepted() {
+    use hux_core::learning::{fusion_mode, fusion_pair_code};
+    let mut harness = FusionHarness::new(lexicon_fixture());
+    for repr in ["a", "b", "q", "t"] {
+        assert_eq!(harness.press(repr), ProcessorResult::Consume);
+    }
+    // 菜单 [瘤(D), 交田(C), 疒田(C)]：直选第 2 项（交田，Composed），此前是 瘤（Direct）。
+    assert_eq!(harness.press("2"), ProcessorResult::Consume);
+    assert_eq!(harness.context.last_commit_text(), "交田");
+    assert_eq!(harness.live.submitted.len(), 1);
+    let event = &harness.live.submitted[0];
+    assert_eq!(event.mode, fusion_mode("t"));
+    assert_eq!(
+        event.text, "C",
+        "选中项是 Composed，之前是 Direct ⇒ Composed 胜"
+    );
+    assert_eq!(event.code, fusion_pair_code(b"abqt", "瘤", "交田"));
+}
+
+/// 成对偏好场景的选中项：本身 composed-only（mask 2），此前可见一项 Direct（mask 1）。
+fn fusion_selected(text: &str, raw_length: usize) -> Selected {
+    Selected {
+        text: text.to_string(),
+        raw_length,
+        diff: diff_item(text),
+        buffered_fallback: false,
+        source_mask: 2,
+        fusion_ahead: vec![FusionAhead {
+            text: "甲".to_string(),
+            source_mask: 1,
+        }],
+    }
+}
+
+#[test]
+fn fusion_event_is_retained_until_the_selected_raw_is_covered() {
+    let state = learning_state();
+    let mut live = learning_live("t");
+    let long = fusion_selected("交交", 6);
+    learning_stage(&mut live, &state, Some(&long), b"ababab", None, 100.0);
+    assert_eq!(live.pending.len(), 1);
+    assert_eq!(
+        live.pending[0].raw_end, 6,
+        "raw_end = 暂存时选中项的 raw 长度"
+    );
+    // 提交点选中项更短（raw 4 < 6）⇒ 保留在 pending（不落库、不强化）。
+    let short = fusion_selected("交", 4);
+    let accepted = learning_submit(&mut live, Some(&short), "交", "交");
+    assert!(accepted.is_empty());
+    assert_eq!(live.pending.len(), 1, "raw_end 未覆盖 ⇒ 必须保留");
+    // 覆盖到 6 ⇒ 接受。
+    let accepted = learning_submit(&mut live, Some(&long), "交交", "交交");
+    assert_eq!(accepted.len(), 1);
+    assert_eq!(accepted[0].text, "C");
+    assert!(live.pending.is_empty());
+}
+
+#[test]
+fn fusion_events_pass_the_filter_but_unrelated_diff_events_are_dropped() {
+    use hux_core::learning::fusion_event;
+    let mut live = learning_live("m");
+    let fused = fusion_event("m", b"abab", "甲", "交", true, 4, 10.0).expect("fusion event");
+    // 同一 pending 中的差异事件：mode 相同但偏移不落在选中文本窗口内 ⇒ 丢弃。
+    let stray = DiffEvent {
+        time: 10.0,
+        mode: "m".to_string(),
+        code: "ab".to_string(),
+        text: "疒".to_string(),
+        context: String::new(),
+        raw_start: 0,
+        raw_end: 1,
+        text_start: 9,
+        text_end: 10,
+    };
+    live.pending = vec![fused, stray];
+    let selected = fusion_selected("交交", 4);
+    let accepted = learning_submit(&mut live, Some(&selected), "交交", "交交");
+    assert_eq!(accepted.len(), 1, "融合事件只受 raw_end 约束，不受子串过滤");
+    assert_eq!(accepted[0].text, "D");
+    assert!(live.pending.is_empty(), "被丢弃的事件不进 remaining");
+    // 提交文本不匹配（actual != expected）⇒ 连融合事件一并丢弃（参照的无条件消费）。
+    learning_stage(
+        &mut live,
+        &state_with_lock("ab", "甲"),
+        Some(&selected),
+        b"abab",
+        None,
+        20.0,
+    );
+    assert_eq!(live.pending.len(), 1);
+    let accepted = learning_submit(&mut live, Some(&selected), "交", "交交");
+    assert!(accepted.is_empty());
+    assert!(live.pending.is_empty());
+}
+
+#[test]
+fn fusion_pending_is_capped_at_256() {
+    // 参照 `#pending < 256`：满 256 后新事件一律丢弃（不增长、不 panic）。
+    // 单次按键最多并入「选中项之前的可见候选」条（夹具 ≤ 20），故上限只能靠连续暂存到达。
+    let state = learning_state();
+    let mut live = learning_live("t");
+    let mut selected = fusion_selected("交交", 4);
+    selected.fusion_ahead = (0..20)
+        .map(|index| FusionAhead {
+            text: format!("甲{index}"),
+            source_mask: 1,
+        })
+        .collect();
+    for _ in 0..13 {
+        learning_stage(&mut live, &state, Some(&selected), b"abab", None, 0.0);
+    }
+    assert_eq!(
+        live.pending.len(),
+        256,
+        "第 13 次暂存越过上限后必须停在 256"
+    );
+    learning_stage(&mut live, &state, Some(&selected), b"abab", None, 0.0);
+    assert_eq!(live.pending.len(), 256, "已满时继续暂存不得增长");
+    // 先入者保留（顺序与去重语义不变）。
+    assert_eq!(live.pending[0].code, live.pending[0].code.clone());
+    assert!(live.pending.iter().all(|event| event.raw_end == 4));
+}
+
 fn rebuild(
     builder: &mut CompositionBuilder,
     decoder: &mut Decoder,
@@ -1108,6 +1321,11 @@ impl Harness {
     }
 
     fn push_segment(&mut self, input: &[u8], texts: &[&str]) {
+        self.push_tagged_segment(input, texts, &[]);
+    }
+
+    /// 带标签的段（音反查段等）：`push_segment` 建的是主候选段（无标签）。
+    fn push_tagged_segment(&mut self, input: &[u8], texts: &[&str], tags: &[&str]) {
         self.context.set_input(input);
         let candidates = texts
             .iter()
@@ -1116,7 +1334,7 @@ impl Harness {
         self.context.composition.segments.push(Segment {
             start: 0,
             end: input.len(),
-            tags: Vec::new(),
+            tags: tags.iter().map(|tag| (*tag).to_string()).collect(),
             prompt: String::new(),
             selected_index: 0,
             candidates,
@@ -1559,6 +1777,51 @@ fn processor_digit_select_zero_picks_tenth_on_ten_page() {
     h.push_segment(b"ab", &refs);
     assert_eq!(h.press("0"), ProcessorResult::Consume);
     assert_eq!(h.context.last_commit_text(), "候9");
+}
+
+/// 音反查段的数字直选按**上游绝对索引**（`digit - 1`）落点，与主菜单的 addon
+/// 页相对口径（`page_start + position`）分开：菜单停在第 2 页起时两者结果不同。
+///
+/// 参照 `lua/tiger_sentence.lua` @ `92a0b54`：反查段的数字分支
+/// `local index = tonumber(ch) - 1`（无分页概念，越界惰性消费）。
+/// 负向对照：把该分支挪回 addon 数字直选**之后** ⇒ 本用例提交 `候11` 而非 `候1`。
+#[test]
+fn processor_reverse_lookup_digit_uses_absolute_index_across_pages() {
+    let mut h = Harness::new();
+    h.context.set_option(OPTION_DIGIT_SELECT, true);
+    h.context.set_option("_auto_commit", true);
+    let texts: Vec<String> = (0..12).map(|index| format!("候{index}")).collect();
+    let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+    h.push_tagged_segment(
+        b"`z",
+        &refs,
+        &[crate::sound_to_char_shape::SOUND_TO_CHAR_SHAPE_TAG],
+    );
+    // 停在第 3 页（页大小 5 ⇒ `page_start` 10）：绝对索引 1 = `候1`，
+    // 页相对口径则是 `候11`。
+    h.context.highlight(10);
+    assert_eq!(h.context.composition.back().unwrap().selected_index, 10);
+    assert!(h.context.has_menu());
+    assert_eq!(h.press("2"), ProcessorResult::Consume);
+    assert_eq!(h.context.last_commit_text(), "候1");
+    assert!(h.context.input().is_empty());
+}
+
+/// 音反查段的数字越界（`index >= count`）惰性消费：不改高亮、不提交。
+#[test]
+fn processor_reverse_lookup_digit_out_of_range_is_inert() {
+    let mut h = Harness::new();
+    h.context.set_option(OPTION_DIGIT_SELECT, true);
+    h.context.set_option("_auto_commit", true);
+    h.push_tagged_segment(
+        b"`z",
+        &["中", "重"],
+        &[crate::sound_to_char_shape::SOUND_TO_CHAR_SHAPE_TAG],
+    );
+    assert_eq!(h.press("9"), ProcessorResult::Consume);
+    assert_eq!(h.context.last_commit_text(), "");
+    assert_eq!(h.context.input(), b"`z");
+    assert_eq!(h.context.composition.back().unwrap().selected_index, 0);
 }
 
 /// 多项触发键（`KeyList`）：任一配置键都可进入音反查，入段字符取命中键的字符。

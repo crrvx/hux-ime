@@ -68,13 +68,18 @@ if [ "$purge" -eq 1 ]; then
     run sudo rm -rf /usr/share/fcitx5/hux
 else
     # 只删随包数据文件，保留用户自取的 models/（README 推荐放在这里）。
-    run sudo rm -f /usr/share/fcitx5/hux/tiger_sentence.codes.txt \
-        /usr/share/fcitx5/hux/tiger_sentence.char_ranks.txt \
-        /usr/share/fcitx5/hux/tiger_sentence.full_code_whitelist.txt \
-        /usr/share/fcitx5/hux/tiger_sentence.supplement.txt \
-        /usr/share/fcitx5/hux/tiger_sentence.lexical.bin \
-        /usr/share/fcitx5/hux/tiger_sentence.pinyin.bin.gz \
-        /usr/share/fcitx5/hux/symbols.yaml
+    # 删除清单与 install.sh / CMake 同源：`data/MANIFEST`（复核整改第 4 批 M15——
+    # 此前这里枚举 7 个文件名、而安装侧用 glob，data/ 增删文件就会残留）。
+    data_files=()
+    while IFS= read -r entry; do
+        case "$entry" in ''|'#'*) continue ;; esac
+        data_files+=("/usr/share/fcitx5/hux/$(basename "$entry")")
+    done < data/MANIFEST
+    if [ "${#data_files[@]}" -eq 0 ]; then
+        echo "data/MANIFEST 没有有效行（随包数据清单缺失或为空）" >&2
+        exit 1
+    fi
+    run sudo rm -f "${data_files[@]}"
     echo "  （模型与其它自建文件保留在 /usr/share/fcitx5/hux/；彻底清除用 --purge）"
 fi
 

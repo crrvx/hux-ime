@@ -16,7 +16,6 @@ const MODULUS: u64 = 4_294_967_291;
 /// 已加载的词先验模型。
 #[derive(Clone, Debug)]
 pub struct LexicalModel {
-    pub path: PathBuf,
     bits: Vec<u8>,
     pub bit_count: usize,
     pub hash_count: usize,
@@ -32,7 +31,7 @@ fn u32le(data: &[u8], offset: usize) -> Option<u32> {
 }
 
 /// 参照 `load`：解析 TCSLEX01 内容。
-pub fn parse(data: Vec<u8>, path: PathBuf) -> Result<LexicalModel, String> {
+pub fn parse(data: Vec<u8>) -> Result<LexicalModel, String> {
     if data.len() < HEADER_SIZE || &data[..8] != MAGIC {
         return Err("not a TCSLEX01 lexical model".to_string());
     }
@@ -65,7 +64,6 @@ pub fn parse(data: Vec<u8>, path: PathBuf) -> Result<LexicalModel, String> {
         return Err("TCSLEX01 size does not match header".to_string());
     }
     Ok(LexicalModel {
-        path,
         bits: data[HEADER_SIZE..].to_vec(),
         bit_count: bit_count as usize,
         hash_count: hash_count as usize,
@@ -79,7 +77,7 @@ pub fn parse(data: Vec<u8>, path: PathBuf) -> Result<LexicalModel, String> {
 /// 参照 `load`：从文件读取并解析。
 pub fn load(path: &Path) -> Result<LexicalModel, String> {
     let data = std::fs::read(path).map_err(|error| error.to_string())?;
-    parse(data, path.to_path_buf())
+    parse(data)
 }
 
 /// 参照 `M.load_first`：返回首个可加载模型与（若有）首个错误。
@@ -90,7 +88,7 @@ pub fn load_first(paths: &[PathBuf]) -> (Option<LexicalModel>, Option<String>) {
         let Ok(data) = std::fs::read(path) else {
             continue;
         };
-        match parse(data, path.to_path_buf()) {
+        match parse(data) {
             Ok(model) => return (Some(model), None),
             Err(error) => {
                 if first_error.is_none() {
@@ -205,7 +203,7 @@ mod tests {
         data.extend_from_slice(&2u32.to_le_bytes());
         data.extend_from_slice(&4u32.to_le_bytes());
         data.extend_from_slice(&bitmap);
-        parse(data, PathBuf::from("synthetic")).expect("parse synthetic")
+        parse(data).expect("parse synthetic")
     }
 
     #[test]
@@ -247,12 +245,12 @@ mod tests {
 
     #[test]
     fn parse_rejects_bad_headers() {
-        assert!(parse(MAGIC.to_vec(), PathBuf::from("x")).is_err());
+        assert!(parse(MAGIC.to_vec()).is_err());
         let mut bad = Vec::new();
         bad.extend_from_slice(MAGIC);
         bad.extend_from_slice(&2u32.to_le_bytes());
         bad.extend_from_slice(&[0u8; 24]);
-        assert!(parse(bad, PathBuf::from("x")).is_err());
+        assert!(parse(bad).is_err());
     }
 
     #[test]

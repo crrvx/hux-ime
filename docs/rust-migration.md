@@ -20,7 +20,8 @@ hux-ime（虎虚）：虎句（`tiger_sentence`）输入方案的 fcitx5 原生 
 
 遗留（后续）：
 - **打包**：PKGBUILD（AUR `fcitx5-hux`）待做；随包数据安装到 `/usr/share/fcitx5/hux/`
-  （CMake 只装插件与 conf，数据由 [`../install.sh`](../install.sh) 安装）；
+  ——`data/MANIFEST` 是单一来源，`cmake --install` 与 [`../install.sh`](../install.sh) 都按它安装
+  （复核整改第 4 批 F5：此前 CMake 只装插件与 conf，只走 CMake 会得到无词库引擎）；
   模型不随包（文档 + 安装提示指向上游 model release）。
 
 已收口（设计取舍，不实现）：**`Ctrl+Delete` 删除候选**——参照无删除通道，本实现仅消费该键
@@ -101,7 +102,7 @@ docs/                    # 设计/重构/使用/配置/性能/Android 等，索�
   | 组件 | 行为要点 |
   |---|---|
   | `key_binder` | `Tab`→Down、`Shift+Tab`→Up（`when: has_menu`） |
-  | `selector` | 菜单导航与翻页（`page_size`、上/下翻页键与翻页循环可由配置覆盖；默认 `-`/`[` → Page_Up（`when: paging`，翻过页后生效）、`=`/`]` → Page_Down（`when: has_menu`））、Home/End；候选排列由配置写入 `_vertical` |
+  | `selector` | 菜单导航与翻页（`page_size`、上/下翻页键与翻页循环可由配置覆盖；默认 `-`/`[` → Page_Up（`when: paging`，翻过页后生效）、`=`/`]` → Page_Down（`when: has_menu`））、Home/End；候选排列由配置写入 `_vertical`。参照 `Selector::PreviousPage` 在首页也 `Highlight(0)` 并**无条件**写 `paging` 标签（`menu/page_down_cycle` 只作用于 `NextPage`），本实现按参照（审计 F2/F3） |
   | `navigator` | 字节光标移动；Ctrl/Shift+Left/Right 跳到段首/段尾（未做音节 spans 细分）；Home/End 到组合起点/末尾 |
   | `express_editor` | space 确认/提交、BackSpace 撤销编辑、Delete 删光标处、Return 提交原文、Escape 取消；可打印字符先提交组合再交宿主 |
   | `punctuator` | 单键可打印 ASCII 查 `symbols.yaml`；组合中提交「组合文本 + 标点」；`{pair}` 交替 |
@@ -119,9 +120,13 @@ docs/                    # 设计/重构/使用/配置/性能/Android 等，索�
 - **英文模式不实现**（设计取舍）：英文输入交由 fcitx5 切换输入法；大写字母经 `char_handler` 直通（先提交组合）。
 - **提交与按键顺序**：可打印字符的 `char_handler` 在核心语义为「提交组合 + 不消费」（同 librime）；宿主层
   （`platform/fcitx5`）据此消费该键并以 `forwardKey` 重发，保证客户端先收到提交、后收到按键
-  （与 fcitx5 核心 `KeyEventOrderFix` 修法一致）。**例外**：布局转换键（核心 `KeyEvent::forward()`，
-  如系统 colemak + 方案 `Layout=us`）不自行转发，交回核心在 `ReservedLast` 提交转换后的字符——
-  否则客户端会按系统布局重新解释该键。
+  （与 fcitx5 核心 `KeyEventOrderFix` 修法一致）。**例外**：布局转换键（如系统 colemak + 方案 `Layout=us`）
+  **不自行转发**，交回核心在 `ReservedLast` 提交转换后的字符——否则客户端会按系统布局重新解释该键。
+  机制是 C ABI 处置位 `HUX_KEY_FORWARD_AFTER_COMMIT`（`crates/hux-ffi/include/hux_abi.h`）+
+  `platform/fcitx5/shell/hux.cpp` 用 fcitx5 自己的 `keyEvent.forward()` 判断是否重发。
+  （**旧名 → 新名对照**：本句曾写作「核心 `KeyEvent::forward()`」——该 API **从未存在**；
+  `KeyEvent` 的公开方法只有 `new`/`from_repr`/`repr`/`shift`/`ctrl`/`alt`/`super_modifier`/`release`，
+  唯一同名的 `Composition::forward()` 是组合光标语义、与布局转换无关。复核整改第 4 批 D7 修正。）
 - **UI 同步**：preedit 参照 librime `Composition::GetPreedit`——高亮候选的 `preedit`（正常段按词
   分码，如 `sh ks`；音反查段按音节，如 `` `zhong guo ``）优先，组合之后的原始输入原样接在其后
   （左右移动光标时保持分码，如 `` ab cd `` + 尾部 `ja` → `` ab cdja ``）；无高亮候选时回退

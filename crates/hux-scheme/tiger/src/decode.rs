@@ -25,14 +25,18 @@ pub const EOS: char = '\u{3}';
 const BEAM_WIDTH: usize = 200;
 const LONG_INPUT_FULL_BEAM_LENGTH: usize = 24;
 const LONG_INPUT_BEAM_WIDTH: usize = 48;
-const CANDIDATE_LIMIT: usize = 20;
+/// 候选上限（参照 `candidate_limit`）：**唯一来源**，交互层与音反查层引用它
+/// （复核整改 3b / C3：原先三份 `20`）。
+pub const CANDIDATE_LIMIT: usize = 20;
 const RANK_PENALTY: f64 = 0.03;
 const EMITTED_CHARACTER_REWARD: f64 = 2.0;
 const WHOLE_INPUT_SINGLE_CHARACTER_REWARD: f64 = 5.0;
 const ISOLATION_THRESHOLD: usize = 3000;
 const ISOLATION_LAMBDA: f64 = 2.0;
 const AGGREGATE_DURING_EXPANSION_THRESHOLD: usize = 128;
-const EARLY_COMMIT_MINIMUM_SHARE: f64 = 0.99;
+/// 早提交最低份额（参照 `early_commit_minimum_share`）：**唯一来源**，
+/// 交互层（`interaction::early_commit`）引用它（复核整改 3b / C3：原先两份 `0.99`）。
+pub(crate) const EARLY_COMMIT_MINIMUM_SHARE: f64 = 0.99;
 const EARLY_COMMIT_CLOSED_BOUNDARY_SHARE: f64 = 0.99999;
 
 /// 来源标记（参照 `learning.source_direct` / `learning.source_composed`）。
@@ -173,8 +177,6 @@ pub struct Evaluated {
     pub early_commit_confidence_score: f64,
     /// 码形证据分（参照 `item.code_score`；只参与排序比较）。
     pub code_score: f64,
-    /// 词先验加权分（参照 `item.lexical_score`；emit 重排时写入）。
-    pub lexical_score: f64,
     pub max_rank: usize,
     pub supplement_score: f64,
     pub learning_score: f64,
@@ -440,11 +442,6 @@ impl Decoder {
         self.learning_affected = false;
     }
 
-    pub fn clear_learning(&mut self) {
-        self.learning = None;
-        self.learning_affected = false;
-    }
-
     /// 参照 `M.decoder_parameters`（排序先验部分）。
     pub fn ranking_prior_parameters(&self) -> RankingPriorParameters {
         self.ranking_prior
@@ -453,11 +450,6 @@ impl Decoder {
     /// 参照 `M.set_decoder_parameters_for_test`（排序先验部分）。
     pub fn set_ranking_prior_parameters(&mut self, parameters: RankingPriorParameters) {
         self.ranking_prior = parameters;
-    }
-
-    /// 参照 `live.store.index`：当前生效的学习索引（未接入学习时为 `None`）。
-    pub fn learning_index_mut(&mut self) -> Option<&mut LearningIndex> {
-        self.learning.as_mut().map(|wiring| &mut wiring.index)
     }
 
     /// 参照 `lexicon_state.lexical_model`：紧凑词先验模型（缺省关闭）。
@@ -1234,7 +1226,6 @@ impl Decoder {
             confidence_score,
             early_commit_confidence_score: confidence_score + personalization,
             code_score: state.code_score,
-            lexical_score: 0.0,
             max_rank: state.max_rank.max(1),
             supplement_score: state.supplement_score,
             learning_score: if direct { 0.0 } else { state.learning_score },
@@ -1389,9 +1380,7 @@ impl Decoder {
             for (position, item) in items.iter_mut().take(limit).enumerate() {
                 let lexical_score = model.score_with_cache(&item.text, &mut cache)
                     * self.ranking_prior.lexical_prior_weight;
-                item.lexical_score = lexical_score;
                 item.score += lexical_score;
-                all[order[position]].lexical_score = item.lexical_score;
                 all[order[position]].score = item.score;
             }
             items.sort_by(|left, right| {
@@ -2358,7 +2347,6 @@ mod tests {
             confidence_score: 0.0,
             early_commit_confidence_score: 0.0,
             code_score: 0.0,
-            lexical_score: 0.0,
             max_rank: 1,
             supplement_score: 0.0,
             learning_score: 0.0,

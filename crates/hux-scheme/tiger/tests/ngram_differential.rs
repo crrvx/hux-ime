@@ -12,6 +12,20 @@ use hux_test_support::{decode_hex as decode, open_golden, parse_bits, repo_path,
 use std::io::BufRead;
 use std::path::PathBuf;
 
+/// 真实模型样例差分（`goldens/local/`，不入库）缺失时的处理。
+///
+/// 缺省**跳过**（CI 无 448 MiB 模型与本地抽样，`cargo test --workspace` 仍应全绿——
+/// 该口径已登记在 `docs/refactor.md` §8：CI 对真实模型路径零守护）；
+/// 置 `HUX_REQUIRE_SAMPLE=1` 时改为**失败**：本地复验 / 专项 CI 用它强制覆盖真实路径
+/// （配合 `goldens/README.md` 的 sample 生成命令）。
+fn sample_missing(reason: &str) {
+    assert!(
+        std::env::var_os("HUX_REQUIRE_SAMPLE").as_deref() != Some(std::ffi::OsStr::new("1")),
+        "HUX_REQUIRE_SAMPLE=1：真实模型差分必须可跑，但 {reason}"
+    );
+    eprintln!("skip: {reason}");
+}
+
 /// 重放一份 transcript，返回记录数；任何一条与本地实现不一致即 panic。
 fn run_transcript(model: &mut MobileModel, reader: impl BufRead) -> usize {
     let mut records = 0usize;
@@ -94,7 +108,7 @@ fn ngram_fixture_transcript_is_bit_exact() {
 #[test]
 fn ngram_sample_transcript_is_bit_exact_when_present() {
     let Some(reader) = try_open_golden("goldens/local/ngram_sample.tsv.gz") else {
-        eprintln!("skip: goldens/local/ngram_sample.tsv.gz not present (local-only sample)");
+        sample_missing("goldens/local/ngram_sample.tsv.gz not present (local-only sample)");
         return;
     };
     let Some(model_path) = std::env::var_os("HUX_NGRAM_MODEL")
@@ -106,11 +120,14 @@ fn ngram_sample_transcript_is_bit_exact_when_present() {
             })
         })
     else {
-        eprintln!("skip: no sample model path (set HUX_NGRAM_MODEL)");
+        sample_missing("no sample model path (set HUX_NGRAM_MODEL)");
         return;
     };
     if !model_path.is_file() {
-        eprintln!("skip: sample model not found at {}", model_path.display());
+        sample_missing(&format!(
+            "sample model not found at {}",
+            model_path.display()
+        ));
         return;
     }
     let mut model = MobileModel::load(&model_path, None).expect("load sample model");

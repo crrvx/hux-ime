@@ -49,3 +49,28 @@ install(FILES conf/hux.addon.conf
 install(FILES conf/hux.inputmethod.conf
         DESTINATION share/fcitx5/inputmethod
         RENAME hux.conf)
+
+# 随包数据（码表四件套 + 词先验 + 拼音索引 + 标点表）：清单 `data/MANIFEST` 是**单一来源**——
+# `install.sh` 按它核对落盘、`uninstall.sh` 按它删除（`tools/checks/check_data_manifest.sh` 守护三者一致）。
+#
+# 复核整改第 4 批 F5：此前 CMake 只装 `libhux.so` 与两个 conf，只走 `cmake --install`
+# （发行版打包、`DESTDIR` 流程、手工安装）会得到「无词库」引擎——`Lexicon` / `PunctTable`
+# 静默降级，打字无输出/无标点。这里按清单安装；**n-gram 模型仍不随包**（用户自取）。
+# `ENCODING UTF-8` 显式给出：CMake 默认编码会破坏非 ASCII 字节（把中文注释行拆成假文件名）；
+# 清单本身按约定保持纯 ASCII（见 `data/README.md`），该选项只是把意图钉住。
+file(STRINGS "${HUX_WORKSPACE}/data/MANIFEST" HUX_DATA_ENTRIES ENCODING UTF-8)
+set(HUX_DATA_FILES "")
+foreach(HUX_DATA_ENTRY IN LISTS HUX_DATA_ENTRIES)
+    string(STRIP "${HUX_DATA_ENTRY}" HUX_DATA_ENTRY)
+    if(HUX_DATA_ENTRY STREQUAL "" OR HUX_DATA_ENTRY MATCHES "^#")
+        continue()
+    endif()
+    if(NOT EXISTS "${HUX_WORKSPACE}/${HUX_DATA_ENTRY}")
+        message(FATAL_ERROR "data/MANIFEST 列出的文件不存在：${HUX_DATA_ENTRY}")
+    endif()
+    list(APPEND HUX_DATA_FILES "${HUX_WORKSPACE}/${HUX_DATA_ENTRY}")
+endforeach()
+if(NOT HUX_DATA_FILES)
+    message(FATAL_ERROR "data/MANIFEST 没有有效行（随包数据清单缺失或为空）")
+endif()
+install(FILES ${HUX_DATA_FILES} DESTINATION share/fcitx5/hux)

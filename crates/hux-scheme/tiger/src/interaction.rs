@@ -9,8 +9,12 @@
 //! - 参照的 `env` 瞬态状态在 Rust 由调用方持有 [`SentenceState`]（每会话一份）；
 //! - 参照的 decode 增量缓存属性能优化，本移植的解码为无状态冷路径，
 //!   `invalidate_edit_state` 因此只处理锁与瞬态标记（语义一致）；
-//! - 上下文属性串（已确认 `raw\ttext`、锁帧 `#len:field`）只由本实现写出，
-//!   其解析对异常输入（空白/浮点）比参照宽容，实际不会出现该差异。
+//! - 上下文属性层只保留**宿主与内核共享**的缓冲前缀（`K_BUFFERED`：`select` /
+//!   `early_commit` / `learning_glue` 与 `Context::is_buffered` 都读它）。会话状态
+//!   （已确认 `raw`/`text`、锁帧）**不再**写成私有属性快照：参照每次入口从属性重读是因为
+//!   Lua `env` 无状态，本仓的会话状态由方案对象持有；原先的 `load`/`read_locks` 解析、
+//!   旧属性迁移与 `committed`/`locks` 写侧因此无生产调用者（也无 FFI / 平台 / C++ 读取方），
+//!   已在复核整改 3b（A3）删除，见 `docs/refactor.md` §8。
 
 use crate::char_to_sound_shape;
 use crate::decode::{
@@ -34,8 +38,8 @@ mod translate;
 
 /// 选项名（对应参照 `allow_duplicate_single_option`）。
 pub const OPTION_ALLOW_DUPLICATE_SINGLE: &str = "tiger_sentence_allow_duplicate_single";
-/// 候选上限（参照 `candidate_limit`）。
-pub const CANDIDATE_LIMIT: usize = 20;
+/// 候选上限（参照 `candidate_limit`）：单一来源在 [`crate::decode::CANDIDATE_LIMIT`]。
+pub use crate::decode::CANDIDATE_LIMIT;
 
 /// 参照 `max_raw_length`：实时输入上限（超出则不接收普通字符）。
 pub const MAX_RAW_LENGTH: usize = 128;

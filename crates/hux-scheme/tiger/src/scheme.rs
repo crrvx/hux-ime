@@ -15,8 +15,8 @@ use hux_core::key::KeyEvent;
 use hux_core::learning::{Event, LearningIndex};
 use hux_core::punct::PunctTable;
 use hux_core::scheme::{
-    Asset, AssetKind, KeyOutcome, OptionDecl, Scheme, SchemeConfig, SessionId, asset_paths,
-    find_asset,
+    Asset, AssetKind, ConfigError, KeyOutcome, OptionDecl, Scheme, SchemeConfig, SessionId,
+    asset_paths, find_asset,
 };
 use hux_core::session::Context;
 
@@ -138,28 +138,28 @@ pub const SCHEME_CONFIG_ROLES: &[&str] = &[
 /// 配置袋中本方案还会读取的**运行时选项角色**（平台在装配处追加；键由本方案声明）。
 const RUNTIME_CONFIG_ROLES: &[&str] = &[role::ALLOW_DUPLICATE_SINGLE];
 
-/// 配置袋角色诊断：装配处（平台）按 `hux-cfg` 的角色名装袋，本方案按自己的角色名读袋。
+/// 配置袋**角色集合**层面的诊断：装配处（平台）按 `hux-cfg` 的角色名装袋，本方案按
+/// 自己的角色名读袋；装出了本方案不认识的名字（单侧改名）在此点名。
 ///
-/// 两侧漂移（单侧改名 / 漏装）在此暴露，而不是让 [`Config::parse`] 静默回退默认值——
-/// `min_retained_raw_length` → 0（不再限制保留量）、`tab_learning` → false（不学习）
-/// 这类降级在用户侧只表现为「设置没生效」（审计 F1）。
+/// 逐角色的「缺失 / 类型不符」由 [`Config::parse`] 的 [`ConfigError`] 给出（见
+/// [`config_diagnostics`]）——两者都进状态串，用户侧不再是「设置没生效」的哑失败
+/// （审计 F1/F7）。
 fn config_role_notes(bag: &SchemeConfig) -> Vec<String> {
     let recognized =
         |role: &str| SCHEME_CONFIG_ROLES.contains(&role) || RUNTIME_CONFIG_ROLES.contains(&role);
-    let mut notes = Vec::new();
     let unknown: Vec<&str> = bag.roles().filter(|role| !recognized(role)).collect();
-    if !unknown.is_empty() {
-        notes.push(format!("config: 未识别的角色 {}", unknown.join(", ")));
+    if unknown.is_empty() {
+        Vec::new()
+    } else {
+        vec![format!("config: 未识别的角色 {}", unknown.join(", "))]
     }
-    let missing: Vec<&str> = SCHEME_CONFIG_ROLES
-        .iter()
-        .chain(RUNTIME_CONFIG_ROLES)
-        .copied()
-        .filter(|role| bag.get(role).is_none())
-        .collect();
-    if !missing.is_empty() {
-        notes.push(format!("config: 缺少角色 {}", missing.join(", ")));
-    }
+}
+
+/// 装配诊断汇总：角色集合（[`config_role_notes`]）+ 逐角色（[`ConfigError`]，审计 F7），
+/// 文案统一带 `config:` 前缀（与既有状态串诊断同风格）。
+fn config_diagnostics(bag: &SchemeConfig, errors: &[ConfigError]) -> Vec<String> {
+    let mut notes = config_role_notes(bag);
+    notes.extend(errors.iter().map(|error| format!("config: {error}")));
     notes
 }
 
@@ -174,32 +174,101 @@ struct Config {
     min_retained_input_length: usize,
     page_size: usize,
     page_cycle: bool,
-    page_up_keys: Vec<String>,
-    page_down_keys: Vec<String>,
+    /// 翻页键：`None` = 角色缺失（用 core 缺省绑定）；`Some([])` = **显式给出空列表**
+    /// ⇒ 不绑定（复核整改第 5 批 F4）。此前 `Vec<String>` 把两者混为一谈，
+    /// 于是配置页清空翻页键仍保留 core 缺省的 `-`/`=`。
+    page_up_keys: Option<Vec<String>>,
+    page_down_keys: Option<Vec<String>>,
     reverse_lookup_pronunciation_keys: Vec<String>,
     reverse_lookup_character_keys: Vec<String>,
     learning_on_tab: bool,
     allow_duplicate_single: bool,
 }
 
-impl Config {
-    fn parse(config: &SchemeConfig) -> Self {
-        Self {
-            high_freq_limit: config.count(role::HIGH_FREQ_LIMIT).unwrap_or(0),
-            min_retained_input_length: config.count(role::MIN_RETAINED_INPUT_LENGTH).unwrap_or(0),
-            page_size: config.count(role::PAGE_SIZE).unwrap_or(0),
-            page_cycle: config.bool(role::PAGE_CYCLE).unwrap_or(false),
-            page_up_keys: config.texts(role::PAGE_UP_KEYS).to_vec(),
-            page_down_keys: config.texts(role::PAGE_DOWN_KEYS).to_vec(),
-            reverse_lookup_pronunciation_keys: config
-                .texts(role::REVERSE_LOOKUP_PRONUNCIATION_KEYS)
-                .to_vec(),
-            reverse_lookup_character_keys: config
-                .texts(role::REVERSE_LOOKUP_CHARACTER_KEYS)
-                .to_vec(),
-            learning_on_tab: config.bool(role::LEARNING_ON_TAB).unwrap_or(false),
-            allow_duplicate_single: config.bool(role::ALLOW_DUPLICATE_SINGLE).unwrap_or(false),
+/// 取计数角色；失败时记诊断并按缺省 `0` 回退（迁移前 `unwrap_or(0)` 的同值回退）。
+fn require_count(
+    config: &SchemeConfig,
+    role: &'static str,
+    errors: &mut Vec<ConfigError>,
+) -> usize {
+    config.require_count(role).unwrap_or_else(|error| {
+        errors.push(error);
+        0
+    })
+}
+
+/// 取开关角色；失败时记诊断并按缺省 `false` 回退。
+fn require_bool(config: &SchemeConfig, role: &'static str, errors: &mut Vec<ConfigError>) -> bool {
+    config.require_bool(role).unwrap_or_else(|error| {
+        errors.push(error);
+        false
+    })
+}
+
+/// 取可选的文本列表角色：区分「角色缺失」与「显式空列表」（F4 的契约基础）。
+///
+/// `require_texts` 把两者都化成空 `Vec`；本函数的 `None` 只表示**角色缺失 / 类型不符**。
+fn optional_texts(
+    config: &SchemeConfig,
+    role: &'static str,
+    errors: &mut Vec<ConfigError>,
+) -> Option<Vec<String>> {
+    match config.require_texts(role) {
+        Ok(values) => Some(values.to_vec()),
+        Err(error) => {
+            errors.push(error);
+            None
         }
+    }
+}
+
+/// 取文本列表角色；失败时记诊断并按缺省空列表回退。
+fn require_texts(
+    config: &SchemeConfig,
+    role: &'static str,
+    errors: &mut Vec<ConfigError>,
+) -> Vec<String> {
+    config
+        .require_texts(role)
+        .unwrap_or_else(|error| {
+            errors.push(error);
+            &[]
+        })
+        .to_vec()
+}
+
+impl Config {
+    /// 解析配置袋；同时返回逐角色诊断（缺角色 / 类型不符，审计 F7）。
+    ///
+    /// 取值失败时按缺省值回退（与迁移前的 `unwrap_or` 同值），但**不再静默**：
+    /// 诊断由 [`TigerScheme::load`] / [`TigerScheme::apply_config`] 回给平台进状态串。
+    fn parse(config: &SchemeConfig) -> (Self, Vec<ConfigError>) {
+        let mut errors = Vec::new();
+        let parsed = Self {
+            high_freq_limit: require_count(config, role::HIGH_FREQ_LIMIT, &mut errors),
+            min_retained_input_length: require_count(
+                config,
+                role::MIN_RETAINED_INPUT_LENGTH,
+                &mut errors,
+            ),
+            page_size: require_count(config, role::PAGE_SIZE, &mut errors),
+            page_cycle: require_bool(config, role::PAGE_CYCLE, &mut errors),
+            page_up_keys: optional_texts(config, role::PAGE_UP_KEYS, &mut errors),
+            page_down_keys: optional_texts(config, role::PAGE_DOWN_KEYS, &mut errors),
+            reverse_lookup_pronunciation_keys: require_texts(
+                config,
+                role::REVERSE_LOOKUP_PRONUNCIATION_KEYS,
+                &mut errors,
+            ),
+            reverse_lookup_character_keys: require_texts(
+                config,
+                role::REVERSE_LOOKUP_CHARACTER_KEYS,
+                &mut errors,
+            ),
+            learning_on_tab: require_bool(config, role::LEARNING_ON_TAB, &mut errors),
+            allow_duplicate_single: require_bool(config, role::ALLOW_DUPLICATE_SINGLE, &mut errors),
+        };
+        (parsed, errors)
     }
 }
 
@@ -236,9 +305,11 @@ impl TigerScheme {
         model_path: Option<PathBuf>,
         config: &SchemeConfig,
     ) -> (Self, Vec<String>) {
-        // 角色漂移诊断先于解析：装袋方与读袋方的角色名必须同值（见 `config_role_notes`）。
-        let mut notes = config_role_notes(config);
-        let config = Config::parse(config);
+        // 角色漂移 / 类型诊断先于解析：装袋方与读袋方的角色名必须同值，
+        // 且每个角色都必须能按声明类型读出（见 `config_diagnostics`）。
+        let (parsed, config_errors) = Config::parse(config);
+        let mut notes = config_diagnostics(config, &config_errors);
+        let config = parsed;
         let lexicon = Lexicon::load(dirs, config.high_freq_limit);
         notes.push(format!("lexicon: {}", lexicon.data_status().canonical()));
         let learning_rules = lexicon.learning_rules.clone();
@@ -326,11 +397,13 @@ fn host_options_from(config: &Config) -> HostOptions {
         page_cycle: config.page_cycle,
         ..HostOptions::default()
     };
-    if !config.page_up_keys.is_empty() {
-        options.page_up_keys = parse(&config.page_up_keys);
+    // F4 契约：**角色显式给出即以此为准**（`Some([])` = 不绑定，与 `hux-cfg` 的
+    // `Settings::host_options()` 同语义）；只有角色**缺失**时才保留 core 缺省绑定。
+    if let Some(reprs) = &config.page_up_keys {
+        options.page_up_keys = parse(reprs);
     }
-    if !config.page_down_keys.is_empty() {
-        options.page_down_keys = parse(&config.page_down_keys);
+    if let Some(reprs) = &config.page_down_keys {
+        options.page_down_keys = parse(reprs);
     }
     options
 }
@@ -373,8 +446,9 @@ impl Scheme for TigerScheme {
         &self.learning_mode
     }
 
-    fn apply_config(&mut self, config: &SchemeConfig) {
-        self.config = Config::parse(config);
+    fn apply_config(&mut self, config: &SchemeConfig) -> Result<(), Vec<ConfigError>> {
+        let (parsed, errors) = Config::parse(config);
+        self.config = parsed;
         self.host_options = host_options_from(&self.config);
         // 学习 mode 的输入都在配置袋里（Tab 学习 / 高频上限 / 单字重码选项值），
         // 由方案自算：变化时同步全部会话并重置解码器的学习索引（旧 mode 的记录不再命中）。
@@ -390,6 +464,14 @@ impl Scheme for TigerScheme {
             if changed {
                 session.live.mode = self.learning_mode.clone();
             }
+        }
+        // 诊断回给平台（进状态串）：装袋侧改名 / 类型不符不再静默回退（审计 F7）。
+        // 「未识别角色」由装配期的 `config_diagnostics` 点名（袋的角色集合归装配方），
+        // 运行期重新下发时逐角色诊断即可覆盖同一类漂移。
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
         }
     }
 
@@ -607,6 +689,36 @@ mod tests {
         config
     }
 
+    /// 全角色袋（每个角色都给一个**类型正确**的值），`overrides` 覆盖同名角色。
+    /// 真实装配路径（平台）就是这个形态：审计 F7 之后任何缺口都会回诊断。
+    fn full_bag(overrides: &[(&'static str, Value)]) -> SchemeConfig {
+        let mut config = bag(&[
+            (role::HIGH_FREQ_LIMIT, Value::Count(1500)),
+            (role::MIN_RETAINED_INPUT_LENGTH, Value::Count(0)),
+            (role::PAGE_SIZE, Value::Count(5)),
+            (role::PAGE_CYCLE, Value::Bool(false)),
+            (role::PAGE_UP_KEYS, Value::Texts(vec!["minus".to_string()])),
+            (
+                role::PAGE_DOWN_KEYS,
+                Value::Texts(vec!["equal".to_string()]),
+            ),
+            (
+                role::REVERSE_LOOKUP_PRONUNCIATION_KEYS,
+                Value::Texts(vec!["grave".to_string()]),
+            ),
+            (
+                role::REVERSE_LOOKUP_CHARACTER_KEYS,
+                Value::Texts(vec!["quotedbl".to_string()]),
+            ),
+            (role::LEARNING_ON_TAB, Value::Bool(true)),
+            (role::ALLOW_DUPLICATE_SINGLE, Value::Bool(true)),
+        ]);
+        for (name, value) in overrides {
+            config.set(name, value.clone());
+        }
+        config
+    }
+
     fn fixture_scheme() -> TigerScheme {
         let config = bag(&[
             (role::HIGH_FREQ_LIMIT, Value::Count(0)),
@@ -666,13 +778,14 @@ mod tests {
             (role::LEARNING_ON_TAB, Value::Bool(true)),
             (role::ALLOW_DUPLICATE_SINGLE, Value::Bool(true)),
         ]);
-        let config = Config::parse(&full);
+        let (config, errors) = Config::parse(&full);
+        assert_eq!(errors, Vec::<ConfigError>::new(), "全角色袋无诊断");
         assert_eq!(config.high_freq_limit, 1500);
         assert_eq!(config.min_retained_input_length, 4);
         assert_eq!(config.page_size, 7);
         assert!(config.page_cycle);
-        assert_eq!(config.page_up_keys, vec!["comma".to_string()]);
-        assert_eq!(config.page_down_keys, vec!["period".to_string()]);
+        assert_eq!(config.page_up_keys, Some(vec!["comma".to_string()]));
+        assert_eq!(config.page_down_keys, Some(vec!["period".to_string()]));
         assert_eq!(
             config.reverse_lookup_pronunciation_keys,
             vec!["grave".to_string()]
@@ -684,14 +797,22 @@ mod tests {
         assert!(config.learning_on_tab);
         assert!(config.allow_duplicate_single);
 
-        // 空袋 → 与迁移前的 `SchemeConfig::default()` 逐字段同值（缺角色回退不变）。
-        let empty = Config::parse(&SchemeConfig::default());
+        // 空袋 → 与迁移前的 `SchemeConfig::default()` 逐字段同值（缺角色回退不变），
+        // 但每个角色都产出「缺少角色」诊断（审计 F7：不再静默）。
+        let (empty, empty_errors) = Config::parse(&SchemeConfig::default());
+        assert_eq!(empty_errors.len(), SCHEME_CONFIG_ROLES.len() + 1);
+        assert!(
+            empty_errors
+                .iter()
+                .all(|error| matches!(error, ConfigError::Missing { .. })),
+            "空袋应逐角色报缺失：{empty_errors:?}"
+        );
         assert_eq!(empty.high_freq_limit, 0);
         assert_eq!(empty.min_retained_input_length, 0);
         assert_eq!(empty.page_size, 0);
         assert!(!empty.page_cycle);
-        assert!(empty.page_up_keys.is_empty());
-        assert!(empty.page_down_keys.is_empty());
+        assert_eq!(empty.page_up_keys, None, "缺角色 ≠ 显式空列表");
+        assert_eq!(empty.page_down_keys, None);
         assert!(empty.reverse_lookup_pronunciation_keys.is_empty());
         assert!(empty.reverse_lookup_character_keys.is_empty());
         assert!(!empty.learning_on_tab);
@@ -703,29 +824,61 @@ mod tests {
             (role::PAGE_SIZE, Value::Count(9)),
         ]);
         assert_eq!(future.text("future_role"), Some("x"));
-        assert_eq!(Config::parse(&future).page_size, 9);
+        let (parsed, errors) = Config::parse(&future);
+        assert_eq!(parsed.page_size, 9);
+        assert!(
+            errors.iter().all(|error| error.role() != role::PAGE_SIZE),
+            "已装配且类型正确的角色不得报诊断：{errors:?}"
+        );
     }
 
     /// 角色一致性守护的方案侧一半：装配方按 `hux-cfg` 的角色名装袋，本方案按自己的角色名读袋，
     /// 单侧改名必须**可见**（进状态串诊断），不得静默回退默认值（审计 F1）。
     #[test]
     fn config_role_notes_expose_single_sided_role_renames() {
-        // 按角色清单装袋（`keep` 过滤出需要的角色；值不重要，只关心角色名）。
+        // 按角色清单装袋（`keep` 过滤出需要的角色；每个角色给**类型正确**的值，
+        // 这样诊断只会来自角色集合或刻意构造的类型不符）。
         let bag_of = |keep: &dyn Fn(&str) -> bool, extra: &[(&'static str, Value)]| {
-            let mut config = bag(&SCHEME_CONFIG_ROLES
-                .iter()
-                .filter(|role| keep(role))
-                .map(|role| (*role, Value::Count(1)))
-                .collect::<Vec<_>>());
-            config.set(role::ALLOW_DUPLICATE_SINGLE, Value::Bool(true));
+            let mut config = SchemeConfig::new();
+            for (name, value) in [
+                (role::HIGH_FREQ_LIMIT, Value::Count(1)),
+                (role::MIN_RETAINED_INPUT_LENGTH, Value::Count(1)),
+                (role::PAGE_SIZE, Value::Count(1)),
+                (role::PAGE_CYCLE, Value::Bool(true)),
+                (role::PAGE_UP_KEYS, Value::Texts(vec!["minus".to_string()])),
+                (
+                    role::PAGE_DOWN_KEYS,
+                    Value::Texts(vec!["equal".to_string()]),
+                ),
+                (
+                    role::REVERSE_LOOKUP_PRONUNCIATION_KEYS,
+                    Value::Texts(vec!["grave".to_string()]),
+                ),
+                (
+                    role::REVERSE_LOOKUP_CHARACTER_KEYS,
+                    Value::Texts(vec!["quotedbl".to_string()]),
+                ),
+                (role::LEARNING_ON_TAB, Value::Bool(true)),
+                (role::ALLOW_DUPLICATE_SINGLE, Value::Bool(true)),
+            ] {
+                if keep(name) {
+                    config.set(name, value);
+                }
+            }
             for (role, value) in extra {
                 config.set(role, value.clone());
             }
             config
         };
+        // 诊断 = 角色集合（未识别）+ 逐角色（缺失 / 类型不符），文案统一带 `config:` 前缀。
+        let diagnostics = |bag: &SchemeConfig| {
+            let (_, errors) = Config::parse(bag);
+            config_diagnostics(bag, &errors)
+        };
         // 正例：本方案声明的全角色袋（+ 平台追加的运行时选项角色）无诊断。
         let full = bag_of(&|_| true, &[]);
         assert_eq!(config_role_notes(&full), Vec::<String>::new());
+        assert_eq!(diagnostics(&full), Vec::<String>::new());
 
         // 负例：装袋侧把 `tab_learning` 改名（模拟 `hux-cfg` 单侧漂移）——
         // 未识别与缺少两侧都点名，用户可在状态串看到「设置没生效」的原因。
@@ -735,21 +888,58 @@ mod tests {
         );
         assert_eq!(
             config_role_notes(&renamed),
+            vec!["config: 未识别的角色 tab_learning_X".to_string()]
+        );
+        assert_eq!(
+            diagnostics(&renamed),
             vec![
                 "config: 未识别的角色 tab_learning_X".to_string(),
                 "config: 缺少角色 tab_learning".to_string(),
             ]
         );
-        // `Config::parse` 对该袋仍是静默回退（这正是需要守护的原因）。
-        assert!(!Config::parse(&renamed).learning_on_tab);
+        // 取值仍按缺省回退（可观测行为不变：缺角色 = 不学习），但回退**不再静默**。
+        let (parsed, errors) = Config::parse(&renamed);
+        assert!(!parsed.learning_on_tab);
+        assert_eq!(
+            errors,
+            vec![ConfigError::Missing {
+                role: role::LEARNING_ON_TAB
+            }]
+        );
+
+        // 负例：**类型不符**（把 `Count` 塞进开关角色）——此前 `bool()` 只返回 `None`，
+        // 全链路静默；现在逐角色点名（审计 F7）。
+        let wrong_type = bag_of(&|_| true, &[(role::LEARNING_ON_TAB, Value::Count(1))]);
+        assert_eq!(config_role_notes(&wrong_type), Vec::<String>::new());
+        assert_eq!(
+            diagnostics(&wrong_type),
+            vec!["config: 角色 tab_learning 类型不符（期望 开关，实际 计数）".to_string()]
+        );
+        assert_eq!(
+            Config::parse(&wrong_type).1,
+            vec![ConfigError::TypeMismatch {
+                role: role::LEARNING_ON_TAB,
+                expected: "开关",
+                found: "计数",
+            }]
+        );
+        assert!(
+            !Config::parse(&wrong_type).0.learning_on_tab,
+            "类型不符按缺省回退"
+        );
 
         // 负例：漏装（平台少写一项）同样点名，不静默当作「不限制保留量」。
         let dropped = bag_of(&|role| role != role::MIN_RETAINED_INPUT_LENGTH, &[]);
         assert_eq!(
             config_role_notes(&dropped),
+            Vec::<String>::new(),
+            "角色集合层面无未识别项"
+        );
+        assert_eq!(
+            diagnostics(&dropped),
             vec!["config: 缺少角色 min_retained_raw_length".to_string()]
         );
-        assert_eq!(Config::parse(&dropped).min_retained_input_length, 0);
+        assert_eq!(Config::parse(&dropped).0.min_retained_input_length, 0);
     }
 
     #[test]
@@ -777,11 +967,13 @@ mod tests {
     fn learning_mode_follows_config_and_rules() {
         // mode 的输入都在配置袋里（Tab 学习 / 高频上限 / 单字重码选项值），由方案自算。
         let mut scheme = fixture_scheme();
-        scheme.apply_config(&bag(&[
-            (role::HIGH_FREQ_LIMIT, Value::Count(1500)),
-            (role::LEARNING_ON_TAB, Value::Bool(true)),
-            (role::ALLOW_DUPLICATE_SINGLE, Value::Bool(true)),
-        ]));
+        scheme
+            .apply_config(&full_bag(&[
+                (role::HIGH_FREQ_LIMIT, Value::Count(1500)),
+                (role::LEARNING_ON_TAB, Value::Bool(true)),
+                (role::ALLOW_DUPLICATE_SINGLE, Value::Bool(true)),
+            ]))
+            .expect("全角色袋");
         assert_eq!(
             scheme.learning_mode(),
             format!(
@@ -791,11 +983,29 @@ mod tests {
         );
         assert!(scheme.learning_mode().starts_with("sentence-v2|rules="));
 
+        // 格式归属方案（F14：平台只看不透明串）⇒ 单字重码关闭时的 `dup=0` 也在本文件钉住。
+        let mut no_duplicate = fixture_scheme();
+        no_duplicate
+            .apply_config(&full_bag(&[
+                (role::HIGH_FREQ_LIMIT, Value::Count(1500)),
+                (role::LEARNING_ON_TAB, Value::Bool(true)),
+                (role::ALLOW_DUPLICATE_SINGLE, Value::Bool(false)),
+            ]))
+            .expect("全角色袋");
+        assert_eq!(
+            no_duplicate.learning_mode(),
+            format!(
+                "sentence-v2|rules={}|optimal=1500|dup=0",
+                no_duplicate.learning_rules
+            )
+        );
+
         let mut off = fixture_scheme();
-        off.apply_config(&bag(&[
+        off.apply_config(&full_bag(&[
             (role::LEARNING_ON_TAB, Value::Bool(false)),
             (role::ALLOW_DUPLICATE_SINGLE, Value::Bool(true)),
-        ]));
+        ]))
+        .expect("全角色袋");
         assert_eq!(off.learning_mode(), "", "关闭 Tab 学习 → 空串 = 不记录");
     }
 
@@ -820,7 +1030,7 @@ mod tests {
         let mut scheme = fixture_scheme();
         let mut context = Context::new();
         let session = scheme.new_session(&mut context);
-        let config = bag(&[
+        let config = full_bag(&[
             (role::MIN_RETAINED_INPUT_LENGTH, Value::Count(4)),
             (role::PAGE_SIZE, Value::Count(7)),
             (role::PAGE_CYCLE, Value::Bool(true)),
@@ -830,7 +1040,7 @@ mod tests {
                 Value::Texts(vec!["quotedbl".to_string()]),
             ),
         ]);
-        scheme.apply_config(&config);
+        scheme.apply_config(&config).expect("全角色袋");
         assert_eq!(scheme.sessions[&session.0].min_retained, Some(4));
         assert_eq!(scheme.host_options.page_size, 7);
         assert!(scheme.host_options.page_cycle);
@@ -846,15 +1056,63 @@ mod tests {
     }
 
     #[test]
+    fn empty_page_key_lists_unbind_the_keys() {
+        // F4：角色**显式给出空列表** ⇒ 不绑定翻页键（与 `hux-cfg` 的
+        // `Settings::host_options()` 同语义，即配置页清空键列表后真的不再翻页）；
+        // 角色**缺失** ⇒ 保留 core 缺省绑定（`HostOptions::default()` 的 `-`/`=`）。
+        let mut scheme = fixture_scheme();
+        scheme
+            .apply_config(&full_bag(&[
+                (role::PAGE_UP_KEYS, Value::Texts(Vec::new())),
+                (role::PAGE_DOWN_KEYS, Value::Texts(Vec::new())),
+            ]))
+            .expect("全角色袋");
+        assert!(
+            scheme.host_options.page_up_keys.is_empty(),
+            "显式空列表 ⇒ 上翻页键不绑定"
+        );
+        assert!(
+            scheme.host_options.page_down_keys.is_empty(),
+            "显式空列表 ⇒ 下翻页键不绑定"
+        );
+        // 缺角色（空袋）⇒ 保持缺省绑定，与 core 一致。
+        let mut missing = fixture_scheme();
+        // 空袋 ⇒ 逐角色诊断（F7），但配置照常落地（与 `apply_config` 的既有语义一致）。
+        let errors = missing
+            .apply_config(&SchemeConfig::default())
+            .expect_err("空袋必须回逐角色诊断");
+        assert!(
+            errors
+                .iter()
+                .all(|error| matches!(error, hux_core::scheme::ConfigError::Missing { .. })),
+            "空袋应逐角色报缺失：{errors:?}"
+        );
+        assert_eq!(
+            missing.host_options.page_up_keys,
+            HostOptions::default().page_up_keys
+        );
+        assert_eq!(
+            missing.host_options.page_down_keys,
+            HostOptions::default().page_down_keys
+        );
+        assert!(
+            !HostOptions::default().page_up_keys.is_empty(),
+            "core 缺省上翻页绑定应为非空（否则本用例是恒真的）"
+        );
+    }
+
+    #[test]
     fn session_lifecycle_and_learning_events() {
         let mut scheme = fixture_scheme();
         let mut context = Context::new();
         let session = scheme.new_session(&mut context);
         assert!(scheme.take_learning_events(session).is_empty());
-        scheme.apply_config(&bag(&[
-            (role::LEARNING_ON_TAB, Value::Bool(true)),
-            (role::ALLOW_DUPLICATE_SINGLE, Value::Bool(false)),
-        ]));
+        scheme
+            .apply_config(&full_bag(&[
+                (role::LEARNING_ON_TAB, Value::Bool(true)),
+                (role::ALLOW_DUPLICATE_SINGLE, Value::Bool(false)),
+            ]))
+            .expect("全角色袋");
         assert!(scheme.learning_mode().starts_with("sentence-v2|rules="));
         scheme.set_store_ready(true);
         scheme.reset_session(session, &mut context);

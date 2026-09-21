@@ -12,6 +12,12 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# 供应链钉版本（复核整改第 4 批 C8，方案登记在 docs/refactor.md §8）：
+#   ① `uses: <action>@vN` 是移动标签 ⇒ 改为钉 commit sha（Dependabot 维护）；本轮未改，待办见 §8；
+#   ② Rust 工具链钉在 `rust-toolchain.toml`（channel + components），避免 stable 漂移让
+#      `cargo fmt --check` / clippy `-D warnings` 无预警变红；本轮未改，待办见 §8；
+#   ③ `archlinux:latest` 是 `golden-lua-latest` 作业的**目的**（测最新 Lua），故不钉镜像；
+#      但 `pacman -Sy` 部分升级已改为 `-Syu`（Arch 官方不推荐部分升级）。
 jobs:
   reuse:
     timeout-minutes: 30
@@ -39,8 +45,12 @@ jobs:
       - name: Core platform-clean (no env/XDG/clock/logging)
         # 只拦「平台痕迹」：env / XDG / 系统时钟 / 直接打印。
         # 允许按平台传入的显式路径读数据文件（见 docs/refactor.md §1.2），故不查 std::fs。
+        # 复核整改第 4 批 C6：先剥离注释再匹配（注释里写「不要用 println!」不该让 CI 变红），
+        # 字符串字面量与真代码照旧命中——与 §7「注释与文档叙述不受影响」一致。
         run: |
-          if grep -RnE 'std::env::var|SystemTime|/usr/share|eprintln!|println!' crates/hux-core/src; then
+          if ! python3 tools/checks/rust_source_grep.py --root crates/hux-core/src \
+              --pattern 'std::env::var|SystemTime|/usr/share|eprintln!|println!' \
+              --label "core 平台痕迹"; then
             echo "::error::hux-core 不得包含平台痕迹（环境变量 / XDG / 系统时钟 / 直接打印）"
             exit 1
           fi
@@ -56,10 +66,27 @@ jobs:
             echo "::error::hux-scheme/* 只允许依赖 hux-core"
             exit 1
           fi
-          # 平台只经契约驱动方案：除装配处（`scheme::{TigerScheme, ASSETS, SCHEME_ID}`）外
-          # 不得引用方案内部模块（见 docs/refactor.md §1/§7）。
+          # 平台只经契约驱动方案（见 docs/refactor.md §1/§7）：
+          #   ⓐ 方案内部模块黑名单（原守卫，保留）；
+          #   ⓑ 复核整改第 4 批 C7：升级为**白名单**——平台源码里出现的方案模块名只能是 `scheme`
+          #      （此前只挡已知内部模块，`hux_scheme_tiger::<其它路径>` 不会被拦）；
+          #   ⓒ 从 `scheme` 大括号导入的名字只允许 ASSETS / TigerScheme / SCHEME_ID。
           if grep -RnE 'hux_scheme_tiger::(interaction|decode|lexicon|lexical|ngram|char_to_sound_shape|sound_to_char_shape)' platform/fcitx5/src; then
             echo "::error::平台层不得直接引用方案内部模块，请经 hux_core::scheme 契约"
+            exit 1
+          fi
+          if ! python3 tools/checks/rust_source_grep.py --root platform/fcitx5/src \
+              --pattern 'hux_scheme_tiger::[A-Za-z_]+' \
+              --expect-set 'hux_scheme_tiger::scheme' \
+              --label "平台→方案模块白名单"; then
+            echo "::error::平台层只允许引用 hux_scheme_tiger::scheme（装配根），见 docs/refactor.md §7"
+            exit 1
+          fi
+          if ! python3 tools/checks/rust_source_grep.py --root platform/fcitx5/src \
+              --pattern 'hux_scheme_tiger::scheme::\{([^{}]*)\}' \
+              --expect-subset 'ASSETS,TigerScheme,SCHEME_ID' --split ',' \
+              --label "平台→方案导入名"; then
+            echo "::error::平台从方案 scheme 模块导入的名字只允许 ASSETS / TigerScheme / SCHEME_ID"
             exit 1
           fi
           # 配置层 / ABI 层不得依赖方案或平台层（docs/refactor.md §1）
@@ -67,26 +94,67 @@ jobs:
             echo "::error::hux-cfg / hux-ffi 只允许依赖 hux-core（及外部 crate）"
             exit 1
           fi
-          if grep -RnE 'crate::(decode|lexicon|lexical|ngram|interaction|sound_to_char_shape|char_to_sound_shape)\b' crates/hux-core/src; then
+          # core 不得引用已迁出的方案模块（剥离注释后匹配：复核整改第 4 批 C6）
+          if ! python3 tools/checks/rust_source_grep.py --root crates/hux-core/src \
+              --pattern 'crate::(decode|lexicon|lexical|ngram|interaction|sound_to_char_shape|char_to_sound_shape)\b' \
+              --label "core 已迁出模块引用"; then
             echo "::error::hux-core 内不得出现已迁出的方案模块引用"
+            exit 1
+          fi
+          # 「core 不得出现 hux_scheme / hux-scheme 引用」（docs/refactor.md §7）：
+          # 复核整改第 4 批 C7 补上这条此前只写在文档里的文本守卫——剥离注释后匹配，
+          # 故 `lib.rs` / `scheme.rs` 里合法的「不依赖 hux-scheme」说明性注释不受影响。
+          if ! python3 tools/checks/rust_source_grep.py --root crates/hux-core/src \
+              --pattern 'hux_scheme|hux-scheme' \
+              --label "core 方案引用"; then
+            echo "::error::hux-core 不得引用 hux_scheme / hux-scheme（注释除外，见 docs/refactor.md §7）"
             exit 1
           fi
           # 契约去方案语义（docs/refactor.md §8①）：内核只留通用容器——角色词汇归 hux-cfg、
           # 选项键归方案，故 core 不得出现**带引号的**角色名 / 方案选项键字面量
-          # （rime 标准名 full_shape/ascii_punct 由 core 宿主链自持，不在此列；注释与文档叙述不受影响）。
-          if grep -RnE '"(early_commit|early_commit_to_preedit|allow_duplicate_single|digit_select|high_freq_limit|min_retained_raw_length|page_size|page_cycle|page_up_keys|page_down_keys|sound_to_char_shape_keys|char_to_sound_shape_keys|tab_learning)"|"tiger_sentence_' crates/hux-core/src; then
+          # （rime 标准名 full_shape/ascii_punct 由 core 宿主链自持，不在此列）。
+          # 复核整改第 4 批 C6：先剥离注释再匹配 ⇒ 与 §7「注释与文档叙述不受影响」一致。
+          if ! python3 tools/checks/rust_source_grep.py --root crates/hux-core/src \
+              --pattern '"(early_commit|early_commit_to_preedit|allow_duplicate_single|digit_select|high_freq_limit|min_retained_raw_length|page_size|page_cycle|page_up_keys|page_down_keys|sound_to_char_shape_keys|char_to_sound_shape_keys|tab_learning)"|"tiger_sentence_' \
+              --label "core 角色名/选项键字面量"; then
             echo "::error::hux-core 契约不得出现角色名 / 方案选项键字面量（见 docs/refactor.md §8①）"
             exit 1
           fi
+          # 模块布局纪律（AGENTS.md：全仓无 `mod.rs`，只用 `foo.rs` + `foo/`）：
+          # 此前只靠人眼/评审（复核整改第 5 批 F17），此处加一条零成本守卫。
+          if find crates platform -name mod.rs -print -quit | grep -q .; then
+            echo "::error::禁止新增 mod.rs（AGENTS.md：Rust 2018+ 布局 foo.rs + foo/）"
+            find crates platform -name mod.rs
+            exit 1
+          fi
+      - name: Verify golden checksums & headers
+        # 复核整改第 4 批 M2：逐行解析 goldens/README.md 的 sha256 表并与实际文件比对，
+        # 另核对三份「不重生成」金样（key / key_sequence / sound_to_char_shape）的内部头部
+        # （`# reference … @ <pin>` 与来源文件 sha256）与 README 声明的 pin 是否一致。
+        run: python3 tools/checks/verify_golden_shas.py
       - name: Verify non-regenerated goldens (sha256)
         run: |
-          # key / key_sequence / sound_to_char_shape 依赖具体 librime 版本，CI 不重生成，
-          # 故按 goldens/README.md 的校验和表逐个校验（防替换/腐坏）。
+          # 与上一步**互为独立来源**（值写在本文件里，不读 README）：key / key_sequence /
+          # key_sequence_tab / sound_to_char_shape 依赖具体 librime 版本，CI 不重生成，
+          # 故此处再钉一次。
           sha256sum -c - <<'SUMS'
-          e939a077cd0825f7b454a4af300ed50fb6a2f2609c71583525d44f2f8fb3fd33  goldens/key.tsv.gz
-          486897c902c23dffe1bc7bdc457f81ca49c2d1689ed3e9d921f94acd457367fe  goldens/key_sequence.tsv.gz
+          7fae4983ab69e36ebd2e5cac267df81e9bc325731deaefcaa22873aeca8660c0  goldens/key.tsv.gz
+          8ce095cf98bae0bbfbd561e6b1e3aa7f1961af6e8e3c3b62b692a7e89e325aa1  goldens/key_sequence.tsv.gz
+          3c89618d0fb067bb0ce5562646a62924576c0610226aed3fa70689b6549da9bc  goldens/key_sequence_tab.tsv.gz
           e9d48698bf73807a37933b7c2324afbc27fffe7b0492f0dd2787116ec06a7545  goldens/sound_to_char_shape.tsv.gz
           SUMS
+      - name: Verify data manifest (install / uninstall / cmake)
+        # 复核整改第 4 批 M15/F5：装、卸、CMake 三处必须读同一份 data/MANIFEST，
+        # 且清单与 data/ 实况一致（防「装得上、卸不掉」）。
+        run: bash tools/checks/check_data_manifest.sh
+      - name: Smoke-check install / uninstall entrypoints
+        # 两个一键脚本是文档首推入口：语法 + `--dry-run` 冒烟（不写系统目录）。
+        run: |
+          bash -n install.sh uninstall.sh tools/generators/*.sh tools/checks/*.sh
+          ./install.sh --dry-run >/dev/null
+          ./uninstall.sh --dry-run >/dev/null
+          ./install.sh --help >/dev/null
+          ./uninstall.sh --help >/dev/null
 
       - name: Verify lexical prior data (provenance)
         run: |
@@ -147,6 +215,17 @@ jobs:
                    usr/share/fcitx5/inputmethod/hux.conf; do
             test -f "/tmp/stage/$f" || { echo "::error::缺少安装文件 /$f"; exit 1; }
           done
+          # 复核整改第 4 批 F5：`cmake --install` 必须把 data/MANIFEST 的随包数据也装上
+          # （此前只有 install.sh 装数据 ⇒ 只走 CMake 安装会得到「无词库」引擎）。
+          count=0
+          while IFS= read -r entry; do
+            case "$entry" in ''|'#'*) continue ;; esac
+            count=$((count + 1))
+            f="usr/share/fcitx5/hux/$(basename "$entry")"
+            test -f "/tmp/stage/$f" || { echo "::error::CMake 安装缺少随包数据 /$f（见 data/MANIFEST）"; exit 1; }
+          done < data/MANIFEST
+          test "$count" -gt 0 || { echo "::error::data/MANIFEST 没有有效行"; exit 1; }
+          echo "安装布局：3 个插件文件 + $count 个随包数据文件"
 
   # 一般金样校验：使用 runner 系统提供的 Lua（Ubuntu 当前可用的最新 lua 包）。
   golden:
@@ -155,6 +234,9 @@ jobs:
     env:
       REFERENCE_REPO: https://github.com/lvyww/tiger-sentense-rime
       REFERENCE_COMMIT: abad411750f79cfca750985fa266689b5d9b865f
+      # 反查分支尖端（音反查金样 `sound_to_char_shape.tsv.gz` 的 pin）；README 的
+      # `lua/tiger_sentence.lua`（音反查金样）行按它核对，故检出里也要有这个提交。
+      REVERSE_COMMIT: 92a0b54b53114e7e5aa6a1ff48efa95db0e21f9c
       LIBRIME_RAW: https://raw.githubusercontent.com/rime/librime
       LIBRIME_COMMIT: 33e78140250125871856cdc5b42ddc6a5fcd3cd4
     steps:
@@ -173,6 +255,12 @@ jobs:
           git -C external/tiger-sentense-rime remote add origin "$REFERENCE_REPO"
           git -C external/tiger-sentense-rime fetch --depth 1 origin "$REFERENCE_COMMIT"
           git -C external/tiger-sentense-rime checkout --detach FETCH_HEAD
+          # 反查分支 pin 另取一次（只为此处的溯源校验；生成脚本自建隔离工作区）
+          git -C external/tiger-sentense-rime fetch --depth 1 origin "$REVERSE_COMMIT"
+      - name: Verify golden checksums (table + headers + reference provenance)
+        # 复核整改第 4 批 M2：表 ↔ 文件、金样内部头部 ↔ 声明的 pin、以及
+        # `lua/*`、`tools/*` 参照文件按对应 pin 的 `git show` sha256（本仓无其它来源可核）。
+        run: python3 tools/checks/verify_golden_shas.py --reference external/tiger-sentense-rime
       - name: Fetch librime key_table.cc (key table provenance)
         run: |
           mkdir -p external/librime/src/rime
@@ -233,6 +321,10 @@ jobs:
             --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
             --lexical "$PWD/data/tiger_sentence.lexical.bin" \
             --out /tmp/decode_learning_model.tsv --every 7 --learning 1
+          lua tools/generators/gen_decode_golden.lua \
+            --reference external/tiger-sentense-rime \
+            --data "$PWD/goldens/lexicon" --out /tmp/decode_learning_evidence.tsv \
+            --early-commit 1 --required 1 --learning 1
           lua tools/generators/gen_lexical_golden.lua \
             --reference external/tiger-sentense-rime \
             --model "$PWD/data/tiger_sentence.lexical.bin" --out /tmp/lexical.tsv
@@ -252,6 +344,7 @@ jobs:
           gunzip -c goldens/learning.tsv.gz | cmp - /tmp/learning.tsv
           gunzip -c goldens/decode_learning.tsv.gz | cmp - /tmp/decode_learning.tsv
           gunzip -c goldens/decode_learning_model.tsv.gz | cmp - /tmp/decode_learning_model.tsv
+          gunzip -c goldens/decode_learning_evidence.tsv.gz | cmp - /tmp/decode_learning_evidence.tsv
           gunzip -c goldens/lexical.tsv.gz | cmp - /tmp/lexical.tsv
 
   # Arch 的系统 lua 即最新版；验证金样在最新 Lua 下同样逐字节一致。
@@ -268,7 +361,7 @@ jobs:
       REFERENCE_COMMIT: abad411750f79cfca750985fa266689b5d9b865f
     steps:
       - name: Install toolchain
-        run: pacman -Sy --noconfirm git lua gzip diffutils
+        run: pacman -Syu --noconfirm git lua gzip diffutils
       - uses: actions/checkout@v4
       - name: Fetch reference implementation
         run: |
@@ -326,6 +419,10 @@ jobs:
             --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
             --lexical "$PWD/data/tiger_sentence.lexical.bin" \
             --out /tmp/decode_learning_model.tsv --every 7 --learning 1
+          lua tools/generators/gen_decode_golden.lua \
+            --reference external/tiger-sentense-rime \
+            --data "$PWD/goldens/lexicon" --out /tmp/decode_learning_evidence.tsv \
+            --early-commit 1 --required 1 --learning 1
           lua tools/generators/gen_lexical_golden.lua \
             --reference external/tiger-sentense-rime \
             --model "$PWD/data/tiger_sentence.lexical.bin" --out /tmp/lexical.tsv
@@ -345,4 +442,5 @@ jobs:
           gunzip -c goldens/learning.tsv.gz | cmp - /tmp/learning.tsv
           gunzip -c goldens/decode_learning.tsv.gz | cmp - /tmp/decode_learning.tsv
           gunzip -c goldens/decode_learning_model.tsv.gz | cmp - /tmp/decode_learning_model.tsv
+          gunzip -c goldens/decode_learning_evidence.tsv.gz | cmp - /tmp/decode_learning_evidence.tsv
           gunzip -c goldens/lexical.tsv.gz | cmp - /tmp/lexical.tsv

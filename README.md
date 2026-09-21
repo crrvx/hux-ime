@@ -89,7 +89,7 @@ sha256 `c0063898fdff27c1fb00c1c72fa28a6c1b375fade1ec2045d731b9db958bdecc`；文�
 | [`goldens/README.md`](goldens/README.md)                   | 差分金样：清单、来源、复现命令                      |
 | [`data/README.md`](data/README.md)                         | 随包数据说明                                        |
 | [`AGENTS.md`](AGENTS.md)                                   | 协作约定：流程 / 命名 / 代码与移植纪律              |
-| `crates/*/README.md`、`platform/*/README.md`               | 各 crate 与各平台目录的职责与现状（就地索引）       |
+| `crates/hux-scheme/*/README.md`、`platform/*/README.md`     | 各方案骨架与各平台目录的职责与现状（就地索引）      |
 
 ## 虎码信息汇总
 

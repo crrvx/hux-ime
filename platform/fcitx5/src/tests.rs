@@ -151,14 +151,10 @@ fn engine_enables_learning_store() {
         engine.engine.learning.store_ready(),
         "用户目录可用时学习库应就绪"
     );
-    assert!(
-        engine
-            .engine
-            .scheme
-            .learning_mode()
-            .starts_with("sentence-v2|rules="),
-        "学习 mode 由方案据配置自算"
-    );
+    // F14：mode 串对平台是**不透明**的（§5）——平台只承诺「原样使用方案自算的串」，
+    // 格式由方案自己的用例钉住（`tiger` 的 `learning_mode_follows_config_and_rules`）。
+    let mode = engine.engine.scheme.learning_mode();
+    assert!(!mode.is_empty(), "学习库就绪时 mode 串非空");
     assert!(
         dir.join(format!(
             "{}.userdb",
@@ -178,13 +174,10 @@ fn engine_applies_learning_after_key() {
     let mut engine = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
     engine.key(u32::from(b'a'), 0, false);
     assert!(engine.engine.learning.store_ready(), "学习库应保持就绪");
+    // F14：同上级——只看「非空」，不看具体格式（格式归方案自己的用例）。
     assert!(
-        engine
-            .engine
-            .scheme
-            .learning_mode()
-            .starts_with("sentence-v2|rules="),
-        "学习 mode 由方案据配置自算"
+        !engine.engine.scheme.learning_mode().is_empty(),
+        "学习库就绪时 mode 串非空"
     );
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -522,6 +515,31 @@ fn menu_paging_keys_are_not_shadowed_by_the_punctuation_branch() {
     COMMITS.lock().unwrap().clear();
     assert!(idle_engine.key(0x2d, 0, false), "空闲 `-` 由标点表消费");
     assert_eq!(COMMITS.lock().unwrap().clone(), vec!["-".to_string()]);
+
+    // ⑥ 显式 `Page_Up` **停在首页** ⇒ `paging` 标签仍置位，随后 `-` 必须走上翻页
+    //    （审计 F2：此前漏写标签，`-` 落标点分支把组合提前上屏）。
+    let mut home_engine = TestEngine::new(host(), fixture_dirs(), None, None);
+    for code in *b"ja" {
+        home_engine.key(u32::from(code), 0, false);
+    }
+    let home_page = last_update().3;
+    COMMITS.lock().unwrap().clear();
+    assert!(home_engine.key(0xff55, 0, false), "Page_Up 应被消费");
+    assert!(COMMITS.lock().unwrap().is_empty(), "Page_Up 不提交");
+    assert_eq!(last_update().3, home_page, "首页上翻归零高亮（留在首页）");
+    assert!(
+        home_engine.key(0x2d, 0, false),
+        "首页 Page_Up 后 `-` 应翻页"
+    );
+    assert!(
+        COMMITS.lock().unwrap().is_empty(),
+        "`paging` 标签置位后 `-` 不得提交组合（审计 F2）"
+    );
+    assert_eq!(
+        home_engine.session().context.input(),
+        b"ja",
+        "翻页不改动输入"
+    );
 }
 
 /// 数字直选（`DigitSelect`）：菜单可见时 1–9 直接上屏当前页候选，0=第 10 个。
@@ -609,7 +627,15 @@ fn digit_select_out_of_page_falls_through() {
 fn runtime_option_roundtrip_and_whitelist() {
     let _guard = serial();
     let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
-    for name in engine.runtime_options() {
+    // F10.2：循环体在返回空列表时一次都不执行 ⇒ 角色表整体失效会「空转通过」，
+    // 故先钉住长度（与 ABI 角色序同源）。
+    let roles = engine.runtime_options().to_vec();
+    assert_eq!(
+        roles.len(),
+        hux_cfg::roles::RUNTIME_OPTION_ROLES.len(),
+        "运行时选项表必须与 RUNTIME_OPTION_ROLES 等长：{roles:?}"
+    );
+    for name in &roles {
         let value = engine.option_value(name).expect("白名单选项");
         assert!(engine.set_option_value(name, !value), "{name} 应可设置");
         assert_eq!(engine.option_value(name), Some(!value));
@@ -850,6 +876,49 @@ fn uppercase_commits_composition_and_requests_forward() {
     );
 }
 
+/// 复核整改第 5 批 F13：`forward_after_commit` 是**粘性输出标志**，未知 / 已释放会话
+/// 不得沿用上一次按键的取值。此前 `with_session` 返回 `None` 时直接 `unwrap_or(false)`，
+/// 标志保留 ⇒ `hux_engine_key` 只回 `HUX_KEY_FORWARD_AFTER_COMMIT`（无 CONSUMED），
+/// 宿主会 `filterAndAccept` + `forwardKey` 一个并不存在的提交。
+#[test]
+fn unknown_session_does_not_reuse_the_sticky_forward_flag() {
+    let _guard = serial();
+    let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
+    // 先造出「提交 + 未消费」（组合中按大写字母）：此时转发位为真。
+    engine.key(u32::from(b'a'), 0, false);
+    engine.key(u32::from(b'b'), 0, false);
+    assert!(!engine.key(0x41, FCITX_SHIFT, false));
+    assert!(engine.forward_after_commit);
+    // 未知会话按键：必须清位（且不消费）。
+    let unknown = engine.session + 1000;
+    assert!(!engine.engine.key(unknown, u32::from(b'x'), 0, false));
+    assert!(
+        !engine.engine.forward_after_commit,
+        "未知会话按键不得沿用上一次的转发位"
+    );
+    // 候选点击路径同理（重新置位后再走未知会话）。
+    assert!(engine.key(u32::from(b'a'), 0, false));
+    assert!(engine.key(u32::from(b'b'), 0, false));
+    assert!(!engine.key(0x41, FCITX_SHIFT, false));
+    assert!(engine.forward_after_commit);
+    assert!(!engine.engine.select_candidate(unknown, 0));
+    assert!(
+        !engine.engine.forward_after_commit,
+        "未知会话的候选点击不得沿用上一次的转发位"
+    );
+    // 已释放会话同理。
+    assert!(engine.key(u32::from(b'a'), 0, false));
+    assert!(engine.key(u32::from(b'b'), 0, false));
+    assert!(!engine.key(0x41, FCITX_SHIFT, false));
+    let released = engine.session;
+    engine.engine.session_free(released);
+    assert!(!engine.engine.key(released, u32::from(b'x'), 0, false));
+    assert!(
+        !engine.engine.forward_after_commit,
+        "已释放会话按键不得沿用上一次的转发位"
+    );
+}
+
 #[test]
 fn idle_uppercase_does_not_request_forward() {
     let _guard = serial();
@@ -1037,10 +1106,25 @@ fn preedit_mode_variants() {
     assert!(!candidates.is_empty(), "候选不受影响");
 }
 
+/// FFI 用例的引擎指针：**显式临时用户目录**（复核整改第 5 批 F9）。
+///
+/// `hux_engine_new(std::ptr::null())` 会解析真实环境（`XDG_DATA_HOME`/`HOME`）并在
+/// `~/.local/share/fcitx5/hux/` 打开（必要时创建）学习库：本机 fcitx5 正在运行时会命中
+/// LevelDB 锁，且会污染/创建用户真实数据。此处用同一 `Engine`（`new_with_dirs`）显式注入
+/// 临时用户目录，其余 FFI 入口（apply_settings / status / session_new / key / free）照旧覆盖。
+fn ffi_engine(user_dir: PathBuf) -> *mut Engine {
+    Box::into_raw(Box::new(Engine::new_with_dirs(
+        host(),
+        fixture_dirs(),
+        None,
+        Some(user_dir),
+    )))
+}
+
 #[test]
 fn ffi_apply_settings_maps_lookup_keys() {
     let _guard = serial();
-    let engine = unsafe { hux_engine_new(std::ptr::null()) };
+    let engine = ffi_engine(temp_user_dir("ffi-lookup-keys"));
     assert!(!engine.is_null());
     let options = ffi_options();
     assert_eq!(unsafe { hux_engine_apply_settings(engine, &options) }, 1);
@@ -1059,7 +1143,7 @@ fn ffi_apply_settings_maps_lookup_keys() {
 #[test]
 fn ffi_apply_settings_maps_page_options() {
     let _guard = serial();
-    let engine = unsafe { hux_engine_new(std::ptr::null()) };
+    let engine = ffi_engine(temp_user_dir("ffi-page-options"));
     assert!(!engine.is_null());
     let options = ffi_options();
     assert_eq!(unsafe { hux_engine_apply_settings(engine, &options) }, 1);
@@ -1320,10 +1404,15 @@ fn preedit_keeps_segmented_codes_while_moving_caret() {
 #[test]
 fn ffi_roundtrip() {
     let _guard = serial();
-    let engine = unsafe { hux_engine_new(std::ptr::null()) };
+    let engine = ffi_engine(temp_user_dir("ffi-roundtrip"));
     assert!(!engine.is_null());
     let status = unsafe { hux_engine_status(engine) };
     assert!(!status.is_null());
+    // F9 的另一半：临时用户目录里确实建起了学习库（不再是真实 `~/.local/share/fcitx5/hux`）。
+    assert!(
+        unsafe { &*engine }.learning.store_ready(),
+        "临时用户目录的学习库应就绪"
+    );
     let session = unsafe { hux_engine_session_new(engine) };
     assert_ne!(session, 0, "会话创建应返回有效 id");
     let consumed = unsafe { hux_engine_key(engine, session, u32::from(b'a'), 0, 0) };
@@ -1418,6 +1507,134 @@ fn option_save_error_is_visible_in_status() {
         status.contains("options: Unable to save"),
         "保存失败应在状态串可见：{status}"
     );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// **运行期**学习库写入失败须进状态串（复核整改第 4 批 F6）。
+///
+/// 此前 `learning.error` 只在构造期读一次：打开失败可见，`confirm` 里的 `db.put` 失败
+/// （磁盘满 / 库被改成只读 / 锁异常）则完全静默，用户只看到「学习不生效」。
+/// LevelDB 的写失败无法在测试里稳定构造，故直接注入错误值再走一次按键路径——
+/// 守护的是 `finish → observe_learning_error → refresh_status` 这条接线：
+/// 去掉那次调用，本用例即失败（负向对照见 `_tmp/批次4-文档工具CI.md`）。
+#[test]
+fn learning_write_failure_reaches_the_status_string() {
+    let _guard = serial();
+    let dir = temp_user_dir("learning-error");
+    let mut engine = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
+    engine.key(u32::from(b'a'), 0, false);
+    let baseline = engine.engine.status.to_str().unwrap_or("").to_string();
+    assert!(
+        !baseline.contains("learning database write failed"),
+        "初始状态串不含写入错误：{baseline}"
+    );
+    engine.engine.learning.error = Some("learning database write failed".to_string());
+    engine.key(u32::from(b'b'), 0, false);
+    let status = engine.engine.status.to_str().unwrap_or("").to_string();
+    assert!(
+        status.contains("learning: learning database write failed"),
+        "运行期落库失败应进状态串：{status}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// 配置页绑到**无名字的 keysym**（媒体键）时该绑定会被丢弃 ⇒ 必须点名（复核整改第 4 批 F15）。
+///
+/// 反向路径：ABI 把 `keysym + 状态位` 经 `KeyEvent::repr()` 转成键名（`0x1008ff14`），
+/// `KeyEvent::from_repr` 不认；方案与 cfg 都在 `filter_map` 处静默丢。此处钉住
+/// 「可解析 ⇒ 无诊断；不可解析 ⇒ 状态串点名 ⇒ C++ 壳落日志」。
+#[test]
+fn unparsable_hotkey_binding_reaches_the_status_string() {
+    let _guard = serial();
+    let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
+    assert!(
+        !engine
+            .engine
+            .status
+            .to_str()
+            .unwrap_or("")
+            .contains("hotkeys:"),
+        "缺省设置不应有热键诊断"
+    );
+    // 正例：可解析的键名不产生诊断。
+    engine.engine.apply_settings(Settings {
+        page_up_keys: vec!["Page_Up".to_string(), "bracketleft".to_string()],
+        ..Default::default()
+    });
+    assert!(
+        !engine
+            .engine
+            .status
+            .to_str()
+            .unwrap_or("")
+            .contains("hotkeys:"),
+        "可解析的绑定不应有诊断"
+    );
+    // 负例：X11 `XF86AudioPlay` = 0x1008ff14，rime 键名表里没有名字。
+    engine.engine.apply_settings(Settings {
+        page_up_keys: vec!["Page_Up".to_string(), "0x1008ff14".to_string()],
+        reverse_lookup_character_keys: vec!["(unknown)".to_string()],
+        ..Default::default()
+    });
+    let status = engine.engine.status.to_str().unwrap_or("").to_string();
+    assert!(
+        status.contains("hotkeys: 忽略无法识别的绑定"),
+        "无法识别的绑定必须点名：{status}"
+    );
+    assert!(
+        status.contains("page_up_keys=0x1008ff14"),
+        "诊断须带角色与键名：{status}"
+    );
+    assert!(
+        status.contains("char_to_sound_shape_keys=(unknown)"),
+        "诊断须覆盖四项绑定：{status}"
+    );
+    // 改回可解析后诊断清空。
+    engine.engine.apply_settings(Settings {
+        page_up_keys: vec!["Page_Up".to_string()],
+        ..Default::default()
+    });
+    assert!(
+        !engine
+            .engine
+            .status
+            .to_str()
+            .unwrap_or("")
+            .contains("hotkeys:"),
+        "恢复后诊断应清空"
+    );
+}
+
+/// `hux_engine_status` 的指针契约（复核整改第 4 批 F8）：状态串在刷新时被**替换**，
+/// 契约是「每次调用取最新串，不得缓存指针」——故刷新后必须**重新调用**才能拿到新串。
+///
+/// 头文件此前写「随引擎存活」，与 `refresh_status` 换 `CString` 的实现不符；
+/// 现契约与实现一致，本用例把「重新调用即最新」钉住（旧指针按契约已失效，无法安全断言）。
+#[test]
+fn status_pointer_must_be_read_again_after_a_refresh() {
+    let _guard = serial();
+    let dir = temp_user_dir("status-pointer");
+    std::fs::create_dir_all(dir.join(hux_cfg::OPTIONS_FILE))
+        .expect("make options path a directory");
+    let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, Some(dir.clone()));
+    let read = |engine: &Engine| -> String {
+        let pointer = unsafe { hux_engine_status(engine) };
+        assert!(!pointer.is_null(), "状态串不应为 NULL");
+        unsafe { std::ffi::CStr::from_ptr(pointer) }
+            .to_string_lossy()
+            .into_owned()
+    };
+    let before = read(&engine);
+    assert!(!before.contains("options:"), "初始无选项错误：{before}");
+    let session = engine.session_new();
+    assert!(engine.set_option_value("tiger_sentence_early_commit", false));
+    engine.key(session, u32::from(b'a'), 0, false);
+    let after = read(&engine);
+    assert!(
+        after.contains("options: Unable to save"),
+        "刷新后重新调用必须读到新串：{after}"
+    );
+    assert_ne!(before, after, "状态串内容应随刷新变化");
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -1517,6 +1734,66 @@ fn scheme_config_roles_match_the_scheme() {
             .iter()
             .any(|note| note == "config: 缺少角色 high_freq_limit"),
         "改名后应报缺少角色：{notes:?}"
+    );
+}
+
+/// 配置袋诊断通道（审计 F7）：逐角色诊断必须**进状态串**，且真实装配路径无诊断。
+///
+/// 此前 `Config::parse` 对未知角色 / 类型不符一律 `unwrap_or` 静默回退：单侧改名或把
+/// `Count` 塞进开关角色，用户侧只表现为「设置没生效」，状态串里什么都没有。
+#[test]
+fn scheme_config_diagnostics_reach_the_status_string() {
+    let _guard = serial();
+    let mut engine = TestEngine::new(host(), fixture_dirs(), None, Some(temp_user_dir("cfgdiag")));
+    let status = engine.engine.status.to_str().unwrap_or("").to_string();
+    assert!(
+        !status.contains("config:"),
+        "真实装配路径不应有配置诊断：{status}"
+    );
+
+    // 类型不符：把 `Count` 装进开关角色 ⇒ 诊断进状态串（方案仍按缺省回退）。
+    let bad = crate::engine::scheme_config(&engine.engine.settings).with(
+        hux_cfg::roles::ROLE_LEARNING_ON_TAB,
+        hux_core::scheme::Value::Count(1),
+    );
+    engine.engine.apply_scheme_config(bad);
+    let status = engine.engine.status.to_str().unwrap_or("").to_string();
+    assert!(
+        status.contains("config: 角色 tab_learning 类型不符（期望 开关，实际 计数）"),
+        "类型不符必须可见：{status}"
+    );
+
+    // 缺角色：漏装 `page_size` ⇒ 同样点名（不静默当作页大小 0）。
+    let mut partial = hux_core::scheme::SchemeConfig::new();
+    for (role, value) in [
+        (
+            hux_cfg::roles::ROLE_HIGH_FREQ_LIMIT,
+            hux_core::scheme::Value::Count(1500),
+        ),
+        (
+            hux_cfg::roles::ROLE_MIN_RETAINED_INPUT_LENGTH,
+            hux_core::scheme::Value::Count(0),
+        ),
+    ] {
+        partial.set(role, value);
+    }
+    engine.engine.apply_scheme_config(partial);
+    let status = engine.engine.status.to_str().unwrap_or("").to_string();
+    assert!(
+        status.contains("config: 缺少角色 page_size"),
+        "漏装角色必须可见：{status}"
+    );
+
+    // 重新下发完整配置袋：诊断清空（状态串回到基线）。
+    let good = crate::engine::scheme_config(&engine.engine.settings).with(
+        hux_cfg::roles::ROLE_ALLOW_DUPLICATE_SINGLE,
+        hux_core::scheme::Value::Bool(true),
+    );
+    engine.engine.apply_scheme_config(good);
+    let status = engine.engine.status.to_str().unwrap_or("").to_string();
+    assert!(
+        !status.contains("config:"),
+        "恢复完整配置袋后不应残留诊断：{status}"
     );
 }
 
@@ -1655,7 +1932,7 @@ fn scheme_config_covers_every_declared_role() {
     );
     assert_eq!(
         bag.texts(hux_cfg::roles::ROLE_REVERSE_LOOKUP_PRONUNCIATION_KEYS),
-        settings.reverse_lookup_pronunciation_keys.as_slice()
+        Some(settings.reverse_lookup_pronunciation_keys.as_slice())
     );
     assert_eq!(
         bag.bool(hux_cfg::roles::ROLE_LEARNING_ON_TAB),
@@ -1683,21 +1960,24 @@ fn runtime_option_value_reaches_scheme_learning_mode() {
     let _guard = serial();
     let dir = temp_user_dir("duplicate-mode");
     let mut engine = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
-    assert!(
-        engine.engine.scheme.learning_mode().ends_with("dup=1"),
-        "设置缺省：单字重码组句开 → dup=1"
-    );
+    // F14：mode 串对平台不透明 ⇒ 只断言「随配置变化而变化」与「重启后一致」，
+    // 具体格式（`dup=1` / `dup=0` 的映射）由方案自己的用例钉住
+    // （`tiger` 的 `learning_mode_follows_config_and_rules`）。
+    let default_mode = engine.engine.scheme.learning_mode().to_string();
+    assert!(!default_mode.is_empty(), "学习开启时 mode 串非空");
     assert!(engine.set_option_value("tiger_sentence_allow_duplicate_single", false));
-    assert!(
-        engine.engine.scheme.learning_mode().ends_with("dup=0"),
-        "运行时关掉后方案自算的 mode 随之变化"
+    let disabled_mode = engine.engine.scheme.learning_mode().to_string();
+    assert_ne!(
+        disabled_mode, default_mode,
+        "运行时关掉单字重码后方案自算的 mode 串必须随之变化"
     );
     // 持久化值经「存储 → 会话 → 配置袋」在按键路径生效（重启后同样）。
     let mut restarted = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
     restarted.key(u32::from(b'a'), 0, false);
-    assert!(
-        restarted.engine.scheme.learning_mode().ends_with("dup=0"),
-        "options.yaml 的值优先于设置缺省"
+    assert_eq!(
+        restarted.engine.scheme.learning_mode(),
+        disabled_mode,
+        "options.yaml 的值优先于设置缺省（重启后 mode 与关掉时一致）"
     );
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -1844,4 +2124,153 @@ fn schema_defaults_match_settings_defaults() {
         checked += 1;
     }
     assert_eq!(checked, 17, "应逐项核对 17 个引擎设置");
+}
+
+/// 反向守护（复核整改 F10.3）：上面那条测试只保证「schema 里出现的项与 `Settings` 一致」，
+/// 是**单向**的——新增一个 `Settings` 字段而不写进 `shell/hux.cpp` 的 schema 不会失败。
+/// 本测试补上另一向：`Settings` 的每个字段都必须在 schema 中声明，反之 schema 里除
+/// `HOST_ONLY_PATHS`（只服务宿主显示、不经引擎的项）外不得出现引擎不认识的路径。
+///
+/// 表内每项都用 `offset_of!` 引用真实字段名 ⇒ **改名字段即编译失败**；`FIELDS.len()` 被钉住
+/// ⇒ 新增字段必须同步本表与配置页（否则此测试先红）。这正是 F7/F10.3 要堵的漂移入口。
+#[test]
+fn every_settings_field_is_declared_in_the_schema() {
+    // （字段名，schema 路径名，偏移）。顺序 = `Settings` 声明序。
+    const FIELDS: &[(&str, &str, usize)] = &[
+        (
+            "early_commit",
+            "EarlyCommit",
+            std::mem::offset_of!(Settings, early_commit),
+        ),
+        (
+            "early_commit_to_preedit",
+            "EarlyCommitToPreedit",
+            std::mem::offset_of!(Settings, early_commit_to_preedit),
+        ),
+        (
+            "allow_duplicate_single",
+            "AllowDuplicateSingle",
+            std::mem::offset_of!(Settings, allow_duplicate_single),
+        ),
+        (
+            "full_shape",
+            "FullShape",
+            std::mem::offset_of!(Settings, full_shape),
+        ),
+        (
+            "ascii_punct",
+            "AsciiPunct",
+            std::mem::offset_of!(Settings, ascii_punct),
+        ),
+        (
+            "learning_on_tab",
+            "TabLearning",
+            std::mem::offset_of!(Settings, learning_on_tab),
+        ),
+        (
+            "digit_select",
+            "DigitSelect",
+            std::mem::offset_of!(Settings, digit_select),
+        ),
+        (
+            "page_cycle",
+            "PageCycle",
+            std::mem::offset_of!(Settings, page_cycle),
+        ),
+        (
+            "high_freq_limit",
+            "HighFreqLimit",
+            std::mem::offset_of!(Settings, high_freq_limit),
+        ),
+        (
+            "page_size",
+            "PageSize",
+            std::mem::offset_of!(Settings, page_size),
+        ),
+        (
+            "min_retained_input_length",
+            "MinRetainedRawLength",
+            std::mem::offset_of!(Settings, min_retained_input_length),
+        ),
+        (
+            "candidate_layout",
+            "CandidateLayout",
+            std::mem::offset_of!(Settings, candidate_layout),
+        ),
+        (
+            "preedit_mode",
+            "PreeditMode",
+            std::mem::offset_of!(Settings, preedit_mode),
+        ),
+        (
+            "page_up_keys",
+            "PageUpKey",
+            std::mem::offset_of!(Settings, page_up_keys),
+        ),
+        (
+            "page_down_keys",
+            "PageDownKey",
+            std::mem::offset_of!(Settings, page_down_keys),
+        ),
+        (
+            "reverse_lookup_pronunciation_keys",
+            "SoundToCharShapeKey",
+            std::mem::offset_of!(Settings, reverse_lookup_pronunciation_keys),
+        ),
+        (
+            "reverse_lookup_character_keys",
+            "CharToSoundShapeKey",
+            std::mem::offset_of!(Settings, reverse_lookup_character_keys),
+        ),
+    ];
+
+    // 只服务宿主显示、不经引擎的 schema 项（与上一条测试的 `_ => continue` 一致）。
+    const HOST_ONLY_PATHS: &[&str] = &["PanelPreedit"];
+
+    assert_eq!(
+        FIELDS.len(),
+        17,
+        "Settings 字段数变化：新增/删除字段必须同步本表与 shell/hux.cpp 的 schema（或将新增项登记为宿主显示项）"
+    );
+    // 字段顺序由 `repr(Rust)` 决定（编译器会重排），故**不假设**「声明序 == 偏移序」；
+    // 只要求偏移互异且落在结构体内——重复登记或张冠李戴都会被抓住。
+    let mut offsets: Vec<usize> = FIELDS.iter().map(|(_, _, offset)| *offset).collect();
+    let size = std::mem::size_of::<Settings>();
+    assert!(
+        offsets.iter().all(|offset| *offset < size),
+        "FIELDS 中有偏移越界项（size_of::<Settings>() = {size}）"
+    );
+    offsets.sort_unstable();
+    offsets.dedup();
+    assert_eq!(offsets.len(), FIELDS.len(), "FIELDS 中两个字段指向同一偏移");
+
+    let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/shell/hux.cpp"))
+        .expect("read hux.cpp");
+    let mut declared: Vec<&str> = source
+        .split(".path{\"")
+        .skip(1)
+        .filter_map(|part| part.split('"').next())
+        .collect();
+    declared.sort_unstable();
+    declared.dedup();
+
+    for (field, path, _) in FIELDS {
+        assert!(
+            declared.contains(path),
+            "Settings::{field} 未在 shell/hux.cpp 的 schema 中声明（新增字段须同步配置页，\
+             或在 HOST_ONLY_PATHS 登记为宿主显示项）"
+        );
+    }
+    let mut engine_paths: Vec<&str> = declared
+        .iter()
+        .copied()
+        .filter(|path| !HOST_ONLY_PATHS.contains(path))
+        .collect();
+    engine_paths.sort_unstable();
+    let mut expected: Vec<&str> = FIELDS.iter().map(|(_, path, _)| *path).collect();
+    expected.sort_unstable();
+    assert_eq!(
+        engine_paths, expected,
+        "schema 路径集合与 Settings 字段表不一致（双向守护：两侧都必须有对方）"
+    );
 }

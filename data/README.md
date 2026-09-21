@@ -5,6 +5,25 @@
 
 运行时数据（随包安装到 `…/hux/`）。
 
+## 安装清单：`MANIFEST`（单一来源）
+
+`MANIFEST` 每行一个仓库相对路径（`#` 行是注释），是**装 / 卸 / CMake 三处共用的唯一清单**：
+
+- `platform/fcitx5/CMakeLists.txt` 的 `install(FILES …)` 按它安装（**只用 `cmake --install`
+  也能得到完整引擎**——此前 CMake 不装数据，只走 CMake 会得到「无词库」引擎；见
+  [`../platform/fcitx5/README.md`](../platform/fcitx5/README.md) 与复核整改第 4 批 F5）；
+- `install.sh` 装后逐条核对落盘（缺任一即失败并给出提示）；
+- `uninstall.sh` 无 `--purge` 时按同一清单删除（此前枚举 7 个文件名而安装侧用 glob，
+  `data/` 增删文件就会残留）。
+
+一致性自检：`bash tools/checks/check_data_manifest.sh`（CI 已接入；`data/` 里
+`tiger_sentence.*` 与 `symbols.yaml` 必须全部登记在清单里）。**清单保持纯 ASCII**：CMake 的
+`file(STRINGS)` 默认编码会破坏非 ASCII 字节，把中文注释行拆成假文件名（configure 期即报错）。
+
+不随包：n-gram 模型（用户自取；`uninstall.sh --purge` 才删）与本文件。
+
+## 文件
+
 - 码表四件套 `tiger_sentence.{codes,char_ranks,full_code_whitelist,supplement}.txt`：取自上游
   [`tiger-sentense-rime`](https://github.com/lvyww/tiger-sentense-rime)（GPL-3.0），与测试夹具
   `goldens/lexicon/` 同内容（`supplement.txt` 仅注释中的方案名由「虎整句」改为「虎句」；

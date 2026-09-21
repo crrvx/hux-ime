@@ -111,7 +111,11 @@ pub struct DiffEvent {
 #[derive(Clone)]
 pub struct LearningIndex {
     pub codes: Vec<String>,
+    /// 构建索引的时刻（平台用作 epoch；参照 `M.*` 的 `now` 元数据）。
     pub now: f64,
+    /// **参照遗留元数据**：`M.runtime_index` 记录的「最大事件时间」，
+    /// `update_index` 原样带过；B4 删掉时间衰减后本仓无消费者（审计 F9，
+    /// 保留以维持与参照 `runtime_index` 的字段同构，便于后续差分核对）。
     pub future: f64,
     partitions: Option<HashMap<String, HashMap<String, Group>>>,
     exact: Option<HashMap<String, Summary>>,
@@ -361,10 +365,12 @@ fn context_valid(context: &str) -> bool {
     if context.is_empty() {
         return true;
     }
-    chars(context).map(|list| !list.is_empty()).unwrap_or(false)
-        && chars(context).map(|list| list.len()).unwrap_or(usize::MAX) <= 2
+    // 一次解码复用（此前对同一串调了两次 `chars`，审计 F13）。
+    chars(context).is_some_and(|list| !list.is_empty() && list.len() <= 2)
 }
 
+/// 参照 `M.build` / `M.runtime_index` 的共用事件过滤（`build_valid` 曾是其同义包装，
+/// 已按 §8 清理口径删除，审计 F8）。
 fn event_valid(e: &Event) -> bool {
     mode_valid(&e.mode)
         && code_valid(&e.code)
@@ -397,11 +403,6 @@ fn score_of(summary: Option<&Summary>, context: &str) -> f64 {
             .general
             .max(summary.exact.get(context).copied().unwrap_or(0.0)),
     }
-}
-
-/// 参照 `M.build` 的事件过滤。
-fn build_valid(e: &Event) -> bool {
-    event_valid(e)
 }
 
 /// 参照 `append_group`：把一条事件并入分区（同组竞争项各 ×0.25，命中项等级 +1）。
@@ -450,7 +451,7 @@ impl LearningIndex {
     pub fn build(events: &[Event], now: f64) -> Self {
         let mut groups: HashMap<String, Group> = HashMap::new();
         for e in events {
-            if !build_valid(e) {
+            if !event_valid(e) {
                 continue;
             }
             let k = key(&[&e.code, &e.mode, &e.context]);

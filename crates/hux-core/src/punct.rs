@@ -10,7 +10,9 @@
 //!
 //! `full_shape` 选项切换两张表；`ascii_punct` 选项关闭标点（由宿主链判定）。
 
-use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::path::Path;
+use std::path::PathBuf;
 
 use hashbrown::HashMap;
 use yaml_rust2::{Yaml, YamlLoader};
@@ -77,7 +79,9 @@ impl PunctTable {
         (None, last_error)
     }
 
-    /// 读取单个文件。
+    /// 读取单个文件（**仅本模块单测使用**；生产路径走 [`PunctTable::load_first`]，
+    /// 后者把「空表 / 解析失败」也算失败并继续探测下一个路径——审计 F10）。
+    #[cfg(test)]
     pub fn load(path: &Path) -> Result<Self, String> {
         let content = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
         Self::parse(&content)

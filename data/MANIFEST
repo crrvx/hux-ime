@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Packaged runtime data (one repo-relative path per line; blank lines and `#` lines are comments).
+# Single source of truth for install.sh / uninstall.sh / platform/fcitx5/CMakeLists.txt --
+# see data/README.md (Chinese) and tools/checks/check_data_manifest.sh (self-check, wired into CI).
+#
+# Keep this file ASCII-only: CMake's `file(STRINGS)` without an explicit ENCODING mangles
+# non-ASCII bytes and would turn a comment line into a bogus "missing file" entry.
+#
+# Not listed here: the n-gram model (fetched by the user; removed only by `uninstall.sh --purge`)
+# and data/README.md.
+data/tiger_sentence.codes.txt
+data/tiger_sentence.char_ranks.txt
+data/tiger_sentence.full_code_whitelist.txt
+data/tiger_sentence.supplement.txt
+data/tiger_sentence.lexical.bin
+data/tiger_sentence.pinyin.bin.gz
+data/symbols.yaml

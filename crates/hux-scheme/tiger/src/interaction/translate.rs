@@ -165,6 +165,16 @@ pub fn translate(
 }
 
 /// 分段常量（参照 schema `speller/alphabet|initials|delimiter`；`finals` 未设置）。
+///
+/// `delimiter` 追踪**反查分支尖端 `92a0b54`** 的 `" '"`（主干 pin `abad411` 为 `" "`）：
+/// 撇号按音节分隔符处理 ⇒ 段内 `'` 之后必须是首字母，数字/`;` 在此断开
+/// （本仓 `speller/finals` 未设置，故只有「断段」效果，不做真正的音节重拼）。
+///
+/// 该口径与主干 pin 的 `key_sequence` 金样在「`'` + 数字/`;`」序列上**确有可见差异**：
+/// 本仓末段是 raw 段（无菜单）⇒ `Up`/`Down`/`Page_*` 不被消费，上游主干单段 abc ⇒ 消费。
+/// 已按期望值登记在 `tests/key_sequence_differential.rs` 的 `DEVIATIONS`
+/// （种类 `BranchPinDelimiter`，用例 `apostrophe_digit_page`/`apostrophe_semicolon_page`），
+/// 理由与回归做法见 `docs/refactor.md` §8「delimiter pin 差异」。
 pub(crate) const SEGMENTATION_ALPHABET: &str = "zyxwvutsrqponmlkjihgfedcba;';0123456789~";
 pub(crate) const SEGMENTATION_INITIALS: &str = "abcdefghijklmnopqrstuvwxyz~";
 pub(crate) const SEGMENTATION_DELIMITER: &str = " '";

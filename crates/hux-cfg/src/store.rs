@@ -4,6 +4,11 @@
 //! 选项持久化（参照 `M.options`）：主文件 `tiger_sentence.options.yaml`，
 //! 缺失键回退 `<user dir>/user.yaml` 的 `var/option/<name>`（只读）；
 //! 保存失败写入属性 `tiger_sentence_options_error`。
+//!
+//! 回退**只对已声明的缺省生效**：`sync` 按 `store_defaults` 的角色表遍历，
+//! 因此 legacy 文档里出现但未纳入该表的键（例：宿主自持的 `ascii_punct`）会被读入
+//! `values` 却**不会**作用到会话上——宿主标准项由宿主自身维护，方案/内核不接管。
+//! 若将来要让某个键也走持久化，须先把角色加入 `store_defaults`（否则等同死读）。
 
 use hashbrown::HashMap;
 use std::path::{Path, PathBuf};

@@ -72,12 +72,69 @@ pub struct OptionDecl {
 /// 方案配置袋的取值：小枚举，覆盖「开关 / 计数 / 文本 / 文本列表」四类。
 ///
 /// **契约不解释取值含义**，只保证类型可携带；含义由方案的配置解析决定。
+/// `Text` 目前无角色使用（通用容器词汇，见 `docs/refactor.md` §8①），但由
+/// [`SchemeConfig::require_text`] 提供服务，仍是活契约的一部分。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Value {
     Bool(bool),
     Count(usize),
     Text(String),
     Texts(Vec<String>),
+}
+
+impl Value {
+    /// 取值类型的中文名（诊断文案用）。
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Bool(_) => "开关",
+            Self::Count(_) => "计数",
+            Self::Text(_) => "文本",
+            Self::Texts(_) => "文本列表",
+        }
+    }
+}
+
+/// 配置袋取值的**诊断**：角色缺失 / 类型不符（审计 F7）。
+///
+/// `bool/count/text/texts` 用 `None` 同时表示「缺角色」与「类型不符」，调用方无从区分、
+/// 也无从上报；[`SchemeConfig::require_bool`] 一族返回本类型，方案据此把诊断回给平台
+/// （[`Scheme::apply_config`] 的 `Err`），平台并入状态串（`config:` 前缀，与装配期
+/// 角色集合诊断同风格）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ConfigError {
+    /// 角色未装配（装配方漏装或单侧改名）。
+    Missing { role: &'static str },
+    /// 角色已装配但类型不符（例如把 `Count` 装进开关角色）。
+    TypeMismatch {
+        role: &'static str,
+        expected: &'static str,
+        found: &'static str,
+    },
+}
+
+impl ConfigError {
+    /// 出问题的角色名。
+    pub fn role(&self) -> &'static str {
+        match self {
+            Self::Missing { role } | Self::TypeMismatch { role, .. } => role,
+        }
+    }
+}
+
+impl std::fmt::Display for ConfigError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Missing { role } => write!(formatter, "缺少角色 {role}"),
+            Self::TypeMismatch {
+                role,
+                expected,
+                found,
+            } => write!(
+                formatter,
+                "角色 {role} 类型不符（期望 {expected}，实际 {found}）"
+            ),
+        }
+    }
 }
 
 /// 方案配置袋：**角色 → 值**（平台按角色装配，方案按角色解释）。
@@ -141,11 +198,71 @@ impl SchemeConfig {
         }
     }
 
-    /// 角色对应的文本列表（类型不符或未装配为空切片）。
-    pub fn texts(&self, role: &str) -> &[String] {
+    /// 角色对应的文本列表（类型不符或未装配为 `None`）。
+    ///
+    /// 与 `bool/count/text` 对齐：不再把「类型不符」退化成空切片——空列表也可能是
+    /// **合法**装配值，二者必须可区分（审计 F7）。
+    pub fn texts(&self, role: &str) -> Option<&[String]> {
         match self.get(role) {
-            Some(Value::Texts(value)) => value,
-            _ => &[],
+            Some(Value::Texts(value)) => Some(value),
+            _ => None,
+        }
+    }
+
+    // ---------------------------------------------------------- 诊断式读取
+    //
+    // `bool/count/text/texts` 的 `None` 无法区分「缺角色」与「类型不符」；
+    // 方案解析配置时一律走 `require_*`，把 [`ConfigError`] 回给平台（审计 F7）。
+
+    /// 角色对应的开关值；缺失 / 类型不符即 [`ConfigError`]。
+    pub fn require_bool(&self, role: &'static str) -> Result<bool, ConfigError> {
+        match self.get(role) {
+            Some(Value::Bool(value)) => Ok(*value),
+            Some(value) => Err(ConfigError::TypeMismatch {
+                role,
+                expected: "开关",
+                found: value.kind(),
+            }),
+            None => Err(ConfigError::Missing { role }),
+        }
+    }
+
+    /// 角色对应的计数值；缺失 / 类型不符即 [`ConfigError`]。
+    pub fn require_count(&self, role: &'static str) -> Result<usize, ConfigError> {
+        match self.get(role) {
+            Some(Value::Count(value)) => Ok(*value),
+            Some(value) => Err(ConfigError::TypeMismatch {
+                role,
+                expected: "计数",
+                found: value.kind(),
+            }),
+            None => Err(ConfigError::Missing { role }),
+        }
+    }
+
+    /// 角色对应的文本；缺失 / 类型不符即 [`ConfigError`]。
+    pub fn require_text(&self, role: &'static str) -> Result<&str, ConfigError> {
+        match self.get(role) {
+            Some(Value::Text(value)) => Ok(value),
+            Some(value) => Err(ConfigError::TypeMismatch {
+                role,
+                expected: "文本",
+                found: value.kind(),
+            }),
+            None => Err(ConfigError::Missing { role }),
+        }
+    }
+
+    /// 角色对应的文本列表；缺失 / 类型不符即 [`ConfigError`]。
+    pub fn require_texts(&self, role: &'static str) -> Result<&[String], ConfigError> {
+        match self.get(role) {
+            Some(Value::Texts(value)) => Ok(value),
+            Some(value) => Err(ConfigError::TypeMismatch {
+                role,
+                expected: "文本列表",
+                found: value.kind(),
+            }),
+            None => Err(ConfigError::Missing { role }),
         }
     }
 
@@ -173,7 +290,12 @@ pub trait Scheme {
     fn learning_mode(&self) -> &str;
 
     /// 应用方案配置（已存在会话同步生效；上下文属性在下次按键 / 重建时惰性同步）。
-    fn apply_config(&mut self, config: &SchemeConfig);
+    ///
+    /// 返回该次装配的诊断（[`ConfigError`]：角色缺失 / 类型不符）：方案已按**缺省值**
+    /// 回退，平台须把诊断并入状态串（`config:` 前缀，与装配期的角色集合诊断同风格，
+    /// 审计 F7）——否则「角色名拼错 / 类型不符」在运行期完全静默。
+    /// `Ok(())` = 每个角色都可解析。
+    fn apply_config(&mut self, config: &SchemeConfig) -> Result<(), Vec<ConfigError>>;
     /// 宿主链选项（方案据配置派生；平台不解释其含义）。
     fn host_options(&self) -> &HostOptions;
 
@@ -259,13 +381,62 @@ mod tests {
         assert_eq!(config.bool("count"), None);
         assert_eq!(config.text("texts"), None);
         assert_eq!(config.text("text"), Some("abc"));
-        assert_eq!(config.texts("texts"), ["k".to_string()].as_slice());
-        // 未装配与未知角色一律 `None` / 空切片（回退语义由方案决定）。
+        assert_eq!(config.texts("texts"), Some(["k".to_string()].as_slice()));
+        // 未装配与未知角色一律 `None`（回退语义由方案决定）。
         assert_eq!(config.text("missing"), None);
         assert_eq!(config.count("missing"), None);
-        assert!(config.texts("missing").is_empty());
+        assert_eq!(config.texts("missing"), None);
         assert!(config.get("missing").is_none());
+        // 「类型不符」与「空列表」必须可区分（`texts` 不再退化成空切片，审计 F7）。
+        assert_eq!(config.texts("switch"), None);
+        let empty = SchemeConfig::new().with("empty", Value::Texts(Vec::new()));
+        assert_eq!(empty.texts("empty"), Some([].as_slice()));
         // 袋的 `Default` 是**空袋**（不是「全零字段」）：缺角色的回退由方案解析决定。
         assert!(SchemeConfig::default().roles().next().is_none());
+    }
+
+    /// 诊断式读取：`require_*` 把「缺角色」与「类型不符」区分开（审计 F7）。
+    #[test]
+    fn scheme_config_require_reports_missing_and_mismatch() {
+        let config = SchemeConfig::new()
+            .with("switch", Value::Bool(true))
+            .with("count", Value::Count(3))
+            .with("text", Value::Text("abc".to_string()))
+            .with("texts", Value::Texts(vec!["k".to_string()]));
+        assert_eq!(config.require_bool("switch"), Ok(true));
+        assert_eq!(config.require_count("count"), Ok(3));
+        assert_eq!(config.require_text("text"), Ok("abc"));
+        assert_eq!(
+            config.require_texts("texts"),
+            Ok(["k".to_string()].as_slice())
+        );
+        // 缺角色 vs 类型不符：变体不同，文案不同，角色可取出。
+        let missing = config.require_bool("absent").expect_err("缺角色");
+        assert_eq!(missing, ConfigError::Missing { role: "absent" });
+        assert_eq!(missing.role(), "absent");
+        assert_eq!(missing.to_string(), "缺少角色 absent");
+        let mismatch = config.require_bool("count").expect_err("类型不符");
+        assert_eq!(
+            mismatch,
+            ConfigError::TypeMismatch {
+                role: "count",
+                expected: "开关",
+                found: "计数",
+            }
+        );
+        assert_eq!(mismatch.role(), "count");
+        assert_eq!(
+            mismatch.to_string(),
+            "角色 count 类型不符（期望 开关，实际 计数）"
+        );
+        // 类型名的中文口径覆盖四类取值。
+        for (value, kind) in [
+            (Value::Bool(true), "开关"),
+            (Value::Count(1), "计数"),
+            (Value::Text("x".to_string()), "文本"),
+            (Value::Texts(vec!["x".to_string()]), "文本列表"),
+        ] {
+            assert_eq!(value.kind(), kind);
+        }
     }
 }

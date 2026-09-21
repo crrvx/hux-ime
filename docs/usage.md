@@ -56,18 +56,21 @@ fcitx5 -r -d  # 或以所在发行版的方式重启
 
 安装产物：
 
-- `/usr/lib/fcitx5/libhux.so`
+- `/usr/lib/fcitx5/libhux.so`（或发行版 libdir，如 Fedora 的 `/usr/lib64/fcitx5/libhux.so`）
 - `/usr/share/fcitx5/{addon,inputmethod}/hux.conf`
+- `/usr/share/fcitx5/hux/`：**随包数据**（`data/MANIFEST` 列出的码表四件套、词先验位图、
+  音反查索引、标点表）——自复核整改第 4 批 F5 起由 `cmake --install` 一并安装，
+  与 `install.sh` 装出的布局一致；此前只有 `install.sh` 装数据，只走 CMake 会得到**无词库引擎**。
 
-随包数据安装到 fcitx5 数据目录： \
-（data/：码表四件套、词先验位图、音反查索引、标点表）
+数据也可放到用户级目录（引擎按「用户目录 → 系统目录」查找）：
 
 ```sh
 mkdir -p ~/.local/share/fcitx5/hux/models
 cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
 ```
 
-也可装到系统级 `/usr/share/fcitx5/hux/`。
+同样可装到系统级 `/usr/share/fcitx5/hux/`（`install.sh` 的做法：`data/MANIFEST` 里的文件
+逐条核对）。
 
 [n-gram 模型](https://github.com/lvyww/tiger-sentense-rime/releases/tag/model) 不随包。
 放入用户级或系统级目录即可。
@@ -154,3 +157,16 @@ rm -rf ~/.local/share/fcitx5/hux \
 # 重启
 fcitx5 -r -d  # 或以发行版所支持的方式
 ```
+
+> 上面的 `rm -rf /usr/share/fcitx5/hux` 会连**用户自取**的 n-gram 模型一起删掉，而
+> `./uninstall.sh`（不带 `--purge`）只删随包数据、保留 `models/`。若要手工卸载又保留模型，
+> 只删 `data/MANIFEST` 列出的文件（`tiger_sentence.*` 与 `symbols.yaml`）：
+>
+> ```sh
+> while IFS= read -r entry; do
+>     case "$entry" in ''|'#'*) continue ;; esac
+>     sudo rm -f "/usr/share/fcitx5/hux/$(basename "$entry")"
+> done < data/MANIFEST
+> ```
+>
+> 插件库目录同理兼容 `lib64`：`/usr/lib64/fcitx5/libhux.so`（Fedora 等）。

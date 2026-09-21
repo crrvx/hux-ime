@@ -26,13 +26,37 @@ PIN="${PIN:-92a0b54b53114e7e5aa6a1ff48efa95db0e21f9c}"
 OUT="${1:-$ROOT/goldens/sound_to_char_shape.tsv.gz}"
 CASES="${CASES:-$ROOT/tools/cases/sound_to_char_shape_cases.txt}"
 FIXTURE="$ROOT/goldens/sound_to_char_shape"
+KEYSEQ_FIXTURE="$ROOT/goldens/key_sequence"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/tiger-pinyin-XXXXXX")"
 WT="$WORK/ref"
-trap 'git -C "$REF" worktree remove --force "$WT" 2>/dev/null || true; rm -rf "$WORK"' EXIT
+trap 'git -C "$REF" worktree remove --force "$WT" 2>/dev/null || true; rm -f "$OUT.tmp.$$"; rm -rf "$WORK"' EXIT
 user="$WORK/user"
 shared="$WORK/shared"
-mkdir -p "$user/lua" "$shared"
+stage="$WORK/stage"
+mkdir -p "$user/lua" "$shared" "$stage"
+
+# 夹具护栏（M3）：入库夹具不得被生成器当副作用重写。
+# 只做「逐字节比对」这一件事（不删传入文件——它可能是 pin 工作区里的真实文件）：
+# 一致才继续，入库文件保持原样不落盘；不一致即失败，并区分两种成因：
+# 上游 pin 变化（须同步更新金样与夹具）或夹具漂移（应还原）。
+# 用法：guard_fixture <本次生成的临时产物> <入库文件> <说明>
+guard_fixture() {
+    local staged="$1" committed="$2" what="$3"
+    if [ ! -f "$committed" ]; then
+        echo "生成失败：入库夹具缺失：$committed（$what）" >&2
+        exit 1
+    fi
+    if ! cmp -s "$staged" "$committed"; then
+        echo "生成失败：$what 与入库夹具不一致（护栏拦下，未写入任何入库文件）" >&2
+        echo "  入库：$committed  sha256 $(sha256sum "$committed" | cut -d' ' -f1)" >&2
+        echo "  本次：$staged  sha256 $(sha256sum "$staged" | cut -d' ' -f1)" >&2
+        echo "  成因二选一：①参照 pin $PIN 的对应源文件已变（上游推进）——须同步更新金样与夹具，" >&2
+        echo "  不能由生成器静默覆盖；②入库夹具被本地改动（夹具漂移）——应还原夹具。" >&2
+        exit 1
+    fi
+    echo "夹具一致（入库文件未改写）：$what -> $committed" >&2
+}
 
 # pin 树（detached worktree，不触碰参照仓库的分支/引用）。
 git -C "$REF" worktree add --detach --force "$WT" "$PIN" >/dev/null
@@ -57,12 +81,21 @@ cp "$WT/PY_c.schema.yaml" "$user/PY_c.schema.yaml"
 # 夹具（入库；探针与 Rust 重放共用）。
 cp "$FIXTURE/PY_c.dict.yaml" "$user/PY_c.dict.yaml"
 cp "$FIXTURE/tiger_sentence.codes.txt" "$user/tiger_sentence.codes.txt"
-cp "$ROOT/goldens/key_sequence/symbols.yaml" "$FIXTURE/symbols.yaml"
+
+# 标点表同源断言（M3）：探针输入（pin $PIN 的 symbols.yaml）、音反查夹具、键序列夹具
+# 必须逐字节相同——原先这里是 `cp 键序列夹具 → 音反查夹具`，一旦上游/pin 一变就会
+# 静默改写**另一个金样**的夹具。
+guard_fixture "$WT/symbols.yaml" "$FIXTURE/symbols.yaml" "标点表 symbols.yaml（pin $PIN）"
+guard_fixture "$KEYSEQ_FIXTURE/symbols.yaml" "$FIXTURE/symbols.yaml" \
+    "标点表 symbols.yaml（须等于 goldens/key_sequence/symbols.yaml）"
 
 # 音反查索引夹具：由小 PY_c 生成（Rust 重放用）。
+# 先写临时文件，再与入库文件逐字节比对，一致则保持入库文件不变（M3）。
 python3 "$ROOT/tools/generators/gen_pinyin_index.py" \
     --source "$FIXTURE/PY_c.dict.yaml" \
-    --out "$FIXTURE/tiger_sentence.pinyin.bin"
+    --out "$stage/tiger_sentence.pinyin.bin"
+guard_fixture "$stage/tiger_sentence.pinyin.bin" "$FIXTURE/tiger_sentence.pinyin.bin" \
+    "音反查索引 tiger_sentence.pinyin.bin（gen_pinyin_index.py）"
 
 # 选项：与键序列夹具同构；页大小用 schema 默认（5，与 core host::DEFAULT_PAGE_SIZE 一致），
 # 翻页用例据此覆盖第 2/3 页候选。
@@ -82,8 +115,12 @@ recognizer:
   patterns: {}
 YAML
 
+# 插件缺失时显式报错：`set -e` 下裸 `test -f` 会静默退出，无从诊断（M7）。
 plugin="${LUA_PLUGIN:-/usr/lib/rime-plugins/librime-lua.so}"
-test -f "$plugin"
+if [ ! -f "$plugin" ]; then
+    echo "生成失败：缺少 librime-lua 插件：$plugin（可用 LUA_PLUGIN 覆盖）" >&2
+    exit 1
+fi
 g++ -std=c++17 -O2 "$ROOT/tools/probes/rime_sequence_probe.cpp" -lrime -ldl -o "$WORK/probe"
 
 lua_sha="$(sha256sum "$WT/lua/tiger_sentence.lua" | cut -d' ' -f1)"

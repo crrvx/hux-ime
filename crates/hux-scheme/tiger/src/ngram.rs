@@ -13,7 +13,7 @@ use hux_core::cache::{Columns, Fifo};
 use memmap2::Mmap;
 use std::collections::VecDeque;
 use std::fs::File;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::rc::Rc;
 
 pub const BOS: &str = "\u{2}";
@@ -77,6 +77,19 @@ fn le_u64(data: &[u8], offset: usize) -> u64 {
 
 fn le_f32(data: &[u8], offset: usize) -> f32 {
     f32::from_le_bytes(data[offset..offset + 4].try_into().expect("bounds checked"))
+}
+
+/// 缓存上限校验：`Fifo::new` / `Columns::new` 要求上限 ≥ 1（否则 `assert!` panic），
+/// `load` 与 `configure_cache` 两条入口共用同一口径（复核整改 3b / A5）。
+fn validate_limits(limits: Limits) -> Result<()> {
+    if limits.page_bytes < 1
+        || limits.context_entries < 1
+        || limits.bigram_entries < 1
+        || limits.index_pages < 1
+    {
+        bail!("invalid model cache limits");
+    }
+    Ok(())
 }
 
 /// 对照 Lua `read_at`：越界即“truncated mobile n-gram”。
@@ -502,7 +515,6 @@ impl CacheStatus {
 }
 
 pub struct MobileModel {
-    path: PathBuf,
     file_size: u64,
     map: Mmap,
     unigram_values: HashMap<i64, f64>,
@@ -514,7 +526,6 @@ pub struct MobileModel {
     bigram: BigramState,
     limits: Limits,
     resident_index_bytes: u64,
-    source_index_bytes: u64,
 }
 
 impl MobileModel {
@@ -547,7 +558,10 @@ impl MobileModel {
         let bi_index_count = le_u32(&map, 52) as usize;
         let bi_blocks_off = le_u64(&map, 56);
         let bi_index_off = le_u64(&map, 64);
-        let tri_ctx_count = le_u64(&map, 72) as usize;
+        // 32 位目标（android 为优先平台）不得静默截断：先按 `u64` 语义校验，再转 `usize`。
+        let tri_ctx_count_u64 = le_u64(&map, 72);
+        let tri_ctx_count = usize::try_from(tri_ctx_count_u64)
+            .context("trigram context count exceeds the address space")?;
         let tri_index_count = le_u32(&map, 80) as usize;
         let tri_blocks_off = le_u64(&map, 88);
         let tri_index_off = le_u64(&map, 96);
@@ -563,9 +577,18 @@ impl MobileModel {
         if file_size != declared_size {
             bail!("mobile n-gram size mismatch: {display}");
         }
+        // 上下文数必须能被文件本身容纳（每条至少 8 字节）：畸形头部在 32 位目标上
+        // 会先截断成看似合理的值，此处按 `u64` 直接拒绝（A6）。
+        if tri_ctx_count_u64 > file_size / 8 {
+            bail!("implausible trigram context count: {tri_ctx_count_u64} for {file_size} bytes");
+        }
 
         let limits = limits.unwrap_or_default();
-        let unigrams = read_at(&map, uni_off, uni_count * 8)?;
+        validate_limits(limits).with_context(|| format!("invalid cache limits: {display}"))?;
+        let unigram_bytes = uni_count
+            .checked_mul(8)
+            .context("unigram section size overflow")?;
+        let unigrams = read_at(&map, uni_off, unigram_bytes)?;
         if unigrams.len() < 8 {
             bail!("truncated mobile unigram section: {display}");
         }
@@ -578,17 +601,17 @@ impl MobileModel {
                     .expect("bounds checked"),
             ) as i64;
             let probability = le_f32(unigrams, position + 4) as f64;
+            // NaN 语义（复核整改 3b / A7）：Lua `math.max(nan, x)` 返回 `nan`，Rust 的
+            // `f64::max` 返回非 NaN 操作数 ⇒ 二者相反。此处**不做** `max`，正常数据
+            // （f32 概率）不可达 NaN，故只注明口径差异、不引入无金样支撑的分支。
             unigram_values.insert(key, probability);
         }
 
         let bi_index = open_index(&map, bi_index_off, bi_index_count, limits.index_pages)?;
         let tri_index = open_index(&map, tri_index_off, tri_index_count, limits.index_pages)?;
         let resident_index_bytes = bi_index.resident_len() + tri_index.resident_len();
-        let source_index_bytes =
-            (uni_count * 8 + bi_index_count * 16 + tri_index_count * 16) as u64;
 
         Ok(Self {
-            path,
             file_size,
             map,
             unigram_values,
@@ -616,50 +639,15 @@ impl MobileModel {
             bigram: BigramState::new(limits.bigram_entries),
             limits,
             resident_index_bytes,
-            source_index_bytes,
         })
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
     }
 
     pub fn bytes(&self) -> u64 {
         self.file_size
     }
 
-    pub fn format(&self) -> &'static str {
-        "TCSKNM02"
-    }
-
-    pub fn resident_index_bytes(&self) -> u64 {
-        self.resident_index_bytes
-    }
-
-    pub fn source_index_bytes(&self) -> u64 {
-        self.source_index_bytes
-    }
-
-    pub fn cache_limit_bytes(&self) -> usize {
-        self.limits.page_bytes
-    }
-
-    pub fn page_misses(&self) -> u64 {
-        self.counters.page_misses
-    }
-
-    pub fn page_bytes_read(&self) -> u64 {
-        self.counters.page_bytes
-    }
-
     pub fn configure_cache(&mut self, limits: Limits) -> Result<()> {
-        if limits.page_bytes < 1
-            || limits.context_entries < 1
-            || limits.bigram_entries < 1
-            || limits.index_pages < 1
-        {
-            bail!("invalid model cache limits");
-        }
+        validate_limits(limits)?;
         if self.limits == limits {
             return Ok(());
         }
@@ -787,6 +775,64 @@ mod tests {
         let path = directory.join(format!("hux-unknown-{}.bin", std::process::id()));
         std::fs::write(&path, b"NOTAMODELBLOB").expect("write temp model");
         assert!(MobileModel::load(&path, None).is_err());
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// A5：`load` 与 `configure_cache` 对上限的校验口径一致——非法上限返回错误，
+    /// 而不是在 `Fifo::new(0)` / `Columns::new(0)` 的 `assert!` 处 panic。
+    #[test]
+    fn load_rejects_invalid_cache_limits() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../goldens/ngram_fixture.bin");
+        for limits in [
+            Limits {
+                page_bytes: 0,
+                ..Limits::default()
+            },
+            Limits {
+                context_entries: 0,
+                ..Limits::default()
+            },
+            Limits {
+                bigram_entries: 0,
+                ..Limits::default()
+            },
+            Limits {
+                index_pages: 0,
+                ..Limits::default()
+            },
+        ] {
+            let Err(error) = MobileModel::load(&fixture, Some(limits)) else {
+                panic!("非法上限必须报错");
+            };
+            assert!(
+                error.to_string().contains("invalid cache limits"),
+                "诊断应指出上限非法：{error}"
+            );
+        }
+        // 合法上限照常加载。
+        assert!(MobileModel::load(&fixture, Some(Limits::default())).is_ok());
+    }
+
+    /// A6：畸形头部把 `tri_ctx_count` 写成 `u64::MAX` 时显式报错，而不是在 32 位目标上
+    /// 静默截断成别的值（其余头部字段保持不变 ⇒ 仍能通过前面的布局/尺寸校验）。
+    #[test]
+    fn implausible_trigram_context_count_is_rejected() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../goldens/ngram_fixture.bin");
+        let mut corrupted = std::fs::read(&fixture).expect("read fixture model");
+        corrupted[72..80].copy_from_slice(&u64::MAX.to_le_bytes());
+        let path = std::env::temp_dir().join(format!("hux-tricount-{}.bin", std::process::id()));
+        std::fs::write(&path, &corrupted).expect("write patched model");
+        let Err(error) = MobileModel::load(&path, None) else {
+            panic!("巨大上下文数必须报错");
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("implausible trigram context count"),
+            "诊断应指出上下文数不可信：{error}"
+        );
         std::fs::remove_file(&path).ok();
     }
 

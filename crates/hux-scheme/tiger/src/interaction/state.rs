@@ -51,8 +51,6 @@ pub struct SentenceState {
     pub continuation_after_auto_commit: bool,
     pub tab_pending: bool,
     pub model_generation: u64,
-    /// 旧属性一次性迁移是否已完成（参照 `env._tiger_sentence_legacy_cleared`）。
-    pub legacy_cleared: bool,
 }
 
 impl SentenceState {
@@ -71,7 +69,6 @@ impl SentenceState {
             continuation_after_auto_commit: false,
             tab_pending: false,
             model_generation,
-            legacy_cleared: false,
         }
     }
 
@@ -91,55 +88,20 @@ impl SentenceState {
         true
     }
 
-    /// 参照 `sentence_state`：从 context 属性同步已确认/缓冲/锁。
-    pub fn load(&mut self, context: &mut Context, model_generation: u64) {
-        let combined = context.get_property(K_COMMITTED).unwrap_or("").to_string();
-        let (mut committed_raw, mut committed_text) = parse_committed_property(&combined);
-        if combined.is_empty() {
-            // 旧双属性格式的一次性迁移：写回合并属性并清空旧键。
-            let old_raw = context
-                .get_property(K_COMMITTED_RAW_LEGACY)
-                .unwrap_or("")
-                .to_string();
-            let old_text = context
-                .get_property(K_COMMITTED_TEXT_LEGACY)
-                .unwrap_or("")
-                .to_string();
-            if !old_raw.is_empty() || !old_text.is_empty() {
-                committed_raw = old_raw.clone();
-                committed_text = old_text.clone();
-                set_property_if_changed(context, K_COMMITTED, &format!("{old_raw}\t{old_text}"));
-                set_property_if_changed(context, K_COMMITTED_RAW_LEGACY, "");
-                set_property_if_changed(context, K_COMMITTED_TEXT_LEGACY, "");
-            }
-        }
-        self.synchronize_model_state(model_generation);
-        self.committed_text = committed_text;
-        self.committed_raw = committed_raw;
-        self.buffered_text = context.get_property(K_BUFFERED).unwrap_or("").to_string();
-        context.set_buffered(!self.buffered_text.is_empty());
-        self.locks = read_locks(context);
-    }
-
-    /// 参照 `save_sentence_state`（含旧属性一次性清理）。
+    /// 参照 `save_sentence_state`：把**缓冲前缀**写进上下文属性。
+    ///
+    /// 会话状态（已确认 `raw`/`text`、锁帧）由调用方持有的 [`SentenceState`] 承载，**不经属性
+    /// 往返**（本仓 `TigerScheme` 每会话一份状态，参照的 Lua `env` 才是无状态、每次入口重读）。
+    /// 属性层因此只剩「宿主/内核也要读」的一项：缓冲前缀 [`K_BUFFERED`]——
+    /// [`buffered_text`] 在 `select` / `early_commit` / `learning_glue` 都读它，
+    /// 内核视图（`live_input` / `live_caret`）在同一处 `set_buffered` 同步。
+    ///
+    /// 复核整改 3b（A3）：原先还会写出只写不读的 `tiger_sentence_committed` /
+    /// `tiger_sentence_locks` 快照，并做一次旧属性清理；已随 `load`/`read_locks` 一并删除
+    /// （无 FFI / 平台 / C++ 侧读取方），见 `docs/refactor.md` §8。
     pub fn save(&mut self, context: &mut Context) {
         set_property_if_changed(context, K_BUFFERED, &self.buffered_text.clone());
-        // 内核视图同步（`live_input` / `live_caret`）：与属性写入同点，避免两处漂移。
         context.set_buffered(!self.buffered_text.is_empty());
-        save_locks(context, &self.locks.clone());
-        let combined = format!("{}\t{}", self.committed_raw, self.committed_text);
-        set_property_if_changed(context, K_COMMITTED, &combined);
-        if !self.legacy_cleared {
-            for key in [
-                K_CONFIDENCE_LEGACY,
-                K_PROPOSAL_LEGACY,
-                K_STABLE_LEGACY,
-                K_EVIDENCE_RAW_LEGACY,
-            ] {
-                set_property_if_changed(context, key, "");
-            }
-            self.legacy_cleared = true;
-        }
     }
 
     /// 参照 `reset_sentence_state`。
@@ -155,67 +117,6 @@ impl SentenceState {
 
 /// 参照 `set_property_if_changed`（通用属性助手，定义在 core `session`）。
 pub use hux_core::session::set_property_if_changed;
-
-/// 参照 `parse_committed_property`：无制表符时返回空对。
-pub fn parse_committed_property(value: &str) -> (String, String) {
-    match value.split_once('\t') {
-        Some((raw, text)) => (raw.to_string(), text.to_string()),
-        None => (String::new(), String::new()),
-    }
-}
-
-/// 参照 `read_locks`：长度前缀帧 `#field:field`，每 3 个字段一个锁。
-pub fn read_locks(context: &Context) -> Vec<Lock> {
-    let data = context.get_property(K_LOCKS).unwrap_or("");
-    let bytes = data.as_bytes();
-    let mut fields: Vec<String> = Vec::new();
-    let mut offset = 0usize;
-    while offset < bytes.len() {
-        let Some(colon) = bytes[offset..].iter().position(|byte| *byte == b':') else {
-            return Vec::new();
-        };
-        let colon = offset + colon;
-        let Ok(length) = std::str::from_utf8(&bytes[offset..colon])
-            .unwrap_or("")
-            .parse::<usize>()
-        else {
-            return Vec::new();
-        };
-        let Some(end) = colon
-            .checked_add(1)
-            .and_then(|value| value.checked_add(length))
-            .filter(|end| *end <= bytes.len())
-        else {
-            return Vec::new();
-        };
-        fields.push(String::from_utf8_lossy(&bytes[colon + 1..end]).into_owned());
-        offset = end;
-    }
-    let mut locks = Vec::new();
-    for chunk in fields.chunks_exact(3) {
-        locks.push(Lock {
-            raw: chunk[0].clone(),
-            text: chunk[1].clone(),
-            boundaries: chunk[2].clone(),
-        });
-    }
-    locks
-}
-
-/// 参照 `save_locks`。
-pub fn save_locks(context: &mut Context, locks: &[Lock]) {
-    let mut framed = String::new();
-    for lock in locks {
-        for field in [
-            lock.raw.as_str(),
-            lock.text.as_str(),
-            lock.boundaries.as_str(),
-        ] {
-            framed.push_str(&format!("{}:{}", field.len(), field));
-        }
-    }
-    set_property_if_changed(context, K_LOCKS, &framed);
-}
 
 /// 参照 `buffered_text`。
 pub fn buffered_text(context: &Context) -> String {

@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# Tab 锁路径用例矩阵（复核整改第 5 批，遗留③）。
+#
+# 与 `key_sequence_cases.txt` 的区别**只在夹具**：本金样使用
+# `goldens/key_sequence_tab/tiger_sentence.custom.yaml`（`tiger_sentence/tab_learning: true`）
+# ⇒ 真机 librime 里参照的学习库**就绪**（`learned.store.db` 非 nil），
+# 于是参照处理器走 `if not state.tab_pending and learned.store and learned.store.db then
+#  _, first = learning_selection(...) ; learned.baseline = first end` 这条分支。
+# 主金样（`key_sequence.tsv.gz`）的夹具是 `tab_learning: false`，该分支恒不进入。
+#
+# 格式：<名称>\t<重置选项（逗号分隔，可空）>\t<按键 repr 序列（空格分隔）>
+# 重置固定：clear_composition、ascii_mode=false、tiger_sentence_early_commit=1、
+# tiger_sentence_early_commit_to_preedit=0；其余选项由第二列覆盖。
+tab_lock			a b Tab c d
+tab_confirm_space		a b Tab space
+tab_confirm_buffer	tiger_sentence_early_commit_to_preedit=1	a b Tab c d
+tab_buffer_space	tiger_sentence_early_commit_to_preedit=1	a b Tab c space
+nav_tab_binder			a b Tab Tab Tab Tab
+tab_lock_left			a b Tab c Left Right
+tab_lock_backspace		a b Tab c BackSpace BackSpace
+tab_lock_up_down		a b Tab c Up Down Page_Down

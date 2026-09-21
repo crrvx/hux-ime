@@ -7,20 +7,10 @@
 //!   cargo run --release --example ngram_bench -- <model.bin> <transcript.tsv>
 
 use hux_scheme_tiger::ngram::MobileModel;
+use hux_test_support::decode_hex as decode;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::time::Instant;
-
-fn decode(text: &str) -> String {
-    if text == "-" {
-        return String::new();
-    }
-    let bytes: Vec<u8> = (0..text.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&text[i..i + 2], 16).expect("hex digit"))
-        .collect();
-    String::from_utf8(bytes).expect("valid utf-8")
-}
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();

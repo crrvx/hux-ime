@@ -53,7 +53,14 @@ void hux_engine_session_free(hux_engine *engine, uint64_t session);
 /* 重置会话（失焦 / 切换输入法 / 重置事件）。 */
 void hux_engine_reset(hux_engine *engine, uint64_t session);
 
-/* 数据加载状态（诊断；随引擎存活，可为 NULL）。 */
+/*
+ * 数据加载状态（诊断；可为 NULL）。
+ *
+ * **指针有效期 = 下一次状态刷新之前**：选项保存失败、配置诊断、运行期学习库错误、
+ * 热键绑定诊断都会替换内部状态串，此前返回的指针随即失效（复核整改第 4 批 F8——
+ * 原注释「随引擎存活」与实现不符）。宿主应在每次需要时调用本函数取最新串，
+ * **不要缓存指针**；引擎实例释放后同样失效。
+ */
 const char *hux_engine_status(const hux_engine *engine);
 
 /*

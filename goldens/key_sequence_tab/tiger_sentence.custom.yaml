@@ -1,0 +1,3 @@
+patch:
+  tiger_sentence/high_freq_limit: 0
+  tiger_sentence/tab_learning: true

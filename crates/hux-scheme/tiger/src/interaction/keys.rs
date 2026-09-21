@@ -3,16 +3,9 @@
 
 use super::*;
 
+/// 缓冲前缀属性（**唯一**仍写出的会话属性：`select` / `early_commit` / `learning_glue`
+/// 与内核视图都读它；其余会话状态改由方案侧 `SentenceState` 承载，见 `state.rs` 的 `save`）。
 pub const K_BUFFERED: &str = "tiger_sentence_buffered_text";
-pub const K_LOCKS: &str = "tiger_sentence_locks";
-pub const K_COMMITTED: &str = "tiger_sentence_committed";
-pub const K_COMMITTED_TEXT_LEGACY: &str = "tiger_sentence_committed_text";
-pub const K_COMMITTED_RAW_LEGACY: &str = "tiger_sentence_committed_raw";
-pub const K_CONFIDENCE_LEGACY: &str = "tiger_sentence_confidence";
-pub const K_PROPOSAL_LEGACY: &str = "tiger_sentence_proposal";
-pub const K_STABLE_LEGACY: &str = "tiger_sentence_stable";
-pub const K_EVIDENCE_RAW_LEGACY: &str = "tiger_sentence_evidence_raw";
-pub const K_OPTIONS_ERROR: &str = "tiger_sentence_options_error";
 /// 音反查触发键（内部属性：宿主按设置写入逗号分隔的 rime 键名；空/缺省 = 关闭）。
 pub const K_SOUND_TO_CHAR_SHAPE_KEY: &str = "_sound_to_char_shape_key";
 /// 字反查触发键（内部属性：宿主按设置写入逗号分隔的 rime 键名；空/缺省 = 关闭）。

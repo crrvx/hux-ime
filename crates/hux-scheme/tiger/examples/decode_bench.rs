@@ -13,7 +13,7 @@
 
 use hux_scheme_tiger::decode::Decoder;
 use hux_scheme_tiger::lexical;
-use hux_scheme_tiger::lexicon::{LEXICAL_FILE, Lexicon, Supplement};
+use hux_scheme_tiger::lexicon::{Lexicon, Supplement};
 use hux_scheme_tiger::ngram::MobileModel;
 use hux_test_support::{decode_hex, open_golden, repo_path};
 use std::io::BufRead;
@@ -113,7 +113,6 @@ fn main() {
         samples[samples.len() - 1] as f64 / 1000.0,
         checksum,
     );
-    let _ = LEXICAL_FILE;
     // 按输入长度分桶（1-2 / 3-5 / 6-10 / 11-20 / >20 字符）：尾部代价来自哪里。
     let names = ["1-2", "3-5", "6-10", "11-20", ">20"];
     for (index, bucket) in buckets.iter_mut().enumerate() {
