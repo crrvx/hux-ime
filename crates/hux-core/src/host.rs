@@ -35,8 +35,8 @@ pub const MAX_PAGE_SIZE: usize = 10;
 pub struct HostOptions {
     /// 每页候选个数（≥ 1；须与宿主候选面板一致）。
     pub page_size: usize,
-    /// 上翻页键列表：**有候选时生效**（参照为 `when: paging`；本实现有意放宽，
-    /// 以免上翻页键落作标点/输入——见 [`key_binder`] 注释与 `docs/config.md`）。
+    /// 上翻页键列表：**已翻过页时生效**（参照 `when: paging`；标签由翻页写入，
+    /// 未翻页时不消费该键，落作标点/输入——见 [`key_binder`] 与 `docs/config.md`）。
     pub page_up_keys: Vec<KeyEvent>,
     /// 下翻页键列表：菜单可用（`has_menu`）时生效。
     pub page_down_keys: Vec<KeyEvent>,
@@ -173,7 +173,12 @@ fn key_binder(key_event: &KeyEvent, context: &mut Context, options: &HostOptions
         return HostResult::Forward;
     }
     if options.page_up_keys.iter().any(|key| key.repr() == repr) {
-        // 上翻页键：有候选即消费（首屏不动作也算消费，不再落作标点/输入）。
+        // 上翻页键的绑定条件是参照 `when: paging`（`KeyBinder` 于末段带 `paging` 标签时置位，
+        // 该标签由翻过页写入）。未翻页时**不消费**——交后续处理器落作标点/输入，
+        // 与参照一致（此前本实现放宽为「有候选即消费」，会吞掉标点键）。
+        if !has_paging_tag(context) {
+            return HostResult::Forward;
+        }
         return selector_action(SelectorAction::PreviousPage, context, options);
     }
     if options.page_down_keys.iter().any(|key| key.repr() == repr) {
@@ -360,7 +365,15 @@ fn selector_action(
     }
 }
 
-/// 参照 `comp.back().tags.insert("paging")`（保留参照状态；上翻页键现按 `has_menu` 消费）。
+/// 参照 `comp.back().tags.insert("paging")`：翻过页后置位，使上翻页键的 `when: paging` 成立。
+/// 末段是否带 `paging` 标签（参照 `KeyBinder` 的 `kWhenPaging` 判据）。
+fn has_paging_tag(context: &Context) -> bool {
+    context
+        .composition
+        .back()
+        .is_some_and(|segment| segment.has_tag("paging"))
+}
+
 fn mark_paging(context: &mut Context) {
     if let Some(segment) = context.composition.back_mut()
         && !segment.has_tag("paging")
@@ -1004,11 +1017,33 @@ mod tests {
     }
 
     #[test]
-    fn selector_consumes_page_up_when_menu_visible() {
-        // 首屏（未翻页）上翻页键也应被消费，不再落到标点/输入。
-        let mut context = context_with_menu(&["a", "b", "c", "d", "e", "f"], 0);
-        assert_eq!(press(&mut context, "minus"), HostResult::Consumed);
-        assert_eq!(selected(&context), 0);
+    fn selector_page_up_requires_paging_tag() {
+        // 参照 `key_binder`：上翻页键的绑定条件是 `when: paging`。
+        // 未翻页时不消费——该键继续下落（无标点表时由 `editor` 的可打印字符路径
+        // 提交组合，有标点表时落作标点），与参照一致。
+        let mut fresh = context_with_menu(&["a", "b", "c", "d", "e", "f"], 0);
+        assert_eq!(
+            press(&mut fresh, "minus"),
+            HostResult::Forward,
+            "未翻页时上翻页键不消费"
+        );
+
+        // 独立上下文：先下翻一页（`=`，`when: has_menu`）写入 `paging` 标签，再按上翻页键。
+        let mut paged = context_with_menu(&["a", "b", "c", "d", "e", "f"], 0);
+        assert_eq!(press(&mut paged, "equal"), HostResult::Consumed);
+        assert!(
+            paged
+                .composition
+                .back()
+                .is_some_and(|segment| segment.has_tag("paging")),
+            "翻页应写入 paging 标签"
+        );
+        assert_eq!(
+            press(&mut paged, "minus"),
+            HostResult::Consumed,
+            "翻过页后上翻页键生效"
+        );
+
         // 无菜单：不消费（交宿主）。
         let mut idle = Context::new();
         assert_eq!(press(&mut idle, "minus"), HostResult::Forward);
@@ -1159,6 +1194,37 @@ mod tests {
             &HostOptions::default(),
             None,
         )
+    }
+
+    #[test]
+    fn editor_confirm_cancel_and_syllable_bindings() {
+        // 参照 `ExpressEditor`：`{XK_space,0}`=Confirm、`{XK_Escape,0}`=CancelComposition、
+        // `{XK_BackSpace,kControlMask}`=BackToPreviousSyllable。
+        // 这些键在真机路径上会先被方案 `processor` 消费，故金样覆盖不到宿主链，须在此钉住。
+        let mut context = context_with_menu(&["甲", "乙"], 0);
+        assert_eq!(press(&mut context, "space"), HostResult::Consumed);
+        assert!(
+            context.composition.segments[0].selected,
+            "空格应确认高亮段（ConfirmCurrentSelection）"
+        );
+
+        // 参照 `CancelComposition` = `ClearPreviousSegment() || Clear()`：
+        // 有段时截到末段起点（可能仍有输入），无段时整体清空。
+        let mut context = context_with_menu(&["甲", "乙"], 0);
+        assert_eq!(press(&mut context, "Escape"), HostResult::Consumed);
+        assert_eq!(context.last_commit_text(), "", "取消不上屏");
+
+        let mut raw_only = Context::new();
+        raw_only.push_input(b"ab");
+        assert!(raw_only.is_composing());
+        assert_eq!(press(&mut raw_only, "Escape"), HostResult::Consumed);
+        assert!(!raw_only.is_composing(), "无段时取消应整体清空");
+
+        let mut context = context_with_menu(&["甲", "乙"], 0);
+        assert_eq!(
+            press_raw(&mut context, 0xff08, K_CONTROL_MASK),
+            HostResult::Consumed
+        );
     }
 
     #[test]

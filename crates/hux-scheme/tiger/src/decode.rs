@@ -14,9 +14,7 @@ use crate::lexicon::{CodeEntry, Lexicon, Supplement};
 use crate::ngram::MobileModel;
 use anyhow::Result;
 use hashbrown::{HashMap, HashSet};
-use hux_core::learning::{
-    DiffItem, DiffPathNode, LearningIndex, character_count, context as learning_context,
-};
+use hux_core::learning::{DiffItem, DiffPathNode, LearningIndex};
 use hux_core::punct::{PairState, PunctTable};
 use hux_core::session::Candidate;
 use std::path::PathBuf;
@@ -1333,42 +1331,23 @@ fn learning_reward(
     finish: usize,
     start: usize,
 ) -> (f64, f64) {
-    let mut best = arena[start].learning_score;
-    let mut potential = 0.0f64;
-    if index.codes.is_empty() || mode.is_empty() {
-        return (best, potential);
-    }
+    // 算法只在 core 维护一份（`learning::reward`）：此处把 arena 的路径物化为其链表示。
+    let mut chain = Vec::new();
     let mut current = Some(start);
-    loop {
-        let (t, r, node_score) = match current {
-            Some(position) => (
-                arena[position].text_length,
-                arena[position].raw_length,
-                arena[position].learning_score,
-            ),
-            None => (0, 0, 0.0),
-        };
-        let fragment = text.get(t..).unwrap_or("");
-        if character_count(fragment) > 16 {
-            break;
-        }
-        let start_byte = r.min(raw.len());
-        let end_byte = finish.min(raw.len());
-        let code = if start_byte < end_byte {
-            std::str::from_utf8(&raw[start_byte..end_byte]).unwrap_or("")
+    while let Some(position) = current {
+        let state = &arena[position];
+        chain.push(hux_core::learning::RewardNode {
+            learning_score: state.learning_score,
+            text_length: state.text_length,
+            raw_length: state.raw_length,
+        });
+        current = if state.raw_length > 0 {
+            state.previous
         } else {
-            ""
-        };
-        let prefix = text.get(..t.min(text.len())).unwrap_or("");
-        let ctx = learning_context(prefix);
-        best = best.max(node_score + index.score(mode, code, fragment, &ctx));
-        potential = potential.max(index.prefix_score(mode, code, fragment, &ctx));
-        current = match current {
-            Some(position) if r > 0 => arena[position].previous,
-            _ => break,
+            None
         };
     }
-    (best, potential)
+    hux_core::learning::reward(index, mode, raw, text, finish, &chain)
 }
 
 // ---------------------------------------------------------------- 早提交证据

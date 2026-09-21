@@ -364,9 +364,11 @@ fn host_commit_records_tab_learning() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// 上翻页键：候选菜单可见即消费（首屏也不落作标点/输入）。
+/// 翻页键条件（参照 `key_binder`）：下翻页 `when: has_menu`、上翻页 `when: paging`。
+///
+/// 上翻页键在**未翻页**时不消费——落作标点/输入；翻过页后才生效。
 #[test]
-fn page_up_is_consumed_with_menu() {
+fn page_keys_follow_reference_conditions() {
     let _guard = serial();
     COMMITS.lock().unwrap().clear();
     UPDATES.lock().unwrap().clear();
@@ -374,8 +376,27 @@ fn page_up_is_consumed_with_menu() {
     for code in *b"ja" {
         engine.key(u32::from(code), 0, false);
     }
-    assert!(engine.key(0x2d, 0, false), "- 菜单可见时应被消费");
-    assert!(COMMITS.lock().unwrap().is_empty(), "不应作为标点/输入上屏");
+    // 未翻页：`-` 不由翻页消费，而是落作标点——**由 punctuator 消费并提交**（参照行为）。
+    assert!(engine.key(0x2d, 0, false), "落作标点时由 punctuator 消费");
+    assert!(
+        !COMMITS.lock().unwrap().is_empty(),
+        "未翻页时该键应落作标点/输入"
+    );
+
+    // 翻过页后：`-` 由 key_binder 当作上翻页消费，不再提交标点。
+    COMMITS.lock().unwrap().clear();
+    let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
+    for code in *b"ja" {
+        engine.key(u32::from(code), 0, false);
+    }
+    assert!(engine.key(0x3d, 0, false), "下翻页键（has_menu）应被消费");
+    let before = COMMITS.lock().unwrap().len();
+    assert!(engine.key(0x2d, 0, false), "翻过页后上翻页键应被消费");
+    assert_eq!(
+        COMMITS.lock().unwrap().len(),
+        before,
+        "翻过页后应只翻页，不再落标点"
+    );
 }
 
 /// 数字直选（`DigitSelect`）：菜单可见时 1–9 直接上屏当前页候选，0=第 10 个。

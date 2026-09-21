@@ -101,10 +101,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install fcitx5 core dev files
+      - name: Install fcitx5 core & librime dev files
         run: |
           sudo apt-get update
-          sudo apt-get install -y libfcitx5core-dev
+          sudo apt-get install -y libfcitx5core-dev librime-dev
       - name: Configure & build addon (cargo + cmake)
         run: |
           cmake -S platform/fcitx5 -B build/addon \
@@ -123,6 +123,15 @@ jobs:
             exit 1
           fi
           echo "C ABI 符号一致：$(wc -l < /tmp/so.txt) 个"
+      - name: Compile-check goldens probes (syntax only)
+        # 探针（tools/probes/*.cpp）只在手动重生成金样时编译，长期无人编译会静默腐坏；
+        # 此处仅做语法检查（不链接、不运行），成本极低。
+        run: |
+          for probe in tools/probes/*.cpp; do
+            echo "checking $probe"
+            g++ -fsyntax-only -std=c++17 -I/usr/include "$probe"
+          done
+
       - name: Verify install layout (DESTDIR)
         run: |
           DESTDIR=/tmp/stage cmake --install build/addon

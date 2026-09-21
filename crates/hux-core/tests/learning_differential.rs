@@ -188,7 +188,6 @@ fn run(mut harness: Harness, reader: impl BufRead) -> usize {
                         text_length: parts[0].parse().expect("text_length"),
                         raw_length: parts[1].parse().expect("raw_length"),
                         learning_score: f64::from_bits(parse_bits(parts[2])),
-                        text: decode_hex(parts[3]),
                     });
                 }
                 harness.chains.insert(name, nodes);

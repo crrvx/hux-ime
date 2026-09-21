@@ -100,7 +100,7 @@ docs/                    # 设计/重构/使用/配置/性能/Android 等，索�
   | 组件 | 行为要点 |
   |---|---|
   | `key_binder` | `Tab`→Down、`Shift+Tab`→Up（`when: has_menu`） |
-  | `selector` | 菜单导航与翻页（`page_size`、上/下翻页键与翻页循环可由配置覆盖，默认 `-`/`[` → Page_Up、`=`/`]` → Page_Down，均有候选时生效）、Home/End；候选排列由配置写入 `_vertical` |
+  | `selector` | 菜单导航与翻页（`page_size`、上/下翻页键与翻页循环可由配置覆盖；默认 `-`/`[` → Page_Up（`when: paging`，翻过页后生效）、`=`/`]` → Page_Down（`when: has_menu`））、Home/End；候选排列由配置写入 `_vertical` |
   | `navigator` | 字节光标移动；Ctrl/Shift+Left/Right 跳到段首/段尾（未做音节 spans 细分）；Home/End 到组合起点/末尾 |
   | `express_editor` | space 确认/提交、BackSpace 撤销编辑、Delete 删光标处、Return 提交原文、Escape 取消；可打印字符先提交组合再交宿主 |
   | `punctuator` | 单键可打印 ASCII 查 `symbols.yaml`；组合中提交「组合文本 + 标点」；`{pair}` 交替 |

@@ -86,8 +86,10 @@ platform/                     # 平台适配
 > 故**不做**参照的增量解码缓存（其收益集中于长输入，且牵涉解码 arena 路径下标生命周期），
 > 复核触发条件记在 `perf.md`。
 >
-> 当前基线：`cargo test --workspace` 267 用例全绿（core 62 / tiger 125 / cfg 16 / platform 59 / support 4 / ffi 1），
-> `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`reuse lint` 均干净。
+> 当前基线（复核收尾时实测）：`cargo test --workspace` **276 用例全绿**
+> （core 66 / tiger 125 / cfg 16 / platform 64 / support 4 / ffi 1），
+> `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`reuse lint`（152/152）均干净；
+> CI `rust` 作业 11 步本机逐步通过；C++ 侧构建链接 + `DESTDIR` 安装 3 文件 + 导出 **14** 个 `hux_*`。
 
 > **P4 落地记录**（`hux-scheme/tiger` 物理拆分；分批见下）：
 > 1. 先定 `hux_core::scheme` 最小契约（内核必须回调的动作：`id` / 选项声明 / 按键与翻译重建 / 学习 / 反查），
@@ -202,6 +204,24 @@ platform/                     # 平台适配
   （状态菜单在会话建立后首次切换可能不落盘）。现改为写入后 `Context::discard_option_events`
   丢弃自身事件，`Options::observe` 回归参照语义；cfg 单测同步重写。
 
+**① 契约去虎码语义（未开工；方案见下，属跨 4 crate 的大改，建议单独一个会话/批次做完）**
+- 病：`OptionIds` 的 4 个字段名与 `SchemeConfig` 的 `min_retained_raw_length`/反查键/Tab 学习
+  仍是虎码口径，与 §5「不把方案特有语义泛化进契约」有张力（换方案须改 core）。
+- 方案（数据化声明，保持强类型检查在调用侧）：
+  1. core：`pub struct OptionDecl { pub role: &'static str, pub key: &'static str }` +
+     `Scheme::option_declarations(&self) -> &'static [OptionDecl]`；删 `OptionIds` 与
+     `Scheme::option_ids`、`Scheme::learning_mode` 等固定字段入口（`SchemeConfig` 改为
+     `&[(role, Value)]` 键值袋，`Value` 为 bool/usize/String 的小枚举）；
+  2. `hux-cfg`：不改依赖方向，角色常量归本层（它本就拥有设置词汇），
+     `Settings::{option_defaults,store_defaults,option_default,learning_mode}` 改为按
+     **角色→键**的已解析表工作（入参为 `&[OptionDecl]` 或由平台解析好的 `HashMap<role,key>`）；
+  3. `tiger`：自报 `option_declarations()`（键=其 `interaction::OPTION_*`，角色=cfg 的常量字符串）
+     与 `SchemeConfig` 的键值袋解析；虎码语义（早提交/缓冲/锁）留在本 crate；
+  4. 平台：装配处把 `scheme.option_declarations()` 交给 cfg 解析，角色缺失即报错
+     （原一致性测试升级为「每个角色都必须被方案声明」）。
+- 守护：全程 `cargo test --workspace` + 金样；该改动**不动可观测行为**（键名与默认值不变），
+  故差分金样应保持逐位一致；`docs/refactor.md` §5 落地清单与 §7 守卫同步。
+
 **内核（hux-core）**
 - **契约语义边界**（需决策）：`OptionIds` 的 4 个字段名 + `SchemeConfig` 的 `min_retained_raw_length`/
   反查键/Tab 学习等仍是虎码口径，与 §5「不把方案特有语义泛化进契约」有张力；改为通用容器
@@ -210,9 +230,11 @@ platform/                     # 平台适配
   有候选未翻页时按 `-` 被吞键，参照会落标点。
 - `editor` 未实现参照的 `FallbackOptions::All` 与 `Ctrl+Return`/`Ctrl+Shift+Return`（Shift+BackSpace、
   Shift+space、Shift+Delete、Ctrl+Return 参照会消费，core 落 Forward）。
-- `learning::reward`/`RewardNode` 无运行时调用者且与方案 `decode::learning_reward` 逐行重复。
-- `session::live_caret` 与 `live_input` 判据不一致（前者只看缓冲标志，后者还要求 `~`），
-  方案侧有同款副本；core 外无调用者。
+- ✅ 已修：`learning::reward`/`RewardNode` 与方案 `decode::learning_reward` 的重复实现已合并——
+  算法只在 core 维护一份，方案把 arena 路径物化为 `RewardNode` 链后调用 core；
+  同时删除 `RewardNode.text`（从未被读取的死字段），金样（learning 与 decode+learning）判定顺序正确。
+- `session::live_caret` 与 `live_input` 判据不一致 —— ✅ 已修（判据统一为「确实带 `~` 标记」）；
+  方案侧是否保留同款副本仍待定（core 外无调用者）。
 - `punct::pair_oddness` 是**可变状态**却放在只读数据表里，`TigerScheme` 单实例 → 多输入上下文串台
   （参照的 `oddness_` 随会话）。
 - `reopen_previous_selection` 漏参照的两条护栏（`status > kSelected`、`selected_before_editing`）。
@@ -231,9 +253,13 @@ platform/                     # 平台适配
   **踩坑记录**：模式里的 `K_A | K_B` 是**或模式**而非按位或，组合修饰键必须写成
   `(code, modifier) if modifier == K_A | K_B`；本轮该 bug 已修，并全仓 grep 确认无同类写法。
   **待复核**：`Context::GetScriptText` 的准确定义（应从参照 `context.cc` 核对，本轮网络取源不稳）。
-- `paging` 条件：参照 `KeyBinder::RelevantConditions`（`_tmp/librime/key_binder.cc:262`）为
-  "末段带 `paging` 标签"；本实现有意放宽为 `has_menu`（`host.rs` `key_binder` 注释），
-  字段文档已对齐。若要严格实现，需同时钉住 `paging` 标签的写入时机（`mark_paging` 现由翻页时写入）。
+- ✅ 覆盖缺口已补：宿主链绑定（金样走不到——真机路径上 `Return`/`space`/`Escape` 等先在方案
+  `processor` 被消费）现有单测钉住：Confirm / Cancel / `Ctrl+BackSpace` / `Ctrl+Return` /
+  `Ctrl+Shift+Return` / Shift 回退；`CancelComposition` 按参照 `ClearPreviousSegment() || Clear()` 断言。
+- ✅ 已修：翻页键条件按参照（`key_binder.cc:262`）严格化——下翻页 `when: has_menu`、
+  上翻页 `when: paging`（`mark_paging` 于翻页时写入标签）；未翻页时上翻页键**不消费**，
+  交后续处理器落作标点（参照行为）。core 与平台两侧的单测按新契约重写，
+  `docs/config.md`、`docs/rust-migration.md` 的翻页键描述同步。
 
 **工具 / CI**
 - ✅ 已修：两个探针生成器写库前先写 `$OUT.tmp.$$` 并断言至少 1 个 `case`，
@@ -243,9 +269,8 @@ platform/                     # 平台适配
   `--manifest` 而文件缺失即 `exit 1`。正负例均已验证。
 - ✅ 已修：CI 加 `--locked`、`timeout-minutes: 30`（五个作业）与 `concurrency`（同分支取消旧运行）。
   **有意不加** 缓存 action（保持第三方依赖面最小，冷编译代价可接受）。
-- **待做**：`tools/probes/*.cpp` 的编译检查——探针依赖 librime/librime-lua 开发文件，
-  `rust` 作业只有 `libfcitx5core-dev`；要么新增一个装 librime 的作业，要么仅在本地复核
-  （现状：探针只在手动生成金样时编译）。
+- ✅ 已修：`addon` 作业加装 `librime-dev` 并对 `tools/probes/*.cpp` 做 **`g++ -fsyntax-only`**
+  语法检查（不链接、不运行），防止探针长期无人编译而静默腐坏。本机已实测两个探针语法通过。
 
 ## 9. 骨架（已落地）
 

@@ -72,7 +72,6 @@ struct Materialized {
 /// 奖励路径链节点（对应参照 `previous` 链上的一个状态）。
 #[derive(Clone, Debug)]
 pub struct RewardNode {
-    pub text: String,
     pub text_length: usize,
     pub raw_length: usize,
     pub learning_score: f64,
