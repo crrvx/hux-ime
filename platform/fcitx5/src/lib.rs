@@ -27,7 +27,7 @@ pub(crate) use abi::*;
 pub(crate) use engine::Engine;
 #[cfg(test)]
 pub(crate) use hux_cfg::{
-    CandidateLayout, MAX_MIN_RETAINED_RAW_LENGTH, OPTIONS_FILE, PreeditMode, Settings,
+    CandidateLayout, MAX_MIN_RETAINED_INPUT_LENGTH, OPTIONS_FILE, PreeditMode, Settings,
 };
 #[cfg(test)]
 pub(crate) use hux_core::key::KeyEvent;

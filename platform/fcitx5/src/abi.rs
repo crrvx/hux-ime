@@ -153,10 +153,10 @@ pub unsafe extern "C" fn hux_engine_apply_settings(
         allow_duplicate_single: options.allow_duplicate_single != 0,
         full_shape: options.full_shape != 0,
         ascii_punct: options.ascii_punct != 0,
-        tab_learning: options.tab_learning != 0,
+        learning_on_tab: options.learning_on_tab != 0,
         high_freq_limit: options.high_freq_limit.max(0) as usize,
-        sound_to_char_shape_keys: key_reprs(&options.sound_to_char_shape),
-        char_to_sound_shape_keys: key_reprs(&options.char_to_sound_shape),
+        reverse_lookup_pronunciation_keys: key_reprs(&options.reverse_lookup_pronunciation),
+        reverse_lookup_character_keys: key_reprs(&options.reverse_lookup_character),
         page_size: options.page_size.max(1) as usize,
         page_up_keys: key_reprs(&options.page_up),
         page_down_keys: key_reprs(&options.page_down),
@@ -172,9 +172,9 @@ pub unsafe extern "C" fn hux_engine_apply_settings(
             _ => PreeditMode::CandidateCode,
         },
         page_cycle: options.page_cycle != 0,
-        min_retained_raw_length: options
-            .min_retained_raw_length
-            .clamp(0, hux_cfg::MAX_MIN_RETAINED_RAW_LENGTH as i32)
+        min_retained_input_length: options
+            .min_retained_input_length
+            .clamp(0, hux_cfg::MAX_MIN_RETAINED_INPUT_LENGTH as i32)
             as usize,
     });
     1
@@ -276,9 +276,11 @@ pub unsafe extern "C" fn hux_engine_key(
 
 /// 引擎选项**角色**对应的选项键（NUL 结尾；角色越界或引擎为空返回 NULL）。
 ///
-/// 角色顺序与 `include/hux_abi.h` 的 `HUX_OPTION_*` 一致：0=提前上屏、1=提前上屏至预编辑、
-/// 2=单字重码组句、3=数字直选、4=全角标点（rime 标准名）。宿主据此构造状态菜单与面板序号，
-/// **不得**在宿主侧硬编码方案选项名。
+/// 角色顺序与 `include/hux_abi.h` 的 `HUX_OPTION_*` 一致，即 `hux_cfg::roles::RUNTIME_OPTION_ROLES`：
+/// 0=提前上屏、1=提前上屏至预编辑、2=单字重码组句、3=全角标点（rime 标准名）、4=数字直选。
+/// 宿主据此构造状态菜单与面板序号，**不得**在宿主侧硬编码方案选项名。
+///
+/// 方案未声明的角色返回 NULL（宿主跳过该项；装配缺陷已在状态串报错）。
 ///
 /// # Safety
 /// `engine` 须有效（可为空指针）；返回指针在引擎存活期内有效。
@@ -293,13 +295,14 @@ pub unsafe extern "C" fn hux_engine_option_key(engine: *const Engine, role: i32)
     engine
         .option_keys
         .get(role as usize)
+        .and_then(|key| key.as_ref())
         .map_or(std::ptr::null(), |key| key.as_ptr())
 }
 
-/// 引擎选项角色总数（状态菜单项数）。
+/// 引擎选项角色总数（状态菜单项数）：与角色序同源，不各写一份。
 #[unsafe(no_mangle)]
 pub extern "C" fn hux_engine_option_role_count() -> i32 {
-    5
+    hux_cfg::roles::RUNTIME_OPTION_ROLES.len() as i32
 }
 
 /// 候选点击（面板候选 `CandidateWord::select`）：按全局索引选中并上屏。

@@ -12,7 +12,7 @@ use crate::Options;
 #[cfg(test)]
 use crate::option_defaults;
 #[cfg(test)]
-use hux_core::scheme::OptionIds;
+use crate::roles::OptionKeys;
 use hux_core::session::{Context, set_property_if_changed};
 use yaml_rust2::{Yaml, YamlEmitter, YamlLoader};
 
@@ -60,8 +60,8 @@ impl OptionsStore {
     /// 参照 `open_store`：读取主文件与 legacy 回退；解析失败即视为空文档。
     /// 测试用便捷入口（生产路径由 addon 传入 `Settings` 缺省）。
     #[cfg(test)]
-    pub fn load(user_dir: &Path, ids: &OptionIds) -> Self {
-        Self::load_with_defaults(user_dir, option_defaults(ids))
+    pub fn load(user_dir: &Path, keys: &OptionKeys) -> Self {
+        Self::load_with_defaults(user_dir, option_defaults(keys))
     }
 
     /// 同 [`OptionsStore::load`]，但以给定缺省回退缺失项
@@ -216,7 +216,7 @@ mod tests {
             "options:\n  tiger_sentence_early_commit: false\n  some_other_option: true\ncustom: 1\n",
         )
         .expect("write");
-        let mut store = OptionsStore::load(&dir, &crate::options::test_option_ids());
+        let mut store = OptionsStore::load(&dir, &crate::options::test_option_keys());
         let mut context = Context::new();
         store.sync(&mut context);
         assert!(!context.get_option("tiger_sentence_early_commit"));
@@ -231,7 +231,7 @@ mod tests {
             "options:\n  tiger_sentence_early_commit: false\n",
         )
         .expect("write");
-        let mut store = OptionsStore::load(&dir, &crate::options::test_option_ids());
+        let mut store = OptionsStore::load(&dir, &crate::options::test_option_keys());
         let mut context = Context::new();
         store.sync(&mut context);
         drain_option_events(&mut store, &mut context);
@@ -257,7 +257,7 @@ mod tests {
             "options:\n  some_other_option: true\ncustom: 1\n",
         )
         .expect("write");
-        let mut store = OptionsStore::load(&dir, &crate::options::test_option_ids());
+        let mut store = OptionsStore::load(&dir, &crate::options::test_option_keys());
         let mut context = Context::new();
         store.sync(&mut context);
         context.set_option("tiger_sentence_early_commit", true);
@@ -277,7 +277,7 @@ mod tests {
             "var:\n  option:\n    tiger_sentence_allow_duplicate_single: false\n",
         )
         .expect("write");
-        let mut store = OptionsStore::load(&dir, &crate::options::test_option_ids());
+        let mut store = OptionsStore::load(&dir, &crate::options::test_option_keys());
         assert_eq!(
             store
                 .options
@@ -310,7 +310,7 @@ mod tests {
         let dir = temp_dir("error");
         // 目标路径是目录 → 写文件失败
         std::fs::create_dir_all(dir.join(OPTIONS_FILE)).expect("blocking dir");
-        let mut store = OptionsStore::load(&dir, &crate::options::test_option_ids());
+        let mut store = OptionsStore::load(&dir, &crate::options::test_option_keys());
         let mut context = Context::new();
         store.sync(&mut context);
         drain_option_events(&mut store, &mut context);

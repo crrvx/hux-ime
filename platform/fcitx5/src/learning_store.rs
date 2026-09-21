@@ -52,6 +52,25 @@ pub struct LearningStore {
     index_version: u64,
 }
 
+/// 单条 `e/` 值 → 学习事件（`frame` 的往返解码）。
+///
+/// 坏值一律 `None`：截断 / 超长 / **落点不在字符边界** / 字段数不是 5 / 时间戳非法。
+/// 长度前缀是**字节数**而值可能不是合法 UTF-8（`from_utf8_lossy` 把 1 字节换成 3 字节 U+FFFD，
+/// 使其后的长度前缀整体错位），故解码必须走 `unframe` 的 `Option` 通道，不得 panic。
+fn decode_event(value: &[u8]) -> Option<Event> {
+    let fields = learning::unframe(&String::from_utf8_lossy(value))?;
+    if fields.len() != 5 {
+        return None;
+    }
+    Some(Event {
+        time: fields[0].parse::<f64>().ok()?,
+        mode: fields[1].clone(),
+        code: fields[2].clone(),
+        text: fields[3].clone(),
+        context: fields[4].clone(),
+    })
+}
+
 impl LearningStore {
     /// 未启用（用户目录不可用/LevelDb 不可用）的占位存储。
     pub fn disabled(reason: &str) -> Self {
@@ -102,6 +121,7 @@ impl LearningStore {
         let mut count = 0usize;
         let mut bytes = 0usize;
         let mut sequence = 0u64;
+        let mut skipped = 0usize;
         let mut failure: Option<String> = None;
         match db.new_iter() {
             Ok(mut iterator) => {
@@ -125,17 +145,11 @@ impl LearningStore {
                         failure = Some("learning database limit reached".to_string());
                         break;
                     }
-                    if let Some(fields) = learning::unframe(&String::from_utf8_lossy(&value))
-                        && fields.len() == 5
-                        && let Ok(time) = fields[0].parse::<f64>()
-                    {
-                        events.push(Event {
-                            time,
-                            mode: fields[1].clone(),
-                            code: fields[2].clone(),
-                            text: fields[3].clone(),
-                            context: fields[4].clone(),
-                        });
+                    match decode_event(&value) {
+                        Some(event) => events.push(event),
+                        // 坏帧跳过但**不吞**：条数进既有诊断（`hux_engine_status` 可见），
+                        // 库本身仍可用（不因一条损坏记录禁用全部学习）。
+                        None => skipped += 1,
                     }
                     if !iterator.advance() {
                         break;
@@ -150,6 +164,12 @@ impl LearningStore {
         if let Some(reason) = failure {
             store.error = Some(reason);
             return store;
+        }
+        if skipped > 0 {
+            // 既有诊断通道（构造期读一次、`Engine::new_with_dirs` 并入状态串）。
+            store.error = Some(format!(
+                "learning database skipped {skipped} undecodable record(s)"
+            ));
         }
         store.count = count;
         store.bytes = bytes;

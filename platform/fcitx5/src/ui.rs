@@ -91,7 +91,7 @@ impl Engine {
         }
         // 字反查段不下发预编辑：避免应用端 marked text 锁住光标（←/→ 无法移动）。
         let mut cursor = cursor;
-        if self.char_to_sound_shape_tagged(session) {
+        if self.reverse_lookup_tagged(session) {
             preedit.clear();
             cursor = 0;
         }
@@ -125,8 +125,8 @@ impl Engine {
         let text_pointers: Vec<*const c_char> = texts.iter().map(|text| text.as_ptr()).collect();
         let comment_pointers: Vec<*const c_char> =
             comments.iter().map(|comment| comment.as_ptr()).collect();
-        let aux_up = cstring_lossy(&session.char_to_sound_shape.aux_up);
-        let aux_down = cstring_lossy(&session.char_to_sound_shape.aux_down);
+        let aux_up = cstring_lossy(&session.reverse_lookup.aux_up);
+        let aux_down = cstring_lossy(&session.reverse_lookup.aux_down);
         // SAFETY: 指针数组与 C 串在本调用期间有效；计数与数组长度一致。
         unsafe {
             update(

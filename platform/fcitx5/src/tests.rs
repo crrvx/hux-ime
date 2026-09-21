@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use crate::*;
+use hux_core::scheme::OptionDecl;
 use std::sync::Mutex;
 
 static COMMITS: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -153,8 +154,10 @@ fn engine_enables_learning_store() {
     assert!(
         engine
             .engine
-            .learning_mode
-            .starts_with("sentence-v2|rules=")
+            .scheme
+            .learning_mode()
+            .starts_with("sentence-v2|rules="),
+        "学习 mode 由方案据配置自算"
     );
     assert!(
         dir.join(format!(
@@ -178,8 +181,10 @@ fn engine_applies_learning_after_key() {
     assert!(
         engine
             .engine
-            .learning_mode
-            .starts_with("sentence-v2|rules=")
+            .scheme
+            .learning_mode()
+            .starts_with("sentence-v2|rules="),
+        "学习 mode 由方案据配置自算"
     );
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -340,12 +345,57 @@ fn candidate_click_out_of_range_ignored() {
     assert_eq!(engine.session().context.input(), b"ab");
 }
 
+/// 学习库里的**坏帧**：跳过该条记录、不禁用整库，并进既有诊断（审计 core F1 / 平台 F3）。
+///
+/// 触发面：`<user dir>/tiger_sentence_learning_<hash>.userdb` 被损坏或被其它工具写坏
+/// （值可能不是合法 UTF-8，`from_utf8_lossy` 会把 1 字节换成 3 字节 U+FFFD 使长度前缀错位），
+/// 而 `LearningStore::open` 由 `hux_engine_new`（`extern "C"`）调用——
+/// 旧实现用 `&value[a..b]` 按字节切片：落点不在字符边界即 panic，unwind 跨不过 C ABI ⇒ abort。
+#[test]
+fn learning_store_skips_undecodable_records_with_diagnostic() {
+    let _guard = serial();
+    let dir = temp_user_dir("bad-frame");
+    let name = crate::learning_store::store_name("tiger_sentence");
+    let path = dir.join(format!("{name}.userdb"));
+    {
+        let mut db = rusty_leveldb::DB::open(&path, rusty_leveldb::Options::default())
+            .expect("open learning db");
+        // 良构帧：时间 / mode / code / text / context。
+        let good = hux_core::learning::frame(&[
+            "1000.0".to_string(),
+            "sentence-v2".to_string(),
+            "ab".to_string(),
+            "甲".to_string(),
+            String::new(),
+        ]);
+        db.put(b"e/0000000001", good.as_bytes()).expect("put good");
+        // 坏帧：长度前缀 1 落在 `é`（2 字节）中间——旧实现的 panic 点。
+        db.put(b"e/0000000002", "1:é".as_bytes()).expect("put bad");
+        db.flush().expect("flush");
+    }
+    let engine = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
+    let store = &engine.learning;
+    assert!(store.store_ready(), "坏帧不得让整库不可用");
+    assert_eq!(store.events.len(), 1, "坏帧跳过、良帧照常装载");
+    assert_eq!(store.count, 2, "计数仍按库中记录数（上限判定不受影响）");
+    let error = store.error.clone().unwrap_or_default();
+    assert!(
+        error.contains("skipped 1 undecodable record"),
+        "坏帧必须计入既有诊断：{error}"
+    );
+    let status = engine.status.to_str().unwrap_or("").to_string();
+    assert!(
+        status.contains("skipped 1 undecodable record"),
+        "诊断随状态串对用户可见：{status}"
+    );
+}
+
 /// 宿主自发提交接学习：Tab 选字后由宿主链提交（组合中大写字母），事件应落库。
 ///
 /// 输入取 `abab`（两条 2 码边 ⇒ composed-only）：`c69c1a8` 起差异学习只对
 /// composed-only 的基线与选中项成对，整串直出（Direct）的确认不再产生事件。
 #[test]
-fn host_commit_records_tab_learning() {
+fn host_commit_records_learning_on_tab() {
     let _guard = serial();
     let dir = temp_user_dir("host-learning");
     COMMITS.lock().unwrap().clear();
@@ -498,12 +548,12 @@ fn digit_select_commits_page_candidate() {
 
 /// 多项触发键（`KeyList`）：两项均可进入音反查。
 #[test]
-fn sound_to_char_shape_accepts_multiple_trigger_keys() {
+fn reverse_lookup_pronunciation_accepts_multiple_trigger_keys() {
     let _guard = serial();
     UPDATES.lock().unwrap().clear();
     let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
     engine.apply_settings(Settings {
-        sound_to_char_shape_keys: vec!["grave".to_string(), "semicolon".to_string()],
+        reverse_lookup_pronunciation_keys: vec!["grave".to_string(), "semicolon".to_string()],
         ..Default::default()
     });
     // 第二绑定（`;`）触发，入段字符为 `;`。
@@ -826,11 +876,11 @@ fn apply_settings_disables_learning_mode() {
     let _guard = serial();
     let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
     engine.apply_settings(Settings {
-        tab_learning: false,
+        learning_on_tab: false,
         ..Default::default()
     });
     assert!(
-        engine.engine.learning_mode.is_empty(),
+        engine.engine.scheme.learning_mode().is_empty(),
         "关闭 Tab 学习 → 学习 mode 为空"
     );
 }
@@ -852,12 +902,12 @@ fn ffi_options() -> HuxOptions {
         allow_duplicate_single: 1,
         full_shape: 1,
         ascii_punct: 1,
-        tab_learning: 0,
+        learning_on_tab: 0,
         high_freq_limit: 800,
         // 音反查：`；`（无修饰）与 Shift+`；`（= `:`）。
-        sound_to_char_shape: key_list(&[(0x3b, 0), (0x3a, 0)]),
+        reverse_lookup_pronunciation: key_list(&[(0x3b, 0), (0x3a, 0)]),
         // 字反查：Shift+`（= `~`）。
-        char_to_sound_shape: key_list(&[(0x60, 1)]),
+        reverse_lookup_character: key_list(&[(0x60, 1)]),
         page_size: 7,
         // 翻页：`.` 与 `]`。
         page_up: key_list(&[(0x2c, 0)]),
@@ -866,7 +916,7 @@ fn ffi_options() -> HuxOptions {
         candidate_layout: 0,
         preedit_mode: 0,
         page_cycle: 0,
-        min_retained_raw_length: 0,
+        min_retained_input_length: 0,
     }
 }
 
@@ -887,8 +937,8 @@ fn ffi_apply_settings_maps_engine_options() {
     assert!(session.context.get_option("full_shape"));
     assert!(session.context.get_option("ascii_punct"));
     assert!(
-        engine.learning_mode.is_empty(),
-        "tab_learning=0 → 学习 mode 为空"
+        engine.scheme.learning_mode().is_empty(),
+        "learning_on_tab=false → 学习 mode 为空"
     );
     assert_eq!(engine.settings.high_freq_limit, 800);
     std::fs::remove_dir_all(&dir).ok();
@@ -904,7 +954,7 @@ fn ffi_apply_settings_maps_new_options() {
         candidate_layout: 2,
         preedit_mode: 2,
         page_cycle: 1,
-        min_retained_raw_length: 4,
+        min_retained_input_length: 4,
         ..ffi_options()
     };
     assert_eq!(
@@ -925,7 +975,7 @@ fn ffi_apply_settings_maps_new_options() {
     assert_eq!(engine.scheme.host_options().page_size, 7);
     // 越界钳制（0..=20）。
     let clamped = HuxOptions {
-        min_retained_raw_length: 999,
+        min_retained_input_length: 999,
         ..ffi_options()
     };
     assert_eq!(
@@ -933,8 +983,8 @@ fn ffi_apply_settings_maps_new_options() {
         1
     );
     assert_eq!(
-        engine.settings.min_retained_raw_length,
-        MAX_MIN_RETAINED_RAW_LENGTH
+        engine.settings.min_retained_input_length,
+        MAX_MIN_RETAINED_INPUT_LENGTH
     );
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -996,10 +1046,13 @@ fn ffi_apply_settings_maps_lookup_keys() {
     assert_eq!(unsafe { hux_engine_apply_settings(engine, &options) }, 1);
     let state = unsafe { &mut *engine };
     assert_eq!(
-        state.settings.sound_to_char_shape_keys,
+        state.settings.reverse_lookup_pronunciation_keys,
         vec!["semicolon", "colon"]
     );
-    assert_eq!(state.settings.char_to_sound_shape_keys, vec!["Shift+grave"]);
+    assert_eq!(
+        state.settings.reverse_lookup_character_keys,
+        vec!["Shift+grave"]
+    );
     unsafe { hux_engine_free(engine) };
 }
 
@@ -1049,7 +1102,7 @@ fn reset_clears_panel() {
 
 /// 音反查端到端：设置 → 前缀识别 → 候选/注释 → 预编辑提示 → 空格上屏。
 #[test]
-fn sound_to_char_shape_end_to_end() {
+fn reverse_lookup_pronunciation_end_to_end() {
     let _guard = serial();
     COMMITS.lock().unwrap().clear();
     UPDATES.lock().unwrap().clear();
@@ -1084,7 +1137,7 @@ fn sound_to_char_shape_end_to_end() {
 /// 字反查：默认 Alt+" 进入组合（**带修饰键不给默认候选**）；
 /// 上排 = 光标左侧 1 字拼音、下排 = 虎码，步长 1；改为单字符键时才给默认可上屏候选。
 #[test]
-fn char_to_sound_shape_end_to_end() {
+fn reverse_lookup_character_end_to_end() {
     let _guard = serial();
     COMMITS.lock().unwrap().clear();
     UPDATES.lock().unwrap().clear();
@@ -1129,7 +1182,7 @@ fn char_to_sound_shape_end_to_end() {
     );
     engine.reset();
     engine.apply_settings(Settings {
-        sound_to_char_shape_keys: vec!["semicolon".to_string()],
+        reverse_lookup_pronunciation_keys: vec!["semicolon".to_string()],
         ..Settings::default()
     });
     assert!(engine.key(0x3b, 0, false), "; 应被消费");
@@ -1142,7 +1195,7 @@ fn char_to_sound_shape_end_to_end() {
     // 音反查：单字符触发键（`）→ 同样给默认可上屏候选，空格上屏。
     engine.reset();
     engine.apply_settings(Settings {
-        sound_to_char_shape_keys: vec!["grave".to_string()],
+        reverse_lookup_pronunciation_keys: vec!["grave".to_string()],
         ..Settings::default()
     });
     assert!(engine.key(0x60, 0, false), "` 应被消费");
@@ -1156,7 +1209,7 @@ fn char_to_sound_shape_end_to_end() {
     // 单字符触发键（~）→ 提供默认可上屏候选，空格上屏。
     engine.reset();
     engine.apply_settings(Settings {
-        char_to_sound_shape_keys: vec!["asciitilde".to_string()],
+        reverse_lookup_character_keys: vec!["asciitilde".to_string()],
         ..Settings::default()
     });
     engine.set_surrounding(Some("中欧中兴"), 2);
@@ -1171,7 +1224,7 @@ fn char_to_sound_shape_end_to_end() {
 }
 
 /// 字反查夹具目录。
-fn char_to_sound_shape_dirs() -> Vec<PathBuf> {
+fn reverse_lookup_character_dirs() -> Vec<PathBuf> {
     vec![
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/sound_to_char_shape"),
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data"),
@@ -1180,10 +1233,10 @@ fn char_to_sound_shape_dirs() -> Vec<PathBuf> {
 
 /// 字反查：周边文本不可用（如终端）时不显示提示，两排均为空。
 #[test]
-fn char_to_sound_shape_without_surrounding_shows_nothing() {
+fn reverse_lookup_character_without_surrounding_shows_nothing() {
     let _guard = serial();
     UPDATES.lock().unwrap().clear();
-    let mut engine = TestEngine::new(host(), char_to_sound_shape_dirs(), None, None);
+    let mut engine = TestEngine::new(host(), reverse_lookup_character_dirs(), None, None);
     engine.set_surrounding(None, 0);
     assert!(engine.key(0x22, FCITX_ALT, false), "Alt+\" 应被消费");
     let (_, _, _, _, up, down) = last_update();
@@ -1193,10 +1246,10 @@ fn char_to_sound_shape_without_surrounding_shows_nothing() {
 
 /// 字反查：周边文本恢复后，同一查码段在下一次按键刷新出两排。
 #[test]
-fn char_to_sound_shape_refreshes_when_surrounding_available() {
+fn reverse_lookup_character_refreshes_when_surrounding_available() {
     let _guard = serial();
     UPDATES.lock().unwrap().clear();
-    let mut engine = TestEngine::new(host(), char_to_sound_shape_dirs(), None, None);
+    let mut engine = TestEngine::new(host(), reverse_lookup_character_dirs(), None, None);
     engine.set_surrounding(None, 0);
     assert!(engine.key(0x22, FCITX_ALT, false), "Alt+\" 应被消费");
     engine.set_surrounding(Some("中欧中兴"), 2);
@@ -1368,12 +1421,312 @@ fn option_save_error_is_visible_in_status() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// **每个角色都必须被方案声明**：装配处按角色解析选项键，缺一即报错。
+#[test]
+fn every_configured_role_is_declared_by_the_scheme() {
+    let _guard = serial();
+    let engine = TestEngine::new(host(), fixture_dirs(), None, None);
+    let declarations = engine.engine.scheme.option_declarations();
+    // 正例：真实方案的声明齐备，装配处不产生诊断（`options:` 前缀只用于装配/保存错误）。
+    let (roles, error) = crate::engine::resolve_option_roles(declarations);
+    assert_eq!(error, None, "tiger 的声明应覆盖全部角色");
+    for role in hux_cfg::roles::SCHEME_OPTION_ROLES {
+        assert!(
+            roles.key(role).is_some(),
+            "角色 {role} 必须被方案声明（否则状态菜单与持久化静默失效）"
+        );
+    }
+    assert!(
+        !engine
+            .engine
+            .status
+            .to_str()
+            .unwrap_or("")
+            .contains("options:"),
+        "装配正常时状态串不含角色诊断"
+    );
+
+    // 负例：缺角色 → 报错且不接线（不落到角色名字面量上）。
+    let incomplete = [
+        OptionDecl {
+            role: hux_cfg::roles::ROLE_EARLY_COMMIT,
+            key: "scheme_early_commit",
+        },
+        OptionDecl {
+            role: "not_a_configured_role",
+            key: "scheme_unknown",
+        },
+    ];
+    let (roles, error) = crate::engine::resolve_option_roles(&incomplete);
+    let error = error.expect("缺角色应报错");
+    assert!(error.contains("方案未声明角色"), "诊断文案：{error}");
+    assert!(error.contains(hux_cfg::roles::ROLE_DIGIT_SELECT));
+    assert_eq!(roles.key(hux_cfg::roles::ROLE_EARLY_COMMIT), None);
+    assert_eq!(roles.key(hux_cfg::roles::ROLE_FULL_SHAPE), None);
+}
+
+/// 角色常量值 ↔ 方案读取的角色：两侧**同值同序**（任一侧改名即失败）。
+///
+/// 这是角色一致性的核心守护：`Config::parse` 对未知角色 `unwrap_or(0/false)` **静默回退**，
+/// 故单侧改名过去可让 `min_retained_raw_length`（→0，不再限制保留量）/ `high_freq_limit`
+/// （→0，高频过滤全放开）静默失效而全绿（审计 F1）。方案不依赖 `hux-cfg`、配置层不依赖方案，
+/// 两侧只能在此（装配根）对齐：清单逐项比对 + 真实装配路径无诊断 + 改名必报诊断。
+#[test]
+fn scheme_config_roles_match_the_scheme() {
+    let _guard = serial();
+    assert_eq!(
+        hux_cfg::roles::SCHEME_CONFIG_ROLES,
+        hux_scheme_tiger::scheme::SCHEME_CONFIG_ROLES,
+        "cfg 的配置角色清单必须与方案读取的角色同值同序"
+    );
+    // 正例：真实装配路径（配置层装袋 → 方案读袋）无角色漂移诊断。
+    let engine = TestEngine::new(host(), fixture_dirs(), None, Some(temp_user_dir("roles")));
+    let status = engine.engine.status.to_str().unwrap_or("").to_string();
+    assert!(
+        !status.contains("config:"),
+        "角色一致时状态串不应有配置诊断：{status}"
+    );
+
+    // 负例：把 `high_freq_limit` 单侧改名（等价于改 `ROLE_HIGH_FREQ_LIMIT` 的值）
+    // → 方案点名「未识别的角色 / 缺少角色」，用户侧不再是「设置没生效」的哑失败。
+    let mut renamed = hux_core::scheme::SchemeConfig::new();
+    for role in hux_cfg::roles::SCHEME_CONFIG_ROLES {
+        if *role != hux_cfg::roles::ROLE_HIGH_FREQ_LIMIT {
+            renamed = renamed.with(role, hux_core::scheme::Value::Count(1));
+        }
+    }
+    renamed = renamed
+        .with(
+            "high_freq_limit_X",
+            hux_core::scheme::Value::Count(hux_cfg::DEFAULT_HIGH_FREQ_LIMIT),
+        )
+        // 平台追加的运行时选项角色照常装入（漂移项只有 `high_freq_limit`）。
+        .with(
+            hux_cfg::roles::ROLE_ALLOW_DUPLICATE_SINGLE,
+            hux_core::scheme::Value::Bool(true),
+        );
+    let (_, notes) = hux_scheme_tiger::scheme::TigerScheme::load(&fixture_dirs(), None, &renamed);
+    assert!(
+        notes
+            .iter()
+            .any(|note| note == "config: 未识别的角色 high_freq_limit_X"),
+        "改名后应报未识别角色：{notes:?}"
+    );
+    assert!(
+        notes
+            .iter()
+            .any(|note| note == "config: 缺少角色 high_freq_limit"),
+        "改名后应报缺少角色：{notes:?}"
+    );
+}
+
+/// 角色表的分组 / 顺序 / 包含关系（审计 F12）：手工清单必须钉在角色表上。
+///
+/// 此前三条不变式（方案开关 ⊆ 运行时角色、存储缺省 ≡ 运行时角色、会话缺省 ⊇ 运行时角色）
+/// 只是「今天恰好成立」——新增一个方案开关角色时不会有任何断言失败。
+#[test]
+fn runtime_role_tables_cover_the_declared_roles() {
+    let _guard = serial();
+    let engine = TestEngine::new(host(), fixture_dirs(), None, Some(temp_user_dir("roles2")));
+    let roles = &engine.engine.option_roles;
+    // 方案声明的角色序 = 配置层的方案开关名单（顺序错位会让状态菜单与开关对不上）。
+    assert_eq!(
+        engine
+            .engine
+            .scheme
+            .option_declarations()
+            .iter()
+            .map(|decl| decl.role)
+            .collect::<Vec<_>>(),
+        hux_cfg::roles::SCHEME_OPTION_ROLES.to_vec(),
+        "方案声明顺序必须等于 SCHEME_OPTION_ROLES"
+    );
+    // 运行时角色表与 ABI 角色数同源（空表也不得让本用例空转）。
+    let runtime = engine.engine.runtime_options().to_vec();
+    assert_eq!(runtime.len(), hux_cfg::roles::RUNTIME_OPTION_ROLES.len());
+    let settings = Settings::default();
+    let store = settings.store_defaults(roles);
+    let defaults = settings.option_defaults(roles);
+    assert_eq!(store.len(), hux_cfg::roles::RUNTIME_OPTION_ROLES.len());
+    for role in hux_cfg::roles::RUNTIME_OPTION_ROLES {
+        let key = roles
+            .key(role)
+            .unwrap_or_else(|| panic!("角色 {role} 应有键"));
+        assert!(
+            store.contains_key(key),
+            "运行时角色 {role} 必须可持久化（否则菜单能切但不落盘）"
+        );
+        assert!(
+            defaults.iter().any(|(name, _)| *name == key),
+            "运行时角色 {role} 必须有会话缺省（否则新会话回退到别处）"
+        );
+    }
+    // 宿主标准项 `ascii_punct` 只作会话初始选项，不入运行时菜单、不落盘。
+    assert!(
+        defaults
+            .iter()
+            .any(|(name, _)| *name == hux_cfg::roles::ROLE_ASCII_PUNCT)
+    );
+    assert!(!store.contains_key(hux_cfg::roles::ROLE_ASCII_PUNCT));
+}
+
+/// `hux_abi.h` 的 `HUX_OPTION_*` 枚举序 ↔ `hux_cfg::roles::RUNTIME_OPTION_ROLES`（顺序 / 个数 / 名字）。
+///
+/// 角色序在三处手工同步（角色表、头文件枚举、C++ 文案表 `kLabels[role]`）：
+/// **调序**会让菜单文案与开关静默错位、`HUX_OPTION_DIGIT_SELECT` 取到别的选项键（审计 F2）。
+/// C++ 侧只能守长度（`static_assert(std::size(kLabels) == HUX_OPTION_COUNT)`，见 `shell/hux.cpp`），
+/// 顺序由本用例从**头文件源码**解析后逐项比对——改名 / 加角色 / 调序都在此失败。
+#[test]
+fn option_role_order_matches_the_abi_header() {
+    let header = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../crates/hux-ffi/include/hux_abi.h"
+    ))
+    .expect("read hux_abi.h");
+    // 解析 `enum { HUX_OPTION_X = n, … };` 的成员与被显式写出的下标（含末尾计数哨兵）。
+    let body = header
+        .split_once("enum {")
+        .expect("HUX_OPTION_* 枚举定义")
+        .1;
+    let body = body.split_once("};").expect("枚举结束").0;
+    let members: Vec<(&str, i32)> = body
+        .lines()
+        .filter_map(|line| {
+            let (name, value) = line.trim().split_once('=')?;
+            let name = name.trim();
+            if !name.starts_with("HUX_OPTION_") {
+                return None;
+            }
+            Some((
+                name,
+                value
+                    .trim()
+                    .trim_end_matches(',')
+                    .parse::<i32>()
+                    .expect("枚举下标应为整数"),
+            ))
+        })
+        .collect();
+
+    let expected: Vec<String> = hux_cfg::roles::RUNTIME_OPTION_ROLES
+        .iter()
+        .map(|role| format!("HUX_OPTION_{}", role.to_ascii_uppercase()))
+        .collect();
+    assert_eq!(
+        members.len(),
+        expected.len() + 1,
+        "枚举 = 角色序 + 计数哨兵（实际：{members:?}）"
+    );
+    assert_eq!(
+        members[..expected.len()]
+            .iter()
+            .map(|(name, _)| *name)
+            .collect::<Vec<_>>(),
+        expected.iter().map(String::as_str).collect::<Vec<_>>(),
+        "hux_abi.h 的角色序（顺序 / 个数 / 名字）必须等于 RUNTIME_OPTION_ROLES"
+    );
+    // 下标连续 0..=n：重复 / 跳号会让宿主按角色取到错位的键。
+    assert_eq!(
+        members.iter().map(|(_, value)| *value).collect::<Vec<_>>(),
+        (0..=expected.len() as i32).collect::<Vec<_>>()
+    );
+    let (sentinel, count) = members[expected.len()];
+    assert_eq!(sentinel, "HUX_OPTION_COUNT");
+    assert_eq!(count as usize, hux_cfg::roles::RUNTIME_OPTION_ROLES.len());
+}
+
+/// 设置 → 角色袋必须覆盖 `hux-cfg` 声明的**全部**配置角色（漏一个即失败）。
+#[test]
+fn scheme_config_covers_every_declared_role() {
+    let bag = crate::engine::scheme_config(&Settings::default());
+    assert_eq!(
+        bag.roles().collect::<Vec<_>>(),
+        hux_cfg::roles::SCHEME_CONFIG_ROLES.to_vec(),
+        "配置袋的角色与顺序即 `hux-cfg` 的角色全集"
+    );
+    let settings = Settings::default();
+    assert_eq!(
+        bag.count(hux_cfg::roles::ROLE_HIGH_FREQ_LIMIT),
+        Some(settings.high_freq_limit)
+    );
+    assert_eq!(
+        bag.count(hux_cfg::roles::ROLE_MIN_RETAINED_INPUT_LENGTH),
+        Some(settings.min_retained())
+    );
+    assert_eq!(
+        bag.texts(hux_cfg::roles::ROLE_REVERSE_LOOKUP_PRONUNCIATION_KEYS),
+        settings.reverse_lookup_pronunciation_keys.as_slice()
+    );
+    assert_eq!(
+        bag.bool(hux_cfg::roles::ROLE_LEARNING_ON_TAB),
+        Some(settings.learning_on_tab)
+    );
+    // 钳制在装配处生效（页大小 / 最短保留码数上限）。
+    let clamped = crate::engine::scheme_config(&Settings {
+        page_size: 999,
+        min_retained_input_length: 999,
+        ..Default::default()
+    });
+    assert_eq!(
+        clamped.count(hux_cfg::roles::ROLE_PAGE_SIZE),
+        Some(hux_core::host::MAX_PAGE_SIZE)
+    );
+    assert_eq!(
+        clamped.count(hux_cfg::roles::ROLE_MIN_RETAINED_INPUT_LENGTH),
+        Some(hux_cfg::MAX_MIN_RETAINED_INPUT_LENGTH)
+    );
+}
+
+/// 运行时选项值经配置袋下发到方案：单字重码开关决定学习 mode 的 `dup` 位。
+#[test]
+fn runtime_option_value_reaches_scheme_learning_mode() {
+    let _guard = serial();
+    let dir = temp_user_dir("duplicate-mode");
+    let mut engine = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
+    assert!(
+        engine.engine.scheme.learning_mode().ends_with("dup=1"),
+        "设置缺省：单字重码组句开 → dup=1"
+    );
+    assert!(engine.set_option_value("tiger_sentence_allow_duplicate_single", false));
+    assert!(
+        engine.engine.scheme.learning_mode().ends_with("dup=0"),
+        "运行时关掉后方案自算的 mode 随之变化"
+    );
+    // 持久化值经「存储 → 会话 → 配置袋」在按键路径生效（重启后同样）。
+    let mut restarted = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
+    restarted.key(u32::from(b'a'), 0, false);
+    assert!(
+        restarted.engine.scheme.learning_mode().ends_with("dup=0"),
+        "options.yaml 的值优先于设置缺省"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// 选项角色 → 键：宿主（C++）据此构造状态菜单与面板序号，不再硬编码方案选项名。
 #[test]
 fn option_role_keys_follow_scheme_declarations() {
     let _guard = serial();
     let engine = TestEngine::new(host(), fixture_dirs(), None, None);
-    assert_eq!(hux_engine_option_role_count(), 5);
+    assert_eq!(
+        hux_engine_option_role_count(),
+        hux_cfg::roles::RUNTIME_OPTION_ROLES.len() as i32
+    );
+    // 角色序（ABI 角色序）与**已解析**的键表逐项一致：菜单项与 ABI 索引不会错位
+    // （宿主标准项 `full_shape` 由配置层自持，不在方案声明里）。
+    assert_eq!(
+        hux_cfg::roles::RUNTIME_OPTION_ROLES
+            .iter()
+            .map(|role| engine.engine.option_roles.key(role))
+            .collect::<Vec<_>>(),
+        vec![
+            Some("tiger_sentence_early_commit"),
+            Some("tiger_sentence_early_commit_to_preedit"),
+            Some("tiger_sentence_allow_duplicate_single"),
+            Some("full_shape"),
+            Some("tiger_sentence_digit_select"),
+        ],
+        "角色序（含宿主标准项 full_shape）↔ 方案声明的键"
+    );
     let keys: Vec<String> = (0..5)
         .map(|role| unsafe {
             let key = hux_engine_option_key(&engine.engine, role);
@@ -1464,18 +1817,18 @@ fn schema_defaults_match_settings_defaults() {
             "AllowDuplicateSingle" => settings.allow_duplicate_single.to_string(),
             "FullShape" => settings.full_shape.to_string(),
             "AsciiPunct" => settings.ascii_punct.to_string(),
-            "TabLearning" => settings.tab_learning.to_string(),
+            "TabLearning" => settings.learning_on_tab.to_string(),
             "DigitSelect" => settings.digit_select.to_string(),
             "PageCycle" => settings.page_cycle.to_string(),
             "HighFreqLimit" => settings.high_freq_limit.to_string(),
             "PageSize" => settings.page_size.to_string(),
-            "MinRetainedRawLength" => settings.min_retained_raw_length.to_string(),
+            "MinRetainedRawLength" => settings.min_retained_input_length.to_string(),
             "CandidateLayout" => format!("{:?}", settings.candidate_layout),
             "PreeditMode" => format!("{:?}", settings.preedit_mode),
             "PageUpKey" => settings.page_up_keys.join(","),
             "PageDownKey" => settings.page_down_keys.join(","),
-            "SoundToCharShapeKey" => settings.sound_to_char_shape_keys.join(","),
-            "CharToSoundShapeKey" => settings.char_to_sound_shape_keys.join(","),
+            "SoundToCharShapeKey" => settings.reverse_lookup_pronunciation_keys.join(","),
+            "CharToSoundShapeKey" => settings.reverse_lookup_character_keys.join(","),
             _ => continue, // PanelPreedit 等宿主显示项不经引擎
         };
         let actual = if raw.contains("fcitx::KeyList") {

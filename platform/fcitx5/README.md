@@ -7,7 +7,9 @@ hux-ime（虎虚）fcitx5 平台适配：**C++ 薄壳**（`shell/`，只做 fcit
 C ABI 契约在 [`../../crates/hux-ffi/`](../../crates/hux-ffi/)（CI 校验 `hux_abi.h` 声明 ↔ `libhux.so` 导出一致）；
 逻辑在 [`../../crates/hux-core/`](../../crates/hux-core/)（内核）、[`../../crates/hux-scheme/tiger/`](../../crates/hux-scheme/tiger/)（虎句方案：`interaction::processor`/`translate`）与 `hux-cfg`。按键 → 方案（处理器/翻译）→ core（会话/宿主链）→ 提交 / preedit / 候选 → fcitx5。
 选项键（菜单/面板）：宿主不硬编码方案选项名——`hux_engine_option_key(role)` 按 `HUX_OPTION_*`
-角色向引擎取键（角色序与状态菜单同源）；面板数字序号取运行时生效值。
+角色向引擎取键（角色序 = `hux_cfg::roles::RUNTIME_OPTION_ROLES`，与状态菜单同源）；
+键的来源是方案声明 `Scheme::option_declarations()`，装配处解析成角色表（**缺角色即报错**，
+该角色无键 → 宿主跳过该项）；面板数字序号取运行时生效值。
 装配方式（P4c）：本层是**装配根**——构造 `TigerScheme` 后以 `dyn Scheme` 驱动（按键 / 候选 / 重建 /
 学习 / 反查全经契约），不引用方案内部模块；
 桌面与 Android **共用本层**（两端同为 fcitx5；Android 接线见 [`../android/README.md`](../android/README.md)）；

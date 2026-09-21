@@ -8,7 +8,7 @@ use hux_core::session::Context;
 
 /// 字反查会话态：应用侧周边文本（字符制光标）+ 已算好的两排提示。
 #[derive(Default)]
-pub(crate) struct CharToSoundShapeState {
+pub(crate) struct ReverseLookupState {
     pub(crate) valid: bool,
     pub(crate) text: String,
     pub(crate) cursor: usize,
@@ -21,5 +21,5 @@ pub(crate) struct Session {
     /// 方案会话句柄（组合、学习暂存、锁、早提交等状态都在方案内，平台只透传）。
     pub(crate) scheme_session: SessionId,
     /// 字反查会话态：应用侧周边文本 + 算好的两排提示。
-    pub(crate) char_to_sound_shape: CharToSoundShapeState,
+    pub(crate) reverse_lookup: ReverseLookupState,
 }

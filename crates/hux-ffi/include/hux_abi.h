@@ -101,10 +101,10 @@ typedef struct hux_options {
   int32_t allow_duplicate_single;
   int32_t full_shape;
   int32_t ascii_punct;
-  int32_t tab_learning;
+  int32_t learning_on_tab;
   int32_t high_freq_limit;
-  hux_key_list sound_to_char_shape;
-  hux_key_list char_to_sound_shape;
+  hux_key_list reverse_lookup_pronunciation;
+  hux_key_list reverse_lookup_character;
   int32_t page_size;
   hux_key_list page_up;
   hux_key_list page_down;
@@ -116,16 +116,26 @@ typedef struct hux_options {
   /* 翻页循环：0 = 关（默认），1 = 开。 */
   int32_t page_cycle;
   /* 提前上屏最短保留码数（0..=20；0 = 不额外限制）。 */
-  int32_t min_retained_raw_length;
+  int32_t min_retained_input_length;
 } hux_options;
 
-/* 引擎选项角色（顺序即状态菜单项顺序；宿主据此取选项键，不得硬编码方案选项名）。 */
+/*
+ * 引擎选项角色（顺序即状态菜单项顺序；宿主据此取选项键，不得硬编码方案选项名）。
+ *
+ * 该顺序是 **ABI**：Rust 侧由 `hux_cfg::roles::RUNTIME_OPTION_ROLES` 派生
+ * （`platform/fcitx5/src/abi.rs` 的 `hux_engine_option_role_count`），
+ * 并由用例 `option_role_order_matches_the_abi_header` 逐项比对；
+ * 宿主侧以 `HUX_OPTION_COUNT` 做 `static_assert` 长度守卫（`shell/hux.cpp`）。
+ * 加角色 / 调序必须同时改这三处，否则编译或测试失败（此前 `kLabels[role]` 会越界读）。
+ */
 enum {
   HUX_OPTION_EARLY_COMMIT = 0,
   HUX_OPTION_EARLY_COMMIT_TO_PREEDIT = 1,
   HUX_OPTION_ALLOW_DUPLICATE_SINGLE = 2,
   HUX_OPTION_FULL_SHAPE = 3,
   HUX_OPTION_DIGIT_SELECT = 4,
+  /* 角色总数（哨兵；不是合法角色下标）。 */
+  HUX_OPTION_COUNT = 5,
 };
 
 /* 选项角色总数。 */

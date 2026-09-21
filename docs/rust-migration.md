@@ -36,7 +36,8 @@ crates/hux-core/         # 引擎内核：与方案、平台无关（无 fcitx5 
   cache.rs  learning.rs                  # K0/K1：有界缓存、学习机制
   key.rs  key_table.rs  session.rs  host.rs   # K2：键事件、会话、宿主链（含提交点回调）
   punct.rs                               # 标点表（symbols.yaml）
-  scheme.rs                              # 方案契约（P4c：dyn Scheme 驱动）
+  scheme.rs                              # 方案契约（P4c：dyn Scheme 驱动；§8① 去方案语义：
+                                         #     角色声明 OptionDecl + 配置袋 SchemeConfig）
 crates/hux-scheme/tiger/ # 虎句方案（唯一全量实现；hux-scheme/* → hux-core）
   lexicon.rs  decode.rs  lexical.rs  ngram.rs # K0/K1/K1.5：码表、beam 解码、词先验、TCSKNM02
   sound_to_char_shape.rs  char_to_sound_shape.rs  # 反查：音反查、字反查
@@ -135,6 +136,9 @@ docs/                    # 设计/重构/使用/配置/性能/Android 等，索�
   （`confirm_selection`、自动上屏）与宿主链提交点（`editor` char_handler、`punctuator`）；
   候选点击经确认链记录；宿主排空 `LiveLearning::submitted` 落库并在 `store_ready` 后生效；
   存储 `<user>/tiger_sentence_learning_<hash(schema_id)>.userdb/`（1 万条 / 16 MiB，60 秒节流刷新）。
+- **选项键归属**：方案经 `Scheme::option_declarations` 自报「角色 → 键」，角色词汇与默认值在
+  `hux-cfg::roles`（宿主标准项 `full_shape`/`ascii_punct` 由配置层自持）；平台装配处解析成角色表，
+  **缺角色即报错**（状态串可见）——宿主与配置层都不硬编码方案选项名。
 - **选项与配置**：`tiger_sentence.options.yaml`（主）+ legacy `user.yaml` 的 `var/option/*`（只读回退，
   保存失败写属性 `tiger_sentence_options_error`）；合并顺序 **options.yaml > 设置 > 内建缺省**；图形配置由
   C++ `HuxConfig` schema 生成（「行为」「快捷键」两区，子配置 + `ToolTipAnnotation`；快捷键为 `KeyList`），

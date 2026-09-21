@@ -246,7 +246,11 @@ pub fn frame(values: &[String]) -> String {
     key(&refs)
 }
 
-/// 参照 `unframe`。
+/// 参照 `unframe`：帧的**长度前缀是字节数**，逐段切出。
+///
+/// 越界与「落点不在 UTF-8 字符边界」都返回 `None`（参照 Lua 的 `sub` 同样不 panic）。
+/// 本函数是坏值的唯一错值通道，而调用方在 `extern "C"` 的构造路径上（读持久化库），
+/// 故**不得 panic**：坏帧只能是「跳过该条记录 + 诊断」（审计 F1）。
 pub fn unframe(value: &str) -> Option<Vec<String>> {
     let bytes = value.as_bytes();
     let mut result = Vec::new();
@@ -266,7 +270,12 @@ pub fn unframe(value: &str) -> Option<Vec<String>> {
         if length > MAX_FRAME_PART || digit_end + 1 + length > bytes.len() {
             return None;
         }
-        result.push(value[digit_end + 1..digit_end + 1 + length].to_string());
+        // `get(a..b)` 同时兜住「越界」与「非字符边界」——`&value[a..b]` 在后者 panic。
+        result.push(
+            value
+                .get(digit_end + 1..digit_end + 1 + length)?
+                .to_string(),
+        );
         position = digit_end + 1 + length;
     }
     Some(result)
@@ -1100,5 +1109,26 @@ mod tests {
         assert_eq!(unframe("5:abc"), None);
         assert_eq!(unframe("8193:ab"), None);
         assert_eq!(unframe("ab"), None);
+    }
+
+    /// 长度前缀合法但落点**不在字符边界**：`&str` 的字节切片会 panic（`Option` 签名承诺不 panic）。
+    ///
+    /// 生产触发面：`platform/fcitx5/src/learning_store.rs` 把 LevelDB 的任意值经
+    /// `String::from_utf8_lossy` 交给本函数（非法 UTF-8 换成 U+FFFD 后长度错位），
+    /// 且发生在 `hux_engine_new`（`extern "C"`）⇒ 坏库会让 addon 加载即 abort（审计 core F1 / 平台 F3）。
+    #[test]
+    fn unframe_rejects_non_char_boundary_slices() {
+        // "1:é"：`é` 占 2 字节，长度 1 的切片正好落在其内部。
+        assert_eq!(unframe("1:é"), None);
+        // 尾段落点不在边界（前段良构）：先切出 "1:a"，再对 `é` 切 1 字节。
+        assert_eq!(unframe("3:1:a1:é"), None);
+        // lossy 替换后的形态（非法 UTF-8 → U+FFFD，3 字节）同样只是坏帧，不 panic。
+        let lossy = String::from_utf8_lossy(b"2:\xff\xfe").to_string();
+        assert_eq!(unframe(&lossy), None);
+        // 良构帧不受影响（含多字节字符的正常切分）。
+        assert_eq!(
+            unframe("1:a2:é"),
+            Some(vec!["a".to_string(), "é".to_string()])
+        );
     }
 }

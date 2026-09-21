@@ -123,6 +123,8 @@ platform/                     # 平台适配
 >   `SchemeConfig` 删除未使用字段；`hux-cfg` 删除已迁入方案的 `learning_mode` 死代码。
 > - **P4 收尾 ✅**：选项 id 纳入契约（`Scheme::option_ids` → `OptionIds`），
 >   `hux-cfg` 的 4 个硬编码常量与平台的一致性测试一并移除，实现单一来源。
+>   （该强类型结构已在 §8① 被**声明式契约**取代：`OptionIds` → `Scheme::option_declarations`
+>   + 角色表；历史形态仅此处留档。）
 
 ## 5. 方案契约（`hux_core::scheme`）
 
@@ -134,19 +136,47 @@ platform/                     # 平台适配
   **不把虎码特有语义**（缓冲态、锁、早提交启发式）泛化进契约——先留在 `tiger` profile，
   等第二个同族方案落地后再抽象。
 - 形码族（虎码 / 宇浩 / 五笔）优先；拼音族（双拼 / 全拼）只留接口。
-- **选项 id 单一来源（✅ 已收口）**：方案经 [`Scheme::option_ids`] 声明自己的选项键
-  （`OptionIds`），配置层 `hux-cfg` 不再硬编码方案选项名——`Settings::option_defaults` /
-  `store_defaults` / `option_default` 与 `OptionsStore::load`、`options::option_defaults`
-  均接收由平台从方案取得的 `&OptionIds`；平台的状态菜单白名单亦据此构造。
-  键的**持久化兼容**由方案侧测试 `option_ids_are_stable_persisted_keys` 钉住，
+- **选项键单一来源 + 角色归配置层（✅ §8① 已收口）**：方案经 `Scheme::option_declarations`
+  自报「角色 → 键」声明（`&'static [OptionDecl]`）；**角色词汇与默认值归 `hux-cfg`**
+  （`hux_cfg::roles` 的常量；宿主标准项 `full_shape` / `ascii_punct` 由配置层自持，不由方案声明）。
+  平台在装配处把声明解析为 `OptionKeys` 角色表（**缺角色即报错**，不静默接线），
+  `Settings::{option_defaults, store_defaults, option_default}` 与 `options::option_defaults`、
+  `OptionsStore::load` 均按该表工作；平台的状态菜单白名单亦据此构造（角色序 = C ABI `HUX_OPTION_*` 序）。
+  键的**持久化兼容**由方案侧测试 `option_declarations_are_stable_persisted_keys` 钉住，
+  「每个角色都必须被方案声明」由平台测试 `every_configured_role_is_declared_by_the_scheme` 钉住，
   YAML 读写格式由 `hux-cfg` 的 store 测试（含历史键字面量）守护。
+  **角色一致性守护（复核整改 §8① 后续）**：`hux-cfg` 与方案各自持有一份同值字面量，
+  过去只靠人肉同步——`Config::parse` 对未知角色 `unwrap_or(0/false)` 静默回退，单侧改名可让
+  `min_retained_raw_length` / `high_freq_limit` 静默失效而全绿。现在：
+  ①方案自报 `hux_scheme_tiger::scheme::SCHEME_CONFIG_ROLES` 并由 `TigerScheme::load` 报出
+  「未识别 / 缺少角色」诊断（进 `hux_engine_status`）；
+  ②平台测试 `scheme_config_roles_match_the_scheme`（清单逐项比对 + 真实装配路径无诊断 + 改名必报诊断）、
+  `runtime_role_tables_cover_the_declared_roles`（`SCHEME_OPTION_ROLES` ⊆ `RUNTIME_OPTION_ROLES`、
+  存储 / 会话缺省覆盖运行时角色）、`option_role_order_matches_the_abi_header`
+  （解析 `hux_abi.h` 的 `HUX_OPTION_*` 枚举序 ↔ `RUNTIME_OPTION_ROLES`）钉住全部四张清单；
+  ③`hux_abi.h` 的 `HUX_OPTION_COUNT` + C++ `static_assert(std::size(kLabels) == HUX_OPTION_COUNT)`
+  把「加角色未补文案」从越界读（UB）变成编译失败。
+- **口径命名（复核整改，范围 C）**：配置 / ABI / 平台层的**标识符**描述引擎概念
+  （`ROLE_MIN_RETAINED_INPUT_LENGTH`、`ROLE_REVERSE_LOOKUP_PRONUNCIATION_KEYS`、
+  `ROLE_REVERSE_LOOKUP_CHARACTER_KEYS`、`ROLE_LEARNING_ON_TAB` 及对应的 `Settings` 字段 /
+  `hux_options` 成员 / C++ 配置成员）；**线上字符串一律不动**——`ROLE_*` 的值仍是与上游 schema /
+  rime 选项同名的键（`"min_retained_raw_length"` / `"sound_to_char_shape_keys"` /
+  `"char_to_sound_shape_keys"` / `"tab_learning"`），`shell/hux.cpp` 的 `.path{}` / schema 默认值路径、
+  `tiger_sentence_*` 前缀、学习库目录名、`options.yaml` 与 `Library` / `Icon` 也保持原样。
+  方案侧的**模块 / 函数名**（`sound_to_char_shape` / `char_to_sound_shape` 及其内部 helper）
+  是参照移植的溯源名，不在此列。
+- **方案配置袋（✅ §8①）**：`SchemeConfig` 是「角色 → `Value`（开关 / 计数 / 文本 / 文本列表）」的
+  **通用键值袋**——平台按角色装配（角色全集 `hux_cfg::roles::SCHEME_CONFIG_ROLES`，装配完整性由平台测试
+  `scheme_config_covers_every_declared_role` 守护），方案按角色解释；内核不再出现
+  `min_retained_raw_length` / 反查键 / Tab 学习等虎码口径字段，换方案不必改 core。
 - **内核不 import 任何 `hux-scheme/*`**（校验方式见 §7）。
-- **落地形态（P4c）**：`hux_core::scheme::Scheme` 只含「必须回调方案」的动作——
-  `id` / `learning_rules` / `option_ids` / `learning_mode` / `apply_config` / `host_options` /
-  `set_learning_mode` / `set_store_ready` / `apply_learning_index` / `new_session` / `free_session` /
+- **落地形态（P4c；§8① 后更新）**：`hux_core::scheme::Scheme` 只含「必须回调方案」的动作——
+  `id` / `option_declarations` / `learning_mode` / `apply_config` / `host_options` /
+  `set_store_ready` / `apply_learning_index` / `new_session` / `free_session` /
   `reset_session` / `process_key` / `select_candidate` / `rebuild` / `take_learning_events` /
   `buffered_text` / `auxiliary_lookup_active` / `auxiliary_rows`；
-  虎码特有语义（缓冲态、锁、早提交启发式、证据）全部留在 `TigerScheme` 内部。
+  学习 mode 由方案据配置袋**自算**（平台只取不透明串 `Scheme::learning_mode`），
+  虎码特有语义（缓冲态、锁、早提交启发式、证据、mode 串格式）全部留在 `TigerScheme` 内部。
 
 ## 6. 测试与性能
 
@@ -177,6 +207,9 @@ platform/                     # 平台适配
 - ✅ 已入 CI：`platform/fcitx5/src` 只允许 `hux_scheme_tiger::scheme::{TigerScheme, ASSETS, SCHEME_ID}`
   （装配根构造方案），不得引用方案内部模块（`interaction` / `decode` / `lexicon` / …）——即「平台经契约驱动」；
 - ✅ 已入 CI：`cargo tree` 校验 `hux-cfg` / `hux-ffi` 不依赖方案（`hux-scheme/*`）与平台层（`hux-platform*`）——§1 规则 1 的四条边全部有守卫；
+- ✅ 已入 CI（§8① 新增）：`crates/hux-core` 不得出现**带引号的**角色名 / 方案选项键字面量
+  （`"tab_learning"`、`"tiger_sentence_<…>"` 等）——角色词汇归 `hux-cfg`、键归方案；
+  rime 标准名 `full_shape` / `ascii_punct` 由 core 宿主链自持，不在此列（注释与文档叙述亦不受影响）；
 - 后续可选 `cargo-deny`。
 
 ## 8. 复核遗留（P0–P6 全仓复核后登记，按需排期）
@@ -387,6 +420,14 @@ platform/                     # 平台适配
   由新增测试 `schema_defaults_match_settings_defaults`（解析 `shell/hux.cpp` 的
   `.path{}`/`.defaultValue`，含 keysym→rime 键名转换）逐项比对并断言核对数为 17，
   使漂移在 CI 即失败。
+- ✅ 已修（复核整改 F2）：状态菜单文案表 `kLabels[role]` 按 ABI 角色下标取，此前与
+  `HUX_OPTION_*` 零绑定（加角色即越界读 UB、调序即菜单错位）。现 `hux_abi.h` 增 `HUX_OPTION_COUNT`、
+  C++ 加 `static_assert(std::size(kLabels) == HUX_OPTION_COUNT)`、Rust 用例
+  `option_role_order_matches_the_abi_header` 解析头文件枚举序并与 `RUNTIME_OPTION_ROLES` 逐项比对
+  （顺序 / 个数 / 名字 / 下标连续）。
+- ✅ 已修（复核整改 F3）：学习库读入的坏帧不再 panic（`learning::unframe` 改 `value.get(a..b)?`）——
+  此前 LevelDB 任意值经 `from_utf8_lossy` 后若长度前缀落在 UTF-8 字符中间，`hux_engine_new`
+  （`extern "C"`）即 abort；现坏帧跳过并计入既有 `error` 诊断（`hux_engine_status` 可见），库仍可用。
 - 面板数字序号/页大小只读配置，而引擎按运行时选项处理（状态菜单关掉数字直选后面板仍显示序号）。
 - ✅ 已修：无会话时状态菜单切换直写存储落盘（`OptionsStore::set_value` + 单测）。
 - ✅ 已修：`CString` 含 NUL 时剔除并记日志（`ui::cstring_lossy` + 单测），不再整条丢空；
@@ -397,28 +438,56 @@ platform/                     # 平台适配
   （状态菜单在会话建立后首次切换可能不落盘）。现改为写入后 `Context::discard_option_events`
   丢弃自身事件，`Options::observe` 回归参照语义；cfg 单测同步重写。
 
-**① 契约去虎码语义（未开工；方案见下，属跨 4 crate 的大改，建议单独一个会话/批次做完）**
-- 病：`OptionIds` 的 4 个字段名与 `SchemeConfig` 的 `min_retained_raw_length`/反查键/Tab 学习
+**① 契约去虎码语义 ✅ 已完成**（跨 4 crate；实施记录见下）
+- 病（原登记）：`OptionIds` 的 4 个字段名与 `SchemeConfig` 的 `min_retained_raw_length`/反查键/Tab 学习
   仍是虎码口径，与 §5「不把方案特有语义泛化进契约」有张力（换方案须改 core）。
-- 方案（数据化声明，保持强类型检查在调用侧）：
-  1. core：`pub struct OptionDecl { pub role: &'static str, pub key: &'static str }` +
-     `Scheme::option_declarations(&self) -> &'static [OptionDecl]`；删 `OptionIds` 与
-     `Scheme::option_ids`、`Scheme::learning_mode` 等固定字段入口（`SchemeConfig` 改为
-     `&[(role, Value)]` 键值袋，`Value` 为 bool/usize/String 的小枚举）；
-  2. `hux-cfg`：不改依赖方向，角色常量归本层（它本就拥有设置词汇），
-     `Settings::{option_defaults,store_defaults,option_default,learning_mode}` 改为按
-     **角色→键**的已解析表工作（入参为 `&[OptionDecl]` 或由平台解析好的 `HashMap<role,key>`）；
-  3. `tiger`：自报 `option_declarations()`（键=其 `interaction::OPTION_*`，角色=cfg 的常量字符串）
-     与 `SchemeConfig` 的键值袋解析；虎码语义（早提交/缓冲/锁）留在本 crate；
-  4. 平台：装配处把 `scheme.option_declarations()` 交给 cfg 解析，角色缺失即报错
-     （原一致性测试升级为「每个角色都必须被方案声明」）。
-- 守护：全程 `cargo test --workspace` + 金样；该改动**不动可观测行为**（键名与默认值不变），
-  故差分金样应保持逐位一致；`docs/refactor.md` §5 落地清单与 §7 守卫同步。
+- 实施（数据化声明；强类型检查落在调用侧）：
+  1. **core**：新增 `OptionDecl { role, key }`、`Value { Bool, Count, Text, Texts }` 与
+     `SchemeConfig` 键值袋（`new` / `with` / `set` / `get` / `bool` / `count` / `text` / `texts` / `roles`；
+     `Default` = **空袋**）；`Scheme::option_declarations() -> &'static [OptionDecl]`；
+     删除 `OptionIds` / `Scheme::option_ids` / `Scheme::learning_mode(rules, duplicate, hfl)` /
+     `Scheme::set_learning_mode` / `Scheme::learning_rules`（**无兼容垫片**）。
+     学习 mode 改为方案自算 + 不透明 getter `Scheme::learning_mode(&self) -> &str`，
+     `apply_learning_index` 随之去掉 `mode` 参数（平台不再持有 mode 串）。
+  2. **hux-cfg**：新增 `roles` 模块——角色常量（`ROLE_*`）+ `SCHEME_OPTION_ROLES` /
+     `HOST_OPTION_ROLES` / `RUNTIME_OPTION_ROLES`（= ABI 角色序）/ `SCHEME_CONFIG_ROLES` +
+     `OptionKeys::resolve(&[OptionDecl]) -> Result<Self, DeclError>`（缺角色 / 重复声明 / 空项 → `Err`）。
+     `Settings::{option_defaults, store_defaults, option_default}`、`options::option_defaults`、
+     `OptionsStore::load` 改为按**已解析的角色表**工作；宿主标准项 `full_shape` / `ascii_punct`
+     由本层自持（键 = 角色名，不由方案声明）。
+  3. **tiger**：`option_declarations()` 自报 4 项（键 = `interaction::OPTION_*`，角色 = cfg 常量**同值字面量**
+     ——方案不依赖 cfg，方向 `hux-scheme/* → hux-core` 与 CI 守卫不变）；新增内部 `Config::parse(&SchemeConfig)`
+     按角色解析袋，虎码语义（早提交最短保留 / 反查键 / Tab 学习 / 页大小与翻页 / mode 串格式）全留在本 crate。
+  4. **平台**：装配处 `resolve_option_roles(scheme.option_declarations())`——**缺角色即报错**
+     （诊断进状态串，该角色不接线：ABI `hux_engine_option_key` 返回 NULL、宿主跳过菜单项，
+     不静默落到别的键上）；`hux_engine_option_role_count()` 与角色序同源。
+     一致性测试升级：`every_configured_role_is_declared_by_the_scheme`（每个角色都必须被方案声明，
+     含负例）、`scheme_config_covers_every_declared_role`（配置袋覆盖角色全集、顺序一致）、
+     `option_role_keys_follow_scheme_declarations`（角色序 ↔ 键，17 项 schema 比对不变）。
+- **与 §8 原方案的偏离（均按「目标不变、改动更小」）**：
+  - `Value` 增加 `Texts(Vec<String>)`：翻页 / 反查键是**多项键列表**，用单一 `String` 需 join/split 往返；
+    `Text` 保留但当前无角色使用（通用容器词汇，非虎码语义）。
+  - 学习 mode 的下沉对象是**方案**而非 cfg：mode 串格式（`sentence-v2|rules=…|optimal=…|dup=…`）是虎码口径，
+    放 cfg 等于把方案语义搬进配置层；且 `Settings::learning_mode` 在 P4 已删（本就不存在）。
+    故 `Scheme::learning_mode` 由「固定入参计算」改为「不透明 getter」，输入经配置袋下发。
+  - `apply_learning_mode` 的 `mode` 参数、`Scheme::learning_rules` 一并删除：平台不再需要 mode 串。
+- **口径名残留（复核整改后状态）**：**标识符已中性化**——`hux-cfg::Settings` 的字段、
+  `roles` 常量、`crates/hux-ffi` 的 `HuxOptions` 与 `hux_abi.h` 的 `hux_options` 成员、
+  `shell/hux.cpp` 的配置成员名，均改为引擎概念名（见 §5「口径命名」）；
+  **线上字符串保留**：`ROLE_*` 的值（= 上游 schema / rime 选项键 `min_retained_raw_length` 等）、
+  `shell/hux.cpp` 的 `.path{"MinRetainedRawLength"}` / `"SoundToCharShapeKey"` / `"CharToSoundShapeKey"` /
+  `"TabLearning"`、fcitx5 配置页文案与 `tiger_sentence_*` 前缀不变（改值即破坏与上游互通 / 老用户配置 / ABI 布局）。
+  **`crates/hux-core` 零残留**（CI 守卫钉住），`hux-scheme/tiger` 的模块 / 函数名保持参照移植的溯源名。
+- **门槛（本批实测）**：`cargo test --workspace --locked` **303 用例 0 失败**
+  （基线 295：+2 core 袋用例、+1 cfg 角色解析用例、+1 cfg 设置表用例、+1 tiger 袋解析用例、
+  +2 平台角色 / 配置袋用例；其中 1 个用例为改写更名）；`cargo fmt --all --check`、clippy `-D warnings`、
+  `reuse lint` 与 CI 分层守卫（含新守卫，正负例均已验证）全绿；`goldens/**` **零改动**
+  （`jj diff --stat` 无 `goldens/` 数据文件），差分金样逐位一致；C++ `addon` 作业本机复跑
+  （configure → 构建 → 14 个 `hux_*` 导出 ↔ `hux_abi.h` → 探针语法 → `DESTDIR` 三文件）通过。
 
 **内核（hux-core）**
-- **契约语义边界**（需决策）：`OptionIds` 的 4 个字段名 + `SchemeConfig` 的 `min_retained_raw_length`/
-  反查键/Tab 学习等仍是虎码口径，与 §5「不把方案特有语义泛化进契约」有张力；改为通用容器
-  （方案自报键值表）则平台与 cfg 需再改一轮。
+- ✅ 已修（§8①）：契约语义边界——`OptionIds` / 固定字段 `SchemeConfig` 已换成
+  「方案自报角色声明 + 通用键值袋」，内核零虎码口径字段（CI 守卫 + 平台/方案用例守护）。
 - `host.rs` 的 `paging` 条件未实现（`mark_paging` 写的标签全仓无人读；参照 `kWhenPaging`）：
   有候选未翻页时按 `-` 被吞键，参照会落标点。
 - `editor` 未实现参照的 `FallbackOptions::All` 与 `Ctrl+Return`/`Ctrl+Shift+Return`（Shift+BackSpace、

@@ -11,11 +11,17 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::abi::{HostCallback, core_modifiers};
 use crate::learning_store::{self, LearningStore};
 use crate::paths::{data_dirs, default_model_path, user_data_dir};
-use crate::session::{CharToSoundShapeState, Session};
-use hux_cfg::{CandidateLayout, OptionIds, OptionsStore, Settings};
+use crate::session::{ReverseLookupState, Session};
+use hux_cfg::roles::{
+    OptionKeys, ROLE_ALLOW_DUPLICATE_SINGLE, ROLE_HIGH_FREQ_LIMIT, ROLE_LEARNING_ON_TAB,
+    ROLE_MIN_RETAINED_INPUT_LENGTH, ROLE_PAGE_CYCLE, ROLE_PAGE_DOWN_KEYS, ROLE_PAGE_SIZE,
+    ROLE_PAGE_UP_KEYS, ROLE_REVERSE_LOOKUP_CHARACTER_KEYS, ROLE_REVERSE_LOOKUP_PRONUNCIATION_KEYS,
+    RUNTIME_OPTION_ROLES,
+};
+use hux_cfg::{CandidateLayout, OptionsStore, Settings};
 
 use hux_core::key::KeyEvent;
-use hux_core::scheme::{KeyOutcome, Scheme, SchemeConfig};
+use hux_core::scheme::{KeyOutcome, OptionDecl, Scheme, SchemeConfig, Value};
 use hux_core::session::{Context, Event};
 use hux_scheme_tiger::scheme::{ASSETS, TigerScheme};
 
@@ -27,35 +33,91 @@ pub(crate) fn wall_clock() -> f64 {
 }
 
 impl Engine {
-    /// 状态菜单可切换的运行时开关（顺序即菜单顺序）：方案声明的 4 项 + rime 标准的 `full_shape`。
-    pub(crate) fn runtime_options(&self) -> [&'static str; 5] {
-        [
-            self.option_ids.early_commit,
-            self.option_ids.early_commit_to_preedit,
-            self.option_ids.allow_duplicate_single,
-            "full_shape",
-            self.option_ids.digit_select,
-        ]
+    /// 状态菜单可切换的运行时开关（顺序即菜单顺序 = C ABI 的 `HUX_OPTION_*` 角色序）：
+    /// 方案声明的 4 项 + rime 标准的 `full_shape`。方案未声明的角色**不出现在菜单里**。
+    pub(crate) fn runtime_options(&self) -> Vec<&'static str> {
+        RUNTIME_OPTION_ROLES
+            .iter()
+            .filter_map(|role| self.option_roles.key(role))
+            .collect()
+    }
+
+    /// 运行时空开关白名单查询（按键路径每键都会问一次，故不做分配）。
+    fn is_runtime_option(&self, name: &str) -> bool {
+        RUNTIME_OPTION_ROLES
+            .iter()
+            .any(|role| self.option_roles.key(role) == Some(name))
+    }
+
+    /// 单字重码选项的**生效值**（会话 → 存储 → 设置缺省；角色无键时按 `true` 计，同迁移前）。
+    fn effective_duplicate(&self) -> bool {
+        self.option_roles
+            .key(ROLE_ALLOW_DUPLICATE_SINGLE)
+            .and_then(|name| self.option_value(name))
+            .unwrap_or(true)
+    }
+
+    /// 下发配置袋（设置派生的角色 + 运行时选项的生效值），方案据此自算学习 mode。
+    ///
+    /// 按键路径每次都会问一次：设置未变且单字重码值不变时直接返回，不重建配置袋。
+    pub(crate) fn push_scheme_config(&mut self) {
+        let duplicate = self.effective_duplicate();
+        if !self.config_dirty && self.applied_duplicate == Some(duplicate) {
+            return;
+        }
+        self.config_dirty = false;
+        self.applied_duplicate = Some(duplicate);
+        let config =
+            scheme_config(&self.settings).with(ROLE_ALLOW_DUPLICATE_SINGLE, Value::Bool(duplicate));
+        self.scheme.apply_config(&config);
     }
 }
 
 /// 事件泵每轮按键的最大轮数（选项事件可能触发确认，进而产生新事件）。
 pub(crate) const EVENT_PUMP_ROUNDS: usize = 4;
 
-/// hux 自身设置 → 方案配置（平台是装配根：只有这里知道两边字段的对应关系）。
+/// 解析方案的选项声明：返回（角色 → 键表, 可选错误诊断）。
+///
+/// **缺角色即报错**（诊断进状态串），且失败时不静默接线——空表使相关角色无键，
+/// 宿主菜单与持久化都会跳过它们，而不是落到别的键上。
+pub(crate) fn resolve_option_roles(declarations: &[OptionDecl]) -> (OptionKeys, Option<String>) {
+    match OptionKeys::resolve(declarations) {
+        Ok(roles) => (roles, None),
+        Err(error) => (OptionKeys::default(), Some(error.to_string())),
+    }
+}
+
+/// hux 自身设置 → 方案配置袋（平台是装配根：只有这里知道「设置 → 角色」的对应关系）。
+///
+/// 角色词汇归 `hux-cfg`；本函数只搬运设置值，方案的运行时选项值（单字重码）由
+/// [`Engine::push_scheme_config`] 追加。
 pub(crate) fn scheme_config(settings: &Settings) -> SchemeConfig {
     let host = settings.host_options();
-    SchemeConfig {
-        high_freq_limit: settings.high_freq_limit,
-        min_retained_raw_length: settings.min_retained(),
-        page_size: host.page_size,
-        page_cycle: host.page_cycle,
-        page_up_keys: settings.page_up_keys.clone(),
-        page_down_keys: settings.page_down_keys.clone(),
-        sound_to_char_shape_keys: settings.sound_to_char_shape_keys.clone(),
-        char_to_sound_shape_keys: settings.char_to_sound_shape_keys.clone(),
-        tab_learning: settings.tab_learning,
-    }
+    SchemeConfig::new()
+        .with(ROLE_HIGH_FREQ_LIMIT, Value::Count(settings.high_freq_limit))
+        .with(
+            ROLE_MIN_RETAINED_INPUT_LENGTH,
+            Value::Count(settings.min_retained()),
+        )
+        .with(ROLE_PAGE_SIZE, Value::Count(host.page_size))
+        .with(ROLE_PAGE_CYCLE, Value::Bool(host.page_cycle))
+        .with(
+            ROLE_PAGE_UP_KEYS,
+            Value::Texts(settings.page_up_keys.clone()),
+        )
+        .with(
+            ROLE_PAGE_DOWN_KEYS,
+            Value::Texts(settings.page_down_keys.clone()),
+        )
+        .with(
+            ROLE_REVERSE_LOOKUP_PRONUNCIATION_KEYS,
+            Value::Texts(settings.reverse_lookup_pronunciation_keys.clone()),
+        )
+        .with(
+            ROLE_REVERSE_LOOKUP_CHARACTER_KEYS,
+            Value::Texts(settings.reverse_lookup_character_keys.clone()),
+        )
+        .with(ROLE_LEARNING_ON_TAB, Value::Bool(settings.learning_on_tab))
 }
 
 pub struct Engine {
@@ -70,14 +132,15 @@ pub struct Engine {
     pub(crate) settings: Settings,
     /// 学习库（用户目录不可用时为禁用占位）。
     pub(crate) learning: LearningStore,
-    /// 方案声明的选项 id（P4 收尾：单一来源 = 方案；配置层与状态菜单白名单据此工作）。
-    pub(crate) option_ids: OptionIds,
-    /// 角色 → 选项键的 C 字符串（构造时固定；`hux_engine_option_key` 返回其指针）。
-    pub(crate) option_keys: Vec<CString>,
-    /// 学习规则串（来自方案数据；用于拼 mode）。
-    pub(crate) learning_rules: String,
-    /// 当前学习 mode 串。
-    pub(crate) learning_mode: String,
+    /// 角色 → 选项键（装配处由方案声明解析；缺角色即报错，见 [`Engine::new_with_dirs`]）。
+    pub(crate) option_roles: OptionKeys,
+    /// 角色序（= [`RUNTIME_OPTION_ROLES`]）的选项键 C 字符串；缺失角色为 `None`
+    /// （`hux_engine_option_key` 返回 NULL，宿主跳过该项）。
+    pub(crate) option_keys: Vec<Option<CString>>,
+    /// 设置派生的配置袋是否需要重下发（`apply_settings` 置位）。
+    config_dirty: bool,
+    /// 上次下发的单字重码生效值（`None` = 尚未下发）。
+    applied_duplicate: Option<bool>,
     /// 本次按键「已提交且未消费」：宿主层应消费该键并以 `forwardKey` 重发，
     /// 保证「提交 → 按键」送达顺序（对齐 fcitx5 核心 `KeyEventOrderFix` 修法）。
     pub forward_after_commit: bool,
@@ -112,16 +175,23 @@ impl Engine {
                 .join(":")
         )];
         let settings = Settings::default();
-        let (mut scheme, scheme_notes) =
-            TigerScheme::load(&dirs, model_path, scheme_config(&settings));
+        // 构造方案前先按设置装配配置袋；单字重码的初始值取设置缺省（尚无会话与存储）。
+        let applied_duplicate = settings.allow_duplicate_single;
+        let initial = scheme_config(&settings)
+            .with(ROLE_ALLOW_DUPLICATE_SINGLE, Value::Bool(applied_duplicate));
+        let (mut scheme, scheme_notes) = TigerScheme::load(&dirs, model_path, &initial);
         notes.extend(scheme_notes);
-        let learning_rules = scheme.learning_rules().to_string();
-        let option_ids = scheme.option_ids();
+        // 选项键的唯一来源 = 方案的声明；**缺角色即报错**（状态串可见），缺的角色不参与
+        // 选项接线（无键 → 宿主跳过该项），不静默落到别的键上。
+        let (option_roles, roles_error) = resolve_option_roles(scheme.option_declarations());
+        if let Some(error) = roles_error {
+            notes.push(format!("options: {error}"));
+        }
         // 选项：有存储则同步（参照 `M.options.sync`，同步写入由核心抑制观察）；
         // 无存储时直接用内建缺省。会话创建时逐个同步（见 `session_new`）。
-        let options = options_dir
-            .as_deref()
-            .map(|dir| OptionsStore::load_with_defaults(dir, settings.store_defaults(&option_ids)));
+        let options = options_dir.as_deref().map(|dir| {
+            OptionsStore::load_with_defaults(dir, settings.store_defaults(&option_roles))
+        });
         // 学习库：`<user dir>/<方案 id 哈希>.userdb/`（用户目录不可用则禁用）。
         let learning = match options_dir.as_deref() {
             Some(dir) => {
@@ -135,24 +205,12 @@ impl Engine {
             notes.push(format!("learning: {}", learning.name));
         }
         scheme.set_store_ready(learning.store_ready());
-        let learning_mode = scheme.learning_mode(
-            &learning_rules,
-            settings.allow_duplicate_single,
-            settings.high_freq_limit,
-        );
-        scheme.set_learning_mode(&learning_mode);
         let status_base = notes.join("; ");
         // 角色顺序与 `hux_abi.h` 的 `HUX_OPTION_*` 一致（ABI 边界用角色，不暴露方案键名）。
-        let option_keys = [
-            option_ids.early_commit,
-            option_ids.early_commit_to_preedit,
-            option_ids.allow_duplicate_single,
-            "full_shape",
-            option_ids.digit_select,
-        ]
-        .into_iter()
-        .map(crate::ui::cstring_lossy)
-        .collect();
+        let option_keys = RUNTIME_OPTION_ROLES
+            .iter()
+            .map(|role| option_roles.key(role).map(crate::ui::cstring_lossy))
+            .collect();
         Self {
             host,
             scheme: Box::new(scheme),
@@ -161,10 +219,10 @@ impl Engine {
             options,
             settings,
             learning,
-            option_ids,
+            option_roles,
             option_keys,
-            learning_rules,
-            learning_mode,
+            config_dirty: false,
+            applied_duplicate: Some(applied_duplicate),
             forward_after_commit: false,
             status: crate::ui::cstring_lossy(&status_base),
             status_base,
@@ -181,7 +239,7 @@ impl Engine {
         // 分流：**可持久化项**（存储有声明的缺省）只经 `store.sync` 写入——其写入带抑制名单，
         // 不会被随后的选项事件当成用户改动写进 `options.yaml`；其余（如 `ascii_punct`）直接写。
         // 参照实现同此：缺省经 `M.options.sync` 写入并由 `live.syncing` 抑制。
-        for (name, value) in self.settings.option_defaults(&self.option_ids) {
+        for (name, value) in self.settings.option_defaults(&self.option_roles) {
             if self
                 .options
                 .as_ref()
@@ -207,7 +265,7 @@ impl Engine {
         let mut session = Session {
             context,
             scheme_session,
-            char_to_sound_shape: CharToSoundShapeState::default(),
+            reverse_lookup: ReverseLookupState::default(),
         };
         self.apply_layout_options(&mut session);
         let id = self.next_session;
@@ -349,18 +407,13 @@ impl Engine {
         if !submitted.is_empty() {
             self.learning.confirm(&submitted);
         }
-        self.refresh_learning_mode();
+        self.push_scheme_config();
         if !session.context.is_composing() {
             self.learning.refresh_scores(now);
         }
         let version = self.learning.index_version();
-        let mode = self.learning_mode.clone();
-        self.scheme.apply_learning_index(
-            session.scheme_session,
-            version,
-            self.learning.index(),
-            &mode,
-        );
+        self.scheme
+            .apply_learning_index(session.scheme_session, version, self.learning.index());
         // 组合重建（参照 `ConcreteEngine::Compose`，含 update 通知器）
         // （非组合清暂存；缓冲且实况输入为空时隐藏候选）。
         if let Err(error) =
@@ -369,21 +422,21 @@ impl Engine {
         {
             eprintln!("hux: rebuild error: {error}");
         }
-        self.refresh_char_to_sound_shape_aux(session);
+        self.refresh_reverse_lookup_aux(session);
         self.push_update(session);
     }
 
     /// 当前组合末段是否为字反查段（进入/退出由方案处理器负责：触发字符推入/清空组合）；
     /// 查码段内方向键交应用处理（见 `key_in` 开头的早退）。
     /// 当前组合末段是否为字反查段。
-    pub(crate) fn char_to_sound_shape_tagged(&self, session: &Session) -> bool {
+    pub(crate) fn reverse_lookup_tagged(&self, session: &Session) -> bool {
         self.scheme.auxiliary_lookup_active(&session.context)
     }
 
     /// 重算两排提示（上排 = 光标左侧拼音、下排 = 虎码）；不在查码段则清空。
-    pub(crate) fn refresh_char_to_sound_shape_aux(&mut self, session: &mut Session) {
-        let tagged = self.char_to_sound_shape_tagged(session);
-        let state = &mut session.char_to_sound_shape;
+    pub(crate) fn refresh_reverse_lookup_aux(&mut self, session: &mut Session) {
+        let tagged = self.reverse_lookup_tagged(session);
+        let state = &mut session.reverse_lookup;
         if !tagged || !state.valid {
             // 不在查码段，或周边文本不可用（如终端）：提示能否呈现取决于前端，
             // 统一清空两排。
@@ -409,7 +462,7 @@ impl Engine {
         text: Option<&str>,
         cursor_chars: usize,
     ) {
-        let state = &mut session.char_to_sound_shape;
+        let state = &mut session.reverse_lookup;
         match text {
             Some(text) => {
                 state.valid = true;
@@ -422,8 +475,8 @@ impl Engine {
                 state.cursor = 0;
             }
         }
-        if self.char_to_sound_shape_tagged(session) {
-            self.refresh_char_to_sound_shape_aux(session);
+        if self.reverse_lookup_tagged(session) {
+            self.refresh_reverse_lookup_aux(session);
         }
     }
 
@@ -435,7 +488,7 @@ impl Engine {
     pub(crate) fn reset_in(&mut self, session: &mut Session) {
         // 契约：重置即丢弃——先清掉未派发的事件（含可能的提交），避免下次按键补上屏。
         session.context.drain_events();
-        session.char_to_sound_shape = CharToSoundShapeState::default();
+        session.reverse_lookup = ReverseLookupState::default();
         session.context.clear();
         self.scheme
             .reset_session(session.scheme_session, &mut session.context);
@@ -473,7 +526,7 @@ impl Engine {
 
     /// 运行时开关当前值（状态菜单；全局）：任一会话的生效值，无会话时回退存储/设置缺省。
     pub fn option_value(&self, name: &str) -> Option<bool> {
-        if !self.runtime_options().contains(&name) {
+        if !self.is_runtime_option(name) {
             return None;
         }
         if let Some(session) = self.sessions.values().next() {
@@ -482,12 +535,12 @@ impl Engine {
         self.options
             .as_ref()
             .and_then(|store| store.value(name))
-            .or_else(|| self.settings.option_default(&self.option_ids, name))
+            .or_else(|| self.settings.option_default(&self.option_roles, name))
     }
 
     /// 设置运行时开关（状态菜单）：白名单校验 → 写入全部会话 → 持久化（`options.yaml`）。
     pub fn set_option_value(&mut self, name: &str, value: bool) -> bool {
-        if !self.runtime_options().contains(&name) {
+        if !self.is_runtime_option(name) {
             return false;
         }
         let ids: Vec<u64> = self.sessions.keys().copied().collect();
@@ -497,7 +550,7 @@ impl Engine {
                 .options
                 .as_mut()
                 .map(|store| store.set_value(name, value));
-            self.refresh_learning_mode();
+            self.push_scheme_config();
             return saved.unwrap_or(true);
         }
         for id in ids {
@@ -508,7 +561,7 @@ impl Engine {
                 engine.observe_option(&mut session.context, name);
             });
         }
-        self.refresh_learning_mode();
+        self.push_scheme_config();
         true
     }
 
@@ -517,10 +570,10 @@ impl Engine {
     /// 作用于全部会话（选项为引擎级）。
     pub fn apply_settings(&mut self, settings: Settings) {
         self.settings = settings;
-        self.scheme.apply_config(&scheme_config(&self.settings));
-        let defaults = self.settings.option_defaults(&self.option_ids);
+        self.config_dirty = true;
+        let defaults = self.settings.option_defaults(&self.option_roles);
         if let Some(store) = self.options.as_mut() {
-            store.set_defaults(self.settings.store_defaults(&self.option_ids));
+            store.set_defaults(self.settings.store_defaults(&self.option_roles));
         }
         let ids: Vec<u64> = self.sessions.keys().copied().collect();
         for id in ids {
@@ -544,7 +597,8 @@ impl Engine {
                 engine.apply_layout_options(session);
             });
         }
-        self.refresh_learning_mode();
+        // 设置 + 运行时选项一起下发（含学习 mode 自算），见 [`Engine::push_scheme_config`]。
+        self.push_scheme_config();
     }
 
     /// 候选布局（context 选项）：host `selector` 读取 `_vertical` 决定 ←→/↑↓ 语义。
@@ -554,19 +608,6 @@ impl Engine {
         if session.context.get_option("_vertical") != vertical {
             session.context.set_option("_vertical", vertical);
         }
-    }
-
-    /// 按当前规则/选项刷新学习 mode（变化时方案会强制重设解码器学习并同步全部会话）。
-    pub(crate) fn refresh_learning_mode(&mut self) {
-        let duplicate = self
-            .option_value(self.option_ids.allow_duplicate_single)
-            .unwrap_or(true);
-        let rules = self.learning_rules.clone();
-        let mode = self
-            .scheme
-            .learning_mode(&rules, duplicate, self.settings.high_freq_limit);
-        self.learning_mode = mode.clone();
-        self.scheme.set_learning_mode(&mode);
     }
 
     /// 提交回调（`engine:commit_text`）。

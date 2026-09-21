@@ -3,28 +3,53 @@
 
 use hashbrown::HashMap;
 
-use hux_core::scheme::OptionIds;
+#[cfg(test)]
+use crate::roles::ROLE_DIGIT_SELECT;
+use crate::roles::{
+    OptionKeys, ROLE_ALLOW_DUPLICATE_SINGLE, ROLE_EARLY_COMMIT, ROLE_EARLY_COMMIT_TO_PREEDIT,
+};
+#[cfg(test)]
+use hux_core::scheme::OptionDecl;
 use hux_core::session::Context;
 
-/// 参照 `M.options` 的内建缺省表（键 = 方案声明的选项 id；本层不硬编码方案选项名）。
-pub fn option_defaults(ids: &OptionIds) -> HashMap<String, bool> {
-    HashMap::from([
-        (ids.early_commit.to_string(), true),
-        (ids.allow_duplicate_single.to_string(), true),
-        (ids.early_commit_to_preedit.to_string(), false),
-    ])
+/// 参照 `M.options` 的内建缺省表（键 = 方案声明的选项键；本层不硬编码方案选项名）。
+pub fn option_defaults(keys: &OptionKeys) -> HashMap<String, bool> {
+    let mut defaults = HashMap::new();
+    for (role, value) in [
+        (ROLE_EARLY_COMMIT, true),
+        (ROLE_ALLOW_DUPLICATE_SINGLE, true),
+        (ROLE_EARLY_COMMIT_TO_PREEDIT, false),
+    ] {
+        if let Some(key) = keys.key(role) {
+            defaults.insert(key.to_string(), value);
+        }
+    }
+    defaults
 }
 
-/// 测试用选项 id（字面量即**持久化契约**的钉桩：`options.yaml` 的历史键不得改名；
-/// 生产路径由平台从方案 `Scheme::option_ids()` 取得，故本表与方案实现无编译期关系）。
+/// 测试用选项键表（字面量即**持久化契约**的钉桩：`options.yaml` 的历史键不得改名；
+/// 生产路径由平台从方案声明解析，故本表与方案实现无编译期关系）。
 #[cfg(test)]
-pub(crate) fn test_option_ids() -> OptionIds {
-    OptionIds {
-        early_commit: "tiger_sentence_early_commit",
-        early_commit_to_preedit: "tiger_sentence_early_commit_to_preedit",
-        allow_duplicate_single: "tiger_sentence_allow_duplicate_single",
-        digit_select: "tiger_sentence_digit_select",
-    }
+pub(crate) fn test_option_keys() -> OptionKeys {
+    OptionKeys::resolve(&[
+        OptionDecl {
+            role: ROLE_EARLY_COMMIT,
+            key: "tiger_sentence_early_commit",
+        },
+        OptionDecl {
+            role: ROLE_EARLY_COMMIT_TO_PREEDIT,
+            key: "tiger_sentence_early_commit_to_preedit",
+        },
+        OptionDecl {
+            role: ROLE_ALLOW_DUPLICATE_SINGLE,
+            key: "tiger_sentence_allow_duplicate_single",
+        },
+        OptionDecl {
+            role: ROLE_DIGIT_SELECT,
+            key: "tiger_sentence_digit_select",
+        },
+    ])
+    .expect("测试声明应覆盖全部方案角色")
 }
 
 /// 参照 `M.options` 的选项状态（文件读写与错误属性由 [`crate::OptionsStore`] 承担）。
@@ -106,7 +131,7 @@ mod tests {
     fn options_sync_applies_defaults() {
         let mut context = Context::new();
 
-        let mut options = Options::new(option_defaults(&test_option_ids()));
+        let mut options = Options::new(option_defaults(&test_option_keys()));
 
         options.sync(&mut context);
 
@@ -122,7 +147,7 @@ mod tests {
     fn options_sync_discards_own_option_events() {
         let mut context = Context::new();
 
-        let mut options = Options::new(option_defaults(&test_option_ids()));
+        let mut options = Options::new(option_defaults(&test_option_keys()));
 
         options.sync(&mut context);
 
@@ -148,7 +173,7 @@ mod tests {
     fn options_observe_records_user_change_once() {
         let mut context = Context::new();
 
-        let mut options = Options::new(option_defaults(&test_option_ids()));
+        let mut options = Options::new(option_defaults(&test_option_keys()));
 
         options.sync(&mut context);
 
@@ -170,7 +195,7 @@ mod tests {
     fn options_sync_prefers_persisted_values() {
         let mut context = Context::new();
 
-        let mut options = Options::new(option_defaults(&test_option_ids()));
+        let mut options = Options::new(option_defaults(&test_option_keys()));
 
         options.sync(&mut context);
 

@@ -29,12 +29,12 @@ pub struct HuxOptions {
     pub allow_duplicate_single: i32,
     pub full_shape: i32,
     pub ascii_punct: i32,
-    pub tab_learning: i32,
+    pub learning_on_tab: i32,
     pub high_freq_limit: i32,
-    /// 音反查触发键（fcitx5 keysym + 状态位，可多项；平台转成 rime 键名）。
-    pub sound_to_char_shape: HuxKeyList,
-    /// 字反查触发键（fcitx5 keysym + 状态位，可多项）。
-    pub char_to_sound_shape: HuxKeyList,
+    /// 反查（按**读音**入口）触发键（fcitx5 keysym + 状态位，可多项；平台转成 rime 键名）。
+    pub reverse_lookup_pronunciation: HuxKeyList,
+    /// 反查（按**字符**入口）触发键（fcitx5 keysym + 状态位，可多项）。
+    pub reverse_lookup_character: HuxKeyList,
     /// 每页候选个数（1..=10）。
     pub page_size: i32,
     /// 上/下翻页键（fcitx5 keysym + 状态位，可多项）。
@@ -49,7 +49,7 @@ pub struct HuxOptions {
     /// 翻页循环：1 = 开（默认 0 = 关）。
     pub page_cycle: i32,
     /// 提前上屏最短保留码数（0..=20；0 = 不额外限制）。
-    pub min_retained_raw_length: i32,
+    pub min_retained_input_length: i32,
 }
 
 /// 宿主回调表（由 C++ 薄壳提供；函数指针可为空，便于测试）。
@@ -104,16 +104,19 @@ mod tests {
         assert_eq!(size_of::<HuxOptions>(), 13 * scalar + 4 * list);
         assert_eq!(offset_of!(HuxOptions, early_commit), 0);
         assert_eq!(offset_of!(HuxOptions, high_freq_limit), 6 * scalar);
-        assert_eq!(offset_of!(HuxOptions, sound_to_char_shape), 7 * scalar);
         assert_eq!(
-            offset_of!(HuxOptions, char_to_sound_shape),
+            offset_of!(HuxOptions, reverse_lookup_pronunciation),
+            7 * scalar
+        );
+        assert_eq!(
+            offset_of!(HuxOptions, reverse_lookup_character),
             7 * scalar + list
         );
         assert_eq!(offset_of!(HuxOptions, page_size), 7 * scalar + 2 * list);
         assert_eq!(offset_of!(HuxOptions, page_up), 8 * scalar + 2 * list);
         assert_eq!(offset_of!(HuxOptions, digit_select), 8 * scalar + 4 * list);
         assert_eq!(
-            offset_of!(HuxOptions, min_retained_raw_length),
+            offset_of!(HuxOptions, min_retained_input_length),
             12 * scalar + 4 * list
         );
     }

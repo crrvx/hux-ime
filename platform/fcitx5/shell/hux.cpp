@@ -27,6 +27,7 @@
 #include <fcitx-utils/log.h>
 
 #include <algorithm>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <vector>
@@ -127,7 +128,7 @@ FCITX_CONFIGURATION(
         .description{"ASCII 标点直通"},
         .defaultValue = false,
         .annotation{"标点不做中文映射，直接输出 ASCII。"}}};
-    fcitx::OptionWithAnnotation<bool, fcitx::ToolTipAnnotation> tabLearning{{
+    fcitx::OptionWithAnnotation<bool, fcitx::ToolTipAnnotation> learningOnTab{{
         .parent = this,
         .path{"TabLearning"},
         .description{"Tab 选字写入学习库"},
@@ -192,7 +193,7 @@ FCITX_CONFIGURATION(
                         "不显示：仅候选与注释。"}}};
     fcitx::Option<int, fcitx::IntConstrain, fcitx::DefaultMarshaller<int>,
                   fcitx::ToolTipAnnotation>
-        minRetainedRawLength{{
+        minRetainedInputLength{{
             .parent = this,
             .path{"MinRetainedRawLength"},
             .description{"提前上屏最短保留码数"},
@@ -205,7 +206,7 @@ FCITX_CONFIGURATION(
 FCITX_CONFIGURATION(
     HuxHotkeyConfig,
     fcitx::KeyListOptionWithAnnotation<fcitx::ToolTipAnnotation>
-        soundToCharShapeKeys{{
+        reverseLookupPronunciationKeys{{
             .parent = this,
             .path{"SoundToCharShapeKey"},
             .description{"音反查"},
@@ -216,7 +217,7 @@ FCITX_CONFIGURATION(
             .annotation{"可多项。按下后输入拼音（支持拼写缩写），候选为对应词语、"
                         "注释显示虎码。"}}};
     fcitx::KeyListOptionWithAnnotation<fcitx::ToolTipAnnotation>
-        charToSoundShapeKeys{{
+        reverseLookupCharacterKeys{{
             .parent = this,
             .path{"CharToSoundShapeKey"},
             .description{"字反查"},
@@ -445,10 +446,15 @@ private:
     ///
     /// **选项键经 ABI 取自引擎**（`hux_engine_option_key`，与 `HUX_OPTION_*` 角色一一对应），
     /// 宿主只保留 UI 文案——方案改名或换方案时菜单自动跟随，不会静默失效。
+    /// 文案表按 **ABI 角色下标**取（`kLabels[role]`），故长度必须等于 `HUX_OPTION_COUNT`：
+    /// 角色数增加而文案漏补时，这里是越界读（UB）；`static_assert` 把它变成编译失败
+    /// （角色**调序**由 Rust 侧 `option_role_order_matches_the_abi_header` 抓）。
     void setupStatusMenu() {
         static constexpr const char *kLabels[] = {
             "提前上屏", "提前上屏至预编辑", "单字重码组句", "全角标点", "数字直选",
         };
+        static_assert(std::size(kLabels) == HUX_OPTION_COUNT,
+                      "状态菜单文案表长度必须等于 HUX_OPTION_COUNT（ABI 角色数）");
         menuAction_.setShortText("虎虚");
         const int32_t roles = hux_engine_option_role_count();
         for (int32_t role = 0; role < roles; ++role) {
@@ -608,11 +614,12 @@ private:
             behavior.allowDuplicateSingle.value() ? 1 : 0;
         options.full_shape = behavior.fullShape.value() ? 1 : 0;
         options.ascii_punct = behavior.asciiPunct.value() ? 1 : 0;
-        options.tab_learning = behavior.tabLearning.value() ? 1 : 0;
+        options.learning_on_tab = behavior.learningOnTab.value() ? 1 : 0;
         options.high_freq_limit = behavior.highFreqLimit.value();
-        fillKeyList(&options.sound_to_char_shape, hotkeys.soundToCharShapeKeys.value());
-        fillKeyList(&options.char_to_sound_shape,
-                    hotkeys.charToSoundShapeKeys.value());
+        fillKeyList(&options.reverse_lookup_pronunciation,
+                    hotkeys.reverseLookupPronunciationKeys.value());
+        fillKeyList(&options.reverse_lookup_character,
+                    hotkeys.reverseLookupCharacterKeys.value());
         options.page_size = behavior.pageSize.value();
         fillKeyList(&options.page_up, hotkeys.pageUpKeys.value());
         fillKeyList(&options.page_down, hotkeys.pageDownKeys.value());
@@ -633,8 +640,8 @@ private:
                                : preeditMode == HuxPreeditMode::Hidden ? 2
                                                                        : 0;
         options.page_cycle = behavior.pageCycle.value() ? 1 : 0;
-        options.min_retained_raw_length =
-            behavior.minRetainedRawLength.value();
+        options.min_retained_input_length =
+            behavior.minRetainedInputLength.value();
         if (hux_engine_apply_settings(engine_, &options) == 0) {
             FCITX_WARN() << "hux: apply settings failed";
         }
@@ -671,9 +678,9 @@ static_assert(sizeof(hux_key_list) == 4 + 2 * HUX_MAX_KEYS * 4,
               "hux_key_list 布局与 Rust 契约不一致");
 static_assert(sizeof(hux_options) == 13 * 4 + 4 * sizeof(hux_key_list),
               "hux_options 布局与 Rust 契约不一致");
-static_assert(offsetof(hux_options, char_to_sound_shape) == 7 * 4 + sizeof(hux_key_list),
+static_assert(offsetof(hux_options, reverse_lookup_character) == 7 * 4 + sizeof(hux_key_list),
               "hux_options 字段顺序与 Rust 契约不一致");
-static_assert(offsetof(hux_options, min_retained_raw_length) == 12 * 4 + 4 * sizeof(hux_key_list),
+static_assert(offsetof(hux_options, min_retained_input_length) == 12 * 4 + 4 * sizeof(hux_key_list),
               "hux_options 末尾字段偏移与 Rust 契约不一致");
 
 FCITX_ADDON_FACTORY(HuxFactory);

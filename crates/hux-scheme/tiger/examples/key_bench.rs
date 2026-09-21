@@ -11,7 +11,7 @@
 //! （翻译 + 过滤 + update 通知器）——即宿主每次按键实际付出的代价。
 
 use hux_core::key::KeyEvent;
-use hux_core::scheme::{Scheme, SchemeConfig};
+use hux_core::scheme::{Scheme, SchemeConfig, Value};
 use hux_core::session::Context;
 use hux_scheme_tiger::scheme::TigerScheme;
 use hux_test_support::{decode_hex, open_golden, repo_path};
@@ -32,12 +32,11 @@ fn main() {
     let repeat: usize = flag("--repeat")
         .map(|value| value.parse().expect("--repeat"))
         .unwrap_or(10);
-    let config = SchemeConfig {
-        high_freq_limit: 1500,
-        page_size: 5,
-        tab_learning: false, // 基准不引入学习库差异
-        ..SchemeConfig::default()
-    };
+    // 角色名与 `hux-cfg` 的角色常量同值（基准只经契约驱动，不依赖配置层）。
+    let config = SchemeConfig::new()
+        .with("high_freq_limit", Value::Count(1500))
+        .with("page_size", Value::Count(5))
+        .with("tab_learning", Value::Bool(false)); // 基准不引入学习库差异
 
     // 语料：金样里的输入码（与 decode 差分同一批），逐字符作为按键送入。
     let mut codes = Vec::new();
@@ -62,7 +61,7 @@ fn main() {
         let (mut scheme, _notes) = TigerScheme::load(
             &[repo_path("goldens/lexicon")],
             model_path.clone().map(std::path::PathBuf::from),
-            config.clone(),
+            &config,
         );
         let mut context = Context::new();
         let session = scheme.new_session(&mut context);

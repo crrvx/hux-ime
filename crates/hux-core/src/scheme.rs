@@ -4,11 +4,13 @@
 //! 方案契约（P4c）：内核与平台驱动方案时使用的**最小**接口。
 //!
 //! 设计取舍（`docs/refactor.md` §5）：
-//! - 只定义「必须回调方案」的动作（`id` / 数据资产 / 按键 / 组合重建 / 证据与学习策略 / 反查展示），
-//!   不把虎码特有语义（缓冲态、锁、早提交启发式）泛化进契约——它们留在方案 profile；
+//! - 只定义「必须回调方案」的动作（`id` / 选项声明 / 数据资产 / 按键 / 组合重建 /
+//!   证据与学习策略 / 反查展示），不把任何**方案特有语义**泛化进契约——它们留在方案 profile；
+//! - 契约里**没有方案口径的字段名**：选项与配置一律是「角色 → 键 / 值」的数据声明，
+//!   角色词汇归配置层（`hux-cfg`）、键名归方案，换方案不改内核；
 //! - 契约放 `hux-core`：方案无论如何要依赖 core 的类型（[`KeyEvent`] / [`Context`] / `Candidate`…），
 //!   单开 interface crate 只多一跳、无净收益；
-//! - 平台是装配根：构造具体方案（如 `hux-scheme-tiger`）后以 `dyn Scheme` 驱动，不直接引用方案模块。
+//! - 平台是装配根：构造具体方案后以 `dyn Scheme` 驱动，不直接引用方案模块。
 //!
 //! 方向约束：`hux-scheme/* → hux-core`；内核不 import 任何方案（CI 校验）。
 
@@ -55,82 +57,130 @@ pub fn find_asset(dirs: &[PathBuf], file: &str) -> Option<PathBuf> {
 /// 语义：`Consumed` = 方案/宿主链消费该键；`Forward` = 交平台决定后续（如转发给应用）。
 pub use crate::host::HostResult as KeyOutcome;
 
-/// 方案选项 id 清单：**方案声明自己的选项键**（运行时选项与持久化键的单一来源）。
+/// 方案的**选项声明**（`role → key`）：角色是配置层的词汇，键是方案自己的选项名。
 ///
-/// 配置层（`hux-cfg`）不再硬编码方案选项名——平台从方案取得本结构后传入；
-/// 平台的状态菜单白名单亦据此构造。
+/// 内核不解释任何角色；配置层（`hux-cfg`）据此把「设置项」接到方案的选项键上，
+/// 平台据此构造状态菜单与持久化缺省——换方案只需换方案的声明。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct OptionIds {
-    /// 提前上屏总开关。
-    pub early_commit: &'static str,
-    /// 提前上屏至预编辑。
-    pub early_commit_to_preedit: &'static str,
-    /// 单字重码参与组句。
-    pub allow_duplicate_single: &'static str,
-    /// 数字直选。
-    pub digit_select: &'static str,
+pub struct OptionDecl {
+    /// 角色名（配置层定义的词汇，如运行时开关的角色）。
+    pub role: &'static str,
+    /// 该角色对应的选项键（方案的持久化键；`options.yaml` 与上下文选项同名）。
+    pub key: &'static str,
+}
+
+/// 方案配置袋的取值：小枚举，覆盖「开关 / 计数 / 文本 / 文本列表」四类。
+///
+/// **契约不解释取值含义**，只保证类型可携带；含义由方案的配置解析决定。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Value {
+    Bool(bool),
+    Count(usize),
+    Text(String),
+    Texts(Vec<String>),
+}
+
+/// 方案配置袋：**角色 → 值**（平台按角色装配，方案按角色解释）。
+///
+/// 与 [`OptionDecl`] 同为「数据化声明」：内核不认识任何角色，
+/// 缺角色的语义（回退值 / 报错）由方案的解析决定。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SchemeConfig {
+    entries: Vec<(&'static str, Value)>,
+}
+
+impl SchemeConfig {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 写入一个角色（同角色后写覆盖先写）。
+    pub fn set(&mut self, role: &'static str, value: Value) {
+        match self.entries.iter_mut().find(|(name, _)| *name == role) {
+            Some(entry) => entry.1 = value,
+            None => self.entries.push((role, value)),
+        }
+    }
+
+    /// 链式写入（装配处一行一个角色）。
+    #[must_use]
+    pub fn with(mut self, role: &'static str, value: Value) -> Self {
+        self.set(role, value);
+        self
+    }
+
+    /// 角色对应的值（未装配为 `None`）。
+    pub fn get(&self, role: &str) -> Option<&Value> {
+        self.entries
+            .iter()
+            .find(|(name, _)| *name == role)
+            .map(|(_, value)| value)
+    }
+
+    /// 角色对应的开关值（类型不符或未装配为 `None`）。
+    pub fn bool(&self, role: &str) -> Option<bool> {
+        match self.get(role) {
+            Some(Value::Bool(value)) => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// 角色对应的计数值（类型不符或未装配为 `None`）。
+    pub fn count(&self, role: &str) -> Option<usize> {
+        match self.get(role) {
+            Some(Value::Count(value)) => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// 角色对应的文本（类型不符或未装配为 `None`）。
+    pub fn text(&self, role: &str) -> Option<&str> {
+        match self.get(role) {
+            Some(Value::Text(value)) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// 角色对应的文本列表（类型不符或未装配为空切片）。
+    pub fn texts(&self, role: &str) -> &[String] {
+        match self.get(role) {
+            Some(Value::Texts(value)) => value,
+            _ => &[],
+        }
+    }
+
+    /// 已装配的角色（顺序即装配顺序；守卫与诊断用）。
+    pub fn roles(&self) -> impl Iterator<Item = &'static str> + '_ {
+        self.entries.iter().map(|(role, _)| *role)
+    }
 }
 
 /// 每输入上下文一份的会话句柄（由方案分配与解释；平台只透传）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SessionId(pub u64);
 
-/// 方案配置：平台由 hux 自身设置（fcitx5 配置页）映射而来。
-///
-/// **契约不解释字段含义**，由方案决定如何生效：虎句把触发键写进上下文属性、
-/// 最短保留码数放进会话、页大小与翻页键放进宿主链选项。
-#[derive(Clone, Debug, Default)]
-pub struct SchemeConfig {
-    /// 高频字过滤上限（词库创建时生效；`0` = 不限）。
-    pub high_freq_limit: usize,
-    /// 提前上屏最短保留码数（`0` = 不额外限制）。
-    pub min_retained_raw_length: usize,
-    /// 每页候选个数。
-    pub page_size: usize,
-    /// 翻页循环。
-    pub page_cycle: bool,
-    /// 上 / 下翻页键（rime 键名）。
-    pub page_up_keys: Vec<String>,
-    pub page_down_keys: Vec<String>,
-    /// 音反查 / 字反查触发键（rime 键名）。
-    pub sound_to_char_shape_keys: Vec<String>,
-    pub char_to_sound_shape_keys: Vec<String>,
-    /// Tab 学习开关（影响学习 mode 编码）。
-    pub tab_learning: bool,
-}
-
 /// 方案：引擎级共享资源（码表 / 模型 / 解码器）+ 会话集合。
 ///
 /// 平台持有 `Box<dyn Scheme>` 并只保存 [`SessionId`]；会话状态由方案内部持有，
 /// 因此共享资源与会话状态之间的借用拆分由方案负责。
 pub trait Scheme {
-    /// 方案标识（数据 / 学习库命名用；虎句为 `tiger_sentence`）。
+    /// 方案标识（数据 / 学习库命名用）。
     fn id(&self) -> &'static str;
-    /// 学习规则串（来自方案数据；平台用于拼学习 mode）。
-    fn learning_rules(&self) -> &str;
-    /// 方案声明的选项 id（配置层的持久化键与平台的状态菜单白名单均据此，
+    /// 方案声明的选项角色 → 键（配置层的持久化键与平台的状态菜单白名单均据此，
     /// 不得在别处硬编码方案选项名）。
-    fn option_ids(&self) -> OptionIds;
-    /// 学习 mode 编码（方案定义；空串 = 不学习）。
-    fn learning_mode(&self, rules: &str, duplicate: bool, high_freq_limit: usize) -> String;
+    fn option_declarations(&self) -> &'static [OptionDecl];
+    /// 方案当前的学习 mode 串（**不透明**，由方案据自身配置与选项自算；空串 = 不学习）。
+    fn learning_mode(&self) -> &str;
 
     /// 应用方案配置（已存在会话同步生效；上下文属性在下次按键 / 重建时惰性同步）。
     fn apply_config(&mut self, config: &SchemeConfig);
     /// 宿主链选项（方案据配置派生；平台不解释其含义）。
     fn host_options(&self) -> &HostOptions;
 
-    /// 设置学习 mode（写入全部会话的暂存态；变化时重置方案内证据缓存）。
-    fn set_learning_mode(&mut self, mode: &str);
     /// 学习库就绪状态（未就绪时方案不产出学习事件）。
     fn set_store_ready(&mut self, ready: bool);
     /// 应用学习库索引；`version` 变化时重置该会话的证据与空码态。
-    fn apply_learning_index(
-        &mut self,
-        session: SessionId,
-        version: u64,
-        index: &LearningIndex,
-        mode: &str,
-    );
+    fn apply_learning_index(&mut self, session: SessionId, version: u64, index: &LearningIndex);
 
     /// 新建会话（平台先建上下文，方案写入自己的属性）。
     fn new_session(&mut self, context: &mut Context) -> SessionId;
@@ -171,4 +221,51 @@ pub trait Scheme {
     fn auxiliary_lookup_active(&self, context: &Context) -> bool;
     /// 依据周边文本算两排提示（上排 / 下排）；无数据时为空串（可能更新方案内缓存）。
     fn auxiliary_rows(&mut self, text: &str, cursor_chars: usize) -> (String, String);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scheme_config_is_a_role_keyed_bag() {
+        let config = SchemeConfig::new()
+            .with("switch", Value::Bool(true))
+            .with("count", Value::Count(5));
+        assert_eq!(config.roles().collect::<Vec<_>>(), vec!["switch", "count"]);
+        assert_eq!(config.bool("switch"), Some(true));
+        // 同角色后写覆盖先写（装配处不改结构即可改值），不新增条目。
+        let replaced = config.clone().with("switch", Value::Bool(false));
+        assert_eq!(replaced.bool("switch"), Some(false));
+        assert_eq!(replaced.roles().count(), 2);
+        let mut mutated = config.clone();
+        mutated.set("count", Value::Count(9));
+        assert_eq!(mutated.count("count"), Some(9));
+        assert_eq!(mutated.roles().count(), 2);
+    }
+
+    #[test]
+    fn scheme_config_accessors_are_type_checked() {
+        let config = SchemeConfig::new()
+            .with("switch", Value::Bool(true))
+            .with("count", Value::Count(3))
+            .with("text", Value::Text("abc".to_string()))
+            .with("texts", Value::Texts(vec!["k".to_string()]));
+        assert_eq!(
+            config.count("switch"),
+            None,
+            "类型不符即 None，不做隐式转换"
+        );
+        assert_eq!(config.bool("count"), None);
+        assert_eq!(config.text("texts"), None);
+        assert_eq!(config.text("text"), Some("abc"));
+        assert_eq!(config.texts("texts"), ["k".to_string()].as_slice());
+        // 未装配与未知角色一律 `None` / 空切片（回退语义由方案决定）。
+        assert_eq!(config.text("missing"), None);
+        assert_eq!(config.count("missing"), None);
+        assert!(config.texts("missing").is_empty());
+        assert!(config.get("missing").is_none());
+        // 袋的 `Default` 是**空袋**（不是「全零字段」）：缺角色的回退由方案解析决定。
+        assert!(SchemeConfig::default().roles().next().is_none());
+    }
 }

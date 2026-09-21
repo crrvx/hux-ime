@@ -71,6 +71,13 @@ jobs:
             echo "::error::hux-core 内不得出现已迁出的方案模块引用"
             exit 1
           fi
+          # 契约去方案语义（docs/refactor.md §8①）：内核只留通用容器——角色词汇归 hux-cfg、
+          # 选项键归方案，故 core 不得出现**带引号的**角色名 / 方案选项键字面量
+          # （rime 标准名 full_shape/ascii_punct 由 core 宿主链自持，不在此列；注释与文档叙述不受影响）。
+          if grep -RnE '"(early_commit|early_commit_to_preedit|allow_duplicate_single|digit_select|high_freq_limit|min_retained_raw_length|page_size|page_cycle|page_up_keys|page_down_keys|sound_to_char_shape_keys|char_to_sound_shape_keys|tab_learning)"|"tiger_sentence_' crates/hux-core/src; then
+            echo "::error::hux-core 契约不得出现角色名 / 方案选项键字面量（见 docs/refactor.md §8①）"
+            exit 1
+          fi
       - name: Verify non-regenerated goldens (sha256)
         run: |
           # key / key_sequence / sound_to_char_shape 依赖具体 librime 版本，CI 不重生成，
