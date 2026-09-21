@@ -26,9 +26,9 @@
 | `decode_learning.tsv.gz` | 解码接入学习（无模型；含一条成对融合偏好） | 1988 行 |
 | `decode_learning_model.tsv.gz` | 解码接入学习（fixture 模型，抽样；同上） | 359 行 |
 | `key.tsv.gz` | 键名/键事件金样（librime 探针）：`name`/`repr`/`parse`/`modifier` | 5132 行 |
-| `key_sequence.tsv.gz` | 键序列金样（真 librime 探针；主干 pin）：逐步 `consumed`/输入/光标/提交/候选/注释/高亮 | 57 例 / 242 步（含空码自动上屏、编辑/导航键、标点表、大写字母直接提交；`punct_menu_equal`/`punct_menu_minus` 钉住「菜单可见的 ASCII 标点先确认组合再交标点表」） |
+| `key_sequence.tsv.gz` | 键序列金样（真 librime 探针；主干 pin）：逐步 `consumed`/输入/光标/提交/候选/注释/高亮 | 57 例 / 242 步（含空码自动上屏、编辑/导航键、标点表、大写字母直接提交；`punct_menu_equal`/`punct_menu_minus` 记录**上游行为**「菜单可见的 ASCII 标点先确认组合再交标点表」——其中 `punct_menu_equal` 因上游缺陷（翻页绑定被标点分支遮蔽）被本仓**有意偏离**、在差分测试中登记跳过，`punct_menu_minus` 仍逐位一致，见 `docs/refactor.md` §8「有意偏离上游」） |
 | `key_sequence/` | 键序列夹具（合成码表 + `symbols.yaml`＝参照 pin 同文件；探针与 Rust 重放共用；发布默认见 `data/symbols.yaml`） | 2 文件 |
-| `sound_to_char_shape.tsv.gz` | 音反查金样（真 librime 探针；反查分支尖端 pin，已含主干）：逐步 `consumed`/输入/光标/提交/候选/注释/高亮 | 31 例 / 164 步（裸前缀标点候选、缩写/全拼剪枝、多音节词、Page 键翻页、导航/退格/Escape/上屏、数字直选与分号惰性、撇号保留） |
+| `sound_to_char_shape.tsv.gz` | 音反查金样（真 librime 探针；反查分支尖端 pin，已含主干）：逐步 `consumed`/输入/光标/提交/候选/注释/高亮 | 31 例 / 164 步（裸前缀标点候选、缩写/全拼剪枝、多音节词、Page 键翻页、导航/退格/Escape/上屏、数字直选与分号惰性、撇号保留；`nav-page-equal`/`nav-page-minus`/`nav-page-zho` 记录**上游行为**「`=`/`-` 被标点分支遮蔽」，因上游缺陷被本仓**有意偏离**、在差分测试中登记跳过，其余（含 `nav-page-keys`）逐位一致，见 `docs/refactor.md` §8「有意偏离上游」） |
 | `sound_to_char_shape/` | 音反查夹具（小 `PY_c.dict.yaml` + 合成码表 + `symbols.yaml` + `gen_pinyin_index.py` 生成的 `tiger_sentence.pinyin.bin`；探针与 Rust 重放共用） | 4 文件 + 生成物 |
 | `lexical.tsv.gz` | 词先验金样（TCSLEX01 读取/Bloom/打分；真实位图 + 码表语料） | 753 行 |
 | `local/`（不入库） | 真实模型抽样金样（224 MB 模型） | 62,777 条 |
@@ -222,6 +222,9 @@ lua tools/probes/bench_ngram.lua --reference "$REF" --model <model.bin> --transc
   真实索引（`data/tiger_sentence.pinyin.bin.gz`，sha256 `18a0931a…`）由同一生成器产出，本地复验可重新生成并比对：
   `python3 tools/generators/gen_pinyin_index.py --source external/tiger-sentense-rime/PY_c.dict.yaml --out /tmp/pinyin.bin.gz && cmp /tmp/pinyin.bin.gz data/tiger_sentence.pinyin.bin.gz`
   （参照检出须含 `898579f` 的 `PY_c.dict.yaml`）。
+- **金样不得因本仓有意的行为差异而重生成**：金样记录的是**上游参照行为**。若判定上游某行为为缺陷而有意偏离，
+  只能在差分测试中把受影响用例登记进 `DEVIATED_CASES` 跳过（并断言「实际跳过集合恰等于登记集合」），
+  金样字节保持原样；**待上游修复后删除登记、恢复无条件逐位比对**。现有偏离项见 `docs/refactor.md` §8「有意偏离上游」。
 - **词先验**：`lexical.tsv.gz` 由 `tools/generators/gen_lexical_golden.lua` 以参照 main（词先验模块自 `35a10b9` 起提供）与
   入库位图生成（CC BY 4.0，见 [`../docs/LEXICAL_PRIOR_ATTRIBUTION.md`](../docs/LEXICAL_PRIOR_ATTRIBUTION.md)）；
   **已在 CI 中再生成比对**。

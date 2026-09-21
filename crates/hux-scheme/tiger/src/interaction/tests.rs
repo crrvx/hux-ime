@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use super::*;
+use hux_core::host::HostOptions;
 use hux_core::session::Segment;
 
 fn state_with_lock(raw: &str, text: &str) -> (Context, SentenceState) {
@@ -1082,11 +1083,13 @@ impl Harness {
     }
 
     fn press_event(&mut self, key: &KeyEvent) -> ProcessorResult {
+        let host_options = HostOptions::default();
         let mut env = ProcessorEnv {
             now: 0.0,
             dot_armed: &mut self.dot_armed,
             min_retained: None,
             page_size: self.page_size,
+            host_options: &host_options,
         };
         processor(
             key,
@@ -1353,6 +1356,57 @@ fn processor_menu_punctuation_stages_learning_before_the_punctuator() {
         assert_eq!(got.context, want.context);
     }
     assert_eq!(h.live.submitted[0].mode, mode);
+}
+
+/// **本仓有意偏离上游 `abad411`**：菜单可见时，会被宿主判为翻页的标点键不由标点分支消费。
+///
+/// 上游对「菜单可见 + 可打印 ASCII 标点」一律「暂存学习 + 确认组合 + 交标点表」，于是
+/// `-/=`（以及 schema 绑到翻页的 `[/]`）的 key_binder 绑定被永久遮蔽（最小复现 `j a equal`）。
+/// 本仓在分支入口先问宿主同一套判据 `hux_core::host::paging_action`：
+/// `=`（`when: has_menu`）与落入 `paging` 标签后的 `-`（`when: paging`）让给宿主翻页，
+/// 不确认组合、不暂存学习；未翻页的 `-` 与普通标点（`,`）维持上游行为。
+/// 理由、最小复现与金样登记见 `docs/refactor.md` §8「有意偏离上游」。
+#[test]
+fn processor_menu_paging_keys_bypass_the_punctuation_branch() {
+    let mut h = Harness::new();
+    h.context.set_option("_auto_commit", true);
+    h.live.store_ready = true;
+    h.push_segment(b"ab", &["交", "疒"]);
+    assert!(h.context.has_menu());
+    h.context.highlight(1); // 人工纠错候选：若走上游标点分支会立刻上屏「疒」
+    assert_eq!(h.context.last_commit_text(), "");
+
+    // `=`：`when: has_menu` 成立 ⇒ 让给宿主下翻页（不消费、不确认组合、不 stage 学习）。
+    assert_eq!(h.press("equal"), ProcessorResult::Forward);
+    assert_eq!(h.context.last_commit_text(), "", "`=` 不得确认组合");
+    assert_eq!(h.context.input(), b"ab", "`=` 后组合原样保留（交宿主翻页）");
+    assert!(h.context.has_menu(), "`=` 后菜单仍在（交宿主翻页）");
+
+    // `-`：未翻页、`when: paging` 不成立 ⇒ 仍走上游标点分支（确认组合后交标点表）。
+    assert_eq!(h.press("minus"), ProcessorResult::Forward);
+    assert_eq!(
+        h.context.last_commit_text(),
+        "疒",
+        "未翻页的 `-` 仍落上游路径"
+    );
+    assert!(h.context.input().is_empty());
+
+    // 同一判据的另一半：落入 `paging` 标签（宿主翻页写入）后，`-` 同样让给宿主上翻页。
+    h.push_segment(b"ab", &["交", "疒"]);
+    h.context.highlight(1);
+    h.context
+        .composition
+        .back_mut()
+        .expect("段")
+        .tags
+        .push("paging".to_string());
+    assert_eq!(h.press("minus"), ProcessorResult::Forward);
+    assert_eq!(
+        h.context.last_commit_text(),
+        "疒",
+        "翻页后 `-` 不得再确认新组合"
+    );
+    assert_eq!(h.context.input(), b"ab", "翻页后 `-` 不消费组合");
 }
 
 #[test]

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use super::*;
+use hux_core::host::{self, HostOptions};
 
 // ---------------------------------------------------------------- ascii 策略
 
@@ -17,6 +18,10 @@ pub struct ProcessorEnv<'a> {
     pub min_retained: Option<i64>,
     /// 每页候选个数（addon 设置；数字直选按页定位）。
     pub page_size: usize,
+    /// 宿主链选项（翻页键绑定）：菜单可见的标点分支据此先问
+    /// [`hux_core::host::paging_action`]，让出会被它遮蔽的翻页绑定
+    /// （**本仓有意偏离上游 `abad411`**，见 `docs/refactor.md` §8）。
+    pub host_options: &'a HostOptions,
 }
 
 /// 处理器结果：`Consume` 对应参照返回 1（拦截），`Forward` 对应 2（交后续处理器）。
@@ -466,16 +471,23 @@ pub fn processor(
         }
         return Ok(ProcessorResult::Forward);
     }
+    let codepoint = key_event.keycode;
     // 菜单可见（不必处于缓冲态）时遇可打印标点：先按当前选中项暂存学习、确认组合，
     // 再把原键交标点处理器（参照 `abad411`：标点段一旦追加进组合，
     // `learning_selection` 就再也不能解码该输入——例如 `zhhbi,`——或取回句子的选中项）。
-    let codepoint = key_event.keycode;
+    //
+    // **本仓有意偏离上游 `abad411`**（见 `docs/refactor.md` §8「有意偏离上游」）：
+    // 上游对该分支内的**所有**可打印 ASCII 标点一律先确认组合再交标点表，于是宿主
+    // `key_binder` 的翻页绑定（缺省 `-`/`=`，以及 schema 绑到翻页的 `[`/`]`）被永久遮蔽
+    // （最小复现 `j a equal`：期望翻页，实际提交「一=」）。此处先问**与宿主同一套**翻页判据
+    // [`host::paging_action`]：会被判为翻页的键不消费、落回宿主链执行翻页；其余标点维持上游行为。
     if context.has_menu()
         && (33..=126).contains(&codepoint)
         && (codepoint as u8 as char).is_ascii_punctuation()
         && !key_event.ctrl()
         && !key_event.alt()
         && !key_event.super_modifier()
+        && host::paging_action(context, env.host_options, key_event).is_none()
     {
         let selection = learning_selection(decoder, context, state)?;
         learning_stage(

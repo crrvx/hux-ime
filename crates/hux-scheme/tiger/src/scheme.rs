@@ -364,6 +364,8 @@ impl Scheme for TigerScheme {
             dot_armed: &mut state.dot_armed,
             min_retained: state.min_retained,
             page_size: page_size_of(config),
+            // 与紧随其后的宿主链共用同一份翻页键绑定（有意偏离上游，见 `ProcessorEnv`）。
+            host_options: &*host_options,
         };
         let result = processor(
             key,

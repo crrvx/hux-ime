@@ -66,6 +66,8 @@ punct_half_shape_minus	full_shape=0	-
 punct_buffered_period	tiger_sentence_early_commit_to_preedit=1,full_shape=0	a b Tab c period
 # 参照 abad411：菜单可见时的 ASCII 标点先确认组合（`_auto_commit` 下即上屏）再交标点表，
 # 故 schema 的 key_binder `=`/`-` 翻页绑定在这条路径上被遮蔽（显式 Page_* 键不受影响）。
+# 本仓判定其为上游缺陷并有意偏离：`punct_menu_equal` 在差分测试里按 DEVIATED_CASES 登记跳过
+# （金样仍记录上游行为、字节不动），`punct_menu_minus` 仍逐位一致；见 docs/refactor.md §8。
 punct_menu_equal		j a equal
 punct_menu_minus		j a minus
 # K3 ⑦b：大写字母（editor char_handler：DirectCommit 先提交组合再交宿主）

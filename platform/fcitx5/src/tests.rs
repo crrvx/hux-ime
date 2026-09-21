@@ -392,15 +392,19 @@ fn host_commit_direct_choice_records_no_learning() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// 菜单可见时的 ASCII 标点（参照 `abad411` 的 `context:has_menu()` 分支）：处理器
-/// 先按当前选中项暂存学习、确认组合（`_auto_commit` 下即上屏），再把原键交标点表；
-/// schema 的 key_binder `=`/`-` 翻页绑定因此在该路径上被遮蔽。
+/// 菜单可见时的翻页键不再被方案标点分支遮蔽（**本仓有意偏离上游 `abad411`**）。
 ///
-/// 参照依据：`crates/hux-scheme/tiger/src/interaction/processor.rs` 的标点分支（`abad411:3756`），
-/// 金样 `goldens/key_sequence.tsv.gz` 的 `punct_menu_equal`/`punct_menu_minus`
-/// （两步各为「组合上屏 + 标点落字」，不再翻页）；显式 `Page_Down`/`Page_Up` 仍是翻页路径。
+/// 上游标点分支对菜单可见的**所有**可打印 ASCII 标点先「暂存学习 + 确认组合」再交标点表，
+/// 于是 schema 的 key_binder 翻页绑定（`-`/`=`，以及绑到翻页的 `[`/`]`）在这条路径上被遮蔽
+/// （`Page_Down`/`Page_Up`/`Tab` 不受影响）。本仓在标点分支入口先问**与宿主同一套**判据
+/// `hux_core::host::paging_action`：判为翻页的键不由标点分支消费，落回宿主链执行翻页。
+/// 理由、最小复现（`j a equal`）与金样登记见 `docs/refactor.md` §8「有意偏离上游」；
+/// 受影响的上游金样用例在差分测试中按 `DEVIATED_CASES` 登记跳过（金样字节保持原样）。
+///
+/// 语义：`=`（`when: has_menu`）翻页且不提交；未翻页的 `-`（`when: paging` 不成立）仍落标点；
+/// 翻过页后 `-` 上翻页；`Page_Down` 始终翻页；无菜单时 `=`/`-` 仍落标点。
 #[test]
-fn menu_punctuation_confirms_before_the_punctuator() {
+fn menu_paging_keys_are_not_shadowed_by_the_punctuation_branch() {
     let _guard = serial();
     COMMITS.lock().unwrap().clear();
     UPDATES.lock().unwrap().clear();
@@ -408,36 +412,66 @@ fn menu_punctuation_confirms_before_the_punctuator() {
     for code in *b"ja" {
         engine.key(u32::from(code), 0, false);
     }
-    let sentence = last_update().2.first().cloned().expect("ja 候选");
-    // 参照注释「Highlight + confirm mirrors Space」：同一夹具下 `space` 的提交应与 `=` 的首笔一致。
-    let mut space_engine = TestEngine::new(host(), fixture_dirs(), None, None);
-    for code in *b"ja" {
-        space_engine.key(u32::from(code), 0, false);
-    }
+    let first_page = last_update().2;
+    assert!(first_page.len() >= 2, "夹具 ja 应有可翻页的多页候选");
+
+    // ① 菜单可见按 `=`（`when: has_menu`）：下翻一页、不提交（上游会提交「…=」）。
     COMMITS.lock().unwrap().clear();
-    assert!(space_engine.key(0x20, 0, false), "space 应被消费");
-    assert_eq!(
-        COMMITS.lock().unwrap().clone(),
-        vec![sentence.clone()],
-        "`=` 的首笔提交应与 space 上屏的候选相同"
-    );
-    COMMITS.lock().unwrap().clear();
+    let selected_before = last_update().3;
+    assert!(engine.key(0x3d, 0, false), "`=` 应被消费（翻页）");
     assert!(
-        engine.key(0x3d, 0, false),
-        "`=` 先确认组合再交标点表（消费）"
+        COMMITS.lock().unwrap().is_empty(),
+        "`=` 不得提交组合：翻页绑定优先于标点分支"
     );
     assert_eq!(
-        COMMITS.lock().unwrap().clone(),
-        vec![sentence, "=".to_string()],
-        "`=` 不再翻页：组合上屏 + 标点落字"
+        last_update().3,
+        selected_before + hux_core::host::DEFAULT_PAGE_SIZE as i32,
+        "`=` 应下翻一页（高亮前进一页）"
     );
+    assert_eq!(engine.session().context.input(), b"ja", "翻页不改动输入");
+
+    // ② 已翻页后按 `-`（`when: paging` 成立）：上翻一页、仍不提交。
+    assert!(engine.key(0x2d, 0, false), "翻页后 `-` 应被消费（上翻页）");
+    assert!(COMMITS.lock().unwrap().is_empty(), "上翻页不得提交组合");
+    assert_eq!(last_update().3, selected_before, "`-` 应回到第一页");
+
+    // ③ 未翻页的 `-`：`when: paging` 不成立 ⇒ 维持上游行为（确认组合 + 落标点）。
+    let mut punct_engine = TestEngine::new(host(), fixture_dirs(), None, None);
+    for code in *b"ja" {
+        punct_engine.key(u32::from(code), 0, false);
+    }
+    let sentence = last_update().2.first().cloned().expect("ja 候选");
     COMMITS.lock().unwrap().clear();
-    assert!(engine.key(0x2d, 0, false), "`-` 由标点表消费");
+    assert!(punct_engine.key(0x2d, 0, false), "`-` 由标点表消费");
     assert_eq!(
         COMMITS.lock().unwrap().clone(),
-        vec!["-".to_string()],
-        "组合已上屏，此处仅落 `-`"
+        vec![sentence, "-".to_string()],
+        "未翻页时 `-` 不判为翻页：确认组合 + 落标点（与上游一致）"
     );
+
+    // ④ 显式 `Page_Down` 仍是翻页路径（不受本偏离影响）。
+    let mut page_engine = TestEngine::new(host(), fixture_dirs(), None, None);
+    for code in *b"ja" {
+        page_engine.key(u32::from(code), 0, false);
+    }
+    let page_start = last_update().3;
+    COMMITS.lock().unwrap().clear();
+    assert!(page_engine.key(0xff56, 0, false), "Page_Down 应被消费");
+    assert!(COMMITS.lock().unwrap().is_empty(), "Page_Down 不提交");
+    assert_eq!(
+        last_update().3,
+        page_start + hux_core::host::DEFAULT_PAGE_SIZE as i32,
+        "Page_Down 翻到下一页"
+    );
+
+    // ⑤ 无菜单（空闲）时 `=`/`-` 仍落标点：不进任何翻页路径。
+    let mut idle_engine = TestEngine::new(host(), fixture_dirs(), None, None);
+    COMMITS.lock().unwrap().clear();
+    assert!(idle_engine.key(0x3d, 0, false), "空闲 `=` 由标点表消费");
+    assert_eq!(COMMITS.lock().unwrap().clone(), vec!["=".to_string()]);
+    COMMITS.lock().unwrap().clear();
+    assert!(idle_engine.key(0x2d, 0, false), "空闲 `-` 由标点表消费");
+    assert_eq!(COMMITS.lock().unwrap().clone(), vec!["-".to_string()]);
 }
 
 /// 数字直选（`DigitSelect`）：菜单可见时 1–9 直接上屏当前页候选，0=第 10 个。

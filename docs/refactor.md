@@ -324,19 +324,59 @@ platform/                     # 平台适配
     （`index = digit-1`，越界惰性消费）、`;` 惰性不并入拼音；识别模式改为 `^`[a-z']*$`
     （撇号可出现在任意位置，`speller/delimiter` 增加 `'`），处理器保留撇号。
   - **金样**：15 份 Lua 核心金样与 `ngram_fixture.bin` 在 `abad411` 下**逐字节不变**；
-    `key_sequence` 仅新增用例（`punct_menu_equal`/`punct_menu_minus`，钉住下面的遮蔽行为）；
+    `key_sequence` 仅新增用例（`punct_menu_equal`/`punct_menu_minus`，记录下面的遮蔽行为——其中
+    `punct_menu_equal` 现为**本仓有意偏离**项，见下方「⚖️ 有意偏离上游」）；
     `sound_to_char_shape` 取 `92a0b54`：`digit-zhong` 由「数字并入拼音」变为**直选提交**，
     `nav-page-equal`/`nav-page-minus`/`nav-page-zho` 由「`=`/`-` 翻页」变为「先上屏组合再落标点」，
     并新增撇号/数字/分号用例（31 例 / 164 步）。
-  - **⚠️ 需要用户决策的参照行为变化**：`abad411` 的标点分支使**所有**可打印 ASCII 标点（含 `-`/`=`/`[`/`]`）
-    在菜单可见时先确认组合、再交标点表 ⇒ 方案侧 `key_binder` 的 `-/=`、`[/]` 翻页绑定在这条路径上被遮蔽
-    （`Page_Up`/`Page_Down` 与 `Tab` 循环不受影响）。这是上游参照的实测行为（探针金样 `punct_menu_*` 与
-    `nav-page-*`），本仓如实移植并同步了 `README.md`/`docs/usage.md`/`docs/config.md`/`docs/rust-migration.md`；
-    若判定为上游缺陷，应在上游修正后随下一批同步。
+  - **⚠️ 参照行为变化（已由用户判定为上游缺陷 ⇒ 本仓有意偏离）**：`abad411` 的标点分支使**所有**可打印 ASCII 标点
+    （含 `-`/`=`/`[`/`]`）在菜单可见时先确认组合、再交标点表 ⇒ 方案侧 `key_binder` 的 `-/=`、`[/]` 翻页绑定
+    在这条路径上被遮蔽（`Page_Up`/`Page_Down` 与 `Tab` 循环不受影响）。这是上游参照的实测行为
+    （探针金样 `punct_menu_*` 与 `nav-page-*`），本仓当时如实移植；**现按用户判定修掉该缺陷**——
+    这是金样层面唯一的偏离登记，做法与豁免项见下方「⚖️ 有意偏离上游」。
   - **门槛**：`cargo test --workspace --locked` **291 用例 0 失败**（与 B4 同数：仅改写 2 个平台用例、
     扩 1 个断言表、金样用例内新增覆盖，无净增删）；fmt/clippy/reuse/CI 分层守卫全绿；
     另复验 C++ addon 的 configure→构建→`DESTDIR` 安装布局与 **14 个** `hux_*` 导出符号、
     `gen_pinyin_index.py --check`。
+
+**⚖️ 有意偏离上游（参照缺陷：菜单可见时 ASCII 翻页键被标点分支遮蔽）✅ 已实施**（用户判定为上游缺陷；
+**金样层面唯一的偏离登记**——其余金样用例一律无条件逐位比对；豁免项与理由见下表）：
+
+- **缺陷**（上游 `abad411` `fix(rime): preserve punctuation learning …` 起）：方案处理器在 `context.has_menu()`
+  时对**所有**可打印 ASCII 标点先「暂存学习 + 确认组合」再交标点表；而翻页绑定在宿主 `key_binder`
+  （缺省 `-`（`when: paging`）/`=`（`when: has_menu`），schema 可绑 `[`/`]`）。于是菜单可见时这些键
+  **永远轮不到**翻页绑定；`Page_Up`/`Page_Down`/`Tab` 不经该分支，不受影响。
+- **最小复现**：`j a` 后按 `equal` ⇒ 期望下翻一页，上游提交「一=」（金样 `punct_menu_equal` 如实记录）；
+  音反查 `` ` z = = `` / `` ` z = = - `` / `` ` z h o = - `` 同理（`nav-page-equal`/`nav-page-minus`/`nav-page-zho`）。
+- **本仓修法**（判据复用，避免两处条件漂移）：core 抽出**唯一**判据
+  `hux_core::host::paging_action(context, options, key_event) -> Option<PagingDir>`
+  ——`Up` = 命中 `page_up_keys` 且末段带 `paging` 标签（参照 `when: paging`），`Down` = 命中 `page_down_keys`
+  （参照 `when: has_menu`），前置条件 `!ascii_mode && has_menu`；`key_binder` 与方案标点分支**共用**它：
+  标点分支入口先问一次，判为翻页则**不消费**（不 stage 学习、不确认组合），键落回宿主链执行翻页。
+  `ProcessorEnv` 新增 `host_options: &HostOptions`，平台 `TigerScheme` 把与宿主链同一份绑定传进处理器。
+- **不受影响的路径**（逐条单测）：无菜单、非标点键、编辑/导航键、`Page_Up`/`Page_Down`、`Tab`/`Shift+Tab`、
+  缓冲态标点，以及**未翻页的 `-`**（`when: paging` 不成立 ⇒ 仍确认组合 + 落标点，与上游一致）。
+- **金样策略（字节零变化）**：金样记录的是**上游行为**，故 `goldens/*.tsv.gz` 一个字节都不改；
+  两个消费方的差分测试新增 `DEVIATED_CASES` 登记表，并断言「实际跳过集合**恰好等于**登记集合」
+  （登记名必须真实存在；不得静默跳过其它用例）：
+
+  | 金样 | 偏离用例 | 步数 | 偏离步 | 上游 vs 本仓 |
+  |---|---|---|---|---|
+  | `key_sequence.tsv.gz` | `punct_menu_equal` | 3 | 2（`equal`） | 提交「一=」 vs **翻页**（不提交） |
+  | `sound_to_char_shape.tsv.gz` | `nav-page-equal` | 4 | 2,3（`=`） | 上屏「中=」再落「=」 vs **连翻两页** |
+  | `sound_to_char_shape.tsv.gz` | `nav-page-minus` | 5 | 2,3,4（`=`/`=`/`-`） | 同上＋落「-」 vs **翻两页后上翻一页** |
+  | `sound_to_char_shape.tsv.gz` | `nav-page-zho` | 6 | 4,5（`=`/`-`） | 上屏「中哦=」再落「-」 vs **下翻一页后上翻一页** |
+
+  其余用例（含 `punct_menu_minus`、`nav_page`/`nav_page_big`、`nav-page-keys`、`punct_half_shape_minus`、
+  `punct_buffered_period`、`upper_*`）**仍逐位一致**。
+- **待上游修复后回归**：上游若采纳下列任一改法，随下一批追平时**删除 `DEVIATED_CASES`**
+  （含 `deviated_cases_are_registered_with_the_expected_golden` 自校验用例）、恢复无条件逐位比对，
+  并复验平台用例 `menu_paging_keys_are_not_shadowed_by_the_punctuation_branch` 的 5 条断言。
+- **建议的上游修法**：
+  1. 最小改动：`lua/tiger_sentence.lua` 的 `context:has_menu()` 标点分支入口先问一次 key_binder 的翻页判据
+     （`page_up_keys`/`page_down_keys` 及其 `when` 条件），命中则直接 `return 2`（不 stage 学习、不确认组合）；
+  2. 结构性改动：把 `key_binder` 提到方案处理器之前（librime 处理器链顺序调整），标点分支即无需感知翻页绑定；
+  3. 兼容性约束：两种改法都须保住 `abad411` 的初衷——**未翻页的 `-` 仍落标点**、缓冲态标点的学习保留不得回退。
 
 **平台（fcitx5）**
 - ✅ 已修：C++ 壳不再硬编码方案选项名——ABI 新增 `hux_engine_option_role_count` /

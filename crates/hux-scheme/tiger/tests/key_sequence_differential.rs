@@ -32,6 +32,42 @@ use hux_scheme_tiger::interaction::{
 };
 use hux_scheme_tiger::lexicon::{Lexicon, Supplement};
 
+/// 本仓**有意偏离上游**的金样用例登记表（金样字节保持原样，不重生成）。
+///
+/// **上游缺陷**（`abad411` `fix(rime): preserve punctuation learning …`）：方案处理器在
+/// `context:has_menu()` 时把**所有**可打印 ASCII 标点先「暂存学习 + 确认组合」再交标点表，
+/// 于是宿主 `key_binder` 的翻页绑定（缺省 `-`/`=`，以及 schema 绑到翻页的 `[`/`]`）
+/// 在这条路径上被永久遮蔽 —— `Page_Up`/`Page_Down`/`Tab` 不受影响。
+/// 最小复现：`j a equal` ⇒ 期望下翻页，上游提交「一=」。
+/// 依据：`_tmp/批次5-追平记录.md`（探针实测）与 `lua/tiger_sentence.lua` @ `abad411` 的标点分支；
+/// 用例定义见 `tools/cases/key_sequence_cases.txt`、`tools/cases/sound_to_char_shape_cases.txt`。
+///
+/// **本仓修法**：标点分支入口先问与宿主**同一套**判据 `hux_core::host::paging_action`，
+/// 被判为翻页的键不由标点分支消费（详见 `docs/refactor.md` §8「有意偏离上游」）。
+/// 下列用例的期望值是**上游行为的记录**，与本仓新语义不符，故在重放中跳过并断言
+/// 「实际跳过集合恰好等于本登记表」（见 [`without_deviated`] 与
+/// `deviated_cases_are_registered_with_the_expected_golden`）：
+///
+/// | 金样 | 用例 | 步数 | 偏离步 | 上游 vs 本仓 |
+/// |---|---|---|---|---|
+/// | `key_sequence.tsv.gz` | `punct_menu_equal` | 3 | 2（`equal`） | `j a` 后提交「一=」 vs **翻页**（不提交） |
+/// | `sound_to_char_shape.tsv.gz` | `nav-page-equal` | 4 | 2,3（`=`） | 上屏「中=」再落「=」 vs **连翻两页** |
+/// | `sound_to_char_shape.tsv.gz` | `nav-page-minus` | 5 | 2,3,4（`=`/`=`/`-`） | 同上＋落「-」 vs **翻两页后上翻一页** |
+/// | `sound_to_char_shape.tsv.gz` | `nav-page-zho` | 6 | 4,5（`=`/`-`） | 上屏「中哦=」再落「-」 vs **下翻一页后上翻一页** |
+///
+/// **待上游修复后移除本表**（把 `paging_action` 的提前放行改回上游分支即可复现），
+/// 届时全部用例无条件重放、逐位比对。
+const DEVIATED_CASES: &[&str] = &[
+    // `j a equal`：`=` 的 `when: has_menu` 成立 ⇒ 本仓翻页，上游提交组合 + 落 `=`。
+    "punct_menu_equal",
+    // `` ` z = = ``：`=` 本仓连翻两页，上游两次「上屏组合 + 落 `=`」。
+    "nav-page-equal",
+    // `` ` z = = - ``：`=` 翻页后 `paging` 标签置位，`-`（`when: paging`）在本仓上翻一页。
+    "nav-page-minus",
+    // `` ` z h o = - ``：同上前半段，`-` 由标点变为上翻页。
+    "nav-page-zho",
+];
+
 struct Step {
     repr: String,
     consumed: bool,
@@ -117,6 +153,36 @@ fn load_cases(path: &Path) -> Vec<Case> {
     cases
 }
 
+/// 剔除登记在册的「有意偏离」用例，返回待重放的用例。
+///
+/// 自校验：本金样中**实际跳过**的用例集合必须恰好等于 [`DEVIATED_CASES`] 中确实存在于
+/// 本金样者 —— 任何未登记却被跳过的用例都会让断言失败（不静默跳过）；
+/// 登记名是否真实存在，由 `deviated_cases_are_registered_with_the_expected_golden` 跨两份金样核对。
+fn without_deviated<'a>(cases: &'a [Case], golden: &str) -> Vec<&'a Case> {
+    let mut kept = Vec::new();
+    let mut skipped: Vec<&str> = Vec::new();
+    for case in cases {
+        if DEVIATED_CASES.contains(&case.name.as_str()) {
+            skipped.push(case.name.as_str());
+        } else {
+            kept.push(case);
+        }
+    }
+    let mut expected: Vec<&str> = DEVIATED_CASES
+        .iter()
+        .copied()
+        .filter(|name| cases.iter().any(|case| case.name == *name))
+        .collect();
+    expected.sort_unstable();
+    skipped.sort_unstable();
+    assert_eq!(
+        skipped, expected,
+        "{golden}: 实际跳过的用例与 DEVIATED_CASES 在本金样内的登记不一致\
+         （不得跳过未登记的用例，也不得漏跳已登记的用例）"
+    );
+    kept
+}
+
 fn replay(
     case: &Case,
     data_dir: &Path,
@@ -149,6 +215,11 @@ fn replay(
         "缺少标点表 symbols.yaml：{punct_error:?}"
     );
     let punct = punct_table;
+    // 处理器与宿主链共用同一份宿主选项（翻页键绑定判据一致；见 `ProcessorEnv::host_options`）。
+    let host_options = HostOptions {
+        page_size,
+        ..HostOptions::default()
+    };
     for (index, step) in case.steps.iter().enumerate() {
         let label = format!("{}[{}] {}", case.name, index, step.repr);
         let key = KeyEvent::from_repr(&step.repr).expect("key repr");
@@ -157,6 +228,7 @@ fn replay(
             dot_armed: &mut dot_armed,
             min_retained: None,
             page_size,
+            host_options: &host_options,
         };
         let result = processor(
             &key,
@@ -171,16 +243,8 @@ fn replay(
         let consumed = match result {
             ProcessorResult::Consume => true,
             ProcessorResult::Forward => {
-                host_process_key(
-                    &key,
-                    &mut context,
-                    punct.as_ref(),
-                    &HostOptions {
-                        page_size,
-                        ..HostOptions::default()
-                    },
-                    None,
-                ) == HostResult::Consumed
+                host_process_key(&key, &mut context, punct.as_ref(), &host_options, None)
+                    == HostResult::Consumed
             }
         };
         // 事件泵：提交与选项事件。
@@ -302,6 +366,8 @@ fn key_sequence_matches_reference() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let cases = load_cases(&root.join("goldens/key_sequence.tsv.gz"));
     assert!(!cases.is_empty(), "empty key_sequence golden");
+    // 上游金样原样保留：其中「上游缺陷」用例见 DEVIATED_CASES（有意偏离，跳过而非重生成）。
+    let cases = without_deviated(&cases, "key_sequence.tsv.gz");
     let data_dir = root.join("goldens/key_sequence");
     let mut failures = Vec::new();
     let mut steps = 0usize;
@@ -331,6 +397,8 @@ fn sound_to_char_shape_matches_reference() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let cases = load_cases(&root.join("goldens/sound_to_char_shape.tsv.gz"));
     assert!(!cases.is_empty(), "empty pinyin lookup golden");
+    // 同上：`nav-page-*` 记录的是上游「`=`/`-` 被标点分支遮蔽」的行为，见 DEVIATED_CASES。
+    let cases = without_deviated(&cases, "sound_to_char_shape.tsv.gz");
     let data_dir = root.join("goldens/sound_to_char_shape");
     let mut failures = Vec::new();
     let mut steps = 0usize;
@@ -351,5 +419,41 @@ fn sound_to_char_shape_matches_reference() {
         cases.len(),
         steps,
         failures.join("\n")
+    );
+}
+
+/// 偏离登记表自校验：每个登记名必须**真实存在**于两份金样之一（且不重名），
+/// 两份金样实际跳过的用例总数 == 登记数 —— 登记与跳过精确对齐，不多不少。
+#[test]
+fn deviated_cases_are_registered_with_the_expected_golden() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let mut matched: Vec<String> = Vec::new();
+    for golden in ["key_sequence.tsv.gz", "sound_to_char_shape.tsv.gz"] {
+        let cases = load_cases(&root.join("goldens").join(golden));
+        for case in &cases {
+            if DEVIATED_CASES.contains(&case.name.as_str()) {
+                assert!(
+                    !matched.iter().any(|name| name == &case.name),
+                    "偏离用例名 `{}` 在两份金样中重名，登记表无法唯一定位",
+                    case.name
+                );
+                matched.push(case.name.clone());
+            }
+        }
+    }
+    let mut expected: Vec<String> = DEVIATED_CASES
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect();
+    expected.sort_unstable();
+    matched.sort_unstable();
+    assert_eq!(
+        matched, expected,
+        "DEVIATED_CASES 中每个用例名都必须在金样中真实存在（不存在者会静默失去守护）"
+    );
+    assert_eq!(
+        matched.len(),
+        DEVIATED_CASES.len(),
+        "被跳过的用例数必须等于登记数"
     );
 }

@@ -161,30 +161,62 @@ fn punctuator(
 
 // ---------------------------------------------------------------- key_binder
 
-/// 参照 `KeyBinder::ProcessKeyEvent`：Tab/Shift+Tab 固定，翻页键取 [`HostOptions`]。
-/// 条件为 `has_menu`（非 ascii_mode）——上/下翻页键均有候选时生效并消费（参照仅当上翻页键
-/// 带 `paging` 标签时绑定；此处放宽，避免其落作标点/输入）。
-fn key_binder(key_event: &KeyEvent, context: &mut Context, options: &HostOptions) -> HostResult {
-    if context.get_option("ascii_mode") {
-        return HostResult::Forward;
+/// 翻页方向（[`paging_action`] 的结果；`Up` = Page_Up 等价动作，`Down` = Page_Down）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PagingDir {
+    /// 上翻页（[`SelectorAction::PreviousPage`]）。
+    Up,
+    /// 下翻页（[`SelectorAction::NextPage`]）。
+    Down,
+}
+
+/// `key_binder` 的翻页判据：菜单可用（非 `ascii_mode` + `has_menu`）时，该键是否会被判为翻页。
+///
+/// - 命中 `page_up_keys` 且末段带 `paging` 标签（参照 `when: paging`）→ [`PagingDir::Up`]；
+/// - 命中 `page_down_keys`（参照 `when: has_menu`）→ [`PagingDir::Down`]；
+/// - 其余（含无菜单 / `ascii_mode` / 上翻页键未翻过页）→ `None`。
+///
+/// 宿主绑定与方案处理器共用本判据（避免两处条件漂移）。方案侧在「菜单可见 + 可打印 ASCII 标点」
+/// 分支入口先问一次：被宿主判为翻页的键（如缺省 `=`/`-`，以及 schema 绑到翻页的 `[`/`]`）
+/// 不由该分支消费，让出被其遮蔽的翻页绑定——**本仓有意偏离上游 `abad411`**，见 `docs/refactor.md` §8。
+pub fn paging_action(
+    context: &Context,
+    options: &HostOptions,
+    key_event: &KeyEvent,
+) -> Option<PagingDir> {
+    if !menu_available(context) {
+        return None;
     }
     let repr = key_event.repr();
-    if !context.has_menu() {
-        return HostResult::Forward;
-    }
     if options.page_up_keys.iter().any(|key| key.repr() == repr) {
-        // 上翻页键的绑定条件是参照 `when: paging`（`KeyBinder` 于末段带 `paging` 标签时置位，
-        // 该标签由翻过页写入）。未翻页时**不消费**——交后续处理器落作标点/输入，
-        // 与参照一致（此前本实现放宽为「有候选即消费」，会吞掉标点键）。
-        if !has_paging_tag(context) {
-            return HostResult::Forward;
-        }
-        return selector_action(SelectorAction::PreviousPage, context, options);
+        return has_paging_tag(context).then_some(PagingDir::Up);
     }
     if options.page_down_keys.iter().any(|key| key.repr() == repr) {
-        return selector_action(SelectorAction::NextPage, context, options);
+        return Some(PagingDir::Down);
     }
-    match repr.as_str() {
+    None
+}
+
+/// 参照 `KeyBinder` 的前置条件：非 `ascii_mode` 且 `has_menu`（[`paging_action`] 与
+/// [`key_binder`] 共用，保证「判为翻页」与「执行翻页」条件一致）。
+fn menu_available(context: &Context) -> bool {
+    !context.get_option("ascii_mode") && context.has_menu()
+}
+
+/// 参照 `KeyBinder::ProcessKeyEvent`：Tab/Shift+Tab 固定，翻页键取 [`HostOptions`]。
+/// 翻页判据统一走 [`paging_action`]（上翻页键的 `when: paging` 标签未置位时**不消费**——
+/// 交后续处理器落作标点/输入，与参照一致）。
+fn key_binder(key_event: &KeyEvent, context: &mut Context, options: &HostOptions) -> HostResult {
+    if !menu_available(context) {
+        return HostResult::Forward;
+    }
+    if let Some(dir) = paging_action(context, options, key_event) {
+        return match dir {
+            PagingDir::Up => selector_action(SelectorAction::PreviousPage, context, options),
+            PagingDir::Down => selector_action(SelectorAction::NextPage, context, options),
+        };
+    }
+    match key_event.repr().as_str() {
         "Tab" => selector_action(SelectorAction::NextCandidate, context, options),
         "Shift+Tab" => selector_action(SelectorAction::PreviousCandidate, context, options),
         _ => HostResult::Forward,
@@ -805,6 +837,10 @@ mod tests {
         }
     }
 
+    fn key_of(repr: &str) -> KeyEvent {
+        KeyEvent::from_repr(repr).expect("key repr")
+    }
+
     #[test]
     fn editor_commits_composition_on_uppercase_then_passes() {
         // 组合中收到大写字母：先提交组合（保证上屏顺序），按键交宿主。
@@ -1047,6 +1083,67 @@ mod tests {
         // 无菜单：不消费（交宿主）。
         let mut idle = Context::new();
         assert_eq!(press(&mut idle, "minus"), HostResult::Forward);
+    }
+
+    #[test]
+    fn paging_action_is_the_shared_key_binder_predicate() {
+        // 方案侧「菜单可见 + 标点」分支与宿主 `key_binder` 共用此判据：
+        // 缺省绑定 `=`（`when: has_menu`）→ Down、`-`（`when: paging`）→ 未翻页 None / 翻页后 Up。
+        let options = HostOptions::default();
+        let mut menu = context_with_menu(&["a", "b", "c", "d", "e", "f"], 0);
+        assert_eq!(
+            paging_action(&menu, &options, &key_of("equal")),
+            Some(PagingDir::Down)
+        );
+        assert_eq!(
+            paging_action(&menu, &options, &key_of("minus")),
+            None,
+            "未翻页时 `when: paging` 不成立"
+        );
+        assert_eq!(press(&mut menu, "equal"), HostResult::Consumed);
+        assert_eq!(
+            paging_action(&menu, &options, &key_of("minus")),
+            Some(PagingDir::Up),
+            "翻过页后 `paging` 标签置位"
+        );
+
+        // 无菜单 / `ascii_mode`：一律不判为翻页。
+        let idle = Context::new();
+        assert_eq!(paging_action(&idle, &options, &key_of("equal")), None);
+        let mut ascii = context_with_menu(&["a", "b"], 0);
+        ascii.set_option("ascii_mode", true);
+        assert_eq!(paging_action(&ascii, &options, &key_of("equal")), None);
+
+        // schema 绑定的其它翻页键按 options 生效（`[`/`]`），未绑定的键不判翻页。
+        let custom = HostOptions {
+            page_size: 2,
+            page_up_keys: vec![key_of("bracketleft")],
+            page_down_keys: vec![key_of("bracketright")],
+            page_cycle: false,
+        };
+        let mut menu = context_with_menu(&["a", "b", "c", "d", "e", "f"], 0);
+        assert_eq!(
+            paging_action(&menu, &custom, &key_of("bracketright")),
+            Some(PagingDir::Down)
+        );
+        assert_eq!(
+            paging_action(&menu, &custom, &key_of("bracketleft")),
+            None,
+            "`[` 同样要求 `paging` 标签"
+        );
+        assert_eq!(
+            paging_action(&menu, &custom, &key_of("equal")),
+            None,
+            "未绑定为翻页键的 `=` 不判翻页（该配置下落标点）"
+        );
+        assert_eq!(
+            press_with(&mut menu, "bracketright", &custom),
+            HostResult::Consumed
+        );
+        assert_eq!(
+            paging_action(&menu, &custom, &key_of("bracketleft")),
+            Some(PagingDir::Up)
+        );
     }
 
     #[test]

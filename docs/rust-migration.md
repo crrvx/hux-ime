@@ -105,11 +105,15 @@ docs/                    # 设计/重构/使用/配置/性能/Android 等，索�
   | `express_editor` | space 确认/提交、BackSpace 撤销编辑、Delete 删光标处、Return 提交原文、Escape 取消；可打印字符先提交组合再交宿主 |
   | `punctuator` | 单键可打印 ASCII 查 `symbols.yaml`；组合中提交「组合文本 + 标点」；`{pair}` 交替 |
 
-  > **方案侧遮蔽（追平上游 `abad411`）**：方案处理器现在对「菜单可见 + 可打印 ASCII 标点」
-  > 先确认组合（`_auto_commit` 下即上屏）再把原键 Forward 给宿主，因此上面 `selector` 的
-  > `-`/`=`/`[`/`]` 翻页绑定在这条路径上不再生效（`Page_Up`/`Page_Down` 与 `Tab` 循环不受影响）；
-  > 参照依据：`lua/tiger_sentence.lua` @ `abad411` 的 `context:has_menu()` 标点分支，
-  > 金样 `goldens/key_sequence.tsv.gz` 的 `punct_menu_equal`/`punct_menu_minus`。
+  > **翻页键不被标点分支遮蔽（本仓有意偏离上游 `abad411`）**：上游方案处理器对「菜单可见 +
+  > 可打印 ASCII 标点」先确认组合（`_auto_commit` 下即上屏）再把原键 Forward 给宿主，使上面
+  > `selector`/`key_binder` 的 `-`/`=`/`[`/`]` 翻页绑定在这条路径上永远轮不到。本仓在标点分支入口
+  > 先问与宿主**同一套**判据 `hux_core::host::paging_action(context, options, key_event)`
+  > （`Up`＝`page_up_keys` 且带 `paging` 标签；`Down`＝`page_down_keys`；`key_binder` 与之共用）：
+  > 判为翻页的键不消费、落回宿主链翻页，其余标点（含**未翻页的 `-`**）维持上游行为。
+  > 依据与最小复现（`j a equal`：期望翻页、上游提交「一=」）见 `docs/refactor.md` §8「有意偏离上游」；
+  > 受影响金样用例 `punct_menu_equal` 与 `nav-page-equal`/`nav-page-minus`/`nav-page-zho` 在差分测试中
+  > 按 `DEVIATED_CASES` 登记跳过（金样字节不动），`Page_Up`/`Page_Down` 与 `Tab` 循环不受影响。
 
 - **英文模式不实现**（设计取舍）：英文输入交由 fcitx5 切换输入法；大写字母经 `char_handler` 直通（先提交组合）。
 - **提交与按键顺序**：可打印字符的 `char_handler` 在核心语义为「提交组合 + 不消费」（同 librime）；宿主层
