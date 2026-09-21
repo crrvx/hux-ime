@@ -6,6 +6,8 @@
 //! 本增量范围：normalize、rank 选择器、资格过滤、beam 扩展、桶聚合、评分与候选发射、
 //! 早提交证据、学习集成、锁播种（`decode_with_lock`）。
 //! 暂不含：增量/锁缓存（性能优化）、模型失败回退（guarded_decode）。
+//! 参照 `decode()` 的缓存机制（`trailing_selector_span` / `expand_range` 的增量状态复用、
+//! `locked_decode_cache`）随该优化一并落地；是否做见 `docs/perf.md` 的 P6 结论与复核条件。
 
 use crate::lexical::{self, LexicalModel};
 use crate::lexicon::{CodeEntry, Lexicon, Supplement};
@@ -1788,21 +1790,6 @@ fn parse_boundaries(value: &str) -> Vec<(usize, usize)> {
     result
 }
 
-/// 参照 `trailing_selector_span`；供后续增量路径（扩展/删减缓存）使用。
-#[allow(dead_code)]
-fn trailing_selector_span(raw: &[u8]) -> usize {
-    let mut index = raw.len();
-    while index > 0 {
-        let mark = raw[index - 1];
-        if mark.is_ascii_digit() || mark == b';' || mark == b'\'' {
-            index -= 1;
-        } else {
-            break;
-        }
-    }
-    raw.len() - index
-}
-
 /// 参照 `parse_selector`：返回 (选中 rank, 消耗到的字节位置)；0 = 无选择器。
 fn parse_selector(raw: &[u8], code_end: usize) -> (u64, usize) {
     let next = code_end;
@@ -2094,11 +2081,6 @@ mod tests {
     fn has_letter_detects_ascii_letters() {
         assert!(has_letter(b"a1"));
         assert!(!has_letter(b"123"));
-    }
-
-    #[test]
-    fn trailing_selector_span_finds_selector_tail() {
-        assert_eq!(trailing_selector_span(b"ab12;"), 3);
     }
 
     #[test]

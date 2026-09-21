@@ -48,22 +48,43 @@ if ! command -v sudo >/dev/null 2>&1; then
     exit 1
 fi
 
+# 用户可写目录按与引擎相同的 XDG 回退解析（引擎优先 XDG_DATA_HOME / XDG_CONFIG_HOME）。
+data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+
 echo "[1/2] 移除系统级文件（需要 sudo）……"
+# 插件库目录：兼容 lib 与 lib64（Fedora 等）。
+for libdir in /usr/lib/fcitx5 /usr/lib64/fcitx5; do
+    [ -f "$libdir/libhux.so" ] && run sudo rm -f "$libdir/libhux.so"
+done
 run sudo rm -f \
-    /usr/lib/fcitx5/libhux.so \
     /usr/share/fcitx5/addon/hux.conf \
     /usr/share/fcitx5/inputmethod/hux.conf
-run sudo rm -rf /usr/share/fcitx5/hux
+if [ "$purge" -eq 1 ]; then
+    # 连同系统级数据目录（含用户自取的 models/）一并删除。
+    if [ -d /usr/share/fcitx5/hux/models ]; then
+        echo "  提示：/usr/share/fcitx5/hux/models/ 下的模型（不随包）将一并删除。"
+    fi
+    run sudo rm -rf /usr/share/fcitx5/hux
+else
+    # 只删随包数据文件，保留用户自取的 models/（README 推荐放在这里）。
+    run sudo rm -f /usr/share/fcitx5/hux/tiger_sentence.codes.txt \
+        /usr/share/fcitx5/hux/tiger_sentence.char_ranks.txt \
+        /usr/share/fcitx5/hux/tiger_sentence.full_code_whitelist.txt \
+        /usr/share/fcitx5/hux/tiger_sentence.supplement.txt \
+        /usr/share/fcitx5/hux/tiger_sentence.lexical.bin \
+        /usr/share/fcitx5/hux/tiger_sentence.pinyin.bin.gz \
+        /usr/share/fcitx5/hux/symbols.yaml
+    echo "  （模型与其它自建文件保留在 /usr/share/fcitx5/hux/；彻底清除用 --purge）"
+fi
 
 if [ "$purge" -eq 1 ]; then
     echo "[2/2] 清除用户数据（选项 / 学习库 / 模型）……"
-    run rm -rf \
-        "$HOME/.local/share/fcitx5/hux" \
-        "$HOME/.config/fcitx5/conf/hux.conf"
+    run rm -rf "$data_home/fcitx5/hux" "$config_home/fcitx5/conf/hux.conf"
 else
     echo "[2/2] 保留用户数据（选项 / 学习库 / 模型）："
-    echo "   $HOME/.local/share/fcitx5/hux/"
-    echo "   $HOME/.config/fcitx5/conf/hux.conf"
+    echo "   $data_home/fcitx5/hux/"
+    echo "   $config_home/fcitx5/conf/hux.conf"
     echo "   （如需彻底清除：./uninstall.sh --purge）"
 fi
 

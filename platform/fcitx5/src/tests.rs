@@ -946,7 +946,7 @@ fn reset_clears_panel() {
     assert!(engine.session().context.input().is_empty());
 }
 
-/// 音反查（⑧-1）端到端：设置 → 前缀识别 → 候选/注释 → 预编辑提示 → 空格上屏。
+/// 音反查端到端：设置 → 前缀识别 → 候选/注释 → 预编辑提示 → 空格上屏。
 #[test]
 fn sound_to_char_shape_end_to_end() {
     let _guard = serial();
@@ -980,7 +980,7 @@ fn sound_to_char_shape_end_to_end() {
     assert_eq!(preedit, ":zhong guo〔拼音〕");
 }
 
-/// 字反查（⑧-2）：默认 Alt+" 进入组合（**带修饰键不给默认候选**）；
+/// 字反查：默认 Alt+" 进入组合（**带修饰键不给默认候选**）；
 /// 上排 = 光标左侧 1 字拼音、下排 = 虎码，步长 1；改为单字符键时才给默认可上屏候选。
 #[test]
 fn char_to_sound_shape_end_to_end() {
@@ -1069,7 +1069,7 @@ fn char_to_sound_shape_end_to_end() {
     assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "~");
 }
 
-/// 字反查（⑧-2）夹具目录。
+/// 字反查夹具目录。
 fn char_to_sound_shape_dirs() -> Vec<PathBuf> {
     vec![
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/sound_to_char_shape"),
@@ -1077,7 +1077,7 @@ fn char_to_sound_shape_dirs() -> Vec<PathBuf> {
     ]
 }
 
-/// 字反查（⑧-2）：周边文本不可用（如终端）时不显示提示，两排均为空。
+/// 字反查：周边文本不可用（如终端）时不显示提示，两排均为空。
 #[test]
 fn char_to_sound_shape_without_surrounding_shows_nothing() {
     let _guard = serial();
@@ -1090,7 +1090,7 @@ fn char_to_sound_shape_without_surrounding_shows_nothing() {
     assert!(down.is_empty(), "周边文本不可用时下排应为空：{down:?}");
 }
 
-/// 字反查（⑧-2）：周边文本恢复后，同一查码段在下一次按键刷新出两排。
+/// 字反查：周边文本恢复后，同一查码段在下一次按键刷新出两排。
 #[test]
 fn char_to_sound_shape_refreshes_when_surrounding_available() {
     let _guard = serial();
@@ -1176,4 +1176,38 @@ fn ffi_roundtrip() {
     assert_eq!(consumed & HUX_KEY_CONSUMED, HUX_KEY_CONSUMED);
     unsafe { hux_engine_session_free(engine, session) };
     unsafe { hux_engine_free(engine) };
+}
+
+/// 设置缺省不得被当成「用户改动」落盘：否则 `options.yaml` 会把设置值钉死，
+/// 之后配置页对这些开关永久失效（参照 `M.options.sync` 的 `live.syncing` 抑制语义）。
+#[test]
+fn setting_defaults_are_not_persisted_as_user_options() {
+    let _guard = serial();
+    let dir = temp_user_dir("options-seed");
+    let mut engine = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
+    // 首个按键会排空会话初始化时入队的选项事件（原缺陷在此落盘 5 个键）。
+    engine.key(u32::from(b'a'), 0, false);
+    let path = dir.join(hux_cfg::OPTIONS_FILE);
+    assert!(
+        !path.exists(),
+        "设置缺省不应写入 options.yaml：{:?}",
+        std::fs::read_to_string(&path).ok()
+    );
+    // 配置页改动必须生效（不得被 options.yaml 回滚）。
+    engine.apply_settings(Settings {
+        full_shape: true,
+        ..Default::default()
+    });
+    assert!(
+        engine.session().context.get_option("full_shape"),
+        "配置页改动应生效"
+    );
+    // 状态菜单改动仍须落盘（这是 options.yaml 的唯一来源）。
+    assert!(engine.set_option_value("tiger_sentence_early_commit", false));
+    let text = std::fs::read_to_string(&path).expect("options.yaml");
+    assert!(
+        text.contains("tiger_sentence_early_commit: false"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
 }

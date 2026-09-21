@@ -35,7 +35,7 @@ jobs:
             echo "::error::hux-core 不得包含平台痕迹（环境变量 / XDG / 系统时钟 / 直接打印）"
             exit 1
           fi
-      - name: Core is scheme-free (no hux-scheme dependency)
+      - name: Layer dependencies (core / cfg / ffi / platform)
         run: |
           # 依赖边判定（源码里的文档提及不算）：cargo tree 不得出现 hux-scheme/*
           if cargo tree -p hux-core --edges normal | grep -q 'hux-scheme'; then
@@ -53,10 +53,25 @@ jobs:
             echo "::error::平台层不得直接引用方案内部模块，请经 hux_core::scheme 契约"
             exit 1
           fi
+          # 配置层 / ABI 层不得依赖方案或平台层（docs/refactor.md §1）
+          if cargo tree -p hux-cfg -p hux-ffi --edges normal | grep -qE 'hux-scheme|hux-platform'; then
+            echo "::error::hux-cfg / hux-ffi 只允许依赖 hux-core（及外部 crate）"
+            exit 1
+          fi
           if grep -RnE 'crate::(decode|lexicon|lexical|ngram|interaction|sound_to_char_shape|char_to_sound_shape)\b' crates/hux-core/src; then
             echo "::error::hux-core 内不得出现已迁出的方案模块引用"
             exit 1
           fi
+      - name: Verify non-regenerated goldens (sha256)
+        run: |
+          # key / key_sequence / sound_to_char_shape 依赖具体 librime 版本，CI 不重生成，
+          # 故按 goldens/README.md 的校验和表逐个校验（防替换/腐坏）。
+          sha256sum -c - <<'SUMS'
+          e939a077cd0825f7b454a4af300ed50fb6a2f2609c71583525d44f2f8fb3fd33  goldens/key.tsv.gz
+          10faace7790c73c3fcb8334b4deff90028dfbfa87694cd5a1fa36db1a6ec0584  goldens/key_sequence.tsv.gz
+          e2d39ba2344f30d795530b621dbf683d7f55bfb69672875d53a48ca18e839547  goldens/sound_to_char_shape.tsv.gz
+          SUMS
+
       - name: Verify lexical prior data (provenance)
         run: |
           echo "8dbc884b6cb719d07e4cef153c8048db19a11f8224f75a4ed87853e688a27393  data/tiger_sentence.lexical.bin" | sha256sum -c -

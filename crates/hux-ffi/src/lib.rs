@@ -31,13 +31,13 @@ pub struct HuxOptions {
     pub ascii_punct: i32,
     pub tab_learning: i32,
     pub high_freq_limit: i32,
-    /// 音反查触发键（rime 键名，可多项）。
+    /// 音反查触发键（fcitx5 keysym + 状态位，可多项；平台转成 rime 键名）。
     pub sound_to_char_shape: HuxKeyList,
-    /// 字反查触发键（rime 键名，可多项）。
+    /// 字反查触发键（fcitx5 keysym + 状态位，可多项）。
     pub char_to_sound_shape: HuxKeyList,
     /// 每页候选个数（1..=10）。
     pub page_size: i32,
-    /// 上/下翻页键（rime 键名，可多项）。
+    /// 上/下翻页键（fcitx5 keysym + 状态位，可多项）。
     pub page_up: HuxKeyList,
     pub page_down: HuxKeyList,
     /// 数字直选（1–9；0=10）。
@@ -79,3 +79,42 @@ pub const HUX_KEY_CONSUMED: i32 = 0x1;
 /// `hux_engine_key` 返回值位掩码：已提交且未消费——宿主应消费该键并以 `forwardKey`
 /// 重发（保证客户端先收到提交、后收到按键；对齐 fcitx5 核心 `KeyEventOrderFix` 修法）。
 pub const HUX_KEY_FORWARD_AFTER_COMMIT: i32 = 0x2;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::mem::{offset_of, size_of};
+
+    /// C 布局守卫：数值与 `include/hux_abi.h` 的字段表一一对应（漂移即失败）。
+    ///
+    /// 重要：C++ 薄壳（`platform/fcitx5/shell/hux.cpp`）逐字段填充本结构、`abi.rs` 逐字段读取，
+    /// 字段顺序/宽度漂移在两侧都能编译通过，故用尺寸 + 偏移钉住。
+    /// 只改 `hux_abi.h` 而忘了这里 → 本测试失败；反之亦然。
+    #[test]
+    fn c_layout_matches_header() {
+        // `hux_key_list`：int32 count + 2 × HUX_MAX_KEYS × int32。
+        assert_eq!(size_of::<HuxKeyList>(), 4 + 2 * HUX_MAX_KEYS * 4);
+        assert_eq!(offset_of!(HuxKeyList, count), 0);
+        assert_eq!(offset_of!(HuxKeyList, sym), 4);
+        assert_eq!(offset_of!(HuxKeyList, states), 4 + HUX_MAX_KEYS * 4);
+
+        // `hux_options`：11 个标量 int32 + 4 个键位列表（顺序见头文件）。
+        let scalar = size_of::<i32>();
+        let list = size_of::<HuxKeyList>();
+        assert_eq!(size_of::<HuxOptions>(), 13 * scalar + 4 * list);
+        assert_eq!(offset_of!(HuxOptions, early_commit), 0);
+        assert_eq!(offset_of!(HuxOptions, high_freq_limit), 6 * scalar);
+        assert_eq!(offset_of!(HuxOptions, sound_to_char_shape), 7 * scalar);
+        assert_eq!(
+            offset_of!(HuxOptions, char_to_sound_shape),
+            7 * scalar + list
+        );
+        assert_eq!(offset_of!(HuxOptions, page_size), 7 * scalar + 2 * list);
+        assert_eq!(offset_of!(HuxOptions, page_up), 8 * scalar + 2 * list);
+        assert_eq!(offset_of!(HuxOptions, digit_select), 8 * scalar + 4 * list);
+        assert_eq!(
+            offset_of!(HuxOptions, min_retained_raw_length),
+            12 * scalar + 4 * list
+        );
+    }
+}

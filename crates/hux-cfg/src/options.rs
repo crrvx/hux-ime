@@ -15,7 +15,8 @@ pub fn option_defaults(ids: &OptionIds) -> HashMap<String, bool> {
     ])
 }
 
-/// 测试用选项 id（与 `hux-scheme-tiger` 的实际值一致；生产路径由平台从方案取得）。
+/// 测试用选项 id（字面量即**持久化契约**的钉桩：`options.yaml` 的历史键不得改名；
+/// 生产路径由平台从方案 `Scheme::option_ids()` 取得，故本表与方案实现无编译期关系）。
 #[cfg(test)]
 pub(crate) fn test_option_ids() -> OptionIds {
     OptionIds {
@@ -26,12 +27,12 @@ pub(crate) fn test_option_ids() -> OptionIds {
     }
 }
 
-/// 参照 `M.options` 的配置存储（文件读写、错误属性由 K3 承担）。
+/// 参照 `M.options` 的选项状态（文件读写与错误属性由 [`crate::OptionsStore`] 承担）。
 #[derive(Clone, Debug, Default)]
 pub struct Options {
-    /// schema 缺省（`tiger_sentence/option_defaults/<name>`，回退内建缺省）。
+    /// 设置缺省（平台经 [`OptionsStore::set_defaults`] 传入；缺省表见 [`option_defaults`]）。
     pub defaults: HashMap<String, bool>,
-    /// 持久化值（`options/<name>`，缺省回退 `user.yaml` 的 `var/option/<name>`）。
+    /// 持久化值（`options/<name>`；缺失时回退设置缺省，读时还可回退 `user.yaml` 的 `var/option/<name>`）。
     pub values: HashMap<String, bool>,
     pub revision: u64,
     /// `sync` 写入上下文、等待宿主回灌选项事件时跳过的选项名（参照 `live.syncing`）。
@@ -48,7 +49,12 @@ impl Options {
         }
     }
 
-    /// 参照 `M.options.sync`：把持久化值（缺省回退 schema 缺省）同步进上下文选项。
+    /// 该选项是否有声明的缺省（⇒ 由本存储管理，可持久化）。
+    pub fn covers(&self, name: &str) -> bool {
+        self.defaults.contains_key(name)
+    }
+
+    /// 参照 `M.options.sync`：把持久化值（缺省回退缺省表）同步进上下文选项。
     /// 写入按选项名排序（事件顺序确定）；这些写入不会被 [`Options::observe`] 记为
     /// 用户改动（参照的 `live.syncing` 抑制）。
     pub fn sync(&mut self, context: &mut Context) {

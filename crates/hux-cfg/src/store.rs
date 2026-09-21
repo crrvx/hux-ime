@@ -106,6 +106,14 @@ impl OptionsStore {
     }
 
     /// 更新设置层缺省（配置界面变化后调用；`options.yaml` 值仍优先）。
+    /// 该选项是否由本存储管理（有声明的缺省 ⇒ 可持久化）。
+    ///
+    /// 平台据此分流：可持久化项交由 [`OptionsStore::sync`] 写入（其写入带抑制名单，
+    /// 不会被 [`OptionsStore::observe`] 当成用户改动落盘），其余非持久化项直接写上下文。
+    pub fn covers(&self, name: &str) -> bool {
+        self.options.covers(name)
+    }
+
     pub fn set_defaults(&mut self, defaults: HashMap<String, bool>) {
         self.options.defaults = defaults;
     }

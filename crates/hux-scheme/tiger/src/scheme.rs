@@ -8,14 +8,15 @@
 //! 平台原先直接编排的处理器 + 宿主链 + 重建 + 证据流程，收在这里。
 
 use hashbrown::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use hux_core::host::{self, HostOptions, HostResult};
+use hux_core::host::{self, HostOptions, HostResult, MAX_PAGE_SIZE};
 use hux_core::key::KeyEvent;
 use hux_core::learning::{Event, LearningIndex};
 use hux_core::punct::PunctTable;
 use hux_core::scheme::{
     Asset, AssetKind, KeyOutcome, OptionIds, Scheme, SchemeConfig, SessionId, asset_paths,
+    find_asset,
 };
 use hux_core::session::Context;
 
@@ -114,7 +115,7 @@ impl TigerScheme {
         let lexicon = Lexicon::load(dirs, config.high_freq_limit);
         notes.push(format!("lexicon: {}", lexicon.data_status().canonical()));
         let learning_rules = lexicon.learning_rules.clone();
-        let supplement = Supplement::load_default(dirs.first().map(PathBuf::as_path));
+        let supplement = Supplement::load_default(supplement_dir(dirs).as_deref());
         let model = model_path.and_then(|path| match MobileModel::load(&path, None) {
             Ok(model) => Some(model),
             Err(error) => {
@@ -155,7 +156,20 @@ impl TigerScheme {
     }
 }
 
-/// 由方案配置派生宿主链选项（键名解析失败项忽略；页大小至少 1）。
+/// 页大小归一（契约调用方可能传任意值；与配置层 `Settings::host_options` 同钳制）。
+fn page_size_of(config: &SchemeConfig) -> usize {
+    config.page_size.clamp(1, MAX_PAGE_SIZE)
+}
+
+/// 补充短语所在目录：在**全部**数据目录中取首个存在该文件者。
+///
+/// 与 lexical / symbols 一致走资产查找——若只读 `dirs.first()`（用户目录恒排第一），
+/// 一键安装把数据装到系统级目录时该文件会永不生效。
+fn supplement_dir(dirs: &[PathBuf]) -> Option<PathBuf> {
+    find_asset(dirs, SUPPLEMENT_FILE).and_then(|path| path.parent().map(Path::to_path_buf))
+}
+
+/// 由方案配置派生宿主链选项（键名解析失败项忽略）。
 fn host_options_from(config: &SchemeConfig) -> HostOptions {
     let parse = |reprs: &[String]| -> Vec<KeyEvent> {
         reprs
@@ -164,7 +178,7 @@ fn host_options_from(config: &SchemeConfig) -> HostOptions {
             .collect()
     };
     let mut options = HostOptions {
-        page_size: config.page_size.max(1),
+        page_size: page_size_of(config),
         page_cycle: config.page_cycle,
         ..HostOptions::default()
     };
@@ -347,7 +361,7 @@ impl Scheme for TigerScheme {
             now,
             dot_armed: &mut state.dot_armed,
             min_retained: state.min_retained,
-            page_size: config.page_size,
+            page_size: page_size_of(config),
         };
         let result = processor(
             key,
@@ -487,6 +501,27 @@ mod tests {
             "tiger_sentence_allow_duplicate_single"
         );
         assert_eq!(ids.digit_select, "tiger_sentence_digit_select");
+    }
+
+    #[test]
+    fn supplement_dir_searches_all_data_dirs() {
+        // 一键安装把数据装在系统级目录（用户目录在前但为空）时，补充短语仍须被找到。
+        let user_dir = hux_test_support::temp_dir("supplement-user");
+        let system_dir = hux_test_support::temp_dir("supplement-system");
+        assert_eq!(
+            supplement_dir(&[user_dir.clone(), system_dir.clone()]),
+            None
+        );
+        std::fs::write(system_dir.join(SUPPLEMENT_FILE), "甲 乙 2\n").expect("write");
+        assert_eq!(
+            supplement_dir(&[user_dir.clone(), system_dir.clone()]),
+            Some(system_dir.clone())
+        );
+        std::fs::write(user_dir.join(SUPPLEMENT_FILE), "甲 乙 2\n").expect("write");
+        assert_eq!(
+            supplement_dir(&[user_dir.clone(), system_dir]),
+            Some(user_dir)
+        );
     }
 
     #[test]

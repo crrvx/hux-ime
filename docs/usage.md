@@ -1,5 +1,4 @@
 <!-- SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com> -->
-
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 
 # 开发 / 安装 / 使用 / 卸载
@@ -9,9 +8,10 @@
 依赖：Rust 1.85+（edition 2024）。
 
 ```sh
-cargo test  # 全工作区：逐位差分 + 配置 + 平台适配测试（本地抽样缺失自动跳过）
+cargo test --workspace          # 逐位差分 + 配置 + 平台适配（本地抽样缺失自动跳过）
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all --check
+reuse lint                      # 许可标注（CI 亦跑）
 ```
 
 设计、模块映射与测试说明见 [`rust-migration.md`](rust-migration.md)； \
@@ -81,7 +81,7 @@ cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
 
 - `空格` 高亮项上屏
 - 鼠标点击候选：选中并上屏
-- `Left/Right` 码标移动
+- `Left/Right` 光标移动（字节偏移）
 - `Up/Down` 或 `Tab / Shift+Tab` 高亮选择
 - `-/=` 或 `[/]` 或 `PgUp/PgDn` 翻页
 - `Enter` 提交原文，`Esc` 取消。

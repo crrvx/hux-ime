@@ -1,8 +1,11 @@
 // SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! 宿主等价物（K3 ⑥）：core `processor` 返回 Forward 后，参照链上由 librime 原生组件
-//! （`key_binder` → `selector` → `navigator` → `express_editor`）处理的按键。
+//! 宿主等价物（K3）：方案侧 `processor` 返回 Forward 后，参照链上由 librime 原生组件
+//! （`key_binder` → `selector` → `navigator` → `punctuator` → `express_editor`）处理的按键。
+//!
+//! 分工：`speller` 由**方案侧**处理器承担（`hux-scheme/tiger` 的 `interaction::processor`）；
+//! 本模块实现其余组件，不经方案（`punctuator` 用 core 的标点表 [`crate::punct`]）。
 //!
 //! 映射依据（pin `33e78140` / 参照 schema）：
 //! - 菜单布局 `Horizontal | Stacked`（未设 `_vertical`/`_linear`/`_horizontal`）；
@@ -11,9 +14,9 @@
 //! - `key_binder/bindings`：`Tab` → Down、`Shift+Tab` → Up（`when: has_menu`）。
 //!
 //! 简化（有金样覆盖的部分一律按真值实现）：
-//! - navigator 的 `spans_` 跳转（多段/词组边界）按单段处理（Left/Right 为逐字节移动，
-//!   `Ctrl/Shift+Left|Right` 直接跳到首/尾）；标点段与词组 spans 见 ⑦；
-//! - `speller`/`punctuator` 属 ⑦；`editor/char_handler`（Printables 直接提交）同。
+//! - navigator 的 `spans_` 跳转（多段/词组边界）按单段处理：Left/Right 逐字节移动，
+//!   `Ctrl/Shift+Left|Right` 直接跳到首/尾（标点段与词组边界不做 spans 细分）；
+//! - `editor/char_handler`（Printables 直接提交）按 `DirectCommit` 语义实现。
 
 use crate::key::{K_CONTROL_MASK, K_SHIFT_MASK, KeyEvent};
 use crate::punct::PunctTable;
@@ -67,7 +70,7 @@ pub trait CommitObserver {
 }
 
 /// 参照处理器链（`key_binder` → `speller` → `punctuator` → `selector` → `navigator`
-/// → `express_editor`；`speller` 由 core `processor` 承担，见 ⑦）。
+/// → `express_editor`；`speller` 由方案侧 `processor` 承担，见模块头）。
 ///
 /// `observer`（可空）供宿主链的提交点回调方案（学习等）。
 pub fn process_key(
@@ -139,7 +142,7 @@ fn punctuator(
     if context.get_option("ascii_punct") {
         return HostResult::Forward;
     }
-    // `use_space = false`：组合中的空格交后续处理器（core `processor` 已消费）。
+    // `use_space = false`：组合中的空格交后续处理器（方案侧 `processor` 已消费）。
     if keycode == 0x20 && context.is_composing() {
         return HostResult::Forward;
     }
@@ -533,7 +536,7 @@ fn go_to_end(context: &mut Context) {
 
 /// 参照 `ExpressEditor`（`_auto_commit = true` 变体）的 keymap 子集 + `char_handler`。
 ///
-/// Return/space/Escape 在组合中已被 core `processor` 消费，此处为完整的兜底实现；
+/// Return/space/Escape 在组合中已被方案侧 `processor` 消费，此处为完整的兜底实现；
 /// 可打印字符按 `char_handler`（ExpressEditor = `DirectCommit`）处理：
 /// **先提交当前组合**（保证上屏顺序），按键交宿主。
 /// 学习链：提交点经 [`commit_notifier`] 记录（对应参照 librime 的提交通知器）。

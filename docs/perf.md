@@ -8,8 +8,8 @@
 
 ## 基准
 
-两个 `--release` 示例（不引入新依赖，故不建 `hux-bench` crate；`docs/refactor.md` §6 允许
-「各 crate `benches/`／`--release` example」）：
+本阶段新增两个 `--release` 示例（另有既存 `ngram_bench.rs`，见 `goldens/README.md`）；
+不引入新依赖，故不建 `hux-bench` crate（与 `docs/refactor.md` §6 的取舍一致）：
 
 ```sh
 # decode 冷路径：重放 goldens/decode.tsv.gz 的 847 条输入（与差分测试同一批语料）
@@ -22,8 +22,12 @@ cargo run --release --example key_bench
 cargo run --release --example key_bench -- --model goldens/ngram_fixture.bin
 ```
 
-两者输出单行 JSON（`ops` / `mean_us` / `p50_us` / `p95_us` / `max_us` / `checksum`），
-`decode_bench` 另按输入长度分桶；`checksum` 用于确认测量期间计算真的发生了且结果稳定。
+参数：`decode_bench` 支持 `--model <bin>` / `--lexical <bin>` / `--repeat N`；
+`key_bench` 支持 `--codes N`（送入的码条数）/ `--repeat N` / `--model <bin>`。
+
+输出：`decode_bench` 打一行 JSON（`corpus`/`repeat`/`ops`/`mean_us`/`p50_us`/`p95_us`/`max_us`/`checksum`）
+再打按输入长度分桶的 5 行文本；`key_bench` 打一行 JSON（`codes`/`repeat`/`keys`/`model`/`mean_us`/…，无 `checksum`）。
+`checksum`（`decode_bench`）用于确认测量期间计算真的发生了且结果稳定。
 
 ## 基线（2026-09-21，开发机 Arch + release，`--repeat 20` / `key_bench --repeat 10`）
 

@@ -4,7 +4,8 @@
 //! addon 配置模型（Rust 半）：外部设置（fcitx5 配置界面 / 测试）与内建缺省。
 //!
 //! 合并顺序照参照 schema 语义：**`tiger_sentence.options.yaml`（user 覆盖） > 本设置 > 内建缺省**；
-//! 可持久化开关（三项早提交、`full_shape`、数字直选）以本设置为存储层缺省（配置 / 状态菜单变更后
+//! 可持久化开关（提前上屏、提前上屏至预编辑、单字重码组句、全角标点、数字直选 5 项）
+//! 以本设置为存储层缺省（配置 / 状态菜单变更后
 //! 经 `apply_settings` 重放存储，`options.yaml` 仍优先）；`ascii_punct` 等作会话初始选项；
 //! `tab_learning` 门控学习 mode（`false` → 空串 = 不学习，对照参照 `prepare_learning` 的 `enabled`），
 //! `high_freq_limit` 在创建词库时生效（修改需重启）。
@@ -44,11 +45,11 @@ pub const MAX_MIN_RETAINED_RAW_LENGTH: usize = 20;
 /// 虎句方案引擎设置（与参照 schema / fcitx5 配置界面一一对应）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
-    /// 提前上屏（`tiger_sentence_early_commit`）。
+    /// 提前上屏（选项键由方案声明，见 `hux_core::scheme::OptionIds`，本层不写死）。
     pub early_commit: bool,
-    /// 提前上屏至预编辑（`tiger_sentence_early_commit_to_preedit`）。
+    /// 提前上屏至预编辑（选项键同上）。
     pub early_commit_to_preedit: bool,
-    /// 单字重码组句（`tiger_sentence_allow_duplicate_single`）。
+    /// 单字重码组句（选项键同上）。
     pub allow_duplicate_single: bool,
     /// 全角标点（`full_shape`）。
     pub full_shape: bool,

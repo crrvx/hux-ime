@@ -16,7 +16,7 @@ just for fun:
 | 英文名 | **hux** =  **hu**`虎码` + **tux**`linux(意指fcitx5方案)` |
 | 中文名 | **虎虚** = **虎**`hux正取2字母` + **虚**`hux倒取2字母`   |
 | 托盘图 | 虎虚虎虚，**虎内空虚**，故取 **虍**                      |
-| 字反查 | **虍** 内取空，**咅** 也取空，对仗工整（                 |
+| 字反查 | **虍** 内取空，**咅** 也取空，对仗工整 |
 
 ![虍](./docs/images/虍.png)
 
@@ -77,10 +77,13 @@ n-gram 模型不随包，能明显提升整句质量： \
 | [`docs/refactor.md`](docs/refactor.md)                     | 计划：核心引擎化 / 平台无关 / 码表无关 / 测试正式化 |
 | [`docs/android.md`](docs/android.md)                       | 计划：fcitx5-android 插件适配                       |
 | [`docs/config-options.md`](docs/config-options.md)         | 待定：可配置项扩展（B/C 组记录）                    |
+| [`docs/LEXICAL_PRIOR_ATTRIBUTION.md`](docs/LEXICAL_PRIOR_ATTRIBUTION.md) | 署名：词先验数据的来源与许可         |
 | [`docs/perf.md`](docs/perf.md)                             | 性能：基准用法、基线数据与优化决定                  |
 | [`platform/fcitx5/README.md`](platform/fcitx5/README.md) | addon 实现：分工、按键语义、反查机制、已知限制      |
 | [`goldens/README.md`](goldens/README.md)                   | 差分金样：清单、来源、复现命令                      |
 | [`data/README.md`](data/README.md)                         | 随包数据说明                                        |
+| [`AGENTS.md`](AGENTS.md)                                   | 协作约定：流程 / 命名 / 代码与移植纪律              |
+| `crates/*/README.md`、`platform/*/README.md`               | 各 crate 与各平台目录的职责与现状（就地索引）       |
 
 ## 虎码信息汇总
 

@@ -43,6 +43,7 @@ crates/hux-scheme/tiger/ # 虎句方案（唯一全量实现；hux-scheme/* → 
   interaction.rs  interaction/           # K2：交互层根 + 子模块（keys/state/early_commit/
                                          #     select/translate/learning_glue/processor/tests）
 crates/hux-cfg/          # hux 自身可配置项：设置与默认值、选项存储与合并顺序
+crates/hux-test-support/ # 测试助手（dev 依赖）：金样路径 / transcript 编解码 / 临时目录
 crates/hux-ffi/          # C ABI 契约：C 布局类型 + include/hux_abi.h（桌面 / Android 共用）
 platform/fcitx5/         # K3：C++ 薄壳（shell/hux.cpp）+ Rust 组装（engine/session/ui/
                          #     paths/learning_store/abi，导出 C ABI）
@@ -51,7 +52,7 @@ platform/android/        # Android：fcitx5-android 插件接线（待启动，�
 data/                    # 随包数据源
 goldens/                 # 差分金样与夹具
 tools/                   # 金样生成器（generators/）、探针与基准（probes/）、探针用例（cases/）
-docs/                    # 本文档、词先验署名
+docs/                    # 设计/重构/使用/配置/性能/Android 等，索引见根 README「文档」表
 ```
 
 依赖方向：`platform/* → hux-ffi / hux-cfg / hux-core`，`hux-scheme/* → hux-core`；
@@ -80,7 +81,7 @@ docs/                    # 本文档、词先验署名
   与 `HUX_MODEL` 覆盖。
 - 运行数据：码表四件套（`tiger_sentence.{codes,char_ranks,full_code_whitelist,supplement}.txt`）、
   `models/sentence-ngram-mobile.bin`（TCSKNM02）、`symbols.yaml`、词先验（TCSLEX01）、音反查索引（TCSRV01）、
-  `tiger_sentence.options.yaml`、学习库 `<hash>.userdb/`（LevelDB 同构）。
+  `tiger_sentence.options.yaml`、学习库 `tiger_sentence_learning_<hash>.userdb/`（LevelDB 同构）。
 - 仓库 `data/` 的清单、来源与署名见 [`../data/README.md`](../data/README.md) 与
   [`LEXICAL_PRIOR_ATTRIBUTION.md`](LEXICAL_PRIOR_ATTRIBUTION.md)。
 
@@ -100,7 +101,7 @@ docs/                    # 本文档、词先验署名
   |---|---|
   | `key_binder` | `Tab`→Down、`Shift+Tab`→Up（`when: has_menu`） |
   | `selector` | 菜单导航与翻页（`page_size`、上/下翻页键与翻页循环可由配置覆盖，默认 `-`/`[` → Page_Up、`=`/`]` → Page_Down，均有候选时生效）、Home/End；候选排列由配置写入 `_vertical` |
-  | `navigator` | 字节光标移动；Ctrl(+Shift)+Left/Right 按音节跳；Home/End 到组合起点/末尾 |
+  | `navigator` | 字节光标移动；Ctrl/Shift+Left/Right 跳到段首/段尾（未做音节 spans 细分）；Home/End 到组合起点/末尾 |
   | `express_editor` | space 确认/提交、BackSpace 撤销编辑、Delete 删光标处、Return 提交原文、Escape 取消；可打印字符先提交组合再交宿主 |
   | `punctuator` | 单键可打印 ASCII 查 `symbols.yaml`；组合中提交「组合文本 + 标点」；`{pair}` 交替 |
 

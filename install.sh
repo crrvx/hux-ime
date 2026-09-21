@@ -40,14 +40,14 @@ if [ "$(id -u)" -eq 0 ]; then
     exit 1
 fi
 
-for tool in cmake cargo sudo; do
+for tool in cmake cargo sudo install nproc pgrep; do
     if ! command -v "$tool" >/dev/null 2>&1; then
         echo "缺少依赖：$tool" >&2
         cat >&2 <<'EOF'
 请先安装依赖（示例）：
-  Arch:          sudo pacman -S --needed cmake rust fcitx5
-  Fedora:        sudo dnf install cmake gcc-c++ rust fcitx5-devel
-  Debian/Ubuntu: sudo apt install cmake g++ cargo libfcitx5core-dev
+  Arch:          sudo pacman -S --needed cmake rust fcitx5 coreutils procps-ng
+  Fedora:        sudo dnf install cmake gcc-c++ rust fcitx5-devel coreutils procps-ng
+  Debian/Ubuntu: sudo apt install cmake g++ cargo libfcitx5core-dev coreutils procps
 EOF
         exit 1
     fi

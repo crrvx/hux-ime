@@ -216,7 +216,7 @@ lua tools/probes/bench_ngram.lua --reference "$REF" --model <model.bin> --transc
 | `tiger_sentence.codes.txt` | `1d3e9b0ce0e4a603be3f220c71acecad846f020e87a52723ecb3814f6b53ac0e` |
 | `tiger_sentence.char_ranks.txt` | `bd64e4bf333b2096a9a61fd5ece868e37912057bd1a812d75b2d5ccb4c994dcf` |
 | `tiger_sentence.full_code_whitelist.txt` | `05d257457898146262f7dbf264103c70a8cf2ee92d188b770ad13232b293f566` |
-| `tiger_sentence.supplement.txt` | `f229832bc92f89d87e4b1d29984aec53e627cedb23dda5074ad03cbcabdf0900` |
+| `tiger_sentence.supplement.txt` | `f229832bc92f89d87e4b1d29984aec53e627cedb23dda5074ad03cbcabdf0900`（**本地改动**：仅注释中方案名「虎整句」→「虎句」，与上游 pin 的 `538f7d60…` 不同；见 `../data/README.md`） |
 | `key_sequence/symbols.yaml` | `9b45c4a2f179d42585d5cc1439bfbcb5a585520f0de3ce83232180990e5cc9b1` |
 | `sound_to_char_shape/symbols.yaml`（与上同一文件） | `9b45c4a2f179d42585d5cc1439bfbcb5a585520f0de3ce83232180990e5cc9b1` |
 | `sound_to_char_shape/PY_c.dict.yaml`（夹具） | `96e8b34adebf5ea478a1cbce2c9ee8f333c264690abfffadd2d31642a30360ee` |
@@ -249,4 +249,5 @@ lua tools/probes/bench_ngram.lua --reference "$REF" --model <model.bin> --transc
 | `lexical.tsv.gz` | `5b559b2504e21c69b4f702678a96d2947abfe7d7c26adcd2b25c3d4de761e0c3` |
 
 CI 以同一参照提交重生成全部 fixture 金样并与入库内容比对（见 `.github/workflows/ci.yml`）。
-`key.tsv.gz` 与 `key_sequence.tsv.gz` 依赖具体 librime/librime-lua 版本，**CI 不重生成**。
+`key.tsv.gz`、`key_sequence.tsv.gz`、`sound_to_char_shape.tsv.gz` 依赖具体 librime/librime-lua 版本，**CI 不重生成**
+（改由 CI 按上表校验其 sha256）。

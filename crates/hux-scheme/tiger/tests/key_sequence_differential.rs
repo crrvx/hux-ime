@@ -5,13 +5,13 @@
 //!
 //! 比对字段：`consumed`、输入、光标、提交、候选（按页：数量/文本/注释/高亮）。
 //! `preedit`（预编辑串）属 K3 宿主职责，金样保留但不比对。
-//! 处理器链：core `processor` 未消费（Forward）的键交 `host` 模块（librime
+//! 处理器链：方案 `processor` 未消费（Forward）的键交 core `host` 模块（librime
 //! `key_binder`/`selector`/`navigator`/`express_editor` 等价物）后比对 `consumed`；
 //! 组合重建用 core `CompositionBuilder`（参照 `ConcreteEngine::Compose`），
 //! 之后执行 update 通知器等价物（`interaction::update_notifier`）。
 //!
 //! 金样与数据：`goldens/key_sequence.tsv.gz`、`goldens/key_sequence/`（合成小码表）；
-//! 音反查（⑧-1）：`goldens/sound_to_char_shape.tsv.gz`、`goldens/sound_to_char_shape/`（小 PY_c + 音反查索引夹具）。
+//! 音反查：`goldens/sound_to_char_shape.tsv.gz`、`goldens/sound_to_char_shape/`（小 PY_c + 音反查索引夹具）。
 //! 再生成：`tools/generators/gen_key_sequence_golden.sh`、`tools/generators/gen_sound_to_char_shape_golden.sh`
 //! （依赖系统 librime + librime-lua）。
 
@@ -325,7 +325,7 @@ fn key_sequence_matches_reference() {
     );
 }
 
-/// 音反查金样（⑧-1）：夹具页大小 5（与引擎一致，翻页用例覆盖后续页）；音反查前缀 `` ` ``。
+/// 音反查金样：夹具页大小 5（与引擎一致，翻页用例覆盖后续页）；音反查前缀 `` ` ``。
 #[test]
 fn sound_to_char_shape_matches_reference() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");

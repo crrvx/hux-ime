@@ -657,4 +657,16 @@ public:
 
 } // namespace
 
+// C 布局守卫（与 Rust `crates/hux-ffi/src/lib.rs` 的 `c_layout_matches_header` 对应）：
+// 本壳逐字段填充 `hux_options`、Rust 侧逐字段读取，字段顺序/宽度漂移在两侧都能编译通过，
+// 故在此钉住尺寸与关键偏移——改 `hux_abi.h` 时必须同步三处。
+static_assert(sizeof(hux_key_list) == 4 + 2 * HUX_MAX_KEYS * 4,
+              "hux_key_list 布局与 Rust 契约不一致");
+static_assert(sizeof(hux_options) == 13 * 4 + 4 * sizeof(hux_key_list),
+              "hux_options 布局与 Rust 契约不一致");
+static_assert(offsetof(hux_options, char_to_sound_shape) == 7 * 4 + sizeof(hux_key_list),
+              "hux_options 字段顺序与 Rust 契约不一致");
+static_assert(offsetof(hux_options, min_retained_raw_length) == 12 * 4 + 4 * sizeof(hux_key_list),
+              "hux_options 末尾字段偏移与 Rust 契约不一致");
+
 FCITX_ADDON_FACTORY(HuxFactory);

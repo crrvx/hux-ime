@@ -5,7 +5,7 @@
 
 hux-ime（虎虚）fcitx5 平台适配：**C++ 薄壳**（`shell/`，只做 fcitx5 接口适配）+ **Rust 组装**（`src/`）。
 C ABI 契约在 [`../../crates/hux-ffi/`](../../crates/hux-ffi/)（CI 校验 `hux_abi.h` 声明 ↔ `libhux.so` 导出一致）；
-逻辑在 [`../../crates/hux-core/`](../../crates/hux-core/)（内核）、[`../../crates/hux-scheme/tiger/`](../../crates/hux-scheme/tiger/)（虎句方案）与 `hux-cfg`。按键 → core（`processor`/`translate`）→ 提交 / preedit / 候选 → fcitx5。
+逻辑在 [`../../crates/hux-core/`](../../crates/hux-core/)（内核）、[`../../crates/hux-scheme/tiger/`](../../crates/hux-scheme/tiger/)（虎句方案：`interaction::processor`/`translate`）与 `hux-cfg`。按键 → 方案（处理器/翻译）→ core（会话/宿主链）→ 提交 / preedit / 候选 → fcitx5。
 装配方式（P4c）：本层是**装配根**——构造 `TigerScheme` 后以 `dyn Scheme` 驱动（按键 / 候选 / 重建 /
 学习 / 反查全经契约），不引用方案内部模块；
 桌面与 Android **共用本层**（两端同为 fcitx5；Android 接线见 [`../android/README.md`](../android/README.md)）；

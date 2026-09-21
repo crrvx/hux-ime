@@ -153,8 +153,18 @@ impl Engine {
         let mut context = Context::new();
         // 宿主缺省：`_auto_commit`（librime `express_editor` 默认 true）。
         context.set_option("_auto_commit", true);
-        // 先写设置缺省（含不持久化的 `ascii_punct`），再由 `options.yaml` 持久化值覆盖。
+        // 先写设置缺省，再由 `options.yaml` 持久化值覆盖。
+        // 分流：**可持久化项**（存储有声明的缺省）只经 `store.sync` 写入——其写入带抑制名单，
+        // 不会被随后的选项事件当成用户改动写进 `options.yaml`；其余（如 `ascii_punct`）直接写。
+        // 参照实现同此：缺省经 `M.options.sync` 写入并由 `live.syncing` 抑制。
         for (name, value) in self.settings.option_defaults(&self.option_ids) {
+            if self
+                .options
+                .as_ref()
+                .is_some_and(|store| store.covers(name))
+            {
+                continue;
+            }
             context.set_option(name, value);
         }
         if let Some(options) = self.options.as_mut() {
@@ -338,8 +348,8 @@ impl Engine {
         self.push_update(session);
     }
 
-    /// 字反查（⑧-2）：查码段内 ←/→ 以 2 字符步长移动锚点（返回 `Some(true)` 消费）。
-    /// 进入/退出查码段由 core 处理器负责（触发字符推入/清空组合）。
+    /// 当前组合末段是否为字反查段（进入/退出由方案处理器负责：触发字符推入/清空组合）；
+    /// 查码段内方向键交应用处理（见 `key_in` 开头的早退）。
     /// 当前组合末段是否为字反查段。
     pub(crate) fn char_to_sound_shape_tagged(&self, session: &Session) -> bool {
         self.scheme.auxiliary_lookup_active(&session.context)
@@ -462,7 +472,15 @@ impl Engine {
         let ids: Vec<u64> = self.sessions.keys().copied().collect();
         for id in ids {
             self.with_session(id, |engine, session| {
+                // 同 `session_new`：可持久化项交由 `store.sync`（带抑制），其余直接写。
                 for (name, value) in &defaults {
+                    if engine
+                        .options
+                        .as_ref()
+                        .is_some_and(|store| store.covers(name))
+                    {
+                        continue;
+                    }
                     if session.context.get_option(name) != *value {
                         session.context.set_option(name, *value);
                     }

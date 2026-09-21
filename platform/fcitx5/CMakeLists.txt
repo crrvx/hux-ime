@@ -34,7 +34,15 @@ target_include_directories(hux PRIVATE
 target_link_libraries(hux PRIVATE Fcitx5::Core "${HUX_RUST_LIB}" dl pthread m)
 set_target_properties(hux PROPERTIES OUTPUT_NAME "hux")
 
-install(TARGETS hux LIBRARY DESTINATION lib/fcitx5)
+# 插件安装目录：优先跟随 fcitx5 自身的 addon 目录（Fcitx5Utils 提供；Fedora 为 lib64/fcitx5），
+# 未提供时退回 GNUInstallDirs 的 libdir。
+if(DEFINED FCITX_INSTALL_ADDONDIR AND NOT FCITX_INSTALL_ADDONDIR STREQUAL "")
+    set(HUX_ADDON_DIR "${FCITX_INSTALL_ADDONDIR}")
+else()
+    include(GNUInstallDirs)
+    set(HUX_ADDON_DIR "${CMAKE_INSTALL_LIBDIR}/fcitx5")
+endif()
+install(TARGETS hux LIBRARY DESTINATION "${HUX_ADDON_DIR}")
 install(FILES conf/hux.addon.conf
         DESTINATION share/fcitx5/addon
         RENAME hux.conf)

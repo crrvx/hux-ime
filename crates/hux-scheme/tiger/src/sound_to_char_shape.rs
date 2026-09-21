@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! 音反查（⑧-1）：`tiger_sentence.pinyin.bin[.gz]`（TCSRV01）读取与音反查翻译。
+//! 音反查：`tiger_sentence.pinyin.bin[.gz]`（TCSRV01）读取与音反查翻译。
 //!
 //! 语义对齐 librime 1.17.0 的词典音反查（`reverse_lookup_translator` + `ReverseLookupFilter`，
 //! 见 `docs/rust-migration.md`）：
@@ -14,7 +14,7 @@
 //!   [`CANDIDATE_LIMIT`]（与主候选一致）；
 //! - 注释（虎码）由 [`code_comment_filter`] 追加以复用现有码注释格式。
 //!
-//! `code_comment`/`code_comment_filter` 定义于 `interaction`（K2 预留），此处沿用。
+//! `code_comment`/`code_comment_filter` 定义于同 crate 的 `interaction`（与主候选共用码注释格式）。
 
 use crate::interaction::code_comment_filter;
 use crate::lexicon::Lexicon;
@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 /// 索引文件名（发布为 `.gz`；fixture 常用未压缩）。
 pub const SOUND_TO_CHAR_SHAPE_FILE: &str = "tiger_sentence.pinyin.bin";
 pub const SOUND_TO_CHAR_SHAPE_FILE_GZ: &str = "tiger_sentence.pinyin.bin.gz";
-/// 音反查候选上限（与主候选一致；⑧ 裁决）。
+/// 音反查候选上限（与主候选一致）。
 pub const CANDIDATE_LIMIT: usize = 20;
 /// 音反查段标签（参照 schema 的 `reverse_lookup`）。
 pub const SOUND_TO_CHAR_SHAPE_TAG: &str = "reverse_lookup";
