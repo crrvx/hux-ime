@@ -11,8 +11,11 @@
 1. **依赖单向**：`platform/*` 依赖 `hux-ffi` / `hux-cfg` / `hux-core`，并在**装配处**依赖具体方案
    （`platform/* → hux-scheme/*`，只允许经契约与装配面常量，不得引用方案内部模块）；
    `hux-cfg → hux-core`；`hux-scheme/* → hux-core`；内核不依赖任何方案、不依赖任何平台。
-2. **core 零平台**：不得出现 `std::env`、XDG / 绝对数据路径、`SystemTime::now`、`eprintln!`、
-   平台文件 API；路径 / 时钟 / 日志由平台构造并注入（`Paths` / `Clock` / `Log`）。
+2. **core 零平台**：不得出现 `std::env`、XDG / 绝对数据路径解析、`SystemTime::now`、`eprintln!`；
+   路径 / 时钟 / 日志由平台构造并注入（目录列表 / `now: f64` / notes 汇总）。
+   **允许**：读取平台传入的**显式路径**（如 [`PunctTable::load`] 按给定路径读 `symbols.yaml`）——
+   core 不解析环境、不拼接平台目录，只做「给定路径 → 解析」的纯步骤；
+   CI 的 platform-clean 检查据此只拦 env / XDG / 时钟 / 直接打印。
 3. **职责归位**：只读数据（码表 / 模型 / 索引）属方案；可写数据（选项 / 学习库）属 `hux-cfg` 与平台存储实现；
    UI 快照、C++ 壳、打包属 `platform`；C ABI 是平台边界（`hux-ffi`）。
 4. 模块名即职责；单元测试随模块、集成 / 差分测试独立目录（二者分离）。
@@ -188,6 +191,39 @@ platform/                     # 平台适配
 - 无会话时 `set_option_value` 直接返回 true 而不落盘（状态菜单切换静默丢失）。
 - 事件泵硬编码 `0..4`；`CString::new` 失败被静默吞掉（含 NUL 的提交/候选整条丢弃）。
 - 保存失败属性 `*_options_error` 全仓无读取方（诊断不落地）。
+
+**内核（hux-core）**
+- **契约语义边界**（需决策）：`OptionIds` 的 4 个字段名 + `SchemeConfig` 的 `min_retained_raw_length`/
+  反查键/Tab 学习等仍是虎码口径，与 §5「不把方案特有语义泛化进契约」有张力；改为通用容器
+  （方案自报键值表）则平台与 cfg 需再改一轮。
+- `host.rs` 的 `paging` 条件未实现（`mark_paging` 写的标签全仓无人读；参照 `kWhenPaging`）：
+  有候选未翻页时按 `-` 被吞键，参照会落标点。
+- `editor` 未实现参照的 `FallbackOptions::All` 与 `Ctrl+Return`/`Ctrl+Shift+Return`（Shift+BackSpace、
+  Shift+space、Shift+Delete、Ctrl+Return 参照会消费，core 落 Forward）。
+- `learning::reward`/`RewardNode` 无运行时调用者且与方案 `decode::learning_reward` 逐行重复。
+- `session::live_caret` 与 `live_input` 判据不一致（前者只看缓冲标志，后者还要求 `~`），
+  方案侧有同款副本；core 外无调用者。
+- `punct::pair_oddness` 是**可变状态**却放在只读数据表里，`TigerScheme` 单实例 → 多输入上下文串台
+  （参照的 `oddness_` 随会话）。
+- `reopen_previous_selection` 漏参照的两条护栏（`status > kSelected`、`selected_before_editing`）。
+- 纪律对齐：core 内 `std::fs` 读文件（`PunctTable::load_first`）与 §1.2「core 零平台文件 API」
+  措辞冲突，CI 正则也只查 env/时钟/打印——需明确「读取平台传入的显式路径」是否在纪律内。
+- 清理：`K_HYPER_MASK`/`K_META_MASK`/`KeyEvent::caps`/`Context::has_events` 无使用者；
+  `HostResult` 与 `KeyOutcome` 同构重复；`build_valid` 仅是 `event_valid` 的同义包装。
+
+- `editor` 绑定：参照 `ExpressEditor` 表（`_tmp/librime/editor.cc` @ pin `33e78140`）为
+  `{Return,0}→CommitRawInput`（✅ 已实现）、`{Return,Ctrl}→CommitScriptText`、
+  `{Return,Ctrl+Shift}→CommitComment`、`{BackSpace,0}→RevertLastEdit`、`{BackSpace,Ctrl}→BackToPreviousSyllable`、
+  `{Delete,0}→DeleteChar`、`{Delete,Ctrl}→DeleteCandidate`、`{Escape,0}→CancelComposition`，
+  另有 `FallbackOptions::All` 的 Shift 回退（✅ 已补 Shift+space / Shift+BackSpace / Shift+Delete）。
+  ✅ 已补：`Ctrl+Return` → `CommitScriptText`（按「脚本文本 = 组合文本」实现）、
+  `Ctrl+Shift+Return` → `CommitComment`（提交高亮候选注释）。
+  **踩坑记录**：模式里的 `K_A | K_B` 是**或模式**而非按位或，组合修饰键必须写成
+  `(code, modifier) if modifier == K_A | K_B`；本轮该 bug 已修，并全仓 grep 确认无同类写法。
+  **待复核**：`Context::GetScriptText` 的准确定义（应从参照 `context.cc` 核对，本轮网络取源不稳）。
+- `paging` 条件：参照 `KeyBinder::RelevantConditions`（`_tmp/librime/key_binder.cc:262`）为
+  "末段带 `paging` 标签"；本实现有意放宽为 `has_menu`（`host.rs` `key_binder` 注释），
+  字段文档已对齐。若要严格实现，需同时钉住 `paging` 标签的写入时机（`mark_paging` 现由翻页时写入）。
 
 **工具 / CI（廉价加固）**
 - 三个不重生成的金样（`key` / `key_sequence` / `sound_to_char_shape`）现已在 CI 校验 sha256 ✓；

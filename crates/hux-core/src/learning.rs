@@ -3,10 +3,10 @@
 
 //! Tab 纠错学习，对应参照 `lua/tiger_sentence_learning.lua` 的纯计算部分。
 //!
-//! 实现：`build`（全量重放 oracle）、`runtime_index`/`update`（运行时快照）、
+//! 实现：`build`（全量重放 oracle）、`runtime`/`update`（运行时快照）、
 //! `score`/`prefix_score`（含物化缓存）、`reward`（路径链）、`diff`、
-//! `context`/`static`/`frame`/`unframe`/`hash`。
-//! 持久化（LevelDb `open`/`confirm`）随 K3 数据层接入。
+//! `context`/`static_text`/`frame`/`unframe`/`hash`。
+//! 持久化（LevelDB `open`/`confirm`）在平台层实现：见 `platform/fcitx5/src/learning_store.rs`。
 //!
 //! 注意：浮点求和顺序仅在“同一 (code, mode, text) 的 ≥3 个上下文”时可能产生
 //! ULP 差异（参照按 `pairs` 序累加）；差分语料限制为 ≤2 个上下文以保证逐位一致。

@@ -10,7 +10,7 @@
 use hashbrown::HashMap;
 use std::path::{Path, PathBuf};
 
-use hux_core::host::{self, HostOptions, HostResult, MAX_PAGE_SIZE};
+use hux_core::host::{self, HostOptions, MAX_PAGE_SIZE};
 use hux_core::key::KeyEvent;
 use hux_core::learning::{Event, LearningIndex};
 use hux_core::punct::PunctTable;
@@ -382,18 +382,14 @@ impl Scheme for TigerScheme {
                     state: &state.state,
                     now,
                 };
-                let consumed = host::process_key(
+                // 契约结果类型即宿主链结果类型（`KeyOutcome` ≡ `HostResult`），无需转换。
+                Ok(host::process_key(
                     key,
                     context,
-                    punct.as_mut(),
+                    punct.as_ref(),
                     host_options,
                     Some(&mut observer),
-                ) == HostResult::Consumed;
-                Ok(if consumed {
-                    KeyOutcome::Consumed
-                } else {
-                    KeyOutcome::Forward
-                })
+                ))
             }
         }
     }
@@ -440,7 +436,7 @@ impl Scheme for TigerScheme {
         };
         state
             .builder
-            .rebuild(decoder, context, &state.state, invalidated, punct.as_mut())
+            .rebuild(decoder, context, &state.state, invalidated, punct.as_ref())
             .map_err(|error| error.to_string())?;
         update_notifier(context, &mut state.state, &mut state.live);
         Ok(())

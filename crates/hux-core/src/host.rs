@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! 宿主等价物（K3）：方案侧 `processor` 返回 Forward 后，参照链上由 librime 原生组件
-//! （`key_binder` → `selector` → `navigator` → `punctuator` → `express_editor`）处理的按键。
+//! （`key_binder` → `speller` → `punctuator` → `selector` → `navigator` → `express_editor`）处理的按键。
 //!
 //! 分工：`speller` 由**方案侧**处理器承担（`hux-scheme/tiger` 的 `interaction::processor`）；
 //! 本模块实现其余组件，不经方案（`punctuator` 用 core 的标点表 [`crate::punct`]）。
@@ -35,7 +35,8 @@ pub const MAX_PAGE_SIZE: usize = 10;
 pub struct HostOptions {
     /// 每页候选个数（≥ 1；须与宿主候选面板一致）。
     pub page_size: usize,
-    /// 上翻页键列表：组合末段带 `paging` 标签时生效。
+    /// 上翻页键列表：**有候选时生效**（参照为 `when: paging`；本实现有意放宽，
+    /// 以免上翻页键落作标点/输入——见 [`key_binder`] 注释与 `docs/config.md`）。
     pub page_up_keys: Vec<KeyEvent>,
     /// 下翻页键列表：菜单可用（`has_menu`）时生效。
     pub page_down_keys: Vec<KeyEvent>,
@@ -76,7 +77,7 @@ pub trait CommitObserver {
 pub fn process_key(
     key_event: &KeyEvent,
     context: &mut Context,
-    punct: Option<&mut PunctTable>,
+    punct: Option<&PunctTable>,
     options: &HostOptions,
     observer: Option<&mut dyn CommitObserver>,
 ) -> HostResult {
@@ -126,7 +127,7 @@ fn commit_notifier(
 fn punctuator(
     key_event: &KeyEvent,
     context: &mut Context,
-    punct: Option<&mut PunctTable>,
+    punct: Option<&PunctTable>,
     observer: &mut Option<&mut dyn CommitObserver>,
 ) -> HostResult {
     let Some(table) = punct else {
@@ -147,7 +148,8 @@ fn punctuator(
         return HostResult::Forward;
     }
     let full_shape = context.get_option("full_shape");
-    let Some(text) = table.resolve(char::from(keycode as u8), full_shape) else {
+    let Some(text) = table.resolve(char::from(keycode as u8), full_shape, context.punct_pairs())
+    else {
         return HostResult::Forward;
     };
     let commit = format!("{}{}", context.get_commit_text(), text);
@@ -558,7 +560,17 @@ fn editor(
             }
             true
         }
-        (0xff08, 0) => {
+        (0x20, K_SHIFT_MASK) => {
+            // `FallbackOptions::All` 的回退：Shift+space → `{XK_space, 0}` = Confirm。
+            if !confirm(context) {
+                let commit_text = context.get_commit_text();
+                commit_notifier(observer, context, &commit_text);
+                context.commit();
+            }
+            true
+        }
+        (0xff08, 0) | (0xff08, K_SHIFT_MASK) => {
+            // `{XK_BackSpace, 0}` = RevertLastEdit；Shift 变体走 `FallbackOptions::All` 回退。
             revert_last_edit(context);
             true
         }
@@ -567,12 +579,40 @@ fn editor(
             true
         }
         (0xff0d, 0) => {
+            // 参照 `Editor::CommitRawInput` = `ClearNonConfirmedComposition(); Commit();`：
+            // 先丢弃**未确认**的末段（本实现的 `selected_candidate()` 不看 `selected` 标志，
+            // 故必须显式清段），保证 Return 提交的是原始输入码而不是高亮候选。
+            context.refresh_non_confirmed_composition();
             let commit_text = context.get_commit_text();
             commit_notifier(observer, context, &commit_text);
             context.commit();
             true
         }
-        (0xffff, 0) => {
+        (0xff0d, K_CONTROL_MASK) => {
+            // 参照 `{XK_Return, kControlMask}` = `CommitScriptText`（ExpressEditor 绑定）：
+            // 提交「脚本文本」——即按当前组合原样提交（**不清未确认段**；注意 `Context::GetScriptText`
+            // 的准确定义尚未从参照源码核对，此处按「脚本文本 = 组合文本」实现，待复核见 docs/refactor.md §8）。
+            let commit_text = context.get_commit_text();
+            commit_notifier(observer, context, &commit_text);
+            context.commit();
+            true
+        }
+        // 注意：模式里的 `|` 是**或模式**而非按位或，故组合修饰键必须用 match guard。
+        (0xff0d, modifier) if modifier == K_CONTROL_MASK | K_SHIFT_MASK => {
+            // 参照 `{XK_Return, kControlMask | kShiftMask}` = `CommitComment`：
+            // 提交高亮候选的注释（如反查候选的虎码）并清空组合。
+            let comment = context
+                .composition
+                .back()
+                .and_then(|segment| segment.selected_candidate())
+                .map(|candidate| candidate.comment.clone())
+                .unwrap_or_default();
+            context.clear();
+            context.direct_commit(&comment);
+            true
+        }
+        (0xffff, 0) | (0xffff, K_SHIFT_MASK) => {
+            // `{XK_Delete, 0}` = DeleteChar；Shift 变体走回退。
             context.delete_input(1);
             true
         }
@@ -628,6 +668,12 @@ fn back_to_previous_syllable(context: &mut Context) {
 }
 
 /// 参照 `Context::ReopenPreviousSelection`：末尾已选段回退为未选。
+///
+/// 与参照的结构差异（有意）：参照另有两道护栏——`seg->status > kSelected` 与
+/// `seg->tags.count("selected_before_editing")`，本模型下**不可达**：
+/// 已确认段会被移出组合（进 committed/locks 状态），故不存在 `kConfirmed` 段；
+/// 本 crate 也无 `BeginEditing` 等价物（无该标签的写入方）。
+/// 若将来引入「编辑态」（`BeginEditing`）或组合内的确认段，须同步补这两道判据。
 fn reopen_previous_selection(context: &mut Context) -> bool {
     let mut index = context.composition.segments.len();
     while index > 0 {
@@ -718,7 +764,7 @@ mod tests {
     fn process(
         context: &mut Context,
         repr: &str,
-        punct: Option<&mut PunctTable>,
+        punct: Option<&PunctTable>,
         options: &HostOptions,
     ) -> HostResult {
         let key = KeyEvent::from_repr(repr).expect("key repr");
@@ -771,15 +817,10 @@ mod tests {
 
     #[test]
     fn punctuator_commits_standalone_punct() {
-        let mut table = punct_table();
+        let table = punct_table();
         let mut context = Context::new();
         assert_eq!(
-            process(
-                &mut context,
-                "comma",
-                Some(&mut table),
-                &HostOptions::default()
-            ),
+            process(&mut context, "comma", Some(&table), &HostOptions::default()),
             HostResult::Consumed
         );
         assert_eq!(context.last_commit_text(), "，");
@@ -787,15 +828,10 @@ mod tests {
 
     #[test]
     fn punctuator_appends_to_composition_text() {
-        let mut table = punct_table();
+        let table = punct_table();
         let mut context = context_with_menu(&["甲", "乙"], 0);
         assert_eq!(
-            process(
-                &mut context,
-                "comma",
-                Some(&mut table),
-                &HostOptions::default()
-            ),
+            process(&mut context, "comma", Some(&table), &HostOptions::default()),
             HostResult::Consumed
         );
         assert_eq!(context.last_commit_text(), "甲，");
@@ -804,14 +840,14 @@ mod tests {
 
     #[test]
     fn punctuator_pair_alternates() {
-        let mut table = punct_table();
+        let table = punct_table();
         let mut context = Context::new();
         for text in ["‘", "’"] {
             assert_eq!(
                 process(
                     &mut context,
                     "apostrophe",
-                    Some(&mut table),
+                    Some(&table),
                     &HostOptions::default()
                 ),
                 HostResult::Consumed
@@ -822,15 +858,10 @@ mod tests {
 
     #[test]
     fn punctuator_passes_unmapped_key() {
-        let mut table = punct_table();
+        let table = punct_table();
         let mut context = Context::new();
         assert_eq!(
-            process(
-                &mut context,
-                "space",
-                Some(&mut table),
-                &HostOptions::default()
-            ),
+            process(&mut context, "space", Some(&table), &HostOptions::default()),
             HostResult::Forward
         );
     }
@@ -1117,5 +1148,91 @@ mod tests {
         let mut empty = Context::new();
         empty.set_input(b"x");
         assert_eq!(press(&mut empty, "Tab"), HostResult::Forward);
+    }
+
+    /// 直接构造键事件（绑定测试不依赖 repr 解析）。
+    fn press_raw(context: &mut Context, keycode: i32, modifier: i32) -> HostResult {
+        process_key(
+            &KeyEvent::new(keycode, modifier),
+            context,
+            None,
+            &HostOptions::default(),
+            None,
+        )
+    }
+
+    #[test]
+    fn editor_ctrl_return_commits_script_text() {
+        // 参照 `{XK_Return, kControlMask}` = `CommitScriptText`：提交**脚本文本**（候选文字），
+        // 与 `{XK_Return, 0}`（`CommitRawInput`，提交原始输入码）区分开。
+        let mut context = context_with_menu(&["甲", "乙"], 0);
+        assert_eq!(
+            press_raw(&mut context, 0xff0d, K_CONTROL_MASK),
+            HostResult::Consumed
+        );
+        assert_eq!(context.last_commit_text(), "甲", "脚本文本 = 高亮候选文字");
+
+        let mut context = context_with_menu(&["甲", "乙"], 0);
+        assert_eq!(press_raw(&mut context, 0xff0d, 0), HostResult::Consumed);
+        assert_eq!(
+            context.last_commit_text(),
+            "ab",
+            "原始输入 = 未确认段的原文"
+        );
+    }
+
+    #[test]
+    fn editor_ctrl_shift_return_commits_candidate_comment() {
+        // 参照 `{XK_Return, kControlMask | kShiftMask}` = `CommitComment`：提交高亮候选的注释。
+        let mut context = Context::new();
+        context.set_input(b"ab");
+        let mut segment = Segment {
+            start: 0,
+            end: 2,
+            tags: vec!["abc".to_string()],
+            translated: true,
+            selected_index: 0,
+            ..Segment::default()
+        };
+        segment
+            .candidates
+            .push(Candidate::new("sentence", 0, 2, "中", "d/dg/dgs"));
+        context.composition.segments.push(segment);
+        context.drain_events();
+        assert_eq!(
+            press_raw(&mut context, 0xff0d, K_CONTROL_MASK | K_SHIFT_MASK),
+            HostResult::Consumed
+        );
+        let events = context.drain_events();
+        assert!(
+            events.iter().any(
+                |event| matches!(event, crate::session::Event::Commit(text) if text == "d/dg/dgs")
+            ),
+            "应提交候选注释：{events:?}"
+        );
+    }
+
+    #[test]
+    fn editor_fallbacks_match_reference_keymap() {
+        // 参照 `ExpressEditor` 键表 + `FallbackOptions::All`：Shift 变体回退到无修饰绑定。
+        let mut context = context_with_menu(&["甲", "乙"], 0);
+        assert_eq!(
+            press_raw(&mut context, 0x20, K_SHIFT_MASK),
+            HostResult::Consumed
+        );
+
+        let mut context = context_with_menu(&["甲", "乙"], 0);
+        context.set_input(b"abc");
+        assert_eq!(
+            press_raw(&mut context, 0xff08, K_SHIFT_MASK),
+            HostResult::Consumed
+        );
+
+        let mut context = context_with_menu(&["甲", "乙"], 0);
+        context.set_input(b"abc");
+        assert_eq!(
+            press_raw(&mut context, 0xffff, K_SHIFT_MASK),
+            HostResult::Consumed
+        );
     }
 }

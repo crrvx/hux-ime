@@ -30,6 +30,8 @@ jobs:
       - name: Test cfg / ffi / platform
         run: cargo test -p hux-cfg -p hux-ffi -p hux-platform-fcitx5
       - name: Core platform-clean (no env/XDG/clock/logging)
+        # 只拦「平台痕迹」：env / XDG / 系统时钟 / 直接打印。
+        # 允许按平台传入的显式路径读数据文件（见 docs/refactor.md §1.2），故不查 std::fs。
         run: |
           if grep -RnE 'std::env::var|SystemTime|/usr/share|eprintln!|println!' crates/hux-core/src; then
             echo "::error::hux-core 不得包含平台痕迹（环境变量 / XDG / 系统时钟 / 直接打印）"

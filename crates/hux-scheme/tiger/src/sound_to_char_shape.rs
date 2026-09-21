@@ -19,7 +19,7 @@
 use crate::interaction::code_comment_filter;
 use crate::lexicon::Lexicon;
 use anyhow::{Context, Result, bail};
-use hux_core::punct::PunctTable;
+use hux_core::punct::{PairState, PunctTable};
 use hux_core::session::Candidate;
 use std::path::{Path, PathBuf};
 
@@ -269,7 +269,8 @@ pub fn translate(
     prefix: char,
     start: usize,
     end: usize,
-    punct: Option<&mut PunctTable>,
+    punct: Option<&PunctTable>,
+    pairs: &mut PairState,
     full_shape: bool,
     limit: usize,
 ) -> Vec<Candidate> {
@@ -281,7 +282,7 @@ pub fn translate(
     };
     // 前缀单独成段：`punct` 段与音反查段同区间，参照里由标点翻译器给出候选。
     if code.is_empty() {
-        return punct_candidate(punct, prefix, full_shape, start, end)
+        return punct_candidate(punct, pairs, prefix, full_shape, start, end)
             .into_iter()
             .collect();
     }
@@ -528,13 +529,14 @@ fn emit(
 /// 裸前缀的标点候选（参照 `PunctTranslator` 与 `CreatePunctCandidate`）；
 /// 字反查的「默认可上屏候选」复用同一实现。
 pub(crate) fn punct_candidate(
-    punct: Option<&mut PunctTable>,
+    punct: Option<&PunctTable>,
+    pairs: &mut PairState,
     prefix: char,
     full_shape: bool,
     start: usize,
     end: usize,
 ) -> Option<Candidate> {
-    let text = punct?.resolve(prefix, full_shape)?;
+    let text = punct?.resolve(prefix, full_shape, pairs)?;
     let comment = punct_shape_comment(&text);
     let mut candidate = Candidate::new("punct", start, end, &text, &comment);
     if end.saturating_sub(start) == 1 {
@@ -694,6 +696,7 @@ mod tests {
                 0,
                 input.len(),
                 None,
+                &mut PairState::default(),
                 false,
                 CANDIDATE_LIMIT,
             )
@@ -725,6 +728,7 @@ mod tests {
                 0,
                 input.len(),
                 None,
+                &mut PairState::default(),
                 false,
                 CANDIDATE_LIMIT,
             )

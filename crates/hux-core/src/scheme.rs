@@ -50,14 +50,10 @@ pub fn find_asset(dirs: &[PathBuf], file: &str) -> Option<PathBuf> {
         .find(|path| path.is_file())
 }
 
-/// 按键结果。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum KeyOutcome {
-    /// 方案消费该键（宿主不再处理）。
-    Consumed,
-    /// 方案未消费（交平台决定后续，如宿主链之外的转发）。
-    Forward,
-}
+/// 按键结果：与宿主链的 [`crate::host::HostResult`] **同一个类型**（避免同构重复与手工转换）。
+///
+/// 语义：`Consumed` = 方案/宿主链消费该键；`Forward` = 交平台决定后续（如转发给应用）。
+pub use crate::host::HostResult as KeyOutcome;
 
 /// 方案选项 id 清单：**方案声明自己的选项键**（运行时选项与持久化键的单一来源）。
 ///

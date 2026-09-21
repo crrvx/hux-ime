@@ -186,7 +186,7 @@ impl CompositionBuilder {
         context: &mut Context,
         state: &SentenceState,
         invalidated: bool,
-        punct: Option<&mut PunctTable>,
+        punct: Option<&PunctTable>,
     ) -> anyhow::Result<bool> {
         let input = context.input().to_vec();
         let caret = context.caret().min(input.len());
@@ -423,7 +423,7 @@ pub(crate) fn translate_segments(
     context: &mut Context,
     state: &SentenceState,
     input: &[u8],
-    mut punct: Option<&mut PunctTable>,
+    punct: Option<&PunctTable>,
 ) -> anyhow::Result<()> {
     let prefixes = sound_to_char_shape_prefixes(context);
     let full_shape = context.get_option("full_shape");
@@ -449,7 +449,8 @@ pub(crate) fn translate_segments(
                     .any(|key| single_char_trigger(key) == Some(*character))
             }) {
                 Some(character) => sound_to_char_shape::punct_candidate(
-                    punct.as_deref_mut(),
+                    punct,
+                    context.punct_pairs(),
                     character,
                     full_shape,
                     start,
@@ -475,7 +476,8 @@ pub(crate) fn translate_segments(
                         .any(|key| single_char_trigger(key) == Some(*character))
                 }) {
                     Some(character) => sound_to_char_shape::punct_candidate(
-                        punct.as_deref_mut(),
+                        punct,
+                        context.punct_pairs(),
                         character,
                         full_shape,
                         start,
@@ -501,7 +503,8 @@ pub(crate) fn translate_segments(
                     *prefix,
                     start,
                     end,
-                    punct.as_deref_mut(),
+                    punct,
+                    context.punct_pairs(),
                     full_shape,
                 ),
                 None => Vec::new(),

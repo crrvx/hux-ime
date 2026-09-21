@@ -17,7 +17,7 @@ use hashbrown::{HashMap, HashSet};
 use hux_core::learning::{
     DiffItem, DiffPathNode, LearningIndex, character_count, context as learning_context,
 };
-use hux_core::punct::PunctTable;
+use hux_core::punct::{PairState, PunctTable};
 use hux_core::session::Candidate;
 use std::path::PathBuf;
 
@@ -323,13 +323,18 @@ impl Decoder {
     }
 
     /// 音反查候选（含虎码注释过滤；上限 [`crate::sound_to_char_shape::CANDIDATE_LIMIT`]）。
+    ///
+    /// 参数较多是因为要透传「索引 / 区间 / 标点表 / 会话态 / 形状」——与
+    /// [`crate::sound_to_char_shape::translate`] 同源，故与同文件既有先例一致地豁免。
+    #[allow(clippy::too_many_arguments)]
     pub fn sound_to_char_shape_candidates(
         &mut self,
         input: &[u8],
         prefix: char,
         start: usize,
         end: usize,
-        punct: Option<&mut PunctTable>,
+        punct: Option<&PunctTable>,
+        pairs: &mut PairState,
         full_shape: bool,
     ) -> Vec<Candidate> {
         self.pinyin_index();
@@ -344,6 +349,7 @@ impl Decoder {
             start,
             end,
             punct,
+            pairs,
             full_shape,
             crate::sound_to_char_shape::CANDIDATE_LIMIT,
         )

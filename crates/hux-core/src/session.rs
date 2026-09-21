@@ -199,6 +199,8 @@ pub struct Context {
     properties: HashMap<String, String>,
     /// 缓冲态（由方案设置；内核不解释来源，只影响实况输入视图）。
     buffered: bool,
+    /// 标点成对符号的交替状态（**会话态**：每输入上下文一份）。
+    punct_pairs: crate::punct::PairState,
     last_commit: String,
     events: VecDeque<Event>,
 }
@@ -218,6 +220,7 @@ impl Context {
             options: HashMap::new(),
             properties: HashMap::new(),
             buffered: false,
+            punct_pairs: crate::punct::PairState::default(),
             last_commit: String::new(),
             events: VecDeque::new(),
         }
@@ -260,13 +263,14 @@ impl Context {
 
     /// 与 `input` 对应的 caret 在 live 输入中的字节偏移（参照 `input_caret`）。
     pub fn live_caret(&self) -> usize {
-        let length = self.live_input().len();
-        let caret = if self.is_buffered() {
+        // 判据与 [`Context::live_input`] 一致：只有**确实带 `~` 标记**时才算少一个字节。
+        let live = self.live_input();
+        let caret = if self.is_buffered() && self.input().first() == Some(&b'~') {
             self.caret.saturating_sub(1)
         } else {
             self.caret
         };
-        caret.min(length)
+        caret.min(live.len())
     }
 
     /// 参照 `Context::GetCommitText`：按当前组合即时计算（未组合时为空串）。
@@ -321,6 +325,11 @@ impl Context {
     /// 设置缓冲态；内核据此调整 [`Context::live_input`] / `live_caret` 的实况视图。
     pub fn set_buffered(&mut self, value: bool) {
         self.buffered = value;
+    }
+
+    /// 标点成对符号的交替状态（随 `Context` 隔离；标点表本身只读）。
+    pub fn punct_pairs(&mut self) -> &mut crate::punct::PairState {
+        &mut self.punct_pairs
     }
 
     // ------------------------------------------------------------ 编辑操作
@@ -444,10 +453,6 @@ impl Context {
 
     pub fn drain_events(&mut self) -> Vec<Event> {
         self.events.drain(..).collect()
-    }
-
-    pub fn has_events(&self) -> bool {
-        !self.events.is_empty()
     }
 }
 
@@ -667,14 +672,17 @@ mod tests {
         context.highlight(1);
         assert!(context.confirm_current_selection());
         let expected = context.composition.commit_text(context.input());
+        context.drain_events(); // 清掉 highlight/confirm 的残留事件，只断言提交本身
         assert!(context.commit());
         assert_eq!(context.last_commit_text(), expected);
         assert!(!context.is_composing());
         assert!(context.input().is_empty());
-        assert!(matches!(
-            context.drain_events().first(),
-            Some(Event::Update)
-        ));
+        let events = context.drain_events();
+        assert!(
+            matches!(events.first(), Some(Event::Commit(text)) if *text == expected),
+            "提交应先派发 Commit：{events:?}"
+        );
+        assert!(matches!(events.get(1), Some(Event::Update)));
     }
 
     #[test]

@@ -148,7 +148,7 @@ fn replay(
         punct_table.is_some(),
         "缺少标点表 symbols.yaml：{punct_error:?}"
     );
-    let mut punct = punct_table;
+    let punct = punct_table;
     for (index, step) in case.steps.iter().enumerate() {
         let label = format!("{}[{}] {}", case.name, index, step.repr);
         let key = KeyEvent::from_repr(&step.repr).expect("key repr");
@@ -174,7 +174,7 @@ fn replay(
                 host_process_key(
                     &key,
                     &mut context,
-                    punct.as_mut(),
+                    punct.as_ref(),
                     &HostOptions {
                         page_size,
                         ..HostOptions::default()
@@ -208,7 +208,7 @@ fn replay(
                 &mut context,
                 &state,
                 commit_invalidated,
-                punct.as_mut(),
+                punct.as_ref(),
             )
             .expect("rebuild");
         // 参照 update 通知器（暂存清理 / 缓冲隐藏）。
