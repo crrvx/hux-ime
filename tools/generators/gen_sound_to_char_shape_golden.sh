@@ -91,6 +91,14 @@ librime_version="$(pkg-config --modversion rime 2>/dev/null || true)"
     printf '# librime: %s; plugin: %s\n' "${librime_version:-unknown}" "$plugin"
     LD_LIBRARY_PATH="$WORK${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
         "$WORK/probe" "$user" "$shared" "$plugin" "$CASES"
-} | gzip -9 > "$OUT"
+} | gzip -9 > "$OUT.tmp.$$"
+
+# 写库前断言：至少产出 1 个用例，避免空/全注释 CASES 把入库金样静默覆盖成只剩头部。
+if ! gzip -cd "$OUT.tmp.$$" | grep -q '^case'; then
+    rm -f "$OUT.tmp.$$"
+    echo "生成失败：$OUT 不含任何用例（检查 CASES 是否为空或全为注释）" >&2
+    exit 1
+fi
+mv "$OUT.tmp.$$" "$OUT"
 
 echo "wrote $OUT ($(gzip -cd "$OUT" | wc -l) lines)"

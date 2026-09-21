@@ -1211,3 +1211,183 @@ fn setting_defaults_are_not_persisted_as_user_options() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// 无会话时状态菜单切换仍须落盘：原先无会话直接 `return true` 而丢弃改动。
+#[test]
+fn option_change_without_sessions_persists() {
+    let _guard = serial();
+    let dir = temp_user_dir("option-no-session");
+    let mut engine = Engine::new_with_dirs(host(), fixture_dirs(), None, Some(dir.clone()));
+    assert!(engine.sessions.is_empty(), "本用例须无会话");
+    assert!(engine.set_option_value("tiger_sentence_early_commit", false));
+    let text = std::fs::read_to_string(dir.join(hux_cfg::OPTIONS_FILE)).expect("options.yaml");
+    assert!(
+        text.contains("tiger_sentence_early_commit: false"),
+        "无会话切换应落盘：{text}"
+    );
+    assert_eq!(
+        engine.option_value("tiger_sentence_early_commit"),
+        Some(false)
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// 文本含 NUL 时剔除后送出，而不是整条丢空。
+#[test]
+fn nul_in_text_is_stripped_not_dropped() {
+    assert_eq!(
+        crate::ui::cstring_lossy("中\0文").to_str().expect("utf8"),
+        "中文"
+    );
+}
+
+/// 选项保存失败须在状态串可见：把 `options.yaml` 造成目录使其必然写失败。
+#[test]
+fn option_save_error_is_visible_in_status() {
+    let _guard = serial();
+    let dir = temp_user_dir("options-error");
+    std::fs::create_dir_all(dir.join(hux_cfg::OPTIONS_FILE))
+        .expect("make options path a directory");
+    let mut engine = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
+    assert!(
+        !engine
+            .engine
+            .status
+            .to_str()
+            .unwrap_or("")
+            .contains("options:"),
+        "初始状态串不含选项错误"
+    );
+    assert!(engine.set_option_value("tiger_sentence_early_commit", false));
+    let status = engine.engine.status.to_str().unwrap_or("").to_string();
+    assert!(
+        status.contains("options: Unable to save"),
+        "保存失败应在状态串可见：{status}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// 选项角色 → 键：宿主（C++）据此构造状态菜单与面板序号，不再硬编码方案选项名。
+#[test]
+fn option_role_keys_follow_scheme_declarations() {
+    let _guard = serial();
+    let engine = TestEngine::new(host(), fixture_dirs(), None, None);
+    assert_eq!(hux_engine_option_role_count(), 5);
+    let keys: Vec<String> = (0..5)
+        .map(|role| unsafe {
+            let key = hux_engine_option_key(&engine.engine, role);
+            assert!(!key.is_null(), "角色 {role} 应有选项键");
+            std::ffi::CStr::from_ptr(key).to_string_lossy().into_owned()
+        })
+        .collect();
+    assert_eq!(
+        keys,
+        vec![
+            "tiger_sentence_early_commit",
+            "tiger_sentence_early_commit_to_preedit",
+            "tiger_sentence_allow_duplicate_single",
+            "full_shape",
+            "tiger_sentence_digit_select",
+        ]
+    );
+    // 角色序与状态菜单白名单同源（改方案时两者一起变）。
+    assert_eq!(engine.engine.runtime_options().to_vec(), keys);
+    // 越界与空指针安全。
+    assert!(unsafe { hux_engine_option_key(&engine.engine, 5) }.is_null());
+    assert!(unsafe { hux_engine_option_key(&engine.engine, -1) }.is_null());
+    assert!(unsafe { hux_engine_option_key(std::ptr::null(), 0) }.is_null());
+}
+
+/// C++ 配置 schema（`shell/hux.cpp`）的默认值必须与 `hux-cfg::Settings::default()` 一致。
+///
+/// 两边各写一份默认值且此前无任何校验：C++ 构造时即 `applyConfig` 覆盖引擎侧默认，
+/// 故 Rust 侧漂移不会被发现。此处以「解析 C++ 源 ↔ 逐项比对」把它变成 CI 不变量。
+#[test]
+fn schema_defaults_match_settings_defaults() {
+    let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/shell/hux.cpp"))
+        .expect("read hux.cpp");
+
+    // 解析 `.path{"Name"}` 与其后的 `.defaultValue = <value>,`（KeyList 可能跨多行）。
+    let mut defaults: Vec<(String, String)> = Vec::new();
+    let mut pending: Option<String> = None;
+    let mut lines = source.lines().map(str::trim).peekable();
+    while let Some(line) = lines.next() {
+        if let Some(rest) = line.strip_prefix(".path{") {
+            pending = Some(rest.trim_end_matches("},").trim_matches('"').to_string());
+            continue;
+        }
+        let Some(rest) = line.strip_prefix(".defaultValue = ") else {
+            continue;
+        };
+        let Some(name) = pending.take() else { continue };
+        let mut value = rest.trim_end_matches(',').to_string();
+        // KeyList 跨行：补齐花括号直到配平。
+        let mut open = value.matches('{').count() as i32 - value.matches('}').count() as i32;
+        while open > 0 {
+            let next = lines.next().expect("unterminated defaultValue");
+            value.push_str(next.trim_end_matches(','));
+            open += next.matches('{').count() as i32 - next.matches('}').count() as i32;
+        }
+        defaults.push((name, value));
+    }
+
+    // C++ 用 keysym 常量声明默认键：`fcitx::Key(FcitxKey_colon, fcitx::KeyState::Alt)`
+    // → rime 键名 `Alt+colon`（`FcitxKey_<name>` 即 X11 键名，与 librime 键名表同名）。
+    let keys = |raw: &str| -> Vec<String> {
+        raw.split("fcitx::Key(FcitxKey_")
+            .skip(1)
+            .filter_map(|part| {
+                let name: String = part
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                    .collect();
+                if name.is_empty() {
+                    return None;
+                }
+                Some(if part.contains("KeyState::Alt") {
+                    format!("Alt+{name}")
+                } else {
+                    name
+                })
+            })
+            .collect()
+    };
+    let enum_tail = |raw: &str| raw.rsplit("::").next().unwrap_or(raw).to_string();
+
+    let settings = Settings::default();
+    let mut checked = 0usize;
+    for (name, raw) in &defaults {
+        let expected: String = match name.as_str() {
+            "EarlyCommit" => settings.early_commit.to_string(),
+            "EarlyCommitToPreedit" => settings.early_commit_to_preedit.to_string(),
+            "AllowDuplicateSingle" => settings.allow_duplicate_single.to_string(),
+            "FullShape" => settings.full_shape.to_string(),
+            "AsciiPunct" => settings.ascii_punct.to_string(),
+            "TabLearning" => settings.tab_learning.to_string(),
+            "DigitSelect" => settings.digit_select.to_string(),
+            "PageCycle" => settings.page_cycle.to_string(),
+            "HighFreqLimit" => settings.high_freq_limit.to_string(),
+            "PageSize" => settings.page_size.to_string(),
+            "MinRetainedRawLength" => settings.min_retained_raw_length.to_string(),
+            "CandidateLayout" => format!("{:?}", settings.candidate_layout),
+            "PreeditMode" => format!("{:?}", settings.preedit_mode),
+            "PageUpKey" => settings.page_up_keys.join(","),
+            "PageDownKey" => settings.page_down_keys.join(","),
+            "SoundToCharShapeKey" => settings.sound_to_char_shape_keys.join(","),
+            "CharToSoundShapeKey" => settings.char_to_sound_shape_keys.join(","),
+            _ => continue, // PanelPreedit 等宿主显示项不经引擎
+        };
+        let actual = if raw.contains("fcitx::KeyList") {
+            keys(raw).join(",")
+        } else if expected.chars().all(|c| c.is_ascii_digit())
+            || matches!(expected.as_str(), "true" | "false")
+        {
+            raw.clone()
+        } else {
+            enum_tail(raw)
+        };
+        assert_eq!(actual, expected, "schema 默认值与 Settings 不一致：{name}");
+        checked += 1;
+    }
+    assert_eq!(checked, 17, "应逐项核对 17 个引擎设置");
+}

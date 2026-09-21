@@ -39,6 +39,9 @@ impl Engine {
     }
 }
 
+/// 事件泵每轮按键的最大轮数（选项事件可能触发确认，进而产生新事件）。
+pub(crate) const EVENT_PUMP_ROUNDS: usize = 4;
+
 /// hux 自身设置 → 方案配置（平台是装配根：只有这里知道两边字段的对应关系）。
 pub(crate) fn scheme_config(settings: &Settings) -> SchemeConfig {
     let host = settings.host_options();
@@ -69,6 +72,8 @@ pub struct Engine {
     pub(crate) learning: LearningStore,
     /// 方案声明的选项 id（P4 收尾：单一来源 = 方案；配置层与状态菜单白名单据此工作）。
     pub(crate) option_ids: OptionIds,
+    /// 角色 → 选项键的 C 字符串（构造时固定；`hux_engine_option_key` 返回其指针）。
+    pub(crate) option_keys: Vec<CString>,
     /// 学习规则串（来自方案数据；用于拼 mode）。
     pub(crate) learning_rules: String,
     /// 当前学习 mode 串。
@@ -77,6 +82,10 @@ pub struct Engine {
     /// 保证「提交 → 按键」送达顺序（对齐 fcitx5 核心 `KeyEventOrderFix` 修法）。
     pub forward_after_commit: bool,
     pub(crate) status: CString,
+    /// 状态串基线（构造时的加载说明；选项保存出错时拼在其后）。
+    pub(crate) status_base: String,
+    /// 选项保存失败的最近一条诊断（来自 [`hux_cfg::OPTIONS_ERROR_PROPERTY`]）。
+    pub(crate) option_error: Option<String>,
 }
 impl Engine {
     pub(crate) fn new(host: Option<HostCallback>) -> Self {
@@ -132,6 +141,18 @@ impl Engine {
             settings.high_freq_limit,
         );
         scheme.set_learning_mode(&learning_mode);
+        let status_base = notes.join("; ");
+        // 角色顺序与 `hux_abi.h` 的 `HUX_OPTION_*` 一致（ABI 边界用角色，不暴露方案键名）。
+        let option_keys = [
+            option_ids.early_commit,
+            option_ids.early_commit_to_preedit,
+            option_ids.allow_duplicate_single,
+            "full_shape",
+            option_ids.digit_select,
+        ]
+        .into_iter()
+        .map(crate::ui::cstring_lossy)
+        .collect();
         Self {
             host,
             scheme: Box::new(scheme),
@@ -141,10 +162,13 @@ impl Engine {
             settings,
             learning,
             option_ids,
+            option_keys,
             learning_rules,
             learning_mode,
             forward_after_commit: false,
-            status: CString::new(notes.join("; ")).unwrap_or_default(),
+            status: crate::ui::cstring_lossy(&status_base),
+            status_base,
+            option_error: None,
         }
     }
 
@@ -292,8 +316,9 @@ impl Engine {
     pub(crate) fn finish(&mut self, session: &mut Session, now: f64, key_forward: Option<bool>) {
         let mut commits = Vec::new();
         let mut invalidated = false;
-        // 事件泵：选项事件可能触发确认（进而产生提交），循环至排空（有界）。
-        for _ in 0..4 {
+        // 事件泵：选项事件可能触发确认（进而产生提交），循环至排空。
+        // 上限是防御性的（选项事件链不可能无限展开）；超限的残余事件留到下一次按键处理。
+        for _ in 0..EVENT_PUMP_ROUNDS {
             let events = session.context.drain_events();
             if events.is_empty() {
                 break;
@@ -425,6 +450,25 @@ impl Engine {
         if let Some(options) = self.options.as_mut() {
             options.observe(context, name);
         }
+        // 保存失败会写入 [`hux_cfg::OPTIONS_ERROR_PROPERTY`]：并入状态串，
+        // 使 `hux_engine_status` 能反映出来（此前该属性全仓无读取方）。
+        let error = context
+            .get_property(hux_cfg::OPTIONS_ERROR_PROPERTY)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        if error != self.option_error {
+            self.option_error = error;
+            self.refresh_status();
+        }
+    }
+
+    /// 重建状态串（基线 + 选项保存错误，若有）。
+    pub(crate) fn refresh_status(&mut self) {
+        let status = match &self.option_error {
+            Some(error) => format!("{}; options: {error}", self.status_base),
+            None => self.status_base.clone(),
+        };
+        self.status = crate::ui::cstring_lossy(&status);
     }
 
     /// 运行时开关当前值（状态菜单；全局）：任一会话的生效值，无会话时回退存储/设置缺省。
@@ -447,6 +491,15 @@ impl Engine {
             return false;
         }
         let ids: Vec<u64> = self.sessions.keys().copied().collect();
+        if ids.is_empty() {
+            // 无会话（尚未绑定输入上下文）：直写存储，避免状态菜单切换被静默丢弃。
+            let saved = self
+                .options
+                .as_mut()
+                .map(|store| store.set_value(name, value));
+            self.refresh_learning_mode();
+            return saved.unwrap_or(true);
+        }
         for id in ids {
             self.with_session(id, |engine, session| {
                 if session.context.get_option(name) != value {
@@ -524,9 +577,8 @@ impl Engine {
         let Some(commit) = host.commit else {
             return;
         };
-        if let Ok(text) = CString::new(text) {
-            // SAFETY: 函数指针与 `user` 由宿主提供且在本调用期间有效。
-            unsafe { commit(host.user, text.as_ptr()) };
-        }
+        // SAFETY: 函数指针与 `user` 由宿主提供且在本调用期间有效。
+        let text = crate::ui::cstring_lossy(text);
+        unsafe { commit(host.user, text.as_ptr()) };
     }
 }

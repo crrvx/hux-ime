@@ -205,6 +205,14 @@ def sha256(path: pathlib.Path) -> str:
     return digest.hexdigest()
 
 
+def read_output(path: pathlib.Path) -> bytes:
+    """读取已写入的索引（按扩展名判断是否 gzip）。"""
+    raw = path.read_bytes()
+    if path.suffix == ".gz":
+        return gzip.decompress(raw)
+    return raw
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="PY_c.dict.yaml → TCSRV01 音反查索引")
     parser.add_argument("--source", required=True, type=pathlib.Path, help="PY_c.dict.yaml")
@@ -229,15 +237,24 @@ def main() -> int:
     if args.check:
         if not args.out.is_file():
             raise SystemExit(f"missing output: {args.out}")
+        # 与**由 --source 重建**的内容逐字节比对（此前只与 manifest 比 sha，
+        # 不带 --manifest 时对任意文件都打印 check ok，属恒真检查）。
+        on_disk = read_output(args.out)
+        if on_disk != data:
+            raise SystemExit(
+                f"check failed: {args.out} 与由 {args.source} 重建的内容不一致"
+            )
         actual = sha256(args.out)
-        if args.manifest and args.manifest.is_file():
+        if args.manifest:
+            if not args.manifest.is_file():
+                raise SystemExit(f"missing manifest: {args.manifest}")
             manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
             expect = manifest["output"]["sha256"]
             if actual != expect:
                 raise SystemExit(f"sha256 mismatch: {actual} != {expect}")
             if manifest.get("counts") != counts:
                 raise SystemExit(f"counts mismatch: {counts} != {manifest.get('counts')}")
-        print(f"check ok: {args.out} sha256={actual}")
+        print(f"check ok: {args.out} sha256={actual}（与重建内容逐字节一致）")
         return 0
 
     write_output(args.out, data)

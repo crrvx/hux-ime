@@ -274,6 +274,34 @@ pub unsafe extern "C" fn hux_engine_key(
     disposition
 }
 
+/// 引擎选项**角色**对应的选项键（NUL 结尾；角色越界或引擎为空返回 NULL）。
+///
+/// 角色顺序与 `include/hux_abi.h` 的 `HUX_OPTION_*` 一致：0=提前上屏、1=提前上屏至预编辑、
+/// 2=单字重码组句、3=数字直选、4=全角标点（rime 标准名）。宿主据此构造状态菜单与面板序号，
+/// **不得**在宿主侧硬编码方案选项名。
+///
+/// # Safety
+/// `engine` 须有效（可为空指针）；返回指针在引擎存活期内有效。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hux_engine_option_key(engine: *const Engine, role: i32) -> *const c_char {
+    let Some(engine) = (unsafe { engine.as_ref() }) else {
+        return std::ptr::null();
+    };
+    if role < 0 {
+        return std::ptr::null();
+    }
+    engine
+        .option_keys
+        .get(role as usize)
+        .map_or(std::ptr::null(), |key| key.as_ptr())
+}
+
+/// 引擎选项角色总数（状态菜单项数）。
+#[unsafe(no_mangle)]
+pub extern "C" fn hux_engine_option_role_count() -> i32 {
+    5
+}
+
 /// 候选点击（面板候选 `CandidateWord::select`）：按全局索引选中并上屏。
 /// 返回 1 = 已处理；0 = 忽略（索引越界 / 无可选段 / 引擎不可用）。
 ///

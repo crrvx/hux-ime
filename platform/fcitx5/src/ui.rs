@@ -9,6 +9,18 @@ use crate::engine::Engine;
 use crate::session::Session;
 use hux_cfg::PreeditMode;
 
+/// 转 C 字符串：内嵌 NUL 会截断 C 侧字符串，故先剔除并记一次日志
+/// （平台层允许直接打印；此前 `CString::new(..).unwrap_or_default()` 会把整条文本静默丢空）。
+pub(crate) fn cstring_lossy(text: &str) -> CString {
+    match CString::new(text) {
+        Ok(value) => value,
+        Err(_) => {
+            eprintln!("hux: 文本含 NUL，已剔除后送出");
+            CString::new(text.replace('\0', "")).unwrap_or_default()
+        }
+    }
+}
+
 impl Engine {
     pub(crate) fn push_update(&self, session: &Session) {
         let Some(host) = &self.host else {
@@ -104,21 +116,17 @@ impl Engine {
             texts.clear();
             comments.clear();
         }
-        let preedit = CString::new(preedit).unwrap_or_default();
-        let texts: Vec<CString> = texts
-            .iter()
-            .map(|text| CString::new(text.as_str()).unwrap_or_default())
-            .collect();
+        let preedit = cstring_lossy(&preedit);
+        let texts: Vec<CString> = texts.iter().map(|text| cstring_lossy(text)).collect();
         let comments: Vec<CString> = comments
             .iter()
-            .map(|comment| CString::new(comment.as_str()).unwrap_or_default())
+            .map(|comment| cstring_lossy(comment))
             .collect();
         let text_pointers: Vec<*const c_char> = texts.iter().map(|text| text.as_ptr()).collect();
         let comment_pointers: Vec<*const c_char> =
             comments.iter().map(|comment| comment.as_ptr()).collect();
-        let aux_up = CString::new(session.char_to_sound_shape.aux_up.as_str()).unwrap_or_default();
-        let aux_down =
-            CString::new(session.char_to_sound_shape.aux_down.as_str()).unwrap_or_default();
+        let aux_up = cstring_lossy(&session.char_to_sound_shape.aux_up);
+        let aux_down = cstring_lossy(&session.char_to_sound_shape.aux_down);
         // SAFETY: 指针数组与 C 串在本调用期间有效；计数与数组长度一致。
         unsafe {
             update(

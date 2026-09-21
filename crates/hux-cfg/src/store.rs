@@ -114,6 +114,14 @@ impl OptionsStore {
         self.options.covers(name)
     }
 
+    /// 直写持久化值并保存（**无会话**时状态菜单切换仍须落盘；返回是否保存成功）。
+    pub fn set_value(&mut self, name: &str, value: bool) -> bool {
+        if !self.options.set_value(name, value) {
+            return self.options.covers(name);
+        }
+        self.save().is_ok()
+    }
+
     pub fn set_defaults(&mut self, defaults: HashMap<String, bool>) {
         self.options.defaults = defaults;
     }

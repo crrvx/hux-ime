@@ -7,14 +7,21 @@ on:
   push:
   pull_request:
 
+# 同一分支的新推送取消旧运行（省额度、避免重复结论）。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   reuse:
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: fsfe/reuse-action@v6
 
   rust:
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,13 +29,13 @@ jobs:
         with:
           components: rustfmt, clippy
       - run: cargo fmt --all --check
-      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo clippy --locked --all-targets -- -D warnings
       - name: Test kernel & test-support
-        run: cargo test -p hux-core -p hux-test-support
+        run: cargo test --locked -p hux-core -p hux-test-support
       - name: Test schemes
-        run: cargo test -p hux-scheme-tiger
+        run: cargo test --locked -p hux-scheme-tiger
       - name: Test cfg / ffi / platform
-        run: cargo test -p hux-cfg -p hux-ffi -p hux-platform-fcitx5
+        run: cargo test --locked -p hux-cfg -p hux-ffi -p hux-platform-fcitx5
       - name: Core platform-clean (no env/XDG/clock/logging)
         # 只拦「平台痕迹」：env / XDG / 系统时钟 / 直接打印。
         # 允许按平台传入的显式路径读数据文件（见 docs/refactor.md §1.2），故不查 std::fs。
@@ -40,12 +47,12 @@ jobs:
       - name: Layer dependencies (core / cfg / ffi / platform)
         run: |
           # 依赖边判定（源码里的文档提及不算）：cargo tree 不得出现 hux-scheme/*
-          if cargo tree -p hux-core --edges normal | grep -q 'hux-scheme'; then
+          if cargo tree --locked -p hux-core --edges normal | grep -q 'hux-scheme'; then
             echo "::error::hux-core 不得依赖任何方案（hux-scheme/*，见 docs/refactor.md §1）"
             exit 1
           fi
           # 方案依赖不得反向：方案只允许依赖 hux-core
-          if cargo tree -p hux-scheme-tiger --edges normal --depth 1 | grep -qE 'hux-platform|hux-cfg|hux-ffi'; then
+          if cargo tree --locked -p hux-scheme-tiger --edges normal --depth 1 | grep -qE 'hux-platform|hux-cfg|hux-ffi'; then
             echo "::error::hux-scheme/* 只允许依赖 hux-core"
             exit 1
           fi
@@ -56,7 +63,7 @@ jobs:
             exit 1
           fi
           # 配置层 / ABI 层不得依赖方案或平台层（docs/refactor.md §1）
-          if cargo tree -p hux-cfg -p hux-ffi --edges normal | grep -qE 'hux-scheme|hux-platform'; then
+          if cargo tree --locked -p hux-cfg -p hux-ffi --edges normal | grep -qE 'hux-scheme|hux-platform'; then
             echo "::error::hux-cfg / hux-ffi 只允许依赖 hux-core（及外部 crate）"
             exit 1
           fi
@@ -89,6 +96,7 @@ jobs:
   # C++ 侧（fcitx5 addon）：configure → 构建/链接 → C ABI 符号一致 → 安装布局（DESTDIR，免 sudo）。
   # 结构性迁移（如拆 crate / 挪目录）与 ABI 契约漂移（crates/hux-ffi/include/hux_abi.h）在此暴露。
   addon:
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -126,6 +134,7 @@ jobs:
 
   # 一般金样校验：使用 runner 系统提供的 Lua（Ubuntu 当前可用的最新 lua 包）。
   golden:
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     env:
       REFERENCE_REPO: https://github.com/lvyww/tiger-sentense-rime
@@ -232,6 +241,7 @@ jobs:
   # Arch 的系统 lua 即最新版；验证金样在最新 Lua 下同样逐字节一致。
   # shell: bash 显式设置（容器内默认 shell 不保证是 bash）。
   golden-lua-latest:
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     container: archlinux:latest
     defaults:

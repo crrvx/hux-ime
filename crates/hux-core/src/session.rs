@@ -299,6 +299,18 @@ impl Context {
         self.options.get(name).copied().unwrap_or(default)
     }
 
+    /// 丢弃队列中指定选项名的 `Event::Option`（**写入方抑制自身事件**用）。
+    ///
+    /// 参照 `M.options.sync` 以 `live.syncing` 在**写入时**抑制自身的选项通知；
+    /// 本实现的 `set_option` 是入队语义，故由写入方在写完后丢弃这些事件——
+    /// 否则它们会在稍后被当成用户改动观察（并吞掉紧随其后的第一次真实改动）。
+    pub fn discard_option_events(&mut self, names: &[String]) {
+        self.events.retain(|event| match event {
+            Event::Option(name) => !names.contains(name),
+            _ => true,
+        });
+    }
+
     /// 参照 `Context::set_option`：无条件触发选项通知（librime 语义）。
     pub fn set_option(&mut self, name: &str, value: bool) {
         self.options.insert(name.to_string(), value);

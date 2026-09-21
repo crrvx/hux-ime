@@ -119,6 +119,21 @@ typedef struct hux_options {
   int32_t min_retained_raw_length;
 } hux_options;
 
+/* 引擎选项角色（顺序即状态菜单项顺序；宿主据此取选项键，不得硬编码方案选项名）。 */
+enum {
+  HUX_OPTION_EARLY_COMMIT = 0,
+  HUX_OPTION_EARLY_COMMIT_TO_PREEDIT = 1,
+  HUX_OPTION_ALLOW_DUPLICATE_SINGLE = 2,
+  HUX_OPTION_FULL_SHAPE = 3,
+  HUX_OPTION_DIGIT_SELECT = 4,
+};
+
+/* 选项角色总数。 */
+int32_t hux_engine_option_role_count(void);
+
+/* 角色对应的选项键（NUL 结尾，引擎存活期内有效）；角色越界/引擎为空返回 NULL。 */
+const char *hux_engine_option_key(const hux_engine *engine, int32_t role);
+
 /* 应用外部配置；返回 1 = 已应用。 */
 int32_t hux_engine_apply_settings(hux_engine *engine,
                                         const hux_options *options);

@@ -441,24 +441,25 @@ private:
         return static_cast<HuxSession *>(inputContext->property(&sessionFactory_));
     }
 
-    /// 状态菜单：注册「虎虚」子菜单与 5 项核心开关（构造时一次）。
+    /// 状态菜单：注册「虎虚」子菜单与核心开关（构造时一次）。
+    ///
+    /// **选项键经 ABI 取自引擎**（`hux_engine_option_key`，与 `HUX_OPTION_*` 角色一一对应），
+    /// 宿主只保留 UI 文案——方案改名或换方案时菜单自动跟随，不会静默失效。
     void setupStatusMenu() {
-        static constexpr struct {
-            const char *option;
-            const char *label;
-        } kToggles[] = {
-            {"tiger_sentence_early_commit", "提前上屏"},
-            {"tiger_sentence_early_commit_to_preedit", "提前上屏至预编辑"},
-            {"tiger_sentence_allow_duplicate_single", "单字重码组句"},
-            {"full_shape", "全角标点"},
-            {"tiger_sentence_digit_select", "数字直选"},
+        static constexpr const char *kLabels[] = {
+            "提前上屏", "提前上屏至预编辑", "单字重码组句", "全角标点", "数字直选",
         };
         menuAction_.setShortText("虎虚");
-        for (const auto &toggle : kToggles) {
-            auto action = std::make_unique<HuxToggleAction>(
-                engine_, toggle.option, toggle.label);
+        const int32_t roles = hux_engine_option_role_count();
+        for (int32_t role = 0; role < roles; ++role) {
+            const char *option = hux_engine_option_key(engine_, role);
+            if (option == nullptr) {
+                continue;
+            }
+            auto action = std::make_unique<HuxToggleAction>(engine_, option,
+                                                            kLabels[role]);
             instance_->userInterfaceManager().registerAction(
-                std::string("hux-") + toggle.option, action.get());
+                std::string("hux-") + option, action.get());
             menu_.addAction(action.get());
             toggleActions_.push_back(std::move(action));
         }
@@ -552,7 +553,13 @@ private:
                     fcitx::Text(text), fcitx::Text(comment), this, index);
             }
             // 数字直选：面板显示 1–9 / 0 序号（与引擎页内定位一致）。
-            if (config_.behavior->digitSelect.value()) {
+            // 取**运行时生效值**（状态菜单可切换、options.yaml 优先），而非仅读配置页设置。
+            const char *digitSelectKey =
+                hux_engine_option_key(engine_, HUX_OPTION_DIGIT_SELECT);
+            const bool digitSelect =
+                digitSelectKey != nullptr &&
+                hux_engine_option_value(engine_, digitSelectKey) == 1;
+            if (digitSelect) {
                 candidateList->setSelectionKey(digitSelectionKeys());
             }
             // 翻页交由 fcitx5 面板（页大小与引擎一致）：绝对索引 → 全局光标 + 所在页。

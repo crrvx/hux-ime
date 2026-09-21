@@ -184,13 +184,23 @@ platform/                     # 平台适配
 - 两者均**晚于本轮金样 pin（`8b615235`）**，故差分全绿守护不到；追平需升 pin + 重生成金样。
 
 **平台（fcitx5）**
-- C++ 壳状态菜单白名单写死 5 个方案选项名（`shell/hux.cpp`），方案改名即静默失效；
-  建议经 ABI 暴露运行时选项名，或加一致性测试。
-- 17 项默认值在 C++ schema 与 `hux-cfg::Settings::default` 各写一份，无一致性校验。
+- ✅ 已修：C++ 壳不再硬编码方案选项名——ABI 新增 `hux_engine_option_role_count` /
+  `hux_engine_option_key(role)`（角色序 `HUX_OPTION_*`），状态菜单按角色取名、只保留 UI 文案；
+  面板数字序号改取**运行时生效值**（`hux_engine_option_value` + `HUX_OPTION_DIGIT_SELECT`），
+  状态菜单关掉数字直选后不再显示序号。导出 12 → 14，头文件与 `.so` 符号校验同步通过。
+- ✅ 已修：17 项默认值在 C++ schema 与 `hux-cfg::Settings::default` 各写一份的问题，
+  由新增测试 `schema_defaults_match_settings_defaults`（解析 `shell/hux.cpp` 的
+  `.path{}`/`.defaultValue`，含 keysym→rime 键名转换）逐项比对并断言核对数为 17，
+  使漂移在 CI 即失败。
 - 面板数字序号/页大小只读配置，而引擎按运行时选项处理（状态菜单关掉数字直选后面板仍显示序号）。
-- 无会话时 `set_option_value` 直接返回 true 而不落盘（状态菜单切换静默丢失）。
-- 事件泵硬编码 `0..4`；`CString::new` 失败被静默吞掉（含 NUL 的提交/候选整条丢弃）。
-- 保存失败属性 `*_options_error` 全仓无读取方（诊断不落地）。
+- ✅ 已修：无会话时状态菜单切换直写存储落盘（`OptionsStore::set_value` + 单测）。
+- ✅ 已修：`CString` 含 NUL 时剔除并记日志（`ui::cstring_lossy` + 单测），不再整条丢空；
+  事件泵上限具名为 `EVENT_PUMP_ROUNDS`。
+- ✅ 已修：保存失败属性 `*_options_error` 并入状态串（`hux_engine_status` 可见）+ 端到端单测。
+- ✅ 已修（本轮顺带发现的真缺陷）：参照的选项抑制是**写入时**抑制（`live.syncing`），
+  本移植曾用「按名一次性名单」——`sync` 排队的事件会**吞掉紧随其后的第一次真实改动**
+  （状态菜单在会话建立后首次切换可能不落盘）。现改为写入后 `Context::discard_option_events`
+  丢弃自身事件，`Options::observe` 回归参照语义；cfg 单测同步重写。
 
 **内核（hux-core）**
 - **契约语义边界**（需决策）：`OptionIds` 的 4 个字段名 + `SchemeConfig` 的 `min_retained_raw_length`/
@@ -225,10 +235,17 @@ platform/                     # 平台适配
   "末段带 `paging` 标签"；本实现有意放宽为 `has_menu`（`host.rs` `key_binder` 注释），
   字段文档已对齐。若要严格实现，需同时钉住 `paging` 标签的写入时机（`mark_paging` 现由翻页时写入）。
 
-**工具 / CI（廉价加固）**
-- 三个不重生成的金样（`key` / `key_sequence` / `sound_to_char_shape`）现已在 CI 校验 sha256 ✓；
-  仍缺：`tools/probes/*.cpp` 编译检查、生成器脚本写库前「至少 1 个用例」断言、
-  `gen_pinyin_index.py --check` 语义（现恒真）、CI 缓存/超时/`--locked`。
+**工具 / CI**
+- ✅ 已修：两个探针生成器写库前先写 `$OUT.tmp.$$` 并断言至少 1 个 `case`，
+  再原子 `mv`（空/全注释 CASES 不再把入库金样覆盖成只剩头部）。
+- ✅ 已修：`gen_pinyin_index.py --check` 与**由 `--source` 重建**的内容逐字节比对
+  （此前不带 `--manifest` 时对任意文件都打印 `check ok`，属恒真检查）；显式传
+  `--manifest` 而文件缺失即 `exit 1`。正负例均已验证。
+- ✅ 已修：CI 加 `--locked`、`timeout-minutes: 30`（五个作业）与 `concurrency`（同分支取消旧运行）。
+  **有意不加** 缓存 action（保持第三方依赖面最小，冷编译代价可接受）。
+- **待做**：`tools/probes/*.cpp` 的编译检查——探针依赖 librime/librime-lua 开发文件，
+  `rust` 作业只有 `libfcitx5core-dev`；要么新增一个装 librime 的作业，要么仅在本地复核
+  （现状：探针只在手动生成金样时编译）。
 
 ## 9. 骨架（已落地）
 
