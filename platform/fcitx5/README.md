@@ -112,6 +112,13 @@ D 16:41:47.539737 hux.cpp:404] hux: ~HuxEngine
 不保留组合）；切换输入法/重置由本层**直接丢弃**（不提交）。上游默认在切换输入法时提交
 候选/预编辑，本实现有意取「丢弃」契约；打包待做（发行版打包脚本，不影响上面的安装布局）。
 
+- **fcitx5 版本**：CI 在 **ubuntu-26.04** 上按 **apt 提供的版本**构建 addon（26.04 = Resolute，其 apt
+  当前给 **5.1.19**，不钉具体版本；`ubuntu-latest` 目前仍是 24.04、其 apt 只有 5.1.7，待 GitHub 迁移后
+  再换回）。代码下限由
+  CMake 明示为 **5.1.15**（配置项的指定初始化构造 `Option(OptionParameters)`；候选注释 `setComment`
+  需 ≥5.1.9），低于下限时 `find_package` 在 configure 阶段直接报错。更早的版本（例：Ubuntu 24.04 的
+  5.1.7）**不受支持、不参与 CI**。
+
 - **引擎 ↔ UI 对象的生命周期**：fcitx5 中 addon 实例（含本引擎）**先于** `InputContext` 析构，
   而候选列表 / 状态区条目归 IC 所有 ⇒ 引擎释放后 UI 仍可能持有指向引擎或其成员的指针。
   本层两处加固：① `~HuxEngine` 对每个 IC `clearGroup(StatusGroup::InputMethod)`，摘掉状态区里

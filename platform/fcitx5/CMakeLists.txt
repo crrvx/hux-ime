@@ -7,7 +7,10 @@ project(hux-platform-fcitx5 VERSION 0.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Fcitx5Core REQUIRED)
+# fcitx5 下限 **5.1.15**：配置项用「指定初始化」构造 `Option(OptionParameters)`（该构造 5.1.15 才有），
+# 候选注释 `CandidateWord::setComment` 需 ≥5.1.9。CI 在 **ubuntu-26.04** 上按 apt 提供的版本构建
+# （26.04 当前给 5.1.19，不钉具体版本）；低于下限时在这里直接报错，而不是在 C++ 模板深处炸开。
+find_package(Fcitx5Core 5.1.15 REQUIRED)
 
 # Rust 静态库（逻辑层；cargo 自身增量，故每次构建都调用）。
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")

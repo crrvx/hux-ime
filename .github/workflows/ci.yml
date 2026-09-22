@@ -170,9 +170,16 @@ jobs:
 
   # C++ 侧（fcitx5 addon）：configure → 构建/链接 → C ABI 符号一致 → 安装布局（DESTDIR，免 sudo）。
   # 结构性迁移（如拆 crate / 挪目录）与 ABI 契约漂移（crates/hux-ffi/include/hux_abi.h）在此暴露。
+  #
+  # 用 **ubuntu-26.04** + apt 装 fcitx5 开发包（26.04 = Resolute，其 apt 当前给 **5.1.19**）：
+  # 不进容器、不钉具体版本，「Ubuntu 新版的 apt 给什么就用什么」。代码下限不在 CI 断言，而由
+  # `platform/fcitx5/CMakeLists.txt` 的 `find_package(Fcitx5Core 5.1.15 REQUIRED)` 守卫——
+  # 装到过旧版本时 configure 阶段就给出清晰报错。
+  # 注：`ubuntu-latest` 目前仍是 24.04（apt 里是 fcitx5 5.1.7，低于下限）；待 GitHub 把
+  # `ubuntu-latest` 迁到 26 之后（公告 2026-10-19 起），可把下面的标签换回 `ubuntu-latest`。
   addon:
     timeout-minutes: 30
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -180,6 +187,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libfcitx5core-dev librime-dev
+      - name: Show toolchain versions
+        run: |
+          # 版本落差排查用：fcitx5 未必提供 pkg-config 文件，故失败即回退到包管理器查询。
+          (pkg-config --modversion Fcitx5Core 2>/dev/null || dpkg -l libfcitx5core-dev | tail -1)
+          rustc -V
       - name: Configure & build addon (cargo + cmake)
         run: |
           cmake -S platform/fcitx5 -B build/addon \
@@ -210,8 +222,16 @@ jobs:
       - name: Verify install layout (DESTDIR)
         run: |
           DESTDIR=/tmp/stage cmake --install build/addon
-          for f in usr/lib/fcitx5/libhux.so \
-                   usr/share/fcitx5/addon/hux.conf \
+          # `libhux.so` 的落点由 fcitx5 的 `FCITX_INSTALL_ADDONDIR` 决定：Arch/Fedora 是
+          # `lib/fcitx5` 或 `lib64/fcitx5`，Debian/Ubuntu 是 multiarch 的 `lib/<triplet>/fcitx5`
+          # ⇒ 不写死路径，按实际落点核对（写死会把发行版布局差异误报成「缺少安装文件」）。
+          so=$(find /tmp/stage -name libhux.so -print -quit)
+          test -n "$so" || { echo "::error::安装布局里没有 libhux.so"; exit 1; }
+          case "$so" in
+            */fcitx5/libhux.so) ;;
+            *) echo "::error::libhux.so 不在 fcitx5 addon 目录：$so"; exit 1 ;;
+          esac
+          for f in usr/share/fcitx5/addon/hux.conf \
                    usr/share/fcitx5/inputmethod/hux.conf; do
             test -f "/tmp/stage/$f" || { echo "::error::缺少安装文件 /$f"; exit 1; }
           done
@@ -225,7 +245,7 @@ jobs:
             test -f "/tmp/stage/$f" || { echo "::error::CMake 安装缺少随包数据 /$f（见 data/MANIFEST）"; exit 1; }
           done < data/MANIFEST
           test "$count" -gt 0 || { echo "::error::data/MANIFEST 没有有效行"; exit 1; }
-          echo "安装布局：3 个插件文件 + $count 个随包数据文件"
+          echo "安装布局：$so + 2 个 conf + $count 个随包数据文件"
 
   # 一般金样校验：使用 runner 系统提供的 Lua（Ubuntu 当前可用的最新 lua 包）。
   golden:
