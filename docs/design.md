@@ -80,12 +80,15 @@ crate / 模块级结构与「结构正义」硬规则见 [`refactor.md`](refacto
   **不自行转发**，交回核心在 `ReservedLast` 提交转换后的字符——否则客户端会按系统布局重新解释该键。
   机制是 C ABI 处置位 `HUX_KEY_FORWARD_AFTER_COMMIT`（`crates/hux-ffi/include/hux_abi.h`）+
   `platform/fcitx5/shell/hux.cpp` 用 fcitx5 自己的 `keyEvent.forward()` 判断是否重发。
-- **UI 同步**：preedit 参照 librime `Composition::GetPreedit`——高亮候选的 `preedit`（正常段按词
-  分码，如 `sh ks`；音反查段按音节，如 `` `zhong guo ``）优先，组合之后的原始输入原样接在其后
-  （左右移动光标时保持分码，如 `` ab cd `` + 尾部 `ja` → `` ab cdja ``）；无高亮候选时回退
-  「缓冲 + 原始输入」；光标为字节偏移。
+- **UI 同步**：preedit 取高亮候选的 `preedit`（正常段按词分码，如 `sh ks`；音反查段按音节，如
+  `` `zhong guo ``），组合之后的原始输入原样接在其后（左右移动光标时保持分码，如 `` ab cd `` +
+  尾部 `ja` → `` ab cdja ``）；无高亮候选时回退「缓冲 + 原始输入」；光标为字节偏移。
+  注：librime C-API 呈现的预编辑是「原始输入 + 段提示」（`` `zhongguo〔拼音〕 ``，不分音节）；
+  本仓默认按候选分段显示，可用「原始输入」模式复现上游观感（登记见
+  [`upstream-deviations.md`](upstream-deviations.md) ②）。
 - **反查**：音反查（`sound_to_char_shape.rs`）语义对齐 librime 词典反查——拼写缩写罚 `log 0.5`、全拼可达时
-  缩写路径剪枝、补全罚 `log 0.05`、排序 = 可信度 + `ln(权重)`、上限 20；字反查（`char_to_sound_shape.rs`）
+  缩写路径剪枝、补全罚 `log 0.05`、排序 = 可信度 + `ln(权重)`、上限 20；预编辑按上游 `preedit_format` 做 ü 例外拼写（`nv`→`nü`、
+  `lue`→`lüe`、`jv`→`ju`）；字反查（`char_to_sound_shape.rs`）
   取光标左侧 1 字，上排拼音（排头「咅」）、下排虎码（排头「虍」）。两者触发键可配置，**仅单字符触发键**
   给默认可上屏候选。详见 [`../platform/fcitx5/README.md`](../platform/fcitx5/README.md)。
 - **候选点击**：面板候选为自定义 `CandidateWord`，点击经 `hux_engine_select_candidate` 按全局索引

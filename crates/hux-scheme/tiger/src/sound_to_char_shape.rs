@@ -7,7 +7,9 @@
 //! - 输入（去掉前缀后）按**拼写表**分段：音节本体 + 缩写（PY_c.schema.yaml 的两条
 //!   `abbrev` 规则），缩写可信度罚 `log(0.5)`；
 //! - 输入尾部无法由拼写键消耗时，对剩余部分做**补全**（拼写表子树展开；本体拼写再罚
-//!   `log(0.05)`，缩写保持自身罚）；
+//!   `log(0.05)`，缩写保持自身罚），补全只作用于**最后一段**内部；
+//! - 撇号 `'` 是**显式音节边界**（上游 `speller/delimiter: " '"`）：它不产生音节、零代价
+//!   可跨，但任何拼写键都不得跨过它 —— `` `xi'an `` 是 `xi` + `an` 两个音节，不是 `xian`；
 //! - 分段路径的音节序列必须与词条的码**完全一致**；
 //! - 候选次序 = 「可信度 + ln(权重)」降序（权重序取自组内稳定排序），上限
 //!   [`CANDIDATE_LIMIT`]（与主候选一致）；
@@ -47,6 +49,11 @@ const ABBREV_PENALTY: f64 = -std::f64::consts::LN_2;
 const COMPLETION_PENALTY: f64 = -2.995732273553991;
 /// 参照 `log(DBL_EPSILON)`（权重为 0 时）。
 const ZERO_WEIGHT_LOG: f64 = -36.04365338911715;
+/// 显式音节边界：上游 `speller/delimiter: " '"` 里的撇号（反查分支尖端 `92a0b54` 起）。
+///
+/// 它**不产生音节、可零代价跨过**（首/尾/连续撇号按空片段容忍），但任何拼写键都
+/// **不得跨过**它：`` `xi'an `` 必须是 `xi` + `an`，绝不能被单音节 `xian` 吞掉。
+const BOUNDARY: u8 = b'\'';
 /// 各类记录的**最小**字节数（容量钳制用）：长度前缀 / 计数 / 权重等固定字段。
 /// 文件头声明的计数不可信（可要求数十 GB 预分配），实际记录数受剩余字节数限制。
 const MIN_SYLLABLE_BYTES: usize = 2;
@@ -319,7 +326,7 @@ pub fn translate(
     }
     let len = code.len();
     let mut edges = build_edges(index, code);
-    let types = path_types(&edges, len);
+    let types = path_types(&edges, code, len);
     // `path_types` 恒置 `types[0]`（见其定义）⇒ 该兜底分支不可达，保留为防御。
     let Some(farthest) = (0..=len).rev().find(|&position| types[position].is_some()) else {
         return Vec::new();
@@ -327,7 +334,7 @@ pub fn translate(
     // 参照 `BuildSyllableGraph` 的剪枝：最远顶点的最优拼写类型决定「缩写/补全」是否被弃
     // （全拼可达时缩写一律弃用）。
     let last_type = types[farthest].unwrap_or(KIND_NORMAL).max(KIND_FUZZY);
-    prune(&mut edges, &types, farthest, last_type);
+    prune(&mut edges, &types, code, farthest, last_type);
     if farthest < len && !complete(index, &mut edges, code, farthest) {
         return Vec::new();
     }
@@ -347,7 +354,16 @@ struct Edge {
     penalty: f64,
 }
 
+/// 匹配区间 `[start, end)` 是否跨过撇号边界。
+///
+/// 一个判据同时覆盖三种情形：①起点即撇号（区间以撇号开头）、②区间内部有撇号
+/// （`` `xi'an `` 不得命中 `xian`）、③索引里含撇号的键（其匹配区间必含撇号 ⇒ 同样被拒）。
+fn crosses_boundary(code: &[u8], start: usize, end: usize) -> bool {
+    code[start..end].contains(&BOUNDARY)
+}
+
 /// 建立拼写边（按音节 id、终点排序；与参照 `Transpose` 的索引序一致）。
+/// 撇号是显式音节边界：跨过它的匹配不建边（见 [`crosses_boundary`]）。
 fn build_edges(index: &SoundToCharShapeIndex, code: &[u8]) -> Vec<Vec<Edge>> {
     let len = code.len();
     let mut edges: Vec<Vec<Edge>> = (0..=len).map(|_| Vec::new()).collect();
@@ -358,6 +374,9 @@ fn build_edges(index: &SoundToCharShapeIndex, code: &[u8]) -> Vec<Vec<Edge>> {
                 continue;
             }
             let end = position + key.len();
+            if crosses_boundary(code, position, end) {
+                continue;
+            }
             for &(syllable, kind) in alts {
                 edges[position].push(Edge {
                     end,
@@ -381,7 +400,8 @@ fn build_edges(index: &SoundToCharShapeIndex, code: &[u8]) -> Vec<Vec<Edge>> {
 }
 
 /// 各顶点的最优拼写类型（路径上最差类型的最小值；参照 BFS 的优先队列语义）。
-fn path_types(edges: &[Vec<Edge>], len: usize) -> Vec<Option<u8>> {
+/// 撇号不产生音节 ⇒ 跨过它时类型**原样传递**（零代价、不改变判定）。
+fn path_types(edges: &[Vec<Edge>], code: &[u8], len: usize) -> Vec<Option<u8>> {
     let mut types: Vec<Option<u8>> = vec![None; len + 1];
     types[0] = Some(KIND_NORMAL);
     let mut queue = std::collections::VecDeque::new();
@@ -390,6 +410,12 @@ fn path_types(edges: &[Vec<Edge>], len: usize) -> Vec<Option<u8>> {
         let Some(current) = types[position] else {
             continue;
         };
+        if code.get(position) == Some(&BOUNDARY)
+            && types[position + 1].is_none_or(|known| current < known)
+        {
+            types[position + 1] = Some(current);
+            queue.push_back(position + 1);
+        }
         for edge in &edges[position] {
             let next = current.max(edge.kind);
             if types[edge.end].is_none_or(|known| next < known) {
@@ -403,10 +429,23 @@ fn path_types(edges: &[Vec<Edge>], len: usize) -> Vec<Option<u8>> {
 
 /// 参照 `BuildSyllableGraph` 的「remove stale vertices and edges」：
 /// 从 `farthest` 向前逐顶点保留「类型可接受且有出边通往保留顶点」的顶点与边。
-fn prune(edges: &mut [Vec<Edge>], types: &[Option<u8>], farthest: usize, last_type: u8) {
+/// 撇号**零代价可跨** ⇒ 它与后继同判定（类型仍受最远顶点的类型支配，与普通顶点同口径）。
+fn prune(
+    edges: &mut [Vec<Edge>],
+    types: &[Option<u8>],
+    code: &[u8],
+    farthest: usize,
+    last_type: u8,
+) {
     let mut good = vec![false; edges.len()];
     good[farthest] = true;
     for position in (0..farthest).rev() {
+        if code[position] == BOUNDARY {
+            // `position + 1` 已在本轮之前判定（倒序推进）；撇号自身不改变类型。
+            good[position] =
+                good[position + 1] && types[position].is_some_and(|kind| kind <= last_type);
+            continue;
+        }
         if types[position].is_none() || types[position].is_some_and(|kind| kind > last_type) {
             continue;
         }
@@ -419,6 +458,10 @@ fn prune(edges: &mut [Vec<Edge>], types: &[Option<u8>], farthest: usize, last_ty
 
 /// 尾部补全（参照 `BuildSyllableGraph` 的 completion 段）：`tail` 对应拼写键子树；
 /// 本体拼写按补全罚、缩写保持自身罚。补全后不重跑剪枝。
+///
+/// **补全不得跨段**：补出的音节只能落在**最后一段**内部。剩余输入含撇号时直接放弃
+/// （否则 `` `xi'z' `` 会被含撇号的键补成跨过边界的音节）；含撇号的键在此同被拒
+/// ——它与 [`build_edges`] 的口径一致（这类键在上游字典里不存在）。
 fn complete(
     index: &SoundToCharShapeIndex,
     edges: &mut [Vec<Edge>],
@@ -426,10 +469,13 @@ fn complete(
     farthest: usize,
 ) -> bool {
     let len = code.len();
+    if crosses_boundary(code, farthest, len) {
+        return false;
+    }
     let tail = &code[farthest..];
     let mut added = false;
     for (key, alts) in &index.spellings {
-        if !key.starts_with(tail) {
+        if !key.starts_with(tail) || key.contains(&BOUNDARY) {
             continue;
         }
         for &(syllable, kind) in alts {
@@ -467,8 +513,50 @@ struct Chunk {
 }
 
 /// 广度优先收集「码恰好等于路径音节序列」的词条块（参照 `Table::Query` 的推入序）。
+/// 上游 `preedit_format` 的三条 `xform`（`tiger_sentence.schema.yaml`）：`v` 的 ü 例外拼写。
+/// 按出现次序做**全局**替换：`([nl])v → $1ü`、`([nl])ue → $1üe`、`([jqxy])v → $1u`。
+pub(crate) fn format_preedit(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut index = 0usize;
+    while index < chars.len() {
+        let ch = chars[index];
+        if index + 1 < chars.len() && chars[index + 1] == 'v' {
+            if matches!(ch, 'n' | 'l') {
+                out.push(ch);
+                out.push('ü');
+                index += 2;
+                continue;
+            }
+            if matches!(ch, 'j' | 'q' | 'x' | 'y') {
+                out.push(ch);
+                out.push('u');
+                index += 2;
+                continue;
+            }
+        }
+        if index + 2 < chars.len()
+            && matches!(ch, 'n' | 'l')
+            && chars[index + 1] == 'u'
+            && chars[index + 2] == 'e'
+        {
+            out.push(ch);
+            out.push('ü');
+            out.push('e');
+            index += 3;
+            continue;
+        }
+        out.push(ch);
+        index += 1;
+    }
+    out
+}
+
 /// `code` 用于生成「按音节分码」的预编辑：上一段为全拼（正常拼写）时在下一个音节前插空格，
 /// 缩写/补全段与后续合并（如 `` `zhongguo `` → `` `zhong guo ``、`` `zho `` → `` `zho ``）。
+///
+/// 撇号**原样照抄**且**两侧都不额外插空格**（`` `xi'an `` → `` `xi'an ``，不是 `` `xi 'an ``
+/// 也不是 `` `xi' an ``）：它本身已是分隔符，跨过它既不产生音节也不补空格。
 fn collect_chunks(
     index: &SoundToCharShapeIndex,
     edges: &[Vec<Edge>],
@@ -485,26 +573,39 @@ fn collect_chunks(
         KIND_NORMAL,
     ));
     while let Some((position, path, penalty, preedit, last_kind)) = queue.pop_front() {
+        // 走完整段输入才产出候选块；空路径（输入全由撇号跨过，如 `` `' ``）不产生音节。
+        if position == len {
+            if !path.is_empty()
+                && let Some(group) = index.group(&path)
+            {
+                chunks.push(Chunk {
+                    first: group.first,
+                    count: group.count,
+                    penalty,
+                    preedit,
+                });
+            }
+            continue;
+        }
+        // 撇号：零代价跨过（不产生音节、不插空格），预编辑原样照抄。
+        if code[position] == BOUNDARY {
+            let mut next_preedit = preedit.clone();
+            next_preedit.push('\'');
+            queue.push_back((position + 1, path.clone(), penalty, next_preedit, last_kind));
+        }
         for edge in &edges[position] {
             let mut next_path = path.clone();
             next_path.push(edge.syllable as u16);
             let next_penalty = penalty + edge.penalty;
             let mut next_preedit = preedit.clone();
-            if !next_preedit.is_empty() && last_kind == KIND_NORMAL {
+            // 全拼段之后在下一个音节前插空格；上一字符已是撇号时不再插（撇号即分隔符）。
+            if !next_preedit.is_empty() && last_kind == KIND_NORMAL && !next_preedit.ends_with('\'')
+            {
                 next_preedit.push(' ');
             }
             next_preedit.push_str(&String::from_utf8_lossy(&code[position..edge.end]));
-            if let Some(group) = index.group(&next_path) {
-                if edge.end == len {
-                    chunks.push(Chunk {
-                        first: group.first,
-                        count: group.count,
-                        penalty: next_penalty,
-                        preedit: next_preedit.clone(),
-                    });
-                }
-            }
-            if edge.end < len && index.prefix_exists(&next_path) {
+            // 到达末尾的状态统一在上方产出；中途状态按「存在以该路径为前缀的码」续推。
+            if edge.end == len || index.prefix_exists(&next_path) {
                 queue.push_back((edge.end, next_path, next_penalty, next_preedit, edge.kind));
             }
         }
@@ -547,7 +648,7 @@ fn emit(
         let entry = &index.entries[(chunks[position].first + cursors[position]) as usize];
         let mut candidate =
             Candidate::new("reverse_lookup", start, end, index.entry_text(entry), "");
-        candidate.preedit = format!("{code_prefix}{}", chunks[position].preedit);
+        candidate.preedit = format_preedit(&format!("{code_prefix}{}", chunks[position].preedit));
         result.push(candidate);
         cursors[position] += 1;
     }
@@ -621,14 +722,15 @@ fn punct_shape_comment(punct: &str) -> String {
 }
 
 /// 音反查输入模式：`<前缀>[a-z']*`（参照 schema `recognizer/patterns/reverse_lookup`
-/// = `^` + 前缀 + `[a-z']*$`）：撇号可出现在任意位置。
+/// = `^` + 前缀 + `[a-z']*$`）：撇号可出现在任意位置（含首/尾/连续）。
 ///
-/// 口径事实（与本仓实现一致）：上游 `92a0b54` 把撇号同时放进 `speller/delimiter`，
-/// 使反查段内按撇号**切分音节**（依赖上游 librime 的 delimiter 修复
-/// [rime/librime#1233](https://github.com/rime/librime/pull/1233)；本机 librime 1.17.0
-/// 未含该修复，故已入库金样里含撇号的反查段**无候选**）。
-/// 本仓只落地「模式放行 + 撇号保留在输入中」，**不实现音节切分**：反查段由本段独占，
-/// 音节按拼写键前缀匹配建边，而拼写表不含 `'` ⇒ 含撇号的反查段同样无候选（与金样一致）。
+/// 上游 `92a0b54` 把撇号同时写进 `speller/delimiter`，故它是**显式音节边界**：本仓在
+/// 「拼写图 → 路径 → 候选」的流水线里落地同一语义（[`translate`]，不依赖 librime 的
+/// delimiter 修复 [rime/librime#1233](https://github.com/rime/librime/pull/1233)），
+/// 处理器则把撇号**原样留在输入中**（`interaction::processor` 的识别模式分支经本函数放行）。
+///
+/// 已入库的音反查金样里 `apostrophe-*` 三例同样无候选：夹具 `PY_c.dict.yaml` 没有
+/// `xi`/`an`/`xian` 这类音节，两边行为一致，与本语义不冲突。
 /// 撇号在 abc 段一侧的效果见 `interaction::translate::SEGMENTATION_DELIMITER`（追踪反查分支 pin 的 schema）。
 pub fn matches_pattern(input: &[u8], prefix: char) -> bool {
     let prefix = prefix as u8;
@@ -763,6 +865,18 @@ mod tests {
         assert_eq!(texts(b"`zhong"), ["中", "重", "种", "钟", "垚"]);
         assert!(texts(b"`zhon").is_empty());
         assert!(texts(b"`zuo").is_empty());
+    }
+
+    #[test]
+    fn preedit_format_applies_u_umlaut_exceptions() {
+        // 上游 `preedit_format`：nv→nü、lue→lüe、jv→ju（三条 xform 按序做全局替换）。
+        assert_eq!(format_preedit("`lv"), "`lü");
+        assert_eq!(format_preedit("`nv"), "`nü");
+        assert_eq!(format_preedit("`lue"), "`lüe");
+        assert_eq!(format_preedit("`jv"), "`ju");
+        assert_eq!(format_preedit("`yv"), "`yu");
+        assert_eq!(format_preedit("`lv lv"), "`lü lü");
+        assert_eq!(format_preedit("`zhong guo"), "`zhong guo");
     }
 
     #[test]
@@ -1051,5 +1165,205 @@ mod tests {
         std::fs::write(&gz, encoder.finish().expect("gzip")).expect("写畸形 gz");
         assert!(SoundToCharShapeIndex::load(&gz).is_err());
         std::fs::remove_dir_all(&dir).expect("清理临时目录");
+    }
+
+    // ------------------------------------------------------------ 撇号边界
+    //
+    // 上游 `speller/delimiter: " '"` 的撇号是**显式音节边界**：不产生音节、零代价可跨
+    // （空片段容忍），但任何拼写键都不得跨过它。以下用例用合成索引——夹具 `PY_c.dict.yaml`
+    // 里没有 `xi`/`an` 这类可作对照的音节，无法表达「单音节 `xian` vs `xi` + `an`」二义。
+
+    /// 撇号边界用例的合成索引：音节 `xi`/`an`/`xian`/`zhong`/`guo`/`zan`；另加两条
+    /// **含撇号的键**（`xi'an`、`z'an`）——它们不得参与建边与补全（上游字典里不存在这类键）。
+    fn boundary_index() -> SoundToCharShapeIndex {
+        let builder = IndexBuilder {
+            syllables: ["xi", "an", "xian", "zhong", "guo", "zan"]
+                .iter()
+                .map(|syllable| (*syllable).to_string())
+                .collect(),
+            spellings: vec![
+                (b"xi".to_vec(), vec![(0, TYPE_NORMAL)]),
+                (b"an".to_vec(), vec![(1, TYPE_NORMAL)]),
+                (b"xian".to_vec(), vec![(2, TYPE_NORMAL)]),
+                (b"xi'an".to_vec(), vec![(2, TYPE_NORMAL)]),
+                (b"zhong".to_vec(), vec![(3, TYPE_NORMAL)]),
+                (b"guo".to_vec(), vec![(4, TYPE_NORMAL)]),
+                (b"zan".to_vec(), vec![(5, TYPE_NORMAL)]),
+                (b"z'an".to_vec(), vec![(5, TYPE_NORMAL)]),
+            ],
+            // 码组必须按码字典序（`group` 依赖二分查找）。
+            groups: vec![
+                (vec![0], 1),
+                (vec![0, 1], 1),
+                (vec![0, 5], 1),
+                (vec![1], 1),
+                (vec![2], 1),
+                (vec![3], 1),
+                (vec![3, 4], 1),
+            ],
+            entries: ["西", "西安", "西赞", "安", "先", "中", "中国"]
+                .iter()
+                .map(|text| (100, (*text).to_string()))
+                .collect(),
+        };
+        SoundToCharShapeIndex::parse(&builder.bytes()).expect("合法索引")
+    }
+
+    /// 合成索引下的音反查「（候选文本, 预编辑）」序列。
+    fn lookup(index: &SoundToCharShapeIndex, input: &[u8]) -> Vec<(String, String)> {
+        let lexicon = Lexicon::load(&[], 0);
+        translate(
+            index,
+            &lexicon,
+            input,
+            '`',
+            0,
+            input.len(),
+            None,
+            &mut PairState::default(),
+            false,
+            CANDIDATE_LIMIT,
+        )
+        .into_iter()
+        .map(|candidate| (candidate.text, candidate.preedit))
+        .collect()
+    }
+
+    /// 决定性用例：索引里同时有单音节 `xian` 与 `xi` + `an` ⇒ `` `xi'an `` 必须走两音节路径
+    /// （含撇号的键 `xi'an` 也救不了 `xian`），`` `xian `` 仍走单音节。
+    #[test]
+    fn apostrophe_splits_syllables_instead_of_merging_them() {
+        let index = boundary_index();
+        assert_eq!(
+            lookup(&index, b"`xi'an"),
+            [("西安".to_string(), "`xi'an".to_string())]
+        );
+        assert_eq!(
+            lookup(&index, b"`xian")
+                .first()
+                .map(|(text, preedit)| (text.as_str(), preedit.as_str())),
+            Some(("先", "`xian"))
+        );
+    }
+
+    /// 首撇号 / 尾撇号 / 连续撇号：空片段容忍、不产生音节（librime delimiter 语义）。
+    #[test]
+    fn apostrophe_edges_tolerate_empty_segments() {
+        let index = boundary_index();
+        // 首撇号：空片段 + `xi`。
+        assert_eq!(
+            lookup(&index, b"`'xi"),
+            [("西".to_string(), "`'xi".to_string())]
+        );
+        // 尾撇号：`xi` + 空片段。
+        assert_eq!(
+            lookup(&index, b"`xi'"),
+            [("西".to_string(), "`xi'".to_string())]
+        );
+        // 连续撇号：`xi` + 两个空片段 + `an`。
+        assert_eq!(
+            lookup(&index, b"`xi''an"),
+            [("西安".to_string(), "`xi''an".to_string())]
+        );
+        // 两音节后再来一个尾撇号。
+        assert_eq!(
+            lookup(&index, b"`xi'an'"),
+            [("西安".to_string(), "`xi'an'".to_string())]
+        );
+        // 裸撇号 / 全是撇号：没有音节就没有候选（空片段不等于空码词条）。
+        assert!(lookup(&index, b"`'").is_empty());
+        assert!(lookup(&index, b"`''").is_empty());
+    }
+
+    /// 预编辑：撇号原样照抄，**两侧都不额外插空格**；无撇号的分段插空格行为不变。
+    #[test]
+    fn apostrophe_preedit_inserts_no_spaces_around_the_boundary() {
+        let index = boundary_index();
+        assert_eq!(
+            lookup(&index, b"`zhongguo"),
+            [("中国".to_string(), "`zhong guo".to_string())]
+        );
+        assert_eq!(
+            lookup(&index, b"`zhong'guo"),
+            [("中国".to_string(), "`zhong'guo".to_string())]
+        );
+        // 不产出「`xi 'an」或「`xi' an」。
+        assert_eq!(lookup(&index, b"`xi'an")[0].1, "`xi'an");
+        assert!(!lookup(&index, b"`xi'an")[0].1.contains(" '"));
+        assert!(!lookup(&index, b"`xi'an")[0].1.contains("' "));
+    }
+
+    /// 补全只作用于**最后一段**内部，且含撇号的键在建边与补全两侧同被拒。
+    #[test]
+    fn boundary_blocks_spelling_keys_and_cross_segment_completion() {
+        let index = boundary_index();
+        // 正向：最后一段内部的补全照旧可用（`xi'a` 由 `an` 补全）。
+        assert_eq!(
+            lookup(&index, b"`xi'a"),
+            [("西安".to_string(), "`xi'a".to_string())]
+        );
+        // 剩余输入「z'」跨段 ⇒ 不得用含撇号的键 `z'an` 补出 `zan`。
+        assert!(lookup(&index, b"`xi'z'").is_empty());
+        // 直接键入含撇号的键：建边侧即被拒（区间含撇号）。
+        assert!(lookup(&index, b"`xi'z'an").is_empty());
+    }
+
+    /// 处理器确实把撇号**保留在反查输入**里（识别模式分支 `push_input`）：
+    /// `` `xi `` + 撇号键 ⇒ 输入变为 `` `xi' ``。只允许改本文件，故该断言落在此处
+    /// （它复用内核既有的处理器入口，不依赖音反查索引）。
+    #[test]
+    fn processor_keeps_the_apostrophe_in_reverse_lookup_input() {
+        use crate::decode::Decoder;
+        use crate::interaction::{
+            K_SOUND_TO_CHAR_SHAPE_KEY, LiveLearning, ProcessorEnv, ProcessorResult, SentenceState,
+            processor,
+        };
+        use hux_core::host::HostOptions;
+        use hux_core::key::KeyEvent;
+        use hux_core::session::{Context, Segment};
+
+        let mut context = Context::new();
+        context.set_property(K_SOUND_TO_CHAR_SHAPE_KEY, "grave");
+        context.set_input(b"`xi");
+        context.composition.segments.push(Segment {
+            start: 0,
+            end: 3,
+            tags: vec![SOUND_TO_CHAR_SHAPE_TAG.to_string()],
+            translated: true,
+            ..Segment::default()
+        });
+        let mut state = SentenceState::fresh(1);
+        let mut decoder = Decoder::new(
+            Lexicon::load(&[], 0),
+            crate::lexicon::Supplement::load_default(None),
+            None,
+        );
+        let mut live = LiveLearning::default();
+        let mut dot_armed = false;
+        let host_options = HostOptions::default();
+        let mut env = ProcessorEnv {
+            now: 0.0,
+            dot_armed: &mut dot_armed,
+            min_retained: None,
+            page_size: 5,
+            host_options: &host_options,
+        };
+        let key = KeyEvent::new(
+            hux_core::key::keycode_by_name("apostrophe").expect("apostrophe"),
+            0,
+        );
+        assert_eq!(
+            processor(
+                &key,
+                &mut context,
+                &mut state,
+                &mut decoder,
+                &mut live,
+                &mut env
+            )
+            .expect("processor"),
+            ProcessorResult::Consume
+        );
+        assert_eq!(context.input(), b"`xi'");
     }
 }

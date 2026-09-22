@@ -99,7 +99,18 @@
   重放按出厂缺省驱动，差异登记为 `AddonExtension`（`digit_menu_select`）。
 - 平台侧由状态菜单开关（`hux_engine_option_value + HUX_OPTION_DIGIT_SELECT`）；关闭后不再直选。
 
-## ③ pin 差异：分段常量 `SEGMENTATION_DELIMITER`（`92a0b54` 的 `" '"` vs 主干 `abad411` 的 `" "`）
+## ②-补 addon 扩展：反查（触发键 / 字反查 / 预编辑呈现 / 英文模式）
+
+- **触发键可配置**：上游固定反引号 `` ` ``（`prefix`）；本仓读设置（音反查 / 字反查两项，可多项绑定），
+  前缀字符即触发键字符；**仅单字符触发键**（无 Ctrl/Alt/Super）时给默认可上屏候选——与上游 `` ` `` 单键同义。
+- **字反查（上游无对应物）**：取光标左侧 1 字，上排拼音（排头「咅」）、下排虎码（排头「虍」）；
+  多音 / 多码以 `/` 连接、缺数据 `?`。属本仓自研的 addon 扩展。
+- **预编辑呈现**：上游 C-API 的预编辑是「原始输入 + 段提示」（`` `zhongguo〔拼音〕 ``，不分音节）；
+  本仓默认按候选分段（`` `zhong guo〔拼音〕 ``），设置里可选「原始输入」以复现上游观感。
+- **无英文模式**：上游 `ascii_composer` 打开时反查不可用；本仓不实现英文模式，该路径不存在
+  （反查可用性不受影响）。
+
+## ③ pin 差异：分段常量 `SEGMENTATION_DELIMITER`（反查支线 `92a0b54` 的 `" '"` vs 主干 `9f742d2` 仍为 `" "`）
 
 - **上游依据**：`92a0b54`（反查分支尖端，`4ff37c4`/`92a0b54` 两笔）把撇号写进
   `speller/delimiter`（`" "` → `" '"`）作为音节分隔符；本仓音反查语义（识别模式 `^`[a-z']*$`、
@@ -120,14 +131,17 @@
   届时 `tools/cases/key_sequence_cases.txt` 的偏离注释同步改写。
   （另注：尖端还有 `punct_segmentor` 把反查段里的 `;` 直接落成全角「；」——本仓的标点由宿主表处理、
   不实现该分段器，属**另一处**已知范围差异，与本项 delimiter 差异无关。）
-- **撇号音节切分（既有口径）与上游 librime 依赖**：`92a0b54` 的「按 `speller/delimiter` 切分音节」
-  依赖上游 librime 的 delimiter 修复 [rime/librime#1233](https://github.com/rime/librime/pull/1233)；
-  本机 librime 1.17.0 未含该修复，故已入库音反查金样里含撇号的段**无候选**（`apostrophe-*` 三例）。
-  本仓只落地「识别模式放行 `^`[a-z']*$` + 撇号保留在输入中」，**不实现音节切分**——
-  反查段由本段独占、音节按拼写键前缀建边，而拼写表不含 `'` ⇒ 行为与金样一致（注释见
-  `sound_to_char_shape::matches_pattern`）。**回归做法**：上游 librime 修复并入后，
-  重生成 `key_sequence`/`sound_to_char_shape` 两份探针金样并复验 `apostrophe-*` 用例；
-  若届时上游同时并入 `feat/reverse-lookup`，③ 的两条登记项一并删除。
+- **撇号音节切分（已实现，不依赖上游 librime）**：上游 `92a0b54` 的「按 `speller/delimiter` 切分音节」
+  依赖 librime 的 delimiter 修复 [rime/librime#1233](https://github.com/rime/librime/pull/1233)，本机
+  librime 1.17.0 未含该修复（故探针金样里含撇号的段无候选）。本仓**已在自身流水线里落地等价语义**：撇号是
+  **显式音节边界**——不产生音节、零代价可跨（首 / 尾 / 连续撇号按空片段容忍），任何拼写键都不得跨过它
+  （`` `xi'an `` = `xi` + `an`，不是 `xian`），补全只作用于最后一段内部；预编辑原样照抄撇号且两侧不额外插空格。
+  落地位置：`crates/hux-scheme/tiger/src/sound_to_char_shape.rs`（`BOUNDARY` / `crosses_boundary` 与
+  `path_types` / `prune` / `complete` / `collect_chunks`），守护用例见该文件 tests 的「撇号边界」段。
+  **金样无需改动**：`apostrophe-tail` / `apostrophe-inner` / `apostrophe-commit` 不在 `DEVIATIONS` 里
+  （逐位比对）且继续通过——夹具 `PY_c.dict.yaml` 只有 14 个音节、不含 `xi`/`an`/`xian`，故「无候选」在两套
+  语义下都成立。**回归做法**：上游 librime 修复并入后重生成探针金样时，用含 `xi`/`an` 的夹具复核
+  `` `xi'an `` 应出两音节候选。
 - **建议的上游修法**：
   1. 最小改动：`lua/tiger_sentence.lua` 的 `context:has_menu()` 标点分支入口先问一次 key_binder 的翻页判据
      （`page_up_keys`/`page_down_keys` 及其 `when` 条件），命中则直接 `return 2`（不 stage 学习、不确认组合）；
