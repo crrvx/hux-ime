@@ -149,8 +149,11 @@ jobs:
         run: bash tools/checks/check_data_manifest.sh
       - name: Smoke-check install / uninstall entrypoints
         # 两个一键脚本是文档首推入口：语法 + `--dry-run` 冒烟（不写系统目录）。
+        # 注意：`bash -n a b c` 只检查 a（其余会成为位置参数），必须逐个查。
         run: |
-          bash -n install.sh uninstall.sh tools/generators/*.sh tools/checks/*.sh
+          for script in install.sh uninstall.sh tools/generators/*.sh tools/checks/*.sh; do
+            bash -n "$script" || exit 1
+          done
           ./install.sh --dry-run >/dev/null
           ./uninstall.sh --dry-run >/dev/null
           ./install.sh --help >/dev/null
@@ -253,7 +256,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       REFERENCE_REPO: https://github.com/lvyww/tiger-sentense-rime
-      REFERENCE_COMMIT: abad411750f79cfca750985fa266689b5d9b865f
+      # 主干 pin：`lua/*` 溯源的比对方，也是本作业「可重生成」金样的生成基准。
+      REFERENCE_COMMIT: 9f742d275c2bd50c7c664be1c258a7b8429e83a1
       # 反查分支尖端（音反查金样 `sound_to_char_shape.tsv.gz` 的 pin）；README 的
       # `lua/tiger_sentence.lua`（音反查金样）行按它核对，故检出里也要有这个提交。
       REVERSE_COMMIT: 92a0b54b53114e7e5aa6a1ff48efa95db0e21f9c
@@ -331,6 +335,11 @@ jobs:
             --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
             --lexical "$PWD/data/tiger_sentence.lexical.bin" \
             --out /tmp/decode_evidence_model.tsv --every 7 --early-commit 1 --required 1
+          lua tools/generators/gen_decode_golden.lua \
+            --reference _external/tiger-sentense-rime \
+            --data "$PWD/goldens/lexicon" --model "$PWD/goldens/fivegram_fixture.bin" \
+            --lexical "$PWD/data/tiger_sentence.lexical.bin" \
+            --out /tmp/decode_fivegram.tsv --every 7 --lock 1
           lua tools/generators/gen_learning_golden.lua \
             --reference _external/tiger-sentense-rime --out /tmp/learning.tsv
           lua tools/generators/gen_decode_golden.lua \
@@ -361,6 +370,7 @@ jobs:
           gunzip -c goldens/decode_rank_first.tsv.gz | cmp - /tmp/decode_rank_first.tsv
           gunzip -c goldens/decode_evidence.tsv.gz | cmp - /tmp/decode_evidence.tsv
           gunzip -c goldens/decode_evidence_model.tsv.gz | cmp - /tmp/decode_evidence_model.tsv
+          gunzip -c goldens/decode_fivegram.tsv.gz | cmp - /tmp/decode_fivegram.tsv
           gunzip -c goldens/learning.tsv.gz | cmp - /tmp/learning.tsv
           gunzip -c goldens/decode_learning.tsv.gz | cmp - /tmp/decode_learning.tsv
           gunzip -c goldens/decode_learning_model.tsv.gz | cmp - /tmp/decode_learning_model.tsv
@@ -378,7 +388,8 @@ jobs:
         shell: bash
     env:
       REFERENCE_REPO: https://github.com/lvyww/tiger-sentense-rime
-      REFERENCE_COMMIT: abad411750f79cfca750985fa266689b5d9b865f
+      # 主干 pin（与 `golden` 作业同步；本作业只做重生成，不做溯源校验）。
+      REFERENCE_COMMIT: 9f742d275c2bd50c7c664be1c258a7b8429e83a1
     steps:
       - name: Install toolchain
         run: pacman -Syu --noconfirm git lua gzip diffutils
@@ -429,6 +440,11 @@ jobs:
             --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
             --lexical "$PWD/data/tiger_sentence.lexical.bin" \
             --out /tmp/decode_evidence_model.tsv --every 7 --early-commit 1 --required 1
+          lua tools/generators/gen_decode_golden.lua \
+            --reference _external/tiger-sentense-rime \
+            --data "$PWD/goldens/lexicon" --model "$PWD/goldens/fivegram_fixture.bin" \
+            --lexical "$PWD/data/tiger_sentence.lexical.bin" \
+            --out /tmp/decode_fivegram.tsv --every 7 --lock 1
           lua tools/generators/gen_learning_golden.lua \
             --reference _external/tiger-sentense-rime --out /tmp/learning.tsv
           lua tools/generators/gen_decode_golden.lua \
@@ -459,6 +475,7 @@ jobs:
           gunzip -c goldens/decode_rank_first.tsv.gz | cmp - /tmp/decode_rank_first.tsv
           gunzip -c goldens/decode_evidence.tsv.gz | cmp - /tmp/decode_evidence.tsv
           gunzip -c goldens/decode_evidence_model.tsv.gz | cmp - /tmp/decode_evidence_model.tsv
+          gunzip -c goldens/decode_fivegram.tsv.gz | cmp - /tmp/decode_fivegram.tsv
           gunzip -c goldens/learning.tsv.gz | cmp - /tmp/learning.tsv
           gunzip -c goldens/decode_learning.tsv.gz | cmp - /tmp/decode_learning.tsv
           gunzip -c goldens/decode_learning_model.tsv.gz | cmp - /tmp/decode_learning_model.tsv
