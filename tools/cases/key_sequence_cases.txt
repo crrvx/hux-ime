@@ -64,6 +64,49 @@ punct_full_shape_space	full_shape=1	space
 punct_half_shape_at	full_shape=0	@
 punct_half_shape_minus	full_shape=0	-
 punct_buffered_period	tiger_sentence_early_commit_to_preedit=1,full_shape=0	a b Tab c period
+# 参照 abad411：菜单可见时的 ASCII 标点先确认组合（`_auto_commit` 下即上屏）再交标点表，
+# 故 schema 的 key_binder `=`/`-` 翻页绑定在这条路径上被遮蔽（显式 Page_* 键不受影响）。
+# 本仓判定其为上游缺陷并有意偏离：`punct_menu_equal` 在差分测试里按 DEVIATED_CASES 登记跳过
+# （金样仍记录上游行为、字节不动），`punct_menu_minus` 仍逐位一致；见 docs/upstream-deviations.md ①。
+punct_menu_equal		j a equal
+punct_menu_minus		j a minus
 # K3 ⑦b：大写字母（editor char_handler：DirectCommit 先提交组合再交宿主）
 upper_composing		a b A
 upper_idle		A
+# K3 ⑧：宿主链 `express_editor` 的 Return 变体（复核整改 F4/F5）。
+# 方案处理器只吃**未加修饰**的 `Return`/`KP_Enter`，故修饰键变体落到宿主链：
+# `Ctrl+Return` = `CommitScriptText`（提交脚本文本 = preedit 去首个 \t，否则原始输入；
+# 不经 `Commit()` ⇒ 不发提交通知）、`Ctrl+Shift+Return` = `CommitComment`
+# （注释为空则只吞键：不清组合、不提交空串）。
+editor_ctrl_return		a b Control+Return
+editor_ctrl_shift_return		a b Control+Shift+Return
+# K3 ⑧：标点表的 caret 语义（复核整改 F6）。参照 `Punctuator::ProcessKeyEvent` 在 caret 处
+# `PushInput(ch)`，引擎按 `input[..caret] + 标点` 分段 ⇒ 提交文本只到该段末尾。
+# 两条分别覆盖「无菜单」与「有菜单（处理器先确认/转发）」两种前序状态。
+punct_mid_caret_comma		a b Left comma
+punct_mid_caret_no_menu		x x Left comma
+# K3 ⑧：selector 首页上翻（复核整改 F2/F3）。参照 `Selector::PreviousPage` 在
+# `selected_index < page_size` 时 `Highlight(0)`（**归零高亮**，不是不动），并**无条件**
+# 写 `paging` 标签 —— 故紧随其后的上翻页键 `-`（`when: paging`）成立。
+# `nav_page_up_home_reset` 逐位覆盖「归零高亮」；`nav_page_home_minus` 记录的是**上游**
+# 行为（`-` 被方案标点分支吃掉 ⇒ 提交「乙-」），本仓按 docs/upstream-deviations.md「有意偏离上游」翻页，
+# 故该用例在差分测试中登记为 DEVIATED_CASES（金样仍如实记录上游）。
+nav_page_up_home_reset		j a Down Page_Up
+nav_page_home_minus		a b Page_Up minus
+# 复核整改 3a（B1）：addon 数字直选（`tiger_sentence_digit_select`，**出厂缺省 true**）。
+# 金样记录的是**上游**行为（方案核心无该扩展：数字作为编码字符入串），本仓按出厂缺省
+# 开启 ⇒ 菜单可见时数字直选当前页候选；差异在差分测试中登记（`DEVIATED_CASES`）。
+digit_menu_select		a b 1
+# 复核整改 3a/3b（B2）：分段常量 `SEGMENTATION_DELIMITER`。本仓追踪反查分支尖端
+# `92a0b54` 的 schema（`delimiter: " '"`；主干 pin `abad411` 为 `" "`）⇒ `'` 之后的
+# `1`/`;` 在本仓切成「abc 段 `ab'` + raw 段」、上游主干仍是单段 `ab'1`。
+# ① `*_split` 两例：**比对字段实测一致**（段结构差异不在比对面：preedit 不参与比对），
+#    故逐位通过、不登记；
+# ② `*_page` 两例：末段类型不同 ⇒ 宿主导航键的消费不同（raw 末段不消费
+#    `Up`/`Down`/`Page_*`，上游的 abc 单段消费）。金样如实记录**主干 pin** 的行为，
+#    本仓行为在差分测试的 `DEVIATIONS` 里登记（同 pin 的探针实测：`PIN=92a0b54`
+#    重跑同一探针即得本仓行），见 docs/upstream-deviations.md ③「delimiter pin 差异」。
+apostrophe_digit_split		a b apostrophe 1
+apostrophe_semicolon_split		a b apostrophe semicolon
+apostrophe_digit_page		a b apostrophe 1 Page_Down
+apostrophe_semicolon_page		a b apostrophe semicolon Page_Down

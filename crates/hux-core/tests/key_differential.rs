@@ -6,10 +6,8 @@
 //! 金样 `goldens/key.tsv.gz` 由 `tools/generators/gen_key_golden.sh` 生成
 //! （系统 librime 1.17.0 + `tools/cases/key_cases.txt`）。
 
-mod common;
-
-use common::open_golden;
 use hux_core::key::{self, KeyEvent};
+use hux_test_support::open_golden;
 use std::io::BufRead;
 
 #[test]

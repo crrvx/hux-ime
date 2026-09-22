@@ -31,7 +31,7 @@
 
 ## 3. 本仓库（hux-ime）改动
 
-- `hux-core` 数据目录查找补 **`XDG_DATA_DIRS`**：
+- 平台层数据目录查找支持 **`XDG_DATA_DIRS`**（落在 `platform/fcitx5/src/paths.rs`，内核不读环境变量）：
   顺序 `HUX_DATA_DIRS`（覆盖） > `XDG_DATA_HOME/fcitx5/hux` > `XDG_DATA_DIRS/*/fcitx5/hux` > `/usr/share/fcitx5/hux`；
   桌面行为不变（新路径只是补充）。
 - 视验收结果决定是否需要 `__ANDROID__` 差异（配置 schema、状态区子菜单；见 §6）。
@@ -45,7 +45,7 @@
 - [ ] `src/main/cpp/CMakeLists.txt`：
   - `find_package(fcitx5 CONFIG)` + `find_package(Fcitx5Core MODULE)`；
   - Rust：`ANDROID_ABI=arm64-v8a → aarch64-linux-android`，`cargo build --target … --release`（**staticlib 无需链接器配置**）；
-  - `add_library(hux SHARED <hux-ime>/crates/hux-addon/shell/hux.cpp)` + 链接 `libhux_addon.a`、`Fcitx5::Core`（按需 `log dl m unwind`）；
+  - `add_library(hux SHARED <hux-ime>/platform/fcitx5/shell/hux.cpp)` + 链接 `libhux_platform_fcitx5.a`、`Fcitx5::Core`（按需 `log dl m unwind`）；
   - `install(TARGETS hux LIBRARY DESTINATION /usr/lib/fcitx5 COMPONENT config)`、
     `install(FILES conf/* … COMPONENT config)`、`install(DIRECTORY data/ … COMPONENT prebuilt-assets)`（排除 `README.md`）。
 - [ ] 模型插件模块：仅 `assets/usr/share/fcitx5/hux/models/sentence-ngram-mobile.bin` + `plugin.xml`。

@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+[package]
+name = "hux-cfg"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "虎虚（hux-ime）配置：设置项、选项存储与合并顺序"
+
+[dependencies]
+anyhow.workspace = true
+hashbrown.workspace = true
+hux-core = { path = "../hux-core" }
+yaml-rust2.workspace = true

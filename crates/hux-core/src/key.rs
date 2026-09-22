@@ -15,8 +15,6 @@ pub const K_LOCK_MASK: i32 = 1 << 1;
 pub const K_CONTROL_MASK: i32 = 1 << 2;
 pub const K_ALT_MASK: i32 = 1 << 3;
 pub const K_SUPER_MASK: i32 = 1 << 26;
-pub const K_HYPER_MASK: i32 = 1 << 27;
-pub const K_META_MASK: i32 = 1 << 28;
 pub const K_RELEASE_MASK: i32 = 1 << 30;
 /// librime `kModifierMask`。
 pub const K_MODIFIER_MASK: i32 = 0x5f00_1fff;
@@ -98,10 +96,6 @@ impl KeyEvent {
 
     pub fn alt(&self) -> bool {
         self.modifier & K_ALT_MASK != 0
-    }
-
-    pub fn caps(&self) -> bool {
-        self.modifier & K_LOCK_MASK != 0
     }
 
     pub fn super_modifier(&self) -> bool {

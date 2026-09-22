@@ -10,7 +10,9 @@
 //!
 //! `full_shape` 选项切换两张表；`ascii_punct` 选项关闭标点（由宿主链判定）。
 
-use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::path::Path;
+use std::path::PathBuf;
 
 use hashbrown::HashMap;
 use yaml_rust2::{Yaml, YamlLoader};
@@ -24,13 +26,27 @@ pub enum PunctDef {
     Pair(String, String),
 }
 
-/// 标点表（half/full shape 两张映射 + pair 交替状态）。
+/// 成对符号的交替状态：**每输入上下文一份**（参照 librime `Punctuator::oddness_` 为会话成员）。
+#[derive(Clone, Debug, Default)]
+pub struct PairState {
+    oddness: HashMap<(char, bool), bool>,
+}
+
+impl PairState {
+    /// 取下一位并翻转（首次为第一位）。
+    fn next(&mut self, key: (char, bool)) -> bool {
+        let value = self.oddness.entry(key).or_insert(false);
+        let current = *value;
+        *value = !current;
+        current
+    }
+}
+
+/// 标点表（half/full shape 两张映射；**只读数据**——成对交替状态见 [`PairState`]）。
 #[derive(Clone, Debug, Default)]
 pub struct PunctTable {
     half: HashMap<char, PunctDef>,
     full: HashMap<char, PunctDef>,
-    /// pair 交替状态（按「形状 + 键」；参照按定义对象记录，两张表互不影响）。
-    pair_oddness: HashMap<(char, bool), bool>,
 }
 
 impl PunctTable {
@@ -44,7 +60,6 @@ impl PunctTable {
         Ok(Self {
             half: parse_shape(child_owned(punctuator, "half_shape")),
             full: parse_shape(child_owned(punctuator, "full_shape")),
-            pair_oddness: HashMap::new(),
         })
     }
 
@@ -64,7 +79,9 @@ impl PunctTable {
         (None, last_error)
     }
 
-    /// 读取单个文件。
+    /// 读取单个文件（**仅本模块单测使用**；生产路径走 [`PunctTable::load_first`]，
+    /// 后者把「空表 / 解析失败」也算失败并继续探测下一个路径）。
+    #[cfg(test)]
     pub fn load(path: &Path) -> Result<Self, String> {
         let content = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
         Self::parse(&content)
@@ -75,14 +92,16 @@ impl PunctTable {
     }
 
     /// 解析 `<key>` 的提交文本（`full_shape` 选项切换映射；pair 交替）。
-    pub fn resolve(&mut self, key: char, full_shape: bool) -> Option<String> {
+    pub fn resolve(&self, key: char, full_shape: bool, pairs: &mut PairState) -> Option<String> {
         let table = if full_shape { &self.full } else { &self.half };
         match table.get(&key)? {
             PunctDef::Text(text) => Some(text.clone()),
             PunctDef::Pair(first, second) => {
-                let oddness = self.pair_oddness.entry((key, full_shape)).or_insert(false);
-                let text = if *oddness { second } else { first };
-                *oddness = !*oddness;
+                let text = if pairs.next((key, full_shape)) {
+                    second
+                } else {
+                    first
+                };
                 Some(text.clone())
             }
         }
@@ -168,31 +187,53 @@ punctuator:
     fn parses_shapes_and_definitions() {
         let table = PunctTable::parse(SAMPLE).expect("parse");
         assert!(!table.is_empty());
-        let mut table = table;
-        assert_eq!(table.resolve(',', false), Some("，".to_string()));
-        assert_eq!(table.resolve('-', false), Some("-".to_string()));
-        assert_eq!(table.resolve('-', true), None, "full_shape 未定义则无标点");
-        assert_eq!(table.resolve('\\', true), Some("、".to_string()));
+        let table = table;
+        let mut pairs = PairState::default();
+        assert_eq!(
+            table.resolve(',', false, &mut pairs),
+            Some("，".to_string())
+        );
+        assert_eq!(table.resolve('-', false, &mut pairs), Some("-".to_string()));
+        assert_eq!(
+            table.resolve('-', true, &mut pairs),
+            None,
+            "full_shape 未定义则无标点"
+        );
+        assert_eq!(
+            table.resolve('\\', true, &mut pairs),
+            Some("、".to_string())
+        );
     }
 
     #[test]
     fn pair_alternates_per_key() {
-        let mut table = PunctTable::parse(SAMPLE).expect("parse");
-        assert_eq!(table.resolve('\'', false), Some("‘".to_string()));
-        assert_eq!(table.resolve('\'', false), Some("’".to_string()));
-        assert_eq!(table.resolve('\'', false), Some("‘".to_string()));
+        let table = PunctTable::parse(SAMPLE).expect("parse");
+        let mut pairs = PairState::default();
+        assert_eq!(
+            table.resolve('\'', false, &mut pairs),
+            Some("‘".to_string())
+        );
+        assert_eq!(
+            table.resolve('\'', false, &mut pairs),
+            Some("’".to_string())
+        );
+        assert_eq!(
+            table.resolve('\'', false, &mut pairs),
+            Some("‘".to_string())
+        );
         // 另一张表（full_shape）独立交替
-        assert_eq!(table.resolve('\'', true), Some("‘".to_string()));
-        assert_eq!(table.resolve('\'', true), Some("’".to_string()));
+        assert_eq!(table.resolve('\'', true, &mut pairs), Some("‘".to_string()));
+        assert_eq!(table.resolve('\'', true, &mut pairs), Some("’".to_string()));
     }
 
     #[test]
     fn shipped_default_symbols_override_slash() {
         // 发布默认（data/symbols.yaml）：half_shape 的 "/" 提交 "/"（非 、）；full_shape 仍为 ／。
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/symbols.yaml");
-        let mut table = PunctTable::load(&path).expect("load data/symbols.yaml");
-        assert_eq!(table.resolve('/', false), Some("/".to_string()));
-        assert_eq!(table.resolve('/', true), Some("／".to_string()));
+        let table = PunctTable::load(&path).expect("load data/symbols.yaml");
+        let mut pairs = PairState::default();
+        assert_eq!(table.resolve('/', false, &mut pairs), Some("/".to_string()));
+        assert_eq!(table.resolve('/', true, &mut pairs), Some("／".to_string()));
     }
 
     #[test]

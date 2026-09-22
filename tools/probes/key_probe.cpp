@@ -9,6 +9,8 @@
 //   g++ -std=c++17 -O2 tools/probes/key_probe.cpp -lrime -o key_probe
 //   key_probe <keyvals.txt> <cases.txt>
 //
+// 两个输入文件不可读、或其中之一为空（0 条）时 `exit 2`——残缺输出会污染入库金样。
+//
 // 记录（tab 分隔）：
 //   name      <keyval> <name|->
 //   repr      <keyval> <modifier> <repr>
@@ -54,6 +56,11 @@ int main(int argc, char** argv) {
     }
     int keyvals_ = 0;
     std::ifstream keyvals(argv[1]);
+    // 输入不可读即失败退出：否则只输出 32 条 `modifier`，会把入库金样静默覆盖成 32 行。
+    if (!keyvals) {
+        std::cerr << "cannot open keyvals file: " << argv[1] << "\n";
+        return 2;
+    }
     std::string line;
     while (std::getline(keyvals, line)) {
         if (line.empty()) continue;
@@ -69,6 +76,10 @@ int main(int argc, char** argv) {
     }
     int cases_ = 0;
     std::ifstream cases(argv[2]);
+    if (!cases) {
+        std::cerr << "cannot open cases file: " << argv[2] << "\n";
+        return 2;
+    }
     while (std::getline(cases, line)) {
         if (line.empty() || line[0] == '#') continue;
         rime::KeyEvent event;
@@ -83,5 +94,11 @@ int main(int argc, char** argv) {
         std::cout << "modifier\t" << index << '\t' << (name ? name : "-") << '\n';
     }
     std::cerr << "keyvals=" << keyvals_ << " cases=" << cases_ << "\n";
+    // 空输入不是「成功的空金样」：报错退出，交由生成器决定是否写库（`gen_key_golden.sh`
+    // 另有「至少 1 条 name / 1 条 parse」的写库前置断言）。
+    if (keyvals_ == 0 || cases_ == 0) {
+        std::cerr << "empty input: keyvals=" << keyvals_ << " cases=" << cases_ << "\n";
+        return 2;
+    }
     return 0;
 }

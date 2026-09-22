@@ -40,21 +40,21 @@ if [ "$(id -u)" -eq 0 ]; then
     exit 1
 fi
 
-for tool in cmake cargo sudo; do
+for tool in cmake cargo sudo install nproc pgrep; do
     if ! command -v "$tool" >/dev/null 2>&1; then
         echo "缺少依赖：$tool" >&2
         cat >&2 <<'EOF'
 请先安装依赖（示例）：
-  Arch:          sudo pacman -S --needed cmake rust fcitx5
-  Fedora:        sudo dnf install cmake gcc-c++ rust fcitx5-devel
-  Debian/Ubuntu: sudo apt install cmake g++ cargo libfcitx5core-dev
+  Arch:          sudo pacman -S --needed cmake rust fcitx5 coreutils procps-ng
+  Fedora:        sudo dnf install cmake gcc-c++ rust fcitx5-devel coreutils procps-ng
+  Debian/Ubuntu: sudo apt install cmake g++ cargo libfcitx5core-dev coreutils procps
 EOF
         exit 1
     fi
 done
 
 echo "[1/4] 构建 addon（cargo + cmake，首次较慢）……"
-run cmake -S crates/hux-addon -B build/addon \
+run cmake -S platform/fcitx5 -B build/addon \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=/usr
 run cmake --build build/addon -j "$(nproc)"
@@ -62,10 +62,31 @@ run cmake --build build/addon -j "$(nproc)"
 echo "[2/4] 安装插件到 /usr/lib/fcitx5（需要 sudo）……"
 run sudo cmake --install build/addon
 
-echo "[3/4] 安装随包数据到 /usr/share/fcitx5/hux/……"
-run sudo install -d /usr/share/fcitx5/hux
-run sudo install -m644 data/tiger_sentence.* data/symbols.yaml \
-    /usr/share/fcitx5/hux/
+echo "[3/4] 校验随包数据（data/MANIFEST → /usr/share/fcitx5/hux/）……"
+# 数据文件由 `cmake --install` 按 data/MANIFEST 安装（同一份清单也被 uninstall.sh 读取）；
+# 这里逐条核对落盘结果，缺任一即失败——只走 CMake 安装时「无词库引擎」的缺口在此暴露。
+if [ ! -f data/MANIFEST ]; then
+    echo "缺少 data/MANIFEST（随包数据清单）" >&2
+    exit 1
+fi
+data_count=0
+while IFS= read -r entry; do
+    case "$entry" in ''|'#'*) continue ;; esac
+    dest="/usr/share/fcitx5/hux/$(basename "$entry")"
+    data_count=$((data_count + 1))
+    if [ "$dry_run" -eq 1 ]; then
+        echo "  （dry-run）应有 $dest"
+    elif [ ! -f "$dest" ]; then
+        echo "缺少随包数据 $dest" >&2
+        echo "（CMake 安装规则应与 data/MANIFEST 一致：platform/fcitx5/CMakeLists.txt；" >&2
+        echo "  自检：bash tools/checks/check_data_manifest.sh）" >&2
+        exit 1
+    fi
+done < data/MANIFEST
+if [ "$data_count" -eq 0 ]; then
+    echo "data/MANIFEST 没有有效行" >&2
+    exit 1
+fi
 
 echo "[4/4] 重启 fcitx5……"
 if pgrep -x fcitx5 >/dev/null 2>&1; then

@@ -9,14 +9,17 @@
 -- 覆盖 build_early_commit_evidence 的 required_text_prefix 过滤路径。
 -- --learning 1：用数据中的真实候选构造纠错事件，经 set_learning_for_test 接入解码，
 -- 并在 transcript 头部输出 learningsetup + levent 使 Rust 侧可重建同一索引。
+-- 两个开关**可并用**：`--early-commit 1 --required 1 --learning 1` 即
+-- `goldens/decode_learning_evidence.tsv.gz`（遗留②，覆盖「学习 × 证据抑制」的交互：
+-- 学习生效且截断的记录、`share`/`base_share` 双权重）。
 --
 -- 数据目录需含四个数据文件；--model 时把模型拷贝为临时用户目录的
 -- models/sentence-ngram-mobile.bin 并启用（走参照的 try_load 路径）。
 -- transcript 记录（tab 分隔，`#` 注释，`-` 表示空串）：
 --   decode <hex input> count=<n> learning=<0|1> truncated=<0|1> required=<hex prefix|->
---   result <hex text> <hex segmented> <bits score> <bits confidence_score> <max_rank> <edge_count> <bits supplement_score> <bits learning_score>
+--   result <hex text> <hex segmented> <bits score> <bits confidence_score> <max_rank> <edge_count> <bits supplement_score> <bits learning_score> <bits early_commit_confidence_score>
 --   evidence <hex proposal> <bits proposal_share> nit= mit= nlc= trunc= prefixes= raws=   （--early-commit 1）
---   prefix <hex text> <raw_length> <bits share> <bits boundary_share> <closed> <chars>
+--   prefix <hex text> <raw_length> <bits share> <bits base_share> <bits boundary_share> <closed> <chars>
 --   rawlen <hex text> <raw_length>
 
 local function parse_args(argv)
@@ -35,7 +38,7 @@ local opts = parse_args({ ... })
 -- 默认参照检出：与仓库同级（相对脚本位置解析，不依赖调用时的 cwd）。
 local script_dir = (arg and arg[0] or ""):match("^(.*)[/\\]") or "."
 local reference = opts.reference or os.getenv("HUX_REFERENCE_REPO")
-    or (script_dir .. "/../../external/tiger-sentense-rime")
+    or (script_dir .. "/../../_external/tiger-sentense-rime")
 assert(opts.data, "missing --data")
 assert(opts.out, "missing --out")
 local every = tonumber(opts.every or "1") or 1
@@ -112,6 +115,14 @@ if learning_flag then
     learn_event(2000, "ab", second_ab, context)
     learn_event(3000, "ab", first_ab, "")
     learn_event(4000, "abc", second_abc, "")
+    -- 成对融合偏好（24e633e/59fc87a/a3fc009）：`zzzz` 同时有 Direct（整串单边）与
+    -- Composed（多边）候选，记一条「Composed 胜」即可让后者越过前者，
+    -- 使 `apply_fusion_ordering` 的归并分支在解码金样里可见（无偏好时保持原序）。
+    -- 事件经参照 `learning.fusion_event` 构造，`time` 覆盖为定值以保证 transcript 确定。
+    local fusion = module.fusion_event("t", "zzzz", "𨰻", "哥哥", false, 4)
+    assert(fusion, "融合事件缺失")
+    fusion.time = 1000
+    learning_events[#learning_events + 1] = fusion
     learning_now = 40 * 86400
     local index = module.build(learning_events, learning_now)
     sentence.set_learning_for_test(index, "t")
@@ -176,7 +187,8 @@ local function emit_decode_pass(input, required)
     for _, item in ipairs(results) do
         emit("result", hex(item.text), hex(item.segmented), bits(item.score),
             bits(item.confidence_score), tostring(item.max_rank), tostring(item.edge_count),
-            bits(item.supplement_score or 0), bits(item.learning_score or 0))
+            bits(item.supplement_score or 0), bits(item.learning_score or 0),
+            bits(item.early_commit_confidence_score or item.confidence_score))
     end
     if early then
         -- 空编码/无字母输入走参照的早退分支（无证据字段），按缺省证据处理。
@@ -197,7 +209,8 @@ local function emit_decode_pass(input, required)
             "raws=" .. #raw_keys)
         for _, prefix in ipairs(evidence.prefixes) do
             emit("prefix", hex(prefix.text), tostring(prefix.raw_length), bits(prefix.share),
-                bits(prefix.boundary_share), prefix.boundary_closed and 1 or 0,
+                bits(prefix.base_share), bits(prefix.boundary_share),
+                prefix.boundary_closed and 1 or 0,
                 tostring(prefix.text_char_count))
         end
         for _, text in ipairs(raw_keys) do

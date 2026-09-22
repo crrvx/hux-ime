@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+[package]
+name = "hux-scheme-tiger"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "虎虚（hux-ime）虎句方案（虎码字/词/句）：码表、解码、词先验、反查与交互策略"
+
+[lib]
+name = "hux_scheme_tiger"
+
+[dependencies]
+anyhow.workspace = true
+flate2 = "1"
+hashbrown.workspace = true
+memmap2.workspace = true
+hux-core = { path = "../../hux-core" }
+
+[dev-dependencies]
+hux-test-support = { path = "../../hux-test-support" }
+flate2 = "1"

@@ -5,11 +5,9 @@
 //!
 //! 金样由 `tools/generators/gen_learning_golden.lua` 生成（`goldens/learning.tsv.gz`）。
 
-mod common;
-
-use common::{decode_bytes, decode_hex, open_golden, parse_bits};
 use hashbrown::HashMap;
 use hux_core::learning::{self, DiffItem, DiffPathNode, Event, LearningIndex, RewardNode};
+use hux_test_support::{decode_bytes, decode_hex, open_golden, parse_bits};
 use std::io::BufRead;
 
 struct Harness {
@@ -190,7 +188,7 @@ fn run(mut harness: Harness, reader: impl BufRead) -> usize {
                         text_length: parts[0].parse().expect("text_length"),
                         raw_length: parts[1].parse().expect("raw_length"),
                         learning_score: f64::from_bits(parse_bits(parts[2])),
-                        text: decode_hex(parts[3]),
+                        learning_early_commit_bonus: f64::from_bits(parse_bits(parts[3])),
                     });
                 }
                 harness.chains.insert(name, nodes);
@@ -205,12 +203,13 @@ fn run(mut harness: Harness, reader: impl BufRead) -> usize {
                 let finish: usize = fields[5].parse().expect("finish");
                 let best = parse_bits(fields[6]);
                 let potential = parse_bits(fields[7]);
+                let early_bonus = parse_bits(fields[8]);
                 let chain = harness.chains.get(chain_name).expect("chain").clone();
                 let index = harness
                     .indexes
                     .get_mut(index_name)
                     .unwrap_or_else(|| panic!("unknown index {index_name}"));
-                let (got_best, got_potential) =
+                let (got_best, got_potential, got_early_bonus) =
                     learning::reward(index, &mode, &raw, &text, finish, &chain);
                 assert_eq!(
                     got_best.to_bits(),
@@ -222,16 +221,144 @@ fn run(mut harness: Harness, reader: impl BufRead) -> usize {
                     potential,
                     "reward potential mismatch for {index_name}/{chain_name}"
                 );
+                assert_eq!(
+                    got_early_bonus.to_bits(),
+                    early_bonus,
+                    "reward early bonus mismatch for {index_name}/{chain_name}"
+                );
+            }
+            "maturity" => {
+                let fields: Vec<&str> = rest.split('\t').collect();
+                let score = f64::from_bits(parse_bits(fields[0]));
+                let expected = parse_bits(fields[1]);
+                assert_eq!(
+                    learning::early_commit_maturity(score).to_bits(),
+                    expected,
+                    "maturity mismatch for {score}"
+                );
+            }
+            "contribution" => {
+                let fields: Vec<&str> = rest.split('\t').collect();
+                let score = f64::from_bits(parse_bits(fields[0]));
+                let expected = parse_bits(fields[1]);
+                assert_eq!(
+                    learning::early_commit_contribution(score).to_bits(),
+                    expected,
+                    "contribution mismatch for {score}"
+                );
+            }
+            "fusionmode" => {
+                let fields: Vec<&str> = rest.split('\t').collect();
+                let mode = decode_hex(fields[0]);
+                assert_eq!(
+                    learning::fusion_mode(&mode),
+                    decode_hex(fields[1]),
+                    "fusion_mode mismatch for {mode:?}"
+                );
+            }
+            "paircode" => {
+                let fields: Vec<&str> = rest.split('\t').collect();
+                let raw = decode_bytes(fields[0]);
+                let direct = decode_hex(fields[1]);
+                let composed = decode_hex(fields[2]);
+                assert_eq!(
+                    learning::fusion_pair_code(&raw, &direct, &composed),
+                    decode_hex(fields[3]),
+                    "fusion_pair_code mismatch for ({raw:?},{direct:?},{composed:?})"
+                );
+            }
+            "fusion" => {
+                let fields: Vec<&str> = rest.split('\t').collect();
+                let name = fields[0];
+                let mode = decode_hex(fields[1]);
+                let raw = decode_bytes(fields[2]);
+                let direct = decode_hex(fields[3]);
+                let composed = decode_hex(fields[4]);
+                let expected = parse_bits(fields[5]);
+                let index = harness
+                    .indexes
+                    .get_mut(name)
+                    .unwrap_or_else(|| panic!("unknown index {name}"));
+                let got = index.fusion_score(&mode, &raw, &direct, &composed);
+                assert_eq!(
+                    got.to_bits(),
+                    expected,
+                    "fusion_score mismatch for {name} ({mode:?},{raw:?},{direct:?},{composed:?})"
+                );
+            }
+            "fusionnone" => {
+                let fields: Vec<&str> = rest.split('\t').collect();
+                let mode = decode_hex(fields[0]);
+                let raw = decode_bytes(fields[1]);
+                let direct = decode_hex(fields[2]);
+                let composed = decode_hex(fields[3]);
+                let direct_wins = fields[4] == "1";
+                let raw_end: usize = fields[5].parse().expect("raw_end");
+                assert!(
+                    learning::fusion_event(
+                        &mode,
+                        &raw,
+                        &direct,
+                        &composed,
+                        direct_wins,
+                        raw_end,
+                        0.0
+                    )
+                    .is_none(),
+                    "空模式应不产出融合事件"
+                );
+            }
+            "fusionevent" => {
+                let fields: Vec<&str> = rest.split('\t').collect();
+                let mode = decode_hex(fields[0]);
+                let raw = decode_bytes(fields[1]);
+                let direct = decode_hex(fields[2]);
+                let composed = decode_hex(fields[3]);
+                let direct_wins = fields[4] == "1";
+                let raw_end: usize = fields[5].parse().expect("raw_end");
+                let time: f64 = fields[6].parse().expect("time");
+                let event = learning::fusion_event(
+                    &mode,
+                    &raw,
+                    &direct,
+                    &composed,
+                    direct_wins,
+                    raw_end,
+                    time,
+                )
+                .unwrap_or_else(|| panic!("fusion_event 不应为空 ({mode:?})"));
+                let context = format!("{mode:?}/{direct:?}/{composed:?}");
+                assert_eq!(event.mode, decode_hex(fields[7]), "mode {context}");
+                assert_eq!(event.code, decode_hex(fields[8]), "code {context}");
+                assert_eq!(event.text, decode_hex(fields[9]), "text {context}");
+                assert_eq!(event.context, decode_hex(fields[10]), "ctx {context}");
+                assert_eq!(
+                    event.raw_start,
+                    fields[11].parse::<usize>().unwrap(),
+                    "raw_start {context}"
+                );
+                assert_eq!(
+                    event.text_start,
+                    fields[12].parse::<usize>().unwrap(),
+                    "text_start {context}"
+                );
+                assert_eq!(
+                    event.text_end,
+                    fields[13].parse::<usize>().unwrap(),
+                    "text_end {context}"
+                );
+                assert_eq!(event.time, time, "time {context}");
+                assert_eq!(event.raw_end, raw_end, "raw_end {context}");
             }
             "diffcase" => {
                 let fields: Vec<&str> = rest.split('\t').collect();
                 let name = fields[0].to_string();
                 let text = decode_hex(fields[1]);
-                let count: usize = fields[2].parse().expect("diffpath count");
+                let count: usize = fields[2].parse().expect("path count");
                 let mut path = Vec::with_capacity(count);
                 for _ in 0..count {
-                    let line = lines.next().expect("diffpath record");
-                    let (kind, rest) = line.split_once('\t').expect("diffpath payload");
+                    let line = lines.next().expect("path record");
+                    let (kind, rest) = line.split_once('\t').expect("path payload");
                     assert_eq!(kind, "diffpath");
                     let parts: Vec<&str> = rest.split('\t').collect();
                     path.push(DiffPathNode {

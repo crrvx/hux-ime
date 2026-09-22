@@ -11,8 +11,10 @@
 """
 import argparse
 import hashlib
+import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -92,6 +94,31 @@ def rust_string(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+def write_atomic(path: Path, text: str) -> None:
+    """同目录临时文件 + `os.replace`：中断/磁盘满不会留下截断的目标文件。
+
+    `mkstemp` 建的是 0600，替换前先对齐目标原有权限（新文件用 0644）。
+    目标是非常规文件（`--out /dev/null` 这类丢弃产物的调用）时退回直接写：
+    那种目标没有「截断」可言，且其所在目录通常不可写。
+    """
+    if path.exists() and not path.is_file():
+        path.write_text(text, encoding="utf-8")
+        return
+    mode = path.stat().st_mode & 0o777 if path.exists() else 0o644
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", required=True)
@@ -140,11 +167,12 @@ def main() -> int:
     lines.append("];")
     lines.append("")
 
-    Path(args.out).write_text("\n".join(lines), encoding="utf-8")
+    write_atomic(Path(args.out), "\n".join(lines))
     if args.keyvals_out:
         keyvals = sorted({keyval for keyval, _ in by_keyval} | {keyval for keyval, _ in by_name})
-        Path(args.keyvals_out).write_text(
-            "\n".join(str(keyval) for keyval in keyvals) + "\n", encoding="utf-8"
+        write_atomic(
+            Path(args.keyvals_out),
+            "\n".join(str(keyval) for keyval in keyvals) + "\n",
         )
     print(
         f'{{"by_keyval":{len(by_keyval)},"by_name":{len(by_name)},'
@@ -154,4 +182,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except ValueError as error:
+        # 已知的输入/解析错误：干净退出（`gen_key_table: <消息>`，退出码 1），不打印 traceback。
+        sys.exit(f"gen_key_table: {error}")

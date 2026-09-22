@@ -20,6 +20,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -28,9 +29,47 @@ namespace {
 
 RimeApi* api = nullptr;
 RimeSessionId session = 0;
+std::set<std::string> declared_switches;  // 已部署方案 `switches` 声明的选项名
 
 void check(bool ok, const std::string& message) {
     if (!ok) throw std::runtime_error(message);
+}
+
+// 已部署方案的 `switches` 名单（方案选项名是否仍然存在的唯一可信来源）。
+std::set<std::string> load_declared_switches(const std::string& schema_id) {
+    std::set<std::string> names;
+    RimeConfig config{};
+    check(api->schema_open(schema_id.c_str(), &config),
+          "Cannot open schema config: " + schema_id);
+    RimeConfigIterator iterator{};
+    if (api->config_begin_list(&iterator, &config, "switches")) {
+        while (api->config_next(&iterator)) {
+            char name[256] = {0};
+            const std::string path = std::string(iterator.path ? iterator.path : "") + "/name";
+            if (api->config_get_string(&config, path.c_str(), name, sizeof(name))) {
+                names.insert(name);
+            }
+        }
+        api->config_end(&iterator);
+    }
+    api->config_close(&config);
+    return names;
+}
+
+// 设置选项。这里**不能**检查 `api->set_option` 的「返回值」：librime 1.17 的
+// `RimeApi::set_option` 返回 `void`（`rime_api.h:333`），且 librime 不校验选项名——
+// 任意名字 `set_option` 之后 `get_option` 都回读为真（实测 `tiger_sentence_bogus_zzz`
+// 亦然），故「设完回读」是恒真检查，发现不了「方案改键名」。
+// 方案选项（`tiger_sentence_` 前缀：探针内置的两个 + 用例第二列声明的赋值）改为断言
+// 「已部署方案的 `switches` 里声明过该名字」——改键名即在此显式失败，而不是静默退回
+// 默认选项、让金样与重放侧「一致地错」（M6）。
+// 宿主/rime 标准选项（ascii_mode、full_shape、ascii_punct）不属本探针契约，不做断言。
+void set_option_checked(const std::string& name, Bool value) {
+    if (name.rfind("tiger_sentence_", 0) == 0) {
+        check(declared_switches.count(name) != 0,
+              "scheme option not declared in schema switches: " + name);
+    }
+    api->set_option(session, name.c_str(), value);
 }
 
 std::string hex(const std::string& text) {
@@ -165,18 +204,18 @@ void apply_option(const std::string& assignment) {
     check(equals != std::string::npos, "bad option assignment: " + assignment);
     const std::string name = assignment.substr(0, equals);
     const std::string value = assignment.substr(equals + 1);
-    api->set_option(session, name.c_str(), value == "1" ? True : False);
+    set_option_checked(name, value == "1" ? True : False);
 }
 
 void reset(const std::string& options) {
     api->clear_composition(session);
     std::string discarded;
     drain_commit(discarded);
-    api->set_option(session, "ascii_mode", False);
-    api->set_option(session, "full_shape", False);
-    api->set_option(session, "ascii_punct", False);
-    api->set_option(session, "tiger_sentence_early_commit", True);
-    api->set_option(session, "tiger_sentence_early_commit_to_preedit", False);
+    set_option_checked("ascii_mode", False);
+    set_option_checked("full_shape", False);
+    set_option_checked("ascii_punct", False);
+    set_option_checked("tiger_sentence_early_commit", True);
+    set_option_checked("tiger_sentence_early_commit_to_preedit", False);
     std::istringstream stream(options);
     std::string item;
     while (std::getline(stream, item, ',')) {
@@ -202,16 +241,23 @@ int main(int argc, char** argv) {
         traits.modules = modules;
         api->setup(&traits);
         api->initialize(&traits);
-        if (api->start_maintenance(True)) api->join_maintenance_thread();
+        // 维护失败必须显式报错（M11①）；先 join 再 check：失败路径也不留后台线程。
+        const Bool maintenance_started = api->start_maintenance(True);
+        api->join_maintenance_thread();
+        check(maintenance_started, "Cannot start maintenance");
         session = api->create_session();
         check(session != 0, "Cannot create Rime session");
         check(api->select_schema(session, "tiger_sentence") != 0,
               "Cannot deploy/select tiger_sentence");
+        declared_switches = load_declared_switches("tiger_sentence");
 
         std::ifstream cases(argv[4]);
         check(cases.good(), "Cannot read cases file");
         std::string line;
+        std::map<std::string, int> seen_lines;  // 用例名 -> 行号
+        int line_no = 0;
         while (std::getline(cases, line)) {
+            ++line_no;
             if (line.empty() || line[0] == '#') continue;
             std::istringstream fields(line);
             std::string name;
@@ -221,6 +267,11 @@ int main(int argc, char** argv) {
                       static_cast<bool>(std::getline(fields, options, '\t')) &&
                       static_cast<bool>(std::getline(fields, keys)),
                   "bad case line: " + line);
+            // 重名用例会让金样出现重复 `case`，重放侧可能只取其一（M11②）。
+            const auto inserted = seen_lines.emplace(name, line_no);
+            check(inserted.second,
+                  "duplicate case name: " + name + " (line " + std::to_string(line_no) +
+                      ", first at line " + std::to_string(inserted.first->second) + ")");
             reset(options);
             std::cout << "case\t" << name << '\t' << options << '\n';
             std::istringstream key_stream(keys);

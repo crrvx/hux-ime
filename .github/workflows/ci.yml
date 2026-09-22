@@ -7,14 +7,27 @@ on:
   push:
   pull_request:
 
+# 同一分支的新推送取消旧运行（省额度、避免重复结论）。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# 供应链钉版本（待办）：
+#   ① `uses: <action>@vN` 是移动标签 ⇒ 计划改钉 commit sha（Dependabot 维护），尚未落地；
+#   ② Rust 工具链**有意不钉**（跟随 stable 最新版，`dtolnay/rust-toolchain@stable`）；代价是
+#      stable 漂移可能让 `cargo fmt --check` / clippy `-D warnings` 无预警变红；
+#   ③ `archlinux:latest` 是 `golden-lua-latest` 作业的**目的**（测最新 Lua），故不钉镜像；
+#      但 `pacman -Sy` 部分升级已改为 `-Syu`（Arch 官方不推荐部分升级）。
 jobs:
   reuse:
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: fsfe/reuse-action@v6
 
   rust:
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,8 +35,127 @@ jobs:
         with:
           components: rustfmt, clippy
       - run: cargo fmt --all --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test -p hux-core
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Test kernel & test-support
+        run: cargo test --locked -p hux-core -p hux-test-support
+      - name: Test schemes
+        run: cargo test --locked -p hux-scheme-tiger
+      - name: Test cfg / ffi / platform
+        run: cargo test --locked -p hux-cfg -p hux-ffi -p hux-platform-fcitx5
+      - name: Core platform-clean (no env/XDG/clock/logging)
+        # 只拦「平台痕迹」：env / XDG / 系统时钟 / 直接打印。
+        # 允许按平台传入的显式路径读数据文件，故不查 std::fs。
+        # 先剥离注释再匹配（注释里写「不要用 println!」不该让 CI 变红），
+        # 字符串字面量与真代码照旧命中——与 §7「注释与文档叙述不受影响」一致。
+        run: |
+          if ! python3 tools/checks/rust_source_grep.py --root crates/hux-core/src \
+              --pattern 'std::env::var|SystemTime|/usr/share|eprintln!|println!' \
+              --label "core 平台痕迹"; then
+            echo "::error::hux-core 不得包含平台痕迹（环境变量 / XDG / 系统时钟 / 直接打印）"
+            exit 1
+          fi
+      - name: Layer dependencies (core / cfg / ffi / platform)
+        run: |
+          # 依赖边判定（源码里的文档提及不算）：cargo tree 不得出现 hux-scheme/*
+          if cargo tree --locked -p hux-core --edges normal | grep -q 'hux-scheme'; then
+            echo "::error::hux-core 不得依赖任何方案（hux-scheme/*）"
+            exit 1
+          fi
+          # 方案依赖不得反向：方案只允许依赖 hux-core
+          if cargo tree --locked -p hux-scheme-tiger --edges normal --depth 1 | grep -qE 'hux-platform|hux-cfg|hux-ffi'; then
+            echo "::error::hux-scheme/* 只允许依赖 hux-core"
+            exit 1
+          fi
+          # 平台只经契约驱动方案：
+          #   ⓐ 方案内部模块黑名单（原守卫，保留）；
+          #   ⓑ **白名单**——平台源码里出现的方案模块名只能是 `scheme`
+          #      （此前只挡已知内部模块，`hux_scheme_tiger::<其它路径>` 不会被拦）；
+          #   ⓒ 从 `scheme` 大括号导入的名字只允许 ASSETS / TigerScheme / SCHEME_ID。
+          if grep -RnE 'hux_scheme_tiger::(interaction|decode|lexicon|lexical|ngram|char_to_sound_shape|sound_to_char_shape)' platform/fcitx5/src; then
+            echo "::error::平台层不得直接引用方案内部模块，请经 hux_core::scheme 契约"
+            exit 1
+          fi
+          if ! python3 tools/checks/rust_source_grep.py --root platform/fcitx5/src \
+              --pattern 'hux_scheme_tiger::[A-Za-z_]+' \
+              --expect-set 'hux_scheme_tiger::scheme' \
+              --label "平台→方案模块白名单"; then
+            echo "::error::平台层只允许引用 hux_scheme_tiger::scheme（装配根）"
+            exit 1
+          fi
+          if ! python3 tools/checks/rust_source_grep.py --root platform/fcitx5/src \
+              --pattern 'hux_scheme_tiger::scheme::\{([^{}]*)\}' \
+              --expect-subset 'ASSETS,TigerScheme,SCHEME_ID' --split ',' \
+              --label "平台→方案导入名"; then
+            echo "::error::平台从方案 scheme 模块导入的名字只允许 ASSETS / TigerScheme / SCHEME_ID"
+            exit 1
+          fi
+          # 配置层 / ABI 层不得依赖方案或平台层
+          if cargo tree --locked -p hux-cfg -p hux-ffi --edges normal | grep -qE 'hux-scheme|hux-platform'; then
+            echo "::error::hux-cfg / hux-ffi 只允许依赖 hux-core（及外部 crate）"
+            exit 1
+          fi
+          # core 不得引用已迁出的方案模块（剥离注释后匹配）
+          if ! python3 tools/checks/rust_source_grep.py --root crates/hux-core/src \
+              --pattern 'crate::(decode|lexicon|lexical|ngram|interaction|sound_to_char_shape|char_to_sound_shape)\b' \
+              --label "core 已迁出模块引用"; then
+            echo "::error::hux-core 内不得出现已迁出的方案模块引用"
+            exit 1
+          fi
+          # 「core 不得出现 hux_scheme / hux-scheme 引用」：
+          # 补上这条此前只写在文档里的文本守卫——剥离注释后匹配，
+          # 故 `lib.rs` / `scheme.rs` 里合法的「不依赖 hux-scheme」说明性注释不受影响。
+          if ! python3 tools/checks/rust_source_grep.py --root crates/hux-core/src \
+              --pattern 'hux_scheme|hux-scheme' \
+              --label "core 方案引用"; then
+            echo "::error::hux-core 不得引用 hux_scheme / hux-scheme（注释除外）"
+            exit 1
+          fi
+          # 内核只留通用容器——角色词汇归 hux-cfg、
+          # 选项键归方案，故 core 不得出现**带引号的**角色名 / 方案选项键字面量
+          # （rime 标准名 full_shape/ascii_punct 由 core 宿主链自持，不在此列）。
+          # 先剥离注释再匹配 ⇒ 与 §7「注释与文档叙述不受影响」一致。
+          if ! python3 tools/checks/rust_source_grep.py --root crates/hux-core/src \
+              --pattern '"(early_commit|early_commit_to_preedit|allow_duplicate_single|digit_select|high_freq_limit|min_retained_raw_length|page_size|page_cycle|page_up_keys|page_down_keys|sound_to_char_shape_keys|char_to_sound_shape_keys|tab_learning)"|"tiger_sentence_' \
+              --label "core 角色名/选项键字面量"; then
+            echo "::error::hux-core 契约不得出现角色名 / 方案选项键字面量"
+            exit 1
+          fi
+          # 模块布局纪律（全仓无 `mod.rs`，只用 `foo.rs` + `foo/`）：
+          # 此前只靠人眼/评审，此处加一条零成本守卫。
+          if find crates platform -name mod.rs -print -quit | grep -q .; then
+            echo "::error::禁止新增 mod.rs（Rust 2018+ 布局：foo.rs + foo/）"
+            find crates platform -name mod.rs
+            exit 1
+          fi
+      - name: Verify golden checksums & headers
+        # 逐行解析 goldens/regenerate.md 的 sha256 表并与实际文件比对，
+        # 另核对三份「不重生成」金样（key / key_sequence / sound_to_char_shape）的内部头部
+        # （`# reference … @ <pin>` 与来源文件 sha256）与 regenerate.md 声明的 pin 是否一致。
+        run: python3 tools/checks/verify_golden_shas.py
+      - name: Verify non-regenerated goldens (sha256)
+        run: |
+          # 与上一步**互为独立来源**（值写在本文件里，不读 README）：key / key_sequence /
+          # key_sequence_tab / sound_to_char_shape 依赖具体 librime 版本，CI 不重生成，
+          # 故此处再钉一次。
+          sha256sum -c - <<'SUMS'
+          7fae4983ab69e36ebd2e5cac267df81e9bc325731deaefcaa22873aeca8660c0  goldens/key.tsv.gz
+          8ce095cf98bae0bbfbd561e6b1e3aa7f1961af6e8e3c3b62b692a7e89e325aa1  goldens/key_sequence.tsv.gz
+          3c89618d0fb067bb0ce5562646a62924576c0610226aed3fa70689b6549da9bc  goldens/key_sequence_tab.tsv.gz
+          e9d48698bf73807a37933b7c2324afbc27fffe7b0492f0dd2787116ec06a7545  goldens/sound_to_char_shape.tsv.gz
+          SUMS
+      - name: Verify data manifest (install / uninstall / cmake)
+        # 装、卸、CMake 三处必须读同一份 data/MANIFEST，
+        # 且清单与 data/ 实况一致（防「装得上、卸不掉」）。
+        run: bash tools/checks/check_data_manifest.sh
+      - name: Smoke-check install / uninstall entrypoints
+        # 两个一键脚本是文档首推入口：语法 + `--dry-run` 冒烟（不写系统目录）。
+        run: |
+          bash -n install.sh uninstall.sh tools/generators/*.sh tools/checks/*.sh
+          ./install.sh --dry-run >/dev/null
+          ./uninstall.sh --dry-run >/dev/null
+          ./install.sh --help >/dev/null
+          ./uninstall.sh --help >/dev/null
+
       - name: Verify lexical prior data (provenance)
         run: |
           echo "8dbc884b6cb719d07e4cef153c8048db19a11f8224f75a4ed87853e688a27393  data/tiger_sentence.lexical.bin" | sha256sum -c -
@@ -36,12 +168,95 @@ jobs:
             --source goldens/sound_to_char_shape/PY_c.dict.yaml --out /tmp/pinyin.bin
           cmp /tmp/pinyin.bin goldens/sound_to_char_shape/tiger_sentence.pinyin.bin
 
+  # C++ 侧（fcitx5 addon）：configure → 构建/链接 → C ABI 符号一致 → 安装布局（DESTDIR，免 sudo）。
+  # 结构性迁移（如拆 crate / 挪目录）与 ABI 契约漂移（crates/hux-ffi/include/hux_abi.h）在此暴露。
+  #
+  # 用 **ubuntu-26.04** + apt 装 fcitx5 开发包（26.04 = Resolute，其 apt 当前给 **5.1.19**）：
+  # 不进容器、不钉具体版本，「Ubuntu 新版的 apt 给什么就用什么」。代码下限不在 CI 断言，而由
+  # `platform/fcitx5/CMakeLists.txt` 的 `find_package(Fcitx5Core 5.1.15 REQUIRED)` 守卫——
+  # 装到过旧版本时 configure 阶段就给出清晰报错。
+  # 注：`ubuntu-latest` 目前仍是 24.04（apt 里是 fcitx5 5.1.7，低于下限）；待 GitHub 把
+  # `ubuntu-latest` 迁到 26 之后（公告 2026-10-19 起），可把下面的标签换回 `ubuntu-latest`。
+  addon:
+    timeout-minutes: 30
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install fcitx5 core & librime dev files
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfcitx5core-dev librime-dev
+      - name: Show toolchain versions
+        run: |
+          # 版本落差排查用：fcitx5 未必提供 pkg-config 文件，故失败即回退到包管理器查询。
+          (pkg-config --modversion Fcitx5Core 2>/dev/null || dpkg -l libfcitx5core-dev | tail -1)
+          rustc -V
+      - name: Configure & build addon (cargo + cmake)
+        run: |
+          cmake -S platform/fcitx5 -B build/addon \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr
+          cmake --build build/addon -j"$(nproc)"
+      - name: Verify C ABI symbols (hux_abi.h ↔ libhux.so)
+        run: |
+          nm -D --defined-only build/addon/libhux.so \
+            | awk '$2=="T"||$2=="i"{print $3}' | grep '^hux_' | sort -u > /tmp/so.txt
+          grep -oE '\bhux_[a-z_0-9]+[[:space:]]*\(' crates/hux-ffi/include/hux_abi.h \
+            | tr -d ' (' | sort -u > /tmp/hdr.txt
+          test -s /tmp/hdr.txt && test -s /tmp/so.txt
+          if ! diff -u /tmp/hdr.txt /tmp/so.txt; then
+            echo "::error::hux_abi.h 声明与 libhux.so 导出不一致（C ABI 漂移）"
+            exit 1
+          fi
+          echo "C ABI 符号一致：$(wc -l < /tmp/so.txt) 个"
+      - name: Compile-check goldens probes (syntax only)
+        # 探针（tools/probes/*.cpp）只在手动重生成金样时编译，长期无人编译会静默腐坏；
+        # 此处仅做语法检查（不链接、不运行），成本极低。
+        run: |
+          for probe in tools/probes/*.cpp; do
+            echo "checking $probe"
+            g++ -fsyntax-only -std=c++17 -I/usr/include "$probe"
+          done
+
+      - name: Verify install layout (DESTDIR)
+        run: |
+          DESTDIR=/tmp/stage cmake --install build/addon
+          # `libhux.so` 的落点由 fcitx5 的 `FCITX_INSTALL_ADDONDIR` 决定：Arch/Fedora 是
+          # `lib/fcitx5` 或 `lib64/fcitx5`，Debian/Ubuntu 是 multiarch 的 `lib/<triplet>/fcitx5`
+          # ⇒ 不写死路径，按实际落点核对（写死会把发行版布局差异误报成「缺少安装文件」）。
+          so=$(find /tmp/stage -name libhux.so -print -quit)
+          test -n "$so" || { echo "::error::安装布局里没有 libhux.so"; exit 1; }
+          case "$so" in
+            */fcitx5/libhux.so) ;;
+            *) echo "::error::libhux.so 不在 fcitx5 addon 目录：$so"; exit 1 ;;
+          esac
+          for f in usr/share/fcitx5/addon/hux.conf \
+                   usr/share/fcitx5/inputmethod/hux.conf; do
+            test -f "/tmp/stage/$f" || { echo "::error::缺少安装文件 /$f"; exit 1; }
+          done
+          # `cmake --install` 必须把 data/MANIFEST 的随包数据也装上
+          # （否则只走 CMake 安装会得到「无词库」引擎）。
+          count=0
+          while IFS= read -r entry; do
+            case "$entry" in ''|'#'*) continue ;; esac
+            count=$((count + 1))
+            f="usr/share/fcitx5/hux/$(basename "$entry")"
+            test -f "/tmp/stage/$f" || { echo "::error::CMake 安装缺少随包数据 /$f（见 data/MANIFEST）"; exit 1; }
+          done < data/MANIFEST
+          test "$count" -gt 0 || { echo "::error::data/MANIFEST 没有有效行"; exit 1; }
+          echo "安装布局：$so + 2 个 conf + $count 个随包数据文件"
+
   # 一般金样校验：使用 runner 系统提供的 Lua（Ubuntu 当前可用的最新 lua 包）。
   golden:
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     env:
       REFERENCE_REPO: https://github.com/lvyww/tiger-sentense-rime
-      REFERENCE_COMMIT: 8b615235c17c858e1eca8f1a41fbc74e202f8bbe
+      REFERENCE_COMMIT: abad411750f79cfca750985fa266689b5d9b865f
+      # 反查分支尖端（音反查金样 `sound_to_char_shape.tsv.gz` 的 pin）；README 的
+      # `lua/tiger_sentence.lua`（音反查金样）行按它核对，故检出里也要有这个提交。
+      REVERSE_COMMIT: 92a0b54b53114e7e5aa6a1ff48efa95db0e21f9c
       LIBRIME_RAW: https://raw.githubusercontent.com/rime/librime
       LIBRIME_COMMIT: 33e78140250125871856cdc5b42ddc6a5fcd3cd4
     steps:
@@ -56,10 +271,16 @@ jobs:
           lua -v
       - name: Fetch reference implementation
         run: |
-          git init external/tiger-sentense-rime
-          git -C external/tiger-sentense-rime remote add origin "$REFERENCE_REPO"
-          git -C external/tiger-sentense-rime fetch --depth 1 origin "$REFERENCE_COMMIT"
-          git -C external/tiger-sentense-rime checkout --detach FETCH_HEAD
+          git init _external/tiger-sentense-rime
+          git -C _external/tiger-sentense-rime remote add origin "$REFERENCE_REPO"
+          git -C _external/tiger-sentense-rime fetch --depth 1 origin "$REFERENCE_COMMIT"
+          git -C _external/tiger-sentense-rime checkout --detach FETCH_HEAD
+          # 反查分支 pin 另取一次（只为此处的溯源校验；生成脚本自建隔离工作区）
+          git -C _external/tiger-sentense-rime fetch --depth 1 origin "$REVERSE_COMMIT"
+      - name: Verify golden checksums (table + headers + reference provenance)
+        # 表 ↔ 文件、金样内部头部 ↔ 声明的 pin、以及
+        # `lua/*`、`tools/*` 参照文件按对应 pin 的 `git show` sha256（本仓无其它来源可核）。
+        run: python3 tools/checks/verify_golden_shas.py --reference _external/tiger-sentense-rime
       - name: Fetch librime key_table.cc (key table provenance)
         run: |
           mkdir -p external/librime/src/rime
@@ -74,54 +295,58 @@ jobs:
       - name: Regenerate goldens
         run: |
           lua tools/generators/gen_ngram_golden.lua \
-            --reference external/tiger-sentense-rime \
+            --reference _external/tiger-sentense-rime \
             --model /tmp/ngram_fixture.bin \
             --out /tmp/ngram_fixture.tsv --mode fixture
           lua tools/generators/gen_lexicon_golden.lua \
-            --reference external/tiger-sentense-rime \
+            --reference _external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --out /tmp/lexicon.tsv --mode present
           lua tools/generators/gen_lexicon_golden.lua \
-            --reference external/tiger-sentense-rime \
+            --reference _external/tiger-sentense-rime \
             --data /tmp/no-such-dir --out /tmp/lexicon_missing.tsv --mode missing
           lua tools/generators/gen_lexicon_golden.lua \
-            --reference external/tiger-sentense-rime \
+            --reference _external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon_variants" --out /tmp/lexicon_variants.tsv --mode present
           lua tools/generators/gen_lexicon_golden.lua \
-            --reference external/tiger-sentense-rime \
+            --reference _external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon_codes_only" --out /tmp/lexicon_codes_only.tsv --mode present
           lua tools/generators/gen_decode_golden.lua \
-            --reference external/tiger-sentense-rime \
+            --reference _external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --out /tmp/decode.tsv
           lua tools/generators/gen_decode_golden.lua \
-            --reference external/tiger-sentense-rime \
+            --reference _external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
             --lexical "$PWD/data/tiger_sentence.lexical.bin" \
             --out /tmp/decode_model.tsv --every 7
           lua tools/generators/gen_decode_golden.lua \
-            --reference external/tiger-sentense-rime \
+            --reference _external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
             --lexical "$PWD/data/tiger_sentence.lexical.bin" \
             --out /tmp/decode_rank_first.tsv --every 7 --duplicate 0
           lua tools/generators/gen_decode_golden.lua \
-            --reference external/tiger-sentense-rime \
+            --reference _external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --out /tmp/decode_evidence.tsv --early-commit 1 --required 1
           lua tools/generators/gen_decode_golden.lua \
-            --reference external/tiger-sentense-rime \
+            --reference _external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
             --lexical "$PWD/data/tiger_sentence.lexical.bin" \
             --out /tmp/decode_evidence_model.tsv --every 7 --early-commit 1 --required 1
           lua tools/generators/gen_learning_golden.lua \
-            --reference external/tiger-sentense-rime --out /tmp/learning.tsv
+            --reference _external/tiger-sentense-rime --out /tmp/learning.tsv
           lua tools/generators/gen_decode_golden.lua \
-            --reference external/tiger-sentense-rime \
+            --reference _external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --out /tmp/decode_learning.tsv --learning 1
           lua tools/generators/gen_decode_golden.lua \
-            --reference external/tiger-sentense-rime \
+            --reference _external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
             --lexical "$PWD/data/tiger_sentence.lexical.bin" \
             --out /tmp/decode_learning_model.tsv --every 7 --learning 1
+          lua tools/generators/gen_decode_golden.lua \
+            --reference _external/tiger-sentense-rime \
+            --data "$PWD/goldens/lexicon" --out /tmp/decode_learning_evidence.tsv \
+            --early-commit 1 --required 1 --learning 1
           lua tools/generators/gen_lexical_golden.lua \
-            --reference external/tiger-sentense-rime \
+            --reference _external/tiger-sentense-rime \
             --model "$PWD/data/tiger_sentence.lexical.bin" --out /tmp/lexical.tsv
       - name: Compare with committed goldens
         run: |
@@ -139,11 +364,13 @@ jobs:
           gunzip -c goldens/learning.tsv.gz | cmp - /tmp/learning.tsv
           gunzip -c goldens/decode_learning.tsv.gz | cmp - /tmp/decode_learning.tsv
           gunzip -c goldens/decode_learning_model.tsv.gz | cmp - /tmp/decode_learning_model.tsv
+          gunzip -c goldens/decode_learning_evidence.tsv.gz | cmp - /tmp/decode_learning_evidence.tsv
           gunzip -c goldens/lexical.tsv.gz | cmp - /tmp/lexical.tsv
 
   # Arch 的系统 lua 即最新版；验证金样在最新 Lua 下同样逐字节一致。
   # shell: bash 显式设置（容器内默认 shell 不保证是 bash）。
   golden-lua-latest:
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     container: archlinux:latest
     defaults:
@@ -151,69 +378,73 @@ jobs:
         shell: bash
     env:
       REFERENCE_REPO: https://github.com/lvyww/tiger-sentense-rime
-      REFERENCE_COMMIT: 8b615235c17c858e1eca8f1a41fbc74e202f8bbe
+      REFERENCE_COMMIT: abad411750f79cfca750985fa266689b5d9b865f
     steps:
       - name: Install toolchain
-        run: pacman -Sy --noconfirm git lua gzip diffutils
+        run: pacman -Syu --noconfirm git lua gzip diffutils
       - uses: actions/checkout@v4
       - name: Fetch reference implementation
         run: |
-          git init external/tiger-sentense-rime
-          git -C external/tiger-sentense-rime remote add origin "$REFERENCE_REPO"
-          git -C external/tiger-sentense-rime fetch --depth 1 origin "$REFERENCE_COMMIT"
-          git -C external/tiger-sentense-rime checkout --detach FETCH_HEAD
+          git init _external/tiger-sentense-rime
+          git -C _external/tiger-sentense-rime remote add origin "$REFERENCE_REPO"
+          git -C _external/tiger-sentense-rime fetch --depth 1 origin "$REFERENCE_COMMIT"
+          git -C _external/tiger-sentense-rime checkout --detach FETCH_HEAD
       - name: Regenerate goldens (system lua)
         run: |
           lua -v
           lua tools/generators/gen_ngram_golden.lua \
-            --reference external/tiger-sentense-rime \
+            --reference _external/tiger-sentense-rime \
             --model /tmp/ngram_fixture.bin \
             --out /tmp/ngram_fixture.tsv --mode fixture
           lua tools/generators/gen_lexicon_golden.lua \
-            --reference external/tiger-sentense-rime \
+            --reference _external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --out /tmp/lexicon.tsv --mode present
           lua tools/generators/gen_lexicon_golden.lua \
-            --reference external/tiger-sentense-rime \
+            --reference _external/tiger-sentense-rime \
             --data /tmp/no-such-dir --out /tmp/lexicon_missing.tsv --mode missing
           lua tools/generators/gen_lexicon_golden.lua \
-            --reference external/tiger-sentense-rime \
+            --reference _external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon_variants" --out /tmp/lexicon_variants.tsv --mode present
           lua tools/generators/gen_lexicon_golden.lua \
-            --reference external/tiger-sentense-rime \
+            --reference _external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon_codes_only" --out /tmp/lexicon_codes_only.tsv --mode present
           lua tools/generators/gen_decode_golden.lua \
-            --reference external/tiger-sentense-rime \
+            --reference _external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --out /tmp/decode.tsv
           lua tools/generators/gen_decode_golden.lua \
-            --reference external/tiger-sentense-rime \
+            --reference _external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
             --lexical "$PWD/data/tiger_sentence.lexical.bin" \
             --out /tmp/decode_model.tsv --every 7
           lua tools/generators/gen_decode_golden.lua \
-            --reference external/tiger-sentense-rime \
+            --reference _external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
             --lexical "$PWD/data/tiger_sentence.lexical.bin" \
             --out /tmp/decode_rank_first.tsv --every 7 --duplicate 0
           lua tools/generators/gen_decode_golden.lua \
-            --reference external/tiger-sentense-rime \
+            --reference _external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --out /tmp/decode_evidence.tsv --early-commit 1 --required 1
           lua tools/generators/gen_decode_golden.lua \
-            --reference external/tiger-sentense-rime \
+            --reference _external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
             --lexical "$PWD/data/tiger_sentence.lexical.bin" \
             --out /tmp/decode_evidence_model.tsv --every 7 --early-commit 1 --required 1
           lua tools/generators/gen_learning_golden.lua \
-            --reference external/tiger-sentense-rime --out /tmp/learning.tsv
+            --reference _external/tiger-sentense-rime --out /tmp/learning.tsv
           lua tools/generators/gen_decode_golden.lua \
-            --reference external/tiger-sentense-rime \
+            --reference _external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --out /tmp/decode_learning.tsv --learning 1
           lua tools/generators/gen_decode_golden.lua \
-            --reference external/tiger-sentense-rime \
+            --reference _external/tiger-sentense-rime \
             --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
             --lexical "$PWD/data/tiger_sentence.lexical.bin" \
             --out /tmp/decode_learning_model.tsv --every 7 --learning 1
+          lua tools/generators/gen_decode_golden.lua \
+            --reference _external/tiger-sentense-rime \
+            --data "$PWD/goldens/lexicon" --out /tmp/decode_learning_evidence.tsv \
+            --early-commit 1 --required 1 --learning 1
           lua tools/generators/gen_lexical_golden.lua \
-            --reference external/tiger-sentense-rime \
+            --reference _external/tiger-sentense-rime \
             --model "$PWD/data/tiger_sentence.lexical.bin" --out /tmp/lexical.tsv
       - name: Compare with committed goldens
         run: |
@@ -231,4 +462,5 @@ jobs:
           gunzip -c goldens/learning.tsv.gz | cmp - /tmp/learning.tsv
           gunzip -c goldens/decode_learning.tsv.gz | cmp - /tmp/decode_learning.tsv
           gunzip -c goldens/decode_learning_model.tsv.gz | cmp - /tmp/decode_learning_model.tsv
+          gunzip -c goldens/decode_learning_evidence.tsv.gz | cmp - /tmp/decode_learning_evidence.tsv
           gunzip -c goldens/lexical.tsv.gz | cmp - /tmp/lexical.tsv

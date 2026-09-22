@@ -182,13 +182,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "hux-addon"
+name = "hux-cfg"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "hashbrown 0.15.5",
  "hux-core",
- "rusty-leveldb",
  "yaml-rust2",
 ]
 
@@ -196,11 +195,45 @@ dependencies = [
 name = "hux-core"
 version = "0.1.0"
 dependencies = [
+ "flate2",
+ "hashbrown 0.15.5",
+ "hux-test-support",
+ "yaml-rust2",
+]
+
+[[package]]
+name = "hux-ffi"
+version = "0.1.0"
+
+[[package]]
+name = "hux-platform-fcitx5"
+version = "0.1.0"
+dependencies = [
+ "hux-cfg",
+ "hux-core",
+ "hux-ffi",
+ "hux-scheme-tiger",
+ "hux-test-support",
+ "rusty-leveldb",
+]
+
+[[package]]
+name = "hux-scheme-tiger"
+version = "0.1.0"
+dependencies = [
  "anyhow",
  "flate2",
  "hashbrown 0.15.5",
+ "hux-core",
+ "hux-test-support",
  "memmap2",
- "yaml-rust2",
+]
+
+[[package]]
+name = "hux-test-support"
+version = "0.1.0"
+dependencies = [
+ "flate2",
 ]
 
 [[package]]
