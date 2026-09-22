@@ -75,7 +75,7 @@ platform/                     # 平台适配
 `docs/`（设计 / 重构 / 使用 / 配置 / 性能 / Android 等，索引见根 `README.md`「文档」表）；
 `platform/android` 的插件接线**待启动**，见 [`android.md`](android.md)；`platform/linux` 的打包待做。
 
-参照实现 → Rust 的模块映射（含各模块差分手段）见 [`rust-migration.md`](rust-migration.md) §3。
+参照实现 → Rust 的模块映射（含各模块差分手段）见 [`design.md`](design.md) §2。
 
 > **现状**：`crates/hux-cfg`、`crates/hux-ffi`、`crates/hux-scheme/tiger`、`platform/fcitx5`、
 > `platform/linux` 均已落地；`hux-core` 只余通用内核（cache/collections/key/key_table/learning/punct/session/host）
@@ -91,7 +91,7 @@ platform/                     # 平台适配
   **不把虎码特有语义**（缓冲态、锁、早提交启发式）泛化进契约——先留在 `tiger` profile，
   等第二个同族方案落地后再抽象。
 - 形码族（虎码 / 宇浩 / 五笔）优先；拼音族（双拼 / 全拼）只留接口。
-- **选项键单一来源 + 角色归配置层（✅ 已收口；记录见 [`review-ledger.md`](review-ledger.md) §4.2）**：方案经 `Scheme::option_declarations`
+- **选项键单一来源 + 角色归配置层（记录见 [`review-ledger.md`](review-ledger.md) §4.2）**：方案经 `Scheme::option_declarations`
   自报「角色 → 键」声明（`&'static [OptionDecl]`）；**角色词汇与默认值归 `hux-cfg`**
   （`hux_cfg::roles` 的常量；宿主标准项 `full_shape` / `ascii_punct` 由配置层自持，不由方案声明）。
   平台在装配处把声明解析为 `OptionKeys` 角色表（**缺角色即报错**，不静默接线），
@@ -120,7 +120,7 @@ platform/                     # 平台适配
   `tiger_sentence_*` 前缀、学习库目录名、`options.yaml` 与 `Library` / `Icon` 也保持原样。
   方案侧的**模块 / 函数名**（`sound_to_char_shape` / `char_to_sound_shape` 及其内部 helper）
   是参照移植的溯源名，不在此列。
-- **方案配置袋（✅ 已收口，见 [`review-ledger.md`](review-ledger.md) §4.2）**：`SchemeConfig` 是「角色 → `Value`（开关 / 计数 / 文本 / 文本列表）」的
+- **方案配置袋（见 [`review-ledger.md`](review-ledger.md) §4.2）**：`SchemeConfig` 是「角色 → `Value`（开关 / 计数 / 文本 / 文本列表）」的
   **通用键值袋**——平台按角色装配（角色全集 `hux_cfg::roles::SCHEME_CONFIG_ROLES`，装配完整性由平台测试
   `scheme_config_covers_every_declared_role` 守护），方案按角色解释；内核不再出现
   `min_retained_raw_length` / 反查键 / Tab 学习等虎码口径字段，换方案不必改 core。

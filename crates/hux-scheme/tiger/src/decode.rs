@@ -3,7 +3,7 @@
 
 //! Beam 解码（冷路径），对应参照 `decode_full` / `decode` 的去缓存形态。
 //!
-//! 本增量范围：normalize、rank 选择器、资格过滤、beam 扩展、桶聚合、评分与候选发射、
+//! 覆盖：normalize、rank 选择器、资格过滤、beam 扩展、桶聚合、评分与候选发射、
 //! 早提交证据、学习集成、锁播种（`decode_with_lock`）。
 //! 暂不含：增量/锁缓存（性能优化）、模型失败回退（guarded_decode）。
 //! 参照 `decode()` 的缓存机制（`trailing_selector_span` / `expand_range` 的增量状态复用、

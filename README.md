@@ -79,7 +79,7 @@ sha256 `c0063898fdff27c1fb00c1c72fa28a6c1b375fade1ec2045d731b9db958bdecc`；文�
 | ---------------------------------------------------------- | --------------------------------------------------- |
 | [`docs/usage.md`](docs/usage.md)                           | 指南：开发 / 安装 / 使用 / 卸载                     |
 | [`docs/config.md`](docs/config.md)                         | 配置项：行为 / 快捷键 / 选项与学习存储 / 待扩展（B/C 组） |
-| [`docs/rust-migration.md`](docs/rust-migration.md)         | 设计：路线与状态、模块映射、数据、集成要点          |
+| [`docs/design.md`](docs/design.md)                         | 设计：模块映射、数据与目录、fcitx5 集成要点、测试    |
 | [`docs/refactor.md`](docs/refactor.md)                     | 活规则：结构正义 / 目标结构 / 方案契约 / 测试与性能 / 依赖校验 / 骨架 |
 | [`docs/review-ledger.md`](docs/review-ledger.md)           | 台账：未闭合项（活口）、迁移映射与批次（留档）、逐批整改记录、四份审计总账 |
 | [`docs/upstream-deviations.md`](docs/upstream-deviations.md) | 政策：有意偏离上游（①②③④）的依据、可证伪期望值表与回归做法 |
@@ -94,7 +94,7 @@ sha256 `c0063898fdff27c1fb00c1c72fa28a6c1b375fade1ec2045d731b9db958bdecc`；文�
 | `crates/hux-scheme/*/README.md`、`platform/*/README.md`     | 各方案骨架与各平台目录的职责与现状（就地索引）      |
 
 > **文档分工（纪律见 `AGENTS.md`「背景与约定」）**：活文档只写**现状与做法**——`docs/refactor.md`
-> （结构与契约等活规则）、`docs/config.md`、`docs/usage.md`、`docs/rust-migration.md`、
+> （结构与契约等活规则）、`docs/config.md`、`docs/usage.md`、`docs/design.md`、
 > `goldens/README.md` 与 `goldens/regenerate.md`；**历史与逐批记录**（迁移映射、批次、审计总账、
 > 未闭合项）进 `docs/review-ledger.md`；**有意偏离上游**进 `docs/upstream-deviations.md`。
 

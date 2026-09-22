@@ -14,7 +14,7 @@ cargo fmt --all --check
 reuse lint                      # 许可标注（CI 亦跑）
 ```
 
-设计、模块映射与测试说明见 [`rust-migration.md`](rust-migration.md)； \
+设计、模块映射与测试说明见 [`design.md`](design.md)； \
 差分金样清单见 [`../goldens/README.md`](../goldens/README.md)，重新生成命令与校验和见
 [`../goldens/regenerate.md`](../goldens/regenerate.md)； \
 性能基准与基线见 [`perf.md`](perf.md)（`cargo run --release --example {decode_bench,key_bench}`）。 \
