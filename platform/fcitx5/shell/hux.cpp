@@ -42,7 +42,7 @@ namespace {
 /// `fcitx::Log::setLogRule` 按**类别名**匹配规则，而 `FCITX_DEBUG()` 走的是名为 `default`
 /// 的类别（`log.h`：`FCITX_LOG(LEVEL)` → `FCITX_LOGC(::fcitx::Log::defaultCategory, LEVEL)`；
 /// `log.cpp` 里默认类别名就是 `"default"`）。因此这里显式定义一个名为 `hux` 的类别，
-/// 让 `fcitx5 --verbose='hux=5'` 只打开本层 DEBUG（见 `platform/fcitx5/README.md`）。
+/// 让 `fcitx5 --verbose='hux=5'` 只打开本层 DEBUG。
 FCITX_DEFINE_LOG_CATEGORY(huxLog, "hux");
 
 /// 本层调试日志（默认级别 Info ⇒ 平时静默；`hux=5` 时输出）。
@@ -399,7 +399,8 @@ public:
     ///      ⇒ `~AddonManager`（`unload()` → 删 addon 实例）在 IC 之前）。
     /// 若调换（先 `free` 再 `unregister`）：每个 `HuxSession` 会对已释放的引擎调
     /// `hux_engine_session_free` ⇒ UAF。**因此本顺序是安全性的前提，改动前请重读本节。**
-    /// 真机核对方法（析构顺序）：见 `platform/fcitx5/README.md`「析构顺序核对」。
+    /// 真机核对方法（析构顺序）：`fcitx5 -r --verbose='hux=5'` 前台运行，退出后确认全部
+    /// `~HuxSession` 日志**早于** `~HuxEngine`（顺序相反即命中悬垂路径）。
     ~HuxEngine() override {
         HUX_DEBUG() << "hux: ~HuxEngine";
         // 1) 注销工厂 ⇒ fcitx5 立刻销毁全部已注册会话（见上方契约注释）。
@@ -740,7 +741,7 @@ private:
             FCITX_WARN() << "hux: apply settings failed";
         }
         // 配置页可能绑到**没有名字的 keysym**（媒体键 / 厂商扩展键）：Rust 侧无法把它解析成
-        // rime 键名，该绑定会被丢弃——诊断经状态串的 `hotkeys:` 前缀送出（复核整改 F15）。
+        // rime 键名，该绑定会被丢弃——诊断经状态串的 `hotkeys:` 前缀送出。
         // 这里把最新状态串落到日志，使「绑定静默消失」变得可诊断；按契约指针只用一次
         // （`hux_engine_status` 在下一次状态刷新后失效，见 `hux_abi.h`）。
         if (const char *status = hux_engine_status(engine_)) {

@@ -114,7 +114,7 @@ pub struct LearningIndex {
     /// 构建索引的时刻（平台用作 epoch；参照 `M.*` 的 `now` 元数据）。
     pub now: f64,
     /// **参照遗留元数据**：`M.runtime_index` 记录的「最大事件时间」，
-    /// `update_index` 原样带过；B4 删掉时间衰减后本仓无消费者（审计 F9，
+    /// `update_index` 原样带过；删掉时间衰减后本仓无消费者（
     /// 保留以维持与参照 `runtime_index` 的字段同构，便于后续差分核对）。
     pub future: f64,
     partitions: Option<HashMap<String, HashMap<String, Group>>>,
@@ -254,7 +254,7 @@ pub fn frame(values: &[String]) -> String {
 ///
 /// 越界与「落点不在 UTF-8 字符边界」都返回 `None`（参照 Lua 的 `sub` 同样不 panic）。
 /// 本函数是坏值的唯一错值通道，而调用方在 `extern "C"` 的构造路径上（读持久化库），
-/// 故**不得 panic**：坏帧只能是「跳过该条记录 + 诊断」（审计 F1）。
+/// 故**不得 panic**：坏帧只能是「跳过该条记录 + 诊断」。
 pub fn unframe(value: &str) -> Option<Vec<String>> {
     let bytes = value.as_bytes();
     let mut result = Vec::new();
@@ -365,12 +365,11 @@ fn context_valid(context: &str) -> bool {
     if context.is_empty() {
         return true;
     }
-    // 一次解码复用（此前对同一串调了两次 `chars`，审计 F13）。
+    // 一次解码复用（此前对同一串调了两次 `chars`）。
     chars(context).is_some_and(|list| !list.is_empty() && list.len() <= 2)
 }
 
-/// 参照 `M.build` / `M.runtime_index` 的共用事件过滤（`build_valid` 曾是其同义包装，
-/// 已按复核整改口径删除，审计 F8——见 `docs/review-ledger.md` §5.1）。
+/// 参照 `M.build` / `M.runtime_index` 的共用事件过滤（`build_valid` 曾是其同义包装，已删除）。
 fn event_valid(e: &Event) -> bool {
     mode_valid(&e.mode)
         && code_valid(&e.code)
@@ -570,7 +569,7 @@ impl LearningIndex {
     /// 无时间衰减后，`7b220ce` 删除了「时钟回退/未来事件 ⇒ 全量重放」的判据，
     /// 也删除了逐事件的 `future` 更新（`future` 原样带过）。
     /// 注意：`partitions.clone()` 为整体深拷贝（参照的 `copy` 只复制外层表），
-    /// 单次确认代价 O(历史规模)；如需优化可改为共享分区（性能项，K3 复核）。
+    /// 单次确认代价 O(历史规模)；如需优化可改为共享分区。
     pub fn update(&self, accepted: &[Event], all_events: &[Event], now: f64) -> Self {
         let Some(partitions) = &self.partitions else {
             return Self::runtime(all_events, now);
@@ -1116,7 +1115,7 @@ mod tests {
     ///
     /// 生产触发面：`platform/fcitx5/src/learning_store.rs` 把 LevelDB 的任意值经
     /// `String::from_utf8_lossy` 交给本函数（非法 UTF-8 换成 U+FFFD 后长度错位），
-    /// 且发生在 `hux_engine_new`（`extern "C"`）⇒ 坏库会让 addon 加载即 abort（审计 core F1 / 平台 F3）。
+    /// 且发生在 `hux_engine_new`（`extern "C"`）⇒ 坏库会让 addon 加载即 abort。
     #[test]
     fn unframe_rejects_non_char_boundary_slices() {
         // "1:é"：`é` 占 2 字节，长度 1 的切片正好落在其内部。

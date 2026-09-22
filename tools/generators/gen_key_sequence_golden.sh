@@ -5,18 +5,18 @@
 # 生成键序列金样（2c）：pin 版参照 Lua 核心 + 系统 librime + librime-lua。
 #
 # 用法：tools/generators/gen_key_sequence_golden.sh [输出文件]
-#   REF  参照仓库本地检出（默认仓库内 external/tiger-sentense-rime，已 gitignore）
+#   REF  参照仓库本地检出（默认仓库内 _external/tiger-sentense-rime，已 gitignore）
 #   REF_URL  写入金样头部的参照仓库线上地址（默认 https://github.com/lvyww/tiger-sentense-rime）
 #   PIN  参照固定提交（默认 abad411750f79cfca750985fa266689b5d9b865f＝主干 pin，与入库金样一致；
-#        音反查金样取「反查分支尖端」92a0b54，见 goldens/regenerate.md 与 gen_sound_to_char_shape_golden.sh）
+#        音反查金样取「反查分支尖端」92a0b54，见 gen_sound_to_char_shape_golden.sh）
 #   CASES 用例文件（默认 tools/cases/key_sequence_cases.txt；可指向临时用例做探索）
 #
 # 依赖：git、g++、python3、系统 librime（rime_api.h + librime-lua.so）。
-# 金样不在 CI 重生成（探针依赖具体 librime/librime-lua 版本），见 goldens/regenerate.md。
+# 金样不在 CI 重生成（探针依赖具体 librime/librime-lua 版本）——需本地按 `tools/generators/` 手动重生成。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-REF="${REF:-$ROOT/external/tiger-sentense-rime}"
+REF="${REF:-$ROOT/_external/tiger-sentense-rime}"
 REF_URL="${REF_URL:-https://github.com/lvyww/tiger-sentense-rime}"
 PIN="${PIN:-abad411750f79cfca750985fa266689b5d9b865f}"
 OUT="${1:-$ROOT/goldens/key_sequence.tsv.gz}"
@@ -30,7 +30,7 @@ shared="$WORK/shared"
 stage="$WORK/stage"
 mkdir -p "$user/lua" "$shared" "$stage"
 
-# 夹具护栏（M3）：入库夹具（goldens/key_sequence/）不得被生成器当副作用重写。
+# 夹具护栏：入库夹具（goldens/key_sequence/）不得被生成器当副作用重写。
 # 只做「逐字节比对」这一件事（不删传入文件——它可能是 pin 工作区里的真实文件）：
 # 一致才继续，入库文件保持原样不落盘；不一致即失败，并区分两种成因：
 # 上游 pin 变化（须同步更新金样与夹具）或夹具漂移（应还原）。
@@ -99,7 +99,7 @@ recognizer:
 YAML
 
 # 探针（系统 librime；librime-lua 插件显式加载）。
-# 插件缺失时显式报错：`set -e` 下裸 `test -f` 会静默退出，无从诊断（M7）。
+# 插件缺失时显式报错：`set -e` 下裸 `test -f` 会静默退出，无从诊断。
 plugin="${LUA_PLUGIN:-/usr/lib/rime-plugins/librime-lua.so}"
 if [ ! -f "$plugin" ]; then
     echo "生成失败：缺少 librime-lua 插件：$plugin（可用 LUA_PLUGIN 覆盖）" >&2

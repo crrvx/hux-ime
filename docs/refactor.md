@@ -4,7 +4,7 @@
 # 重构：核心引擎化 / 平台无关 / 码表无关 / 测试正式化
 
 目标：把现状（虎句 + fcitx5 桌面）整理为可承载**多方案、多平台**的引擎结构。 \
-**本轮范围**：双端（linux / android）+ 虎码（字 / 词 / 句）；其他方案与平台仅留 README 骨架。
+**当前范围**：双端（linux / android）+ 虎码（字 / 词 / 句）；其他方案与平台仅留 README 骨架。
 
 ## 本文边界
 
@@ -14,8 +14,7 @@
 - **活规则（本文，只写现状与做法）**：§1 结构正义（硬规则）、§2 目标结构、§5 方案契约、
   §6 测试与性能、§7 依赖校验、§9 骨架。
 - **历史与逐批记录** → [`review-ledger.md`](review-ledger.md)：未闭合项（活口，置顶）、迁移映射
-  （原 §3，留档）、批次 P0–P6（原 §4）、上游追平 B1–B5、复核整改逐批记录与四份审计的
-  「复核整改总账」（96 行，原 §8）。
+  （原 §3，留档）、各轮批次（原 §4）、上游追平、逐批整改记录与四份审计总账。
 - **有意偏离上游** → [`upstream-deviations.md`](upstream-deviations.md)：① 翻页 / 标点遮蔽修复
   （含用户决定 B）、② addon 扩展、③ pin 差异、④ 宿主链交互；含金样「字节不动 + `DEVIATIONS`
   可证伪期望值表」策略与回归做法。
@@ -46,10 +45,10 @@ crates/                       # 平台无关的 Rust 库
                               #   （options.yaml > 设置 > 内建）、状态菜单开关白名单、持久化接口
   hux-ffi/                    # C ABI：C 布局类型 + 导出函数（桌面 / Android 共用）
   hux-scheme/
-    tiger/                    # 虎码（字/词/句）——本轮唯一全量实现
+    tiger/                    # 虎码（字/词/句）——当前唯一全量实现
     yuhao/  wubi/             # init：README 骨架（形码族，复用 tiger 框架）
     shuangpin/  quanpin/      # init：README 骨架（拼音族，接口预留）
-  hux-test-support/           # 测试助手（P5 已落地：金样路径 / transcript 编解码 / 临时目录）
+  hux-test-support/           # 测试助手（金样路径 / transcript 编解码 / 临时目录）
 platform/                     # 平台适配
   fcitx5/                     # 共享 fcitx5 适配：Rust 组装（Engine/UI 快照/存储实现/Paths）
                               #   + C++ 壳 + CMake（linux 与 android 共用）
@@ -78,7 +77,7 @@ platform/                     # 平台适配
 
 参照实现 → Rust 的模块映射（含各模块差分手段）见 [`rust-migration.md`](rust-migration.md) §3。
 
-> **现状（P4c 后）**：`crates/hux-cfg`、`crates/hux-ffi`、`crates/hux-scheme/tiger`、`platform/fcitx5`、
+> **现状**：`crates/hux-cfg`、`crates/hux-ffi`、`crates/hux-scheme/tiger`、`platform/fcitx5`、
 > `platform/linux` 均已落地；`hux-core` 只余通用内核（cache/collections/key/key_table/learning/punct/session/host）
 > **+ 方案契约 `hux_core::scheme`**；平台装配根构造 tiger 后以 `dyn Scheme` 驱动。
 
@@ -101,7 +100,7 @@ platform/                     # 平台适配
   键的**持久化兼容**由方案侧测试 `option_declarations_are_stable_persisted_keys` 钉住，
   「每个角色都必须被方案声明」由平台测试 `every_configured_role_is_declared_by_the_scheme` 钉住，
   YAML 读写格式由 `hux-cfg` 的 store 测试（含历史键字面量）守护。
-  **角色一致性守护（复核整改① 后续，记录见 [`review-ledger.md`](review-ledger.md) §4.2）**：`hux-cfg` 与方案各自持有一份同值字面量，
+  **角色一致性守护（记录见 [`review-ledger.md`](review-ledger.md) §4.2）**：`hux-cfg` 与方案各自持有一份同值字面量，
   过去只靠人肉同步——`Config::parse` 对未知角色 `unwrap_or(0/false)` 静默回退，单侧改名可让
   `min_retained_raw_length` / `high_freq_limit` 静默失效而全绿。现在：
   ①方案自报 `hux_scheme_tiger::scheme::SCHEME_CONFIG_ROLES` 并由 `TigerScheme::load` 报出
@@ -112,7 +111,7 @@ platform/                     # 平台适配
   （解析 `hux_abi.h` 的 `HUX_OPTION_*` 枚举序 ↔ `RUNTIME_OPTION_ROLES`）钉住全部四张清单；
   ③`hux_abi.h` 的 `HUX_OPTION_COUNT` + C++ `static_assert(std::size(kLabels) == HUX_OPTION_COUNT)`
   把「加角色未补文案」从越界读（UB）变成编译失败。
-- **口径命名（复核整改，范围 C）**：配置 / ABI / 平台层的**标识符**描述引擎概念
+- **口径命名**：配置 / ABI / 平台层的**标识符**描述引擎概念
   （`ROLE_MIN_RETAINED_INPUT_LENGTH`、`ROLE_REVERSE_LOOKUP_PRONUNCIATION_KEYS`、
   `ROLE_REVERSE_LOOKUP_CHARACTER_KEYS`、`ROLE_LEARNING_ON_TAB` 及对应的 `Settings` 字段 /
   `hux_options` 成员 / C++ 配置成员）；**线上字符串一律不动**——`ROLE_*` 的值仍是与上游 schema /
@@ -126,12 +125,12 @@ platform/                     # 平台适配
   `scheme_config_covers_every_declared_role` 守护），方案按角色解释；内核不再出现
   `min_retained_raw_length` / 反查键 / Tab 学习等虎码口径字段，换方案不必改 core。
 - **内核不 import 任何 `hux-scheme/*`**（校验方式见 §7）。
-- **配置诊断通道（第 2 批 F7；记录见 [`review-ledger.md`](review-ledger.md) §4.3）**：`Scheme::apply_config(&SchemeConfig) -> Result<(), Vec<ConfigError>>`
+- **配置诊断通道（记录见 [`review-ledger.md`](review-ledger.md) §4.3）**：`Scheme::apply_config(&SchemeConfig) -> Result<(), Vec<ConfigError>>`
   ——`SchemeConfig::require_{bool,count,text,texts}` 把「角色缺失」与「类型不符」区分开
   （`ConfigError` 带角色名与期望类型），方案按缺省值回退的同时把诊断回给平台；
   平台并入状态串（`config:` 前缀，与装配期「未识别的角色 / 缺少角色」同风格）。
   `texts` 相应改为 `Option<&[String]>`（不再把「类型不符」退化成空切片）。
-- **落地形态（P4c；复核整改① 后更新）**：`hux_core::scheme::Scheme` 只含「必须回调方案」的动作——
+- **落地形态**：`hux_core::scheme::Scheme` 只含「必须回调方案」的动作——
   `id` / `option_declarations` / `learning_mode` / `apply_config` / `host_options` /
   `set_store_ready` / `apply_learning_index` / `new_session` / `free_session` /
   `reset_session` / `process_key` / `select_candidate` / `rebuild` / `take_learning_events` /
@@ -142,12 +141,10 @@ platform/                     # 平台适配
 ## 6. 测试与性能
 
 - 单元测试随模块；集成 / 差分测试独立 `tests/`；金样只读，持续作为行为 oracle。
-  现状（复核整改第 4 批复测）：源内单测 **24 个文件**（内核 7 / 方案 8 / 配置 4 / 助手 1 / 平台 3 / ffi 1），
-  另有 2 个同目录的独立 `tests.rs` 模块文件（`tiger/src/interaction/tests.rs`、`platform/fcitx5/src/tests.rs`），
+  现状：含内联单测的源文件 **25 个**（内核 8 / 方案 8 / 配置 4 / 助手 1 / 平台 3 / ffi 1），
   集成与差分 7 个在 `tests/`（内核 2 / 方案 5）——两者不混放。
-  （漂移来源：复核整改① 新增的 `hux-core/src/scheme.rs`、`hux-cfg/src/roles.rs` 单测；数法为
-  `grep -rl '#\[cfg(test)\]' crates platform`。）
-- `hux-test-support`（P5，**✅ 已落地**，`crates/hux-test-support`）：只放与业务无关的共性工具——
+  （数法为 `grep -rl '#\[cfg(test)\]' crates platform`。）
+- `hux-test-support`（`crates/hux-test-support`）：只放与业务无关的共性工具——
   金样 / 夹具路径定位（`repo_path` / `open_golden`）、transcript 编解码、临时目录（`temp_dir`）；
   各 crate 以 `dev-dependencies` 引入，本 crate 不依赖任何 hux crate（避免测试期成环）。
   **方案专属夹具留在各自 `tests/`**（如 `decode_differential.rs` 的 `make_decoder`）；
@@ -162,14 +159,15 @@ platform/                     # 平台适配
   `bash -n` + `--dry-run` 冒烟）
   + `addon` 作业（cmake configure 与构建链接、`hux_abi.h` ↔ `libhux.so` 符号一致、
   `DESTDIR` 安装布局 = 3 个插件文件 + `data/MANIFEST` 全部随包数据）+ 金样重生成比对
-  （「层依赖」一步覆盖 §1 规则 1 的四条边）；复核整改第 4 批后 `rust` 作业为 16 步；
-  **待补**：`cargo-deny`（可选）、依赖/工具链钉版本（[`review-ledger.md`](review-ledger.md) §0 的 `[待办]`）。
+  （「层依赖」一步覆盖 §1 规则 1 的四条边）；`rust` 作业为 16 步；
+  **待补**：`cargo-deny`（可选）、CI action 钉 commit sha（[`review-ledger.md`](review-ledger.md) §0 的
+  `[待办]`）；Rust 工具链**有意跟随最新 stable**（不钉 `rust-toolchain.toml`）。
 
 ## 7. 依赖校验
 
-> **统一做法（复核整改第 4 批 C6/C7）**：源码文本类守卫一律先**剥离 Rust 注释**（`//`、`///`、`/* */`
+> **统一做法**：源码文本类守卫一律先**剥离 Rust 注释**（`//`、`///`、`/* */`
 > 含嵌套，字符串字面量保留）再匹配——工具是 `tools/checks/rust_source_grep.py`
-> （`--mode no-comments`，正负例见 `_tmp/批次4-文档工具CI.md`）。故「注释里写为什么不能出现
+> （`--mode no-comments`）。故「注释里写为什么不能出现
 > 某个角色名」不再让 CI 变红，而真代码里的字面量照旧命中；依赖边判定仍由 `cargo tree` 负责。
 
 - ✅ 已入 CI（`.github/workflows/ci.yml` 的 Core platform-clean）：`crates/hux-core` 源码不得出现
@@ -178,7 +176,7 @@ platform/                     # 平台适配
   `lib.rs` / `scheme.rs` / `host.rs` / `session.rs` 里「不依赖 hux-scheme」的说明性提及是合法的，实测 6 处），
   也不得引用已迁出的方案模块（`decode` / `lexicon` / `lexical` / `ngram` / `interaction` / 反查）；
 - ✅ 已入 CI：`cargo tree` 校验 `hux-core` 无 `hux-scheme/*` 依赖边，且 `hux-scheme/*` 只依赖 `hux-core`；
-- ✅ 已入 CI：`platform/fcitx5/src` 的方案引用走**白名单**（复核整改第 4 批 C7，此前只是「内部模块黑名单」）：
+- ✅ 已入 CI：`platform/fcitx5/src` 的方案引用走**白名单**（此前只是「内部模块黑名单」）：
   ① 出现的方案模块只能是 `hux_scheme_tiger::scheme`（装配根构造方案，`hux_scheme_tiger::<其它模块>` 一律失败）；
   ② 从 `scheme` 大括号导入的名字只允许 `ASSETS` / `TigerScheme` / `SCHEME_ID`；
   ③ 保留原有内部模块黑名单（`interaction` / `decode` / `lexicon` / …）——即「平台经契约驱动」；
@@ -186,7 +184,7 @@ platform/                     # 平台适配
 - ✅ 已入 CI（契约去方案语义时新增；记录见 [`review-ledger.md`](review-ledger.md) §4.2）：`crates/hux-core` 不得出现**带引号的**角色名 / 方案选项键字面量
   （`"tab_learning"`、`"tiger_sentence_<…>"` 等）——角色词汇归 `hux-cfg`、键归方案；
   rime 标准名 `full_shape` / `ascii_punct` 由 core 宿主链自持，不在此列（**注释与文档叙述确实不受影响**：
-  守卫剥离注释后匹配，复核整改第 4 批 C6 修正了此前 `grep` 注释误伤的措辞/实现不一致）；
+  守卫剥离注释后匹配（避免 `grep` 误伤注释）；
 - 后续可选 `cargo-deny`。
 
 ## 9. 骨架（已落地）

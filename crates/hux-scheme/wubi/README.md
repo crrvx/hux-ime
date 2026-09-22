@@ -15,4 +15,4 @@
   逐角色回报诊断）/ `host_options`，以及 `new_session` / `free_session` / `reset_session` /
   `process_key` / `select_candidate` / `rebuild` / `take_learning_events` / `buffered_text` /
   `auxiliary_lookup_active` / `auxiliary_rows`；资产目录由平台解析后传入。
-- 前置（已满足）：`hux_core::scheme` 契约已于 P4c 落地（见 `docs/refactor.md` §5）；本骨架待开工。
+- 前置（已满足）：`hux_core::scheme` 契约已落地（见 `docs/refactor.md` §5）；本骨架待开工。

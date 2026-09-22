@@ -81,7 +81,7 @@ sha256 `c0063898fdff27c1fb00c1c72fa28a6c1b375fade1ec2045d731b9db958bdecc`；文�
 | [`docs/config.md`](docs/config.md)                         | 配置项：行为 / 快捷键 / 选项与学习存储 / 待扩展（B/C 组） |
 | [`docs/rust-migration.md`](docs/rust-migration.md)         | 设计：路线与状态、模块映射、数据、集成要点          |
 | [`docs/refactor.md`](docs/refactor.md)                     | 活规则：结构正义 / 目标结构 / 方案契约 / 测试与性能 / 依赖校验 / 骨架 |
-| [`docs/review-ledger.md`](docs/review-ledger.md)           | 台账：未闭合项（活口）、迁移映射与批次（留档）、逐批整改记录、四份审计总账（96 行） |
+| [`docs/review-ledger.md`](docs/review-ledger.md)           | 台账：未闭合项（活口）、迁移映射与批次（留档）、逐批整改记录、四份审计总账 |
 | [`docs/upstream-deviations.md`](docs/upstream-deviations.md) | 政策：有意偏离上游（①②③④）的依据、可证伪期望值表与回归做法 |
 | [`docs/android.md`](docs/android.md)                       | 计划：fcitx5-android 插件适配                       |
 | [`docs/LEXICAL_PRIOR_ATTRIBUTION.md`](docs/LEXICAL_PRIOR_ATTRIBUTION.md) | 署名：词先验数据的来源与许可         |

@@ -172,13 +172,12 @@ mod tests {
         assert_eq!(offset_of!(HuxKeyList, sym), 4);
         assert_eq!(offset_of!(HuxKeyList, states), 4 + HUX_MAX_KEYS * 4);
 
-        // `hux_options`：13 个标量 int32 + 4 个键位列表（顺序见头文件；
-        // 复核整改第 5 批 F7 修正了此处「11 个标量」的陈旧注释）。
+        // `hux_options`：13 个标量 int32 + 4 个键位列表（顺序见头文件）。
         let scalar = size_of::<i32>();
         let list = size_of::<HuxKeyList>();
         assert_eq!(size_of::<HuxOptions>(), 13 * scalar + 4 * list);
         // **逐字段**（名字 + 偏移，按声明序）：任何改名都让 `offset_of!` 编译失败，
-        // 任何同宽换序都让下一条偏移断言失败（F7：此前只有 8 个抽查点）。
+        // 任何同宽换序都让下一条偏移断言失败（此前只有 8 个抽查点）。
         let expected: &[(&str, usize)] = &[
             ("early_commit", 0),
             ("early_commit_to_preedit", scalar),
@@ -234,7 +233,7 @@ mod tests {
         }
     }
 
-    /// F7：`hux_options` 的**字段名与声明序**必须与 Rust 结构体逐项一致。
+    /// `hux_options` 的**字段名与声明序**必须与 Rust 结构体逐项一致。
     ///
     /// 同宽字段换序（如 `early_commit` ↔ `allow_duplicate_single`，都是 `int32_t`）不会改变
     /// 尺寸，只靠 `size_of`/`offset_of` 的自比抓不到；本用例直接解析头文件与

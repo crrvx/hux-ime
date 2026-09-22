@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! 整键路径基准（P6）：经方案契约驱动一个会话，测「按键 → 组合重建」的单键耗时。
+//! 整键路径基准：经方案契约驱动一个会话，测「按键 → 组合重建」的单键耗时。
 //!
 //! ```sh
 //! cargo run --release --example key_bench -- [--codes N] [--repeat N] [--model <bin>]

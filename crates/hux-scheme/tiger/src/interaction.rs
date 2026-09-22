@@ -12,9 +12,8 @@
 //! - 上下文属性层只保留**宿主与内核共享**的缓冲前缀（`K_BUFFERED`：`select` /
 //!   `early_commit` / `learning_glue` 与 `Context::is_buffered` 都读它）。会话状态
 //!   （已确认 `raw`/`text`、锁帧）**不再**写成私有属性快照：参照每次入口从属性重读是因为
-//!   Lua `env` 无状态，本仓的会话状态由方案对象持有；原先的 `load`/`read_locks` 解析、
-//!   旧属性迁移与 `committed`/`locks` 写侧因此无生产调用者（也无 FFI / 平台 / C++ 读取方），
-//!   已在复核整改 3b（A3）删除，见 `docs/review-ledger.md` §4.4。
+//!   Lua `env` 无状态，本仓的会话状态由方案对象持有；`load`/`read_locks` 解析、旧属性迁移与
+//!   `committed`/`locks` 写侧无生产调用者，已删除。
 
 use crate::char_to_sound_shape;
 use crate::decode::{

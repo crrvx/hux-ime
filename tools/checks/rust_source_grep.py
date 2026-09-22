@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""按「注释剥离后」的 Rust 源码做守卫匹配（复核整改第 4 批 C6/C7）。
+"""按「注释剥离后」的 Rust 源码做守卫匹配。
 
-CI 里原来的 `grep -RnE` 会命中**注释**，与 `docs/refactor.md` §7 的声明相反
+CI 里原来的 `grep -RnE` 会命中**注释**，与本层的分层纪律相反
 （在 core 里写「为什么不能出现角色名 `"page_size"`」这类说明性注释也会让 CI 变红）。
 本脚本先按 Rust 词法剥掉 `//`、`///`、`/* */`（含嵌套）与文档注释，再匹配；
 字符串字面量原样保留，故「带引号的角色名 / 方案选项键字面量」照旧命中。

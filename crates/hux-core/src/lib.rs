@@ -10,10 +10,10 @@
 //!   [`host::CommitObserver`]；`learning`：学习机制；`cache`：有界 FIFO 缓存；
 //!   `collections`：不透明哈希容器（公开 API 不暴露底层哈希库，见模块文档）。
 //!
-//! 纪律（`docs/refactor.md` §1）：内核不依赖任何方案与平台——不出现环境变量 / XDG 路径解析 /
+//! 纪律：内核不依赖任何方案与平台——不出现环境变量 / XDG 路径解析 /
 //! 系统时钟 / 直接打印（CI 校验），也不 import `hux-scheme/*`；
 //! 允许按**平台传入的显式路径**读取数据文件（不自行解析环境或拼接平台目录）。虎码方案实现见 `hux-scheme/tiger`；
-//! 方案契约 `hux_core::scheme` 随 P4c 落地。
+//! 方案契约 `hux_core::scheme` 已落地。
 
 pub mod cache;
 pub mod collections;

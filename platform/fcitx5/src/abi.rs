@@ -112,7 +112,7 @@ pub unsafe extern "C" fn hux_engine_reset(engine: *mut Engine, session: u64) {
 ///
 /// **指针有效期 = 下一次状态刷新之前**：`Engine::refresh_status` 会替换内部 `CString`
 /// （选项保存失败 / 配置诊断 / 运行期学习库错误 / 热键绑定诊断），此前返回的指针随即失效
-/// （复核整改第 4 批 F8，契约见 `hux_abi.h` 同名声明）。宿主每次需要时重新调用，不要缓存。
+/// （契约见 `hux_abi.h` 同名声明）。宿主每次需要时重新调用，不要缓存。
 ///
 /// # Safety
 /// `engine` 须有效（可为空指针）。

@@ -3,7 +3,7 @@
 
 # crates/hux-scheme/tiger
 
-**虎句**（`tiger_sentence`）方案：虎码字 / 词 / 句的整句输入（当前唯一全量实现，P4b 落地）。
+**虎句**（`tiger_sentence`）方案：虎码字 / 词 / 句的整句输入（当前唯一全量实现）。
 
 - 数据与计算：`lexicon`（码表 / 字频 / 白名单 / 补充）、`decode`（beam 解码与早提交证据）、
   `lexical`（TCSLEX01 词先验）、`ngram`（TCSKNM02 模型）；
@@ -14,5 +14,5 @@
 - 差分测试在 `tests/`（`cargo test --workspace`；本地真实模型抽样缺失自动跳过）；
 - 依赖方向：`hux-scheme/* → hux-core`；内核不依赖本 crate，平台仅在装配处构造方案；
 - 语义、数据与金样参照 [tiger-sentense-rime](https://github.com/lvyww/tiger-sentense-rime)，
-  方案标识保持 `tiger_sentence`。活规则（结构 / 契约）见 [`../../../docs/refactor.md`](../../../docs/refactor.md)，批次与复核整改记录见
+  方案标识保持 `tiger_sentence`。活规则（结构 / 契约）见 [`../../../docs/refactor.md`](../../../docs/refactor.md)，历史与逐批记录见
   [`../../../docs/review-ledger.md`](../../../docs/review-ledger.md)。

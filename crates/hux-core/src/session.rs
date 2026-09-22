@@ -329,7 +329,7 @@ impl Context {
     /// ——`Ctrl+Return`（`Editor::CommitScriptText`）提交的「脚本文本」。
     ///
     /// 参照不带实参调用，故取 `composition.h` 的默认实参 `keep_selection = true`
-    /// （**不是**审计草稿里的 `false`；pin `33e78140` 实读）。
+    /// （pin `33e78140` 处实读为 `true`）。
     pub fn get_script_text(&self) -> String {
         self.composition.script_text(&self.input, true)
     }
@@ -455,7 +455,7 @@ impl Context {
     /// 参照 `Context::Highlight`：截断到 `count-1`；空菜单归 0；索引未变化返回 false。
     ///
     /// 段**未建立菜单**（本模型的 [`Segment::translated`] ⇒ 参照 `!back().menu`）时
-    /// 直接返回 false：不改写 `selected_index`、不推 `Update`（审计 F12；参照 `context.cc`
+    /// 直接返回 false：不改写 `selected_index`、不推 `Update`（参照 `context.cc`
     /// 首行即 `if (composition_.empty() || !composition_.back().menu) return false;`）。
     pub fn highlight(&mut self, index: usize) -> bool {
         let Some(segment) = self.composition.back_mut() else {
@@ -551,7 +551,7 @@ mod tests {
             end: 2,
             tags: vec!["abc".to_string()],
             prompt: String::new(),
-            // 有候选即「已建立菜单」（参照 `menu` 非空）；`highlight` 依此判据（审计 F12）。
+            // 有候选即「已建立菜单」（参照 `menu` 非空）；`highlight` 依此判据。
             translated: true,
             ..Segment::default()
         };
@@ -631,7 +631,7 @@ mod tests {
         let mut context = Context::new();
         context.composition.segments.push(Segment::default());
         context.composition.segments[0].selected_index = 2;
-        // 未翻译段（参照 `menu == null`）不改写、不通知（审计 F12）。
+        // 未翻译段（参照 `menu == null`）不改写、不通知。
         assert!(!context.highlight(0));
         assert_eq!(context.composition.segments[0].selected_index, 2);
         // 已建立菜单但候选为空（参照 `menu` 存在、`Prepare` 返回 0）：归 0 并在变化时通知。
@@ -650,10 +650,7 @@ mod tests {
         context.drain_events();
         assert!(!context.highlight(0), "参照 `Highlight` 在无菜单时不动作");
         assert_eq!(context.composition.back().unwrap().selected_index, 3);
-        assert!(
-            context.drain_events().is_empty(),
-            "无菜单时不得推 Update（审计 F12）"
-        );
+        assert!(context.drain_events().is_empty(), "无菜单时不得推 Update");
     }
 
     #[test]

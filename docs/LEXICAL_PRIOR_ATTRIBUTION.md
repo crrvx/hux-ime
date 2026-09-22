@@ -44,7 +44,7 @@ sha256 为 `1d3e9b0ce0e4a603be3f220c71acecad846f020e87a52723ecb3814f6b53ac0e`。
 ```sh
 git clone https://github.com/fcxxxz/rime-mohu external/rime-mohu
 (
-  cd external/tiger-sentense-rime
+  cd _external/tiger-sentense-rime
   python3 tools/build_lexical_prior.py \
     --source ../rime-mohu/mohu_flypy.base.dict.yaml \
     --source-repository https://github.com/fcxxxz/rime-mohu \

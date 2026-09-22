@@ -80,7 +80,7 @@ fn le_f32(data: &[u8], offset: usize) -> f32 {
 }
 
 /// 缓存上限校验：`Fifo::new` / `Columns::new` 要求上限 ≥ 1（否则 `assert!` panic），
-/// `load` 与 `configure_cache` 两条入口共用同一口径（复核整改 3b / A5）。
+/// `load` 与 `configure_cache` 两条入口共用同一口径。
 fn validate_limits(limits: Limits) -> Result<()> {
     if limits.page_bytes < 1
         || limits.context_entries < 1
@@ -578,7 +578,7 @@ impl MobileModel {
             bail!("mobile n-gram size mismatch: {display}");
         }
         // 上下文数必须能被文件本身容纳（每条至少 8 字节）：畸形头部在 32 位目标上
-        // 会先截断成看似合理的值，此处按 `u64` 直接拒绝（A6）。
+        // 会先截断成看似合理的值，此处按 `u64` 直接拒绝。
         if tri_ctx_count_u64 > file_size / 8 {
             bail!("implausible trigram context count: {tri_ctx_count_u64} for {file_size} bytes");
         }
@@ -601,7 +601,7 @@ impl MobileModel {
                     .expect("bounds checked"),
             ) as i64;
             let probability = le_f32(unigrams, position + 4) as f64;
-            // NaN 语义（复核整改 3b / A7）：Lua `math.max(nan, x)` 返回 `nan`，Rust 的
+            // NaN 语义：Lua `math.max(nan, x)` 返回 `nan`，Rust 的
             // `f64::max` 返回非 NaN 操作数 ⇒ 二者相反。此处**不做** `max`，正常数据
             // （f32 概率）不可达 NaN，故只注明口径差异、不引入无金样支撑的分支。
             unigram_values.insert(key, probability);
@@ -778,7 +778,7 @@ mod tests {
         std::fs::remove_file(&path).ok();
     }
 
-    /// A5：`load` 与 `configure_cache` 对上限的校验口径一致——非法上限返回错误，
+    /// `load` 与 `configure_cache` 对上限的校验口径一致——非法上限返回错误，
     /// 而不是在 `Fifo::new(0)` / `Columns::new(0)` 的 `assert!` 处 panic。
     #[test]
     fn load_rejects_invalid_cache_limits() {
@@ -814,7 +814,7 @@ mod tests {
         assert!(MobileModel::load(&fixture, Some(Limits::default())).is_ok());
     }
 
-    /// A6：畸形头部把 `tri_ctx_count` 写成 `u64::MAX` 时显式报错，而不是在 32 位目标上
+    /// 畸形头部把 `tri_ctx_count` 写成 `u64::MAX` 时显式报错，而不是在 32 位目标上
     /// 静默截断成别的值（其余头部字段保持不变 ⇒ 仍能通过前面的布局/尺寸校验）。
     #[test]
     fn implausible_trigram_context_count_is_rejected() {

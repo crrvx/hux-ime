@@ -3,8 +3,7 @@
 
 //! 音反查：`tiger_sentence.pinyin.bin[.gz]`（TCSRV01）读取与音反查翻译。
 //!
-//! 语义对齐 librime 1.17.0 的词典音反查（`reverse_lookup_translator` + `ReverseLookupFilter`，
-//! 见 `docs/rust-migration.md`）：
+//! 语义对齐 librime 1.17.0 的词典音反查（`reverse_lookup_translator` + `ReverseLookupFilter`）：
 //! - 输入（去掉前缀后）按**拼写表**分段：音节本体 + 缩写（PY_c.schema.yaml 的两条
 //!   `abbrev` 规则），缩写可信度罚 `log(0.5)`；
 //! - 输入尾部无法由拼写键消耗时，对剩余部分做**补全**（拼写表子树展开；本体拼写再罚
@@ -195,7 +194,7 @@ impl SoundToCharShapeIndex {
             for group in &groups {
                 // 音节 id 与组区间均已在上方校验 ⇒ 索引与切片在界内。
                 let end = group.first + group.count;
-                // 读音串**按需**构造（复核整改 3b / C7）：真实索引 600,869 组里只有
+                // 读音串**按需**构造：真实索引 600,869 组里只有
                 // 412 组含单字词条，先前的「每组 `Vec<&str>` + `join`」在首次反查时
                 // 白付约 60 万次分配。
                 let mut reading: Option<String> = None;
@@ -326,7 +325,7 @@ pub fn translate(
         return Vec::new();
     };
     // 参照 `BuildSyllableGraph` 的剪枝：最远顶点的最优拼写类型决定「缩写/补全」是否被弃
-    // （全拼可达时缩写一律弃用，见 docs/rust-migration.md）。
+    // （全拼可达时缩写一律弃用）。
     let last_type = types[farthest].unwrap_or(KIND_NORMAL).max(KIND_FUZZY);
     prune(&mut edges, &types, farthest, last_type);
     if farthest < len && !complete(index, &mut edges, code, farthest) {
@@ -630,8 +629,7 @@ fn punct_shape_comment(punct: &str) -> String {
 /// 未含该修复，故已入库金样里含撇号的反查段**无候选**）。
 /// 本仓只落地「模式放行 + 撇号保留在输入中」，**不实现音节切分**：反查段由本段独占，
 /// 音节按拼写键前缀匹配建边，而拼写表不含 `'` ⇒ 含撇号的反查段同样无候选（与金样一致）。
-/// 撇号在 abc 段一侧的效果见 `interaction::translate::SEGMENTATION_DELIMITER`
-/// 与 `docs/upstream-deviations.md` ③。
+/// 撇号在 abc 段一侧的效果见 `interaction::translate::SEGMENTATION_DELIMITER`（追踪反查分支 pin 的 schema）。
 pub fn matches_pattern(input: &[u8], prefix: char) -> bool {
     let prefix = prefix as u8;
     let Some(rest) = input.strip_prefix(&[prefix][..]) else {

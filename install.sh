@@ -64,7 +64,7 @@ run sudo cmake --install build/addon
 
 echo "[3/4] 校验随包数据（data/MANIFEST → /usr/share/fcitx5/hux/）……"
 # 数据文件由 `cmake --install` 按 data/MANIFEST 安装（同一份清单也被 uninstall.sh 读取）；
-# 这里逐条核对落盘结果，缺任一即失败——只走 CMake 安装时「无词库引擎」的缺口在此暴露（复核整改 F5）。
+# 这里逐条核对落盘结果，缺任一即失败——只走 CMake 安装时「无词库引擎」的缺口在此暴露。
 if [ ! -f data/MANIFEST ]; then
     echo "缺少 data/MANIFEST（随包数据清单）" >&2
     exit 1

@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com> -->
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 
-# 设计（K0–K4）
+# 设计
 
 hux-ime（虎虚）：虎句（`tiger_sentence`）输入方案的 fcitx5 原生 Rust 实现。
 参照实现（测试 oracle，仅开发/CI 使用）：<https://github.com/lvyww/tiger-sentense-rime>；
@@ -12,17 +12,17 @@ hux-ime（虎虚）：虎句（`tiger_sentence`）输入方案的 fcitx5 原生 
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| K0 | spike：`cache`/`ngram` 移植、差分工具链、陷阱审计 | ✅ fixture 29,617 行 + 真实模型 62,777 行逐位一致；查询吞吐约 82× |
-| K1 | 计算核：lexicon、beam 解码、早提交证据、learning | ✅ 快照差分全绿 |
-| K1.5 | 上游追平：紧凑排序先验（TCSLEX01）、锁播种修复 | ✅ |
-| K2 | 交互引擎：键事件/键表、会话、交互层、宿主链 | ✅ 键序列金样一致 |
-| K3 | fcitx5 addon：注册与候选、编辑语义、标点、音反查、字反查、配置与学习库、状态菜单 | ✅ |
-| K4 | 验收与打包 | 进行中：验收随开发持续进行；打包与下述遗留待做 |
+| 首轮 spike | `cache` / `ngram` 移植、差分工具链、陷阱审计 | ✅ fixture 29,617 行 + 真实模型 62,777 行逐位一致；查询吞吐约 82× |
+| 计算核 | lexicon、beam 解码、早提交证据、learning | ✅ 快照差分全绿 |
+| 上游追平 | 紧凑排序先验（TCSLEX01）、锁播种修复 | ✅ |
+| 交互引擎 | 键事件 / 键表、会话、交互层、宿主链 | ✅ 键序列金样一致 |
+| fcitx5 addon | 注册与候选、编辑语义、标点、音反查、字反查、配置与学习库、状态菜单 | ✅ |
+| 验收与打包 | 验收随开发持续进行；打包与下述遗留待做 | 进行中 |
 
 遗留（后续）：
 - **打包**：PKGBUILD（AUR `fcitx5-hux`）待做；随包数据安装到 `/usr/share/fcitx5/hux/`
   ——`data/MANIFEST` 是单一来源，`cmake --install` 与 [`../install.sh`](../install.sh) 都按它安装
-  （复核整改第 4 批 F5：此前 CMake 只装插件与 conf，只走 CMake 会得到无词库引擎）；
+  （只装插件与 conf 时，只走 CMake 会得到无词库引擎）；
   模型不随包（文档 + 安装提示指向上游 model release）。
 
 已收口（设计取舍，不实现）：**`Ctrl+Delete` 删除候选**——参照无删除通道，本实现仅消费该键
@@ -81,7 +81,7 @@ crate / 模块级结构与「结构正义」硬规则见 [`refactor.md`](refacto
   | 组件 | 行为要点 |
   |---|---|
   | `key_binder` | `Tab`→Down、`Shift+Tab`→Up（`when: has_menu`） |
-  | `selector` | 菜单导航与翻页（`page_size`、上/下翻页键与翻页循环可由配置覆盖；默认 `-`/`[` → Page_Up、`=`/`]` → Page_Down，**两侧同前置**：菜单可见（且非 `ascii_mode`）即判翻页——用户决定 B，见下）、Home/End；候选排列由配置写入 `_vertical`。参照 `Selector::PreviousPage` 在首页也 `Highlight(0)`（`menu/page_down_cycle` 只作用于 `NextPage`），本实现按参照（审计 F2/F3）；参照另写 `paging` 标签，本仓随其唯一读取方一并删除 |
+  | `selector` | 菜单导航与翻页（`page_size`、上/下翻页键与翻页循环可由配置覆盖；默认 `-`/`[` → Page_Up、`=`/`]` → Page_Down，**两侧同前置**：菜单可见（且非 `ascii_mode`）即判翻页——用户决定 B，见下）、Home/End；候选排列由配置写入 `_vertical`。参照 `Selector::PreviousPage` 在首页也 `Highlight(0)`（`menu/page_down_cycle` 只作用于 `NextPage`），本实现按参照；参照另写 `paging` 标签，本仓随其唯一读取方一并删除 |
   | `navigator` | 字节光标移动；Ctrl/Shift+Left/Right 跳到段首/段尾（未做音节 spans 细分）；Home/End 到组合起点/末尾 |
   | `express_editor` | space 确认/提交、BackSpace 撤销编辑、Delete 删光标处、Return 提交原文、Escape 取消；可打印字符先提交组合再交宿主 |
   | `punctuator` | 单键可打印 ASCII 查 `symbols.yaml`；组合中提交「组合文本 + 标点」；`{pair}` 交替 |
@@ -109,7 +109,7 @@ crate / 模块级结构与「结构正义」硬规则见 [`refactor.md`](refacto
   `platform/fcitx5/shell/hux.cpp` 用 fcitx5 自己的 `keyEvent.forward()` 判断是否重发。
   （**旧名 → 新名对照**：本句曾写作「核心 `KeyEvent::forward()`」——该 API **从未存在**；
   `KeyEvent` 的公开方法只有 `new`/`from_repr`/`repr`/`shift`/`ctrl`/`alt`/`super_modifier`/`release`，
-  唯一同名的 `Composition::forward()` 是组合光标语义、与布局转换无关。复核整改第 4 批 D7 修正。）
+  唯一同名的 `Composition::forward()` 是组合光标语义、与布局转换无关。）
 - **UI 同步**：preedit 参照 librime `Composition::GetPreedit`——高亮候选的 `preedit`（正常段按词
   分码，如 `sh ks`；音反查段按音节，如 `` `zhong guo ``）优先，组合之后的原始输入原样接在其后
   （左右移动光标时保持分码，如 `` ab cd `` + 尾部 `ja` → `` ab cdja ``）；无高亮候选时回退

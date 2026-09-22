@@ -9,7 +9,7 @@
 //! * `goldens/decode_rank_first.tsv.gz`：fixture 模型 + 关闭单字重码；
 //! * `goldens/decode_evidence*.tsv.gz`：早提交证据（`--early-commit 1`）；
 //! * `goldens/decode_learning_evidence.tsv.gz`：早提交证据 **+ 学习接入**
-//!   （`--early-commit 1 --required 1 --learning 1`）——遗留②：学习 × 证据抑制的交互
+//!   （`--early-commit 1 --required 1 --learning 1`）——学习 × 证据抑制的交互
 //!   （`learning_affected && truncated` 的拒绝分支、`share`/`base_share` 双权重）。
 
 use hux_core::learning::{Event, LearningIndex};
@@ -384,7 +384,7 @@ fn decode_learning_transcript_is_bit_exact_with_fixture_model() {
     println!("decode learning (fixture model): {records} golden records verified");
 }
 
-/// 遗留②：`--learning 1 --early-commit 1` 的组合金样（学习 × 证据抑制的交互）。
+/// 学习 × 证据抑制的交互金样（`--learning 1 --early-commit 1`）。
 /// 生成器两侧开关本就可并用，缺的是**组合覆盖**——校准记录与 learning 索引
 /// （`learningsetup` / `levent`）同批重放，`learning=1 && truncated=1` 的记录
 /// 正是 `try_early_commit` 的拒绝分支与双权重交互的比对面。

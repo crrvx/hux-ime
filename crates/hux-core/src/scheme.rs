@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! 方案契约（P4c）：内核与平台驱动方案时使用的**最小**接口。
+//! 方案契约：内核与平台驱动方案时使用的**最小**接口。
 //!
-//! 设计取舍（`docs/refactor.md` §5）：
+//! 设计取舍：
 //! - 只定义「必须回调方案」的动作（`id` / 选项声明 / 数据资产 / 按键 / 组合重建 /
 //!   证据与学习策略 / 反查展示），不把任何**方案特有语义**泛化进契约——它们留在方案 profile；
 //! - 契约里**没有方案口径的字段名**：选项与配置一律是「角色 → 键 / 值」的数据声明，
@@ -72,7 +72,7 @@ pub struct OptionDecl {
 /// 方案配置袋的取值：小枚举，覆盖「开关 / 计数 / 文本 / 文本列表」四类。
 ///
 /// **契约不解释取值含义**，只保证类型可携带；含义由方案的配置解析决定。
-/// `Text` 目前无角色使用（通用容器词汇，见 `docs/review-ledger.md` §4.2），但由
+/// `Text` 目前无角色使用（通用容器词汇），但由
 /// [`SchemeConfig::require_text`] 提供服务，仍是活契约的一部分。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Value {
@@ -94,7 +94,7 @@ impl Value {
     }
 }
 
-/// 配置袋取值的**诊断**：角色缺失 / 类型不符（审计 F7）。
+/// 配置袋取值的**诊断**：角色缺失 / 类型不符。
 ///
 /// `bool/count/text/texts` 用 `None` 同时表示「缺角色」与「类型不符」，调用方无从区分、
 /// 也无从上报；[`SchemeConfig::require_bool`] 一族返回本类型，方案据此把诊断回给平台
@@ -201,7 +201,7 @@ impl SchemeConfig {
     /// 角色对应的文本列表（类型不符或未装配为 `None`）。
     ///
     /// 与 `bool/count/text` 对齐：不再把「类型不符」退化成空切片——空列表也可能是
-    /// **合法**装配值，二者必须可区分（审计 F7）。
+    /// **合法**装配值，二者必须可区分。
     pub fn texts(&self, role: &str) -> Option<&[String]> {
         match self.get(role) {
             Some(Value::Texts(value)) => Some(value),
@@ -212,7 +212,7 @@ impl SchemeConfig {
     // ---------------------------------------------------------- 诊断式读取
     //
     // `bool/count/text/texts` 的 `None` 无法区分「缺角色」与「类型不符」；
-    // 方案解析配置时一律走 `require_*`，把 [`ConfigError`] 回给平台（审计 F7）。
+    // 方案解析配置时一律走 `require_*`，把 [`ConfigError`] 回给平台。
 
     /// 角色对应的开关值；缺失 / 类型不符即 [`ConfigError`]。
     pub fn require_bool(&self, role: &'static str) -> Result<bool, ConfigError> {
@@ -292,8 +292,8 @@ pub trait Scheme {
     /// 应用方案配置（已存在会话同步生效；上下文属性在下次按键 / 重建时惰性同步）。
     ///
     /// 返回该次装配的诊断（[`ConfigError`]：角色缺失 / 类型不符）：方案已按**缺省值**
-    /// 回退，平台须把诊断并入状态串（`config:` 前缀，与装配期的角色集合诊断同风格，
-    /// 审计 F7）——否则「角色名拼错 / 类型不符」在运行期完全静默。
+    /// 回退，平台须把诊断并入状态串（`config:` 前缀，与装配期的角色集合诊断同风格）
+    /// ——否则「角色名拼错 / 类型不符」在运行期完全静默。
     /// `Ok(())` = 每个角色都可解析。
     fn apply_config(&mut self, config: &SchemeConfig) -> Result<(), Vec<ConfigError>>;
     /// 宿主链选项（方案据配置派生；平台不解释其含义）。
@@ -387,7 +387,7 @@ mod tests {
         assert_eq!(config.count("missing"), None);
         assert_eq!(config.texts("missing"), None);
         assert!(config.get("missing").is_none());
-        // 「类型不符」与「空列表」必须可区分（`texts` 不再退化成空切片，审计 F7）。
+        // 「类型不符」与「空列表」必须可区分（`texts` 不再退化成空切片）。
         assert_eq!(config.texts("switch"), None);
         let empty = SchemeConfig::new().with("empty", Value::Texts(Vec::new()));
         assert_eq!(empty.texts("empty"), Some([].as_slice()));
@@ -395,7 +395,7 @@ mod tests {
         assert!(SchemeConfig::default().roles().next().is_none());
     }
 
-    /// 诊断式读取：`require_*` 把「缺角色」与「类型不符」区分开（审计 F7）。
+    /// 诊断式读取：`require_*` 把「缺角色」与「类型不符」区分开。
     #[test]
     fn scheme_config_require_reports_missing_and_mismatch() {
         let config = SchemeConfig::new()

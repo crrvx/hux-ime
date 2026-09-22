@@ -7,7 +7,8 @@
 //! 早提交证据、学习集成、锁播种（`decode_with_lock`）。
 //! 暂不含：增量/锁缓存（性能优化）、模型失败回退（guarded_decode）。
 //! 参照 `decode()` 的缓存机制（`trailing_selector_span` / `expand_range` 的增量状态复用、
-//! `locked_decode_cache`）随该优化一并落地；是否做见 `docs/perf.md` 的 P6 结论与复核条件。
+//! `locked_decode_cache`）**当前不做**：收益集中在 >20 字符的长整句，而缓存需与解码 arena 的
+//! 路径下标生命周期绑定（改动语义边界），不符合「金样不变 + 按需」的前提。
 
 use crate::lexical::{self, LexicalModel};
 use crate::lexicon::{CodeEntry, Lexicon, Supplement};
@@ -26,8 +27,7 @@ pub const EOS: char = '\u{3}';
 const BEAM_WIDTH: usize = 200;
 const LONG_INPUT_FULL_BEAM_LENGTH: usize = 24;
 const LONG_INPUT_BEAM_WIDTH: usize = 48;
-/// 候选上限（参照 `candidate_limit`）：**唯一来源**，交互层与音反查层引用它
-/// （复核整改 3b / C3：原先三份 `20`）。
+/// 候选上限（参照 `candidate_limit`）：**唯一来源**，交互层与音反查层引用它。
 pub const CANDIDATE_LIMIT: usize = 20;
 const RANK_PENALTY: f64 = 0.03;
 const EMITTED_CHARACTER_REWARD: f64 = 2.0;
@@ -36,7 +36,7 @@ const ISOLATION_THRESHOLD: usize = 3000;
 const ISOLATION_LAMBDA: f64 = 2.0;
 const AGGREGATE_DURING_EXPANSION_THRESHOLD: usize = 128;
 /// 早提交最低份额（参照 `early_commit_minimum_share`）：**唯一来源**，
-/// 交互层（`interaction::early_commit`）引用它（复核整改 3b / C3：原先两份 `0.99`）。
+/// 交互层（`interaction::early_commit`）引用它。
 pub(crate) const EARLY_COMMIT_MINIMUM_SHARE: f64 = 0.99;
 const EARLY_COMMIT_CLOSED_BOUNDARY_SHARE: f64 = 0.99999;
 

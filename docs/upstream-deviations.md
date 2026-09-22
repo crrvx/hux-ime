@@ -8,16 +8,15 @@
 > 四类各一节：**① 翻页 / 标点遮蔽修复（含用户决定 B）**、**② addon 扩展**、**③ pin 差异**、
 > **④ 宿主链交互**（`Ctrl+BackSpace` / `Ctrl+Delete`）——编号沿用原 `docs/refactor.md` §8，既有引用与
 > 代码注释按编号即可对应。
-> 历史背景（追平批次、复核整改记录）见 [`review-ledger.md`](review-ledger.md)；
+> 历史背景（追平批次与历史记录）见 [`review-ledger.md`](review-ledger.md)；
 > 结构与契约等活规则见 [`refactor.md`](refactor.md)。
 
 **⚖️ 有意偏离上游 ✅ 已实施**（金样记录上游行为、**字节不动**；偏离项一律按「本仓逐步期望值 + 期望差异集合 ==
 实测差异集合」登记在 `crates/hux-scheme/tiger/tests/key_sequence_differential.rs` 的 `DEVIATIONS`，
 其余金样用例无条件逐位比对。偏离共四类：**上游缺陷修复 + 用户决定的语义强化**（下表 ①）、**addon 扩展**（②）、
 **pin 差异**（③）三类入 `DEVIATIONS` 表（可证伪的期望值表）；另有 **④ 宿主链交互**
-（`Ctrl+BackSpace`/`Ctrl+Delete` 同义化）——该路径金样覆盖不到，只能由单测守护，见下文 ④。复核整改 3a 把登记从「跳过名单」升级为**可证伪的期望值表**，
-3b 再把 `DEVIATED_CASES` 更名/扩展为 `DEVIATIONS`（见 `_tmp/批次3a-tiger整改.md`）；
-翻页语义强化（下 ①「用户决定 B」）把 `punct_menu_minus` 也纳入 ①，见 `_tmp/翻页语义B.md`。
+（`Ctrl+BackSpace`/`Ctrl+Delete` 同义化）——该路径金样覆盖不到，只能由单测守护，见下文 ④。`DEVIATIONS` 是**可证伪的期望值表**：登记项写错、或实际并不偏离，都会让测试失败；
+翻页语义强化（下 ①）把 `punct_menu_minus` 也纳入 ①。
 
 ## ① 参照缺陷 + 用户决定的语义强化：菜单可见时的 ASCII 翻页键
 
@@ -77,12 +76,12 @@
   | ③ | `key_sequence.tsv.gz` | `apostrophe_semicolon_page` | 5 | 4（`Page_Down`） | 同上（`'` + `;` 变体） |
 
   其余用例（含 `nav_page`/`nav_page_big`、`nav-page-keys`、`punct_half_shape_minus`、
-  `punct_buffered_period`、`upper_*`，以及第 2 批新增的 `editor_ctrl_return`/`editor_ctrl_shift_return`/
+  `punct_buffered_period`、`upper_*`，以及新增的 `editor_ctrl_return`/`editor_ctrl_shift_return`/
   `punct_mid_caret_*`/`nav_page_up_home_reset`）**仍逐位一致**。
   `punct_menu_minus`（`j a minus`）在语义强化前与上游逐位一致（`-` 未翻页 ⇒ 双方都落标点），
   强化后**转为偏离项**并登记（首屏 `-` 本仓上翻页、不提交）。
   `nav_page_home_minus`（`a b Page_Up minus`）的偏离在强化前后都成立，但**成因不同**：强化前靠
-  「`Page_Up` 停在首页写 `paging` 标签」（第 2 批 F2），强化后靠「菜单可见」；上游则因方案处理器
+  「`Page_Up` 停在首页写 `paging` 标签」（上游行为），强化后靠「菜单可见」；上游则因方案处理器
   在确认组合时 `_auto_commit` 立刻提交并清空组合，`-` 落标点提交「乙-」。
 - **待上游修复后回归（①）**：上游若采纳下列任一改法**修掉遮蔽缺陷**，随下一批追平时按项重推：
   可以删除的是由遮蔽缺陷直接造成的登记
@@ -97,7 +96,7 @@
 
 - 上游方案核心没有该选项（数字作为编码字符入串）；本仓按出厂缺省开启 ⇒ 菜单可见时数字直选当前页候选
   （`processor` 的 `select_page_candidate`，走与 `space` 相同的确认/学习链）。金样如实记录上游行为，
-  重放按出厂缺省驱动（复核整改 3a / B1），差异登记为 `AddonExtension`（`digit_menu_select`）。
+  重放按出厂缺省驱动，差异登记为 `AddonExtension`（`digit_menu_select`）。
 - 平台侧由状态菜单开关（`hux_engine_option_value + HUX_OPTION_DIGIT_SELECT`）；关闭后不再直选。
 
 ## ③ pin 差异：分段常量 `SEGMENTATION_DELIMITER`（`92a0b54` 的 `" '"` vs 主干 `abad411` 的 `" "`）
@@ -121,7 +120,7 @@
   届时 `tools/cases/key_sequence_cases.txt` 的偏离注释同步改写。
   （另注：尖端还有 `punct_segmentor` 把反查段里的 `;` 直接落成全角「；」——本仓的标点由宿主表处理、
   不实现该分段器，属**另一处**已知范围差异，与本项 delimiter 差异无关。）
-- **撇号音节切分（A4 口径）与上游 librime 依赖**：`92a0b54` 的「按 `speller/delimiter` 切分音节」
+- **撇号音节切分（既有口径）与上游 librime 依赖**：`92a0b54` 的「按 `speller/delimiter` 切分音节」
   依赖上游 librime 的 delimiter 修复 [rime/librime#1233](https://github.com/rime/librime/pull/1233)；
   本机 librime 1.17.0 未含该修复，故已入库音反查金样里含撇号的段**无候选**（`apostrophe-*` 三例）。
   本仓只落地「识别模式放行 `^`[a-z']*$` + 撇号保留在输入中」，**不实现音节切分**——
@@ -137,7 +136,7 @@
 
 ## ④ 宿主链交互：`Ctrl+BackSpace` / `Ctrl+Delete` 与不带修饰者同义（用户要求；金样覆盖不到）
 
-- **参照**（`_tmp/librime/editor.cc` @ `33e78140`）：`{XK_BackSpace, kControlMask}` = `Editor::BackToPreviousSyllable`
+- **参照**（librime `editor.cc` @ `33e78140`）：`{XK_BackSpace, kControlMask}` = `Editor::BackToPreviousSyllable`
   （按音节回退）、`{XK_Delete, kControlMask}` = `Editor::DeleteCandidate`（删除高亮候选）。
 - **本仓**：按要求**取消这两个交互**——`Ctrl+BackSpace` ≡ `BackSpace`、`Ctrl+Delete` ≡ `Delete`
   （`crates/hux-core/src/host.rs` 的 match 臂已把修饰位并入普通臂）。
@@ -148,5 +147,5 @@
 - **回归做法**：若要恢复参照语义，把 `host.rs` 中并入的 `K_CONTROL_MASK` 拆回独立分支、
   恢复 `BackToPreviousSyllable`/`DeleteCandidate`（后者还需 `selected_index` 能表达参照的 `-1`），并改该单测；
   **不需要动任何金样**。
-- 连带结论：总账 `F13.3`（[`review-ledger.md`](review-ledger.md) §5.1；`selected_index` 无法表达 `-1`、`Ctrl+Delete` 退化为吞键）随本决定**关闭**——
+- 连带结论：`selected_index` 无法表达 `-1`、`Ctrl+Delete` 退化为吞键等条目（[`review-ledger.md`](review-ledger.md) §5.1；`selected_index` 无法表达 `-1`、`Ctrl+Delete` 退化为吞键）随本决定**关闭**——
   不再需要「删除候选」通道。

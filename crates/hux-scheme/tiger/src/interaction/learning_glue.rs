@@ -61,7 +61,7 @@ pub struct LearningSelection {
     pub raw: Vec<u8>,
 }
 
-/// 交互层学习暂存（对应参照 `env._tiger_learning` 的暂存字段；存储/索引归 K3）。
+/// 交互层学习暂存（对应参照 `env._tiger_learning` 的暂存字段；存储/索引归宿主层）。
 #[derive(Clone, Debug, Default)]
 pub struct LiveLearning {
     pub mode: String,
@@ -69,10 +69,10 @@ pub struct LiveLearning {
     pub baseline: Option<Selected>,
     pub submitted_raw: Option<String>,
     pub hide_owned: bool,
-    /// 参照 `learned.store and learned.store.db`（K3 学习库就绪后置位）。
+    /// 参照 `learned.store and learned.store.db`（宿主学习库就绪后置位）。
     pub store_ready: bool,
     /// 提交点接受的学习事件（`learning::Event`）：核心提交路径与宿主
-    /// [`learning_commit`] 调用均入此队列，等待宿主持久化（K3 排空后落库）。
+    /// [`learning_commit`] 调用均入此队列，等待宿主持久化（宿主排空后落库）。
     pub submitted: Vec<Event>,
 }
 

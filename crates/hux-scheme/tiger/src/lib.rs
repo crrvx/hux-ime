@@ -6,7 +6,7 @@
 //! 参照实现：[`tiger-sentense-rime`](https://github.com/lvyww/tiger-sentense-rime) 的 `lua/`
 //! （Lua，作为差分 oracle）；字符串/偏移语义与参照一致：UTF-8 字节串、字节偏移。
 //!
-//! 依赖方向：`hux-scheme/* → hux-core`；内核不依赖任何方案（`docs/refactor.md` §1）。
+//! 依赖方向：`hux-scheme/* → hux-core`；内核不依赖任何方案。
 //!
 //! 组成：
 //! - 数据与计算：`lexicon`（码表/字频/白名单/补充）、`decode`（beam 解码与早提交证据）、

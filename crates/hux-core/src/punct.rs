@@ -80,7 +80,7 @@ impl PunctTable {
     }
 
     /// 读取单个文件（**仅本模块单测使用**；生产路径走 [`PunctTable::load_first`]，
-    /// 后者把「空表 / 解析失败」也算失败并继续探测下一个路径——审计 F10）。
+    /// 后者把「空表 / 解析失败」也算失败并继续探测下一个路径）。
     #[cfg(test)]
     pub fn load(path: &Path) -> Result<Self, String> {
         let content = std::fs::read_to_string(path).map_err(|error| error.to_string())?;

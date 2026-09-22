@@ -151,7 +151,7 @@ fn engine_enables_learning_store() {
         engine.engine.learning.store_ready(),
         "用户目录可用时学习库应就绪"
     );
-    // F14：mode 串对平台是**不透明**的（§5）——平台只承诺「原样使用方案自算的串」，
+    // mode 串对平台是**不透明**的（§5）——平台只承诺「原样使用方案自算的串」，
     // 格式由方案自己的用例钉住（`tiger` 的 `learning_mode_follows_config_and_rules`）。
     let mode = engine.engine.scheme.learning_mode();
     assert!(!mode.is_empty(), "学习库就绪时 mode 串非空");
@@ -168,7 +168,7 @@ fn engine_enables_learning_store() {
 #[test]
 fn engine_applies_learning_after_key() {
     // 学习索引的「已应用版本」属方案内部状态（见 `crates/hux-scheme/tiger` 的单测）；
-    // 平台侧验证接线**且索引确实作用到解码器**（复核整改 F10.1：原先只断言
+    // 平台侧验证接线**且索引确实作用到解码器**（只断言
     // `store_ready` 与 mode 非空，删掉 `Engine::finish` 里的 `apply_learning_index`
     // 调用仍全绿）。判据只用**已有可观测面**：宿主提交点落库一条纠错证据后，
     // 同码候选的排序必须随库版本变化而变（候选快照即宿主真实可见的输出，
@@ -179,7 +179,7 @@ fn engine_applies_learning_after_key() {
     COMMITS.lock().unwrap().clear();
     let mut engine = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
     assert!(engine.engine.learning.store_ready(), "学习库应就绪");
-    // F14：只看「非空」，不看具体格式（格式归方案自己的用例）。
+    // 只看「非空」，不看具体格式（格式归方案自己的用例）。
     assert!(
         !engine.engine.scheme.learning_mode().is_empty(),
         "学习库就绪时 mode 串非空"
@@ -220,7 +220,7 @@ fn engine_applies_learning_after_key() {
     let learned = last_update().2;
     assert_ne!(
         learned, baseline,
-        "F10.1：学习索引必须作用到解码器排序（仅 store_ready / mode 非空不足为证）"
+        "学习索引必须作用到解码器排序（仅 store_ready / mode 非空不足为证）"
     );
     assert_eq!(
         learned,
@@ -392,7 +392,7 @@ fn candidate_click_out_of_range_ignored() {
     assert_eq!(engine.session().context.input(), b"ab");
 }
 
-/// 学习库里的**坏帧**：跳过该条记录、不禁用整库，并进既有诊断（审计 core F1 / 平台 F3）。
+/// 学习库里的**坏帧**：跳过该条记录、不禁用整库，并进既有诊断。
 ///
 /// 触发面：`<user dir>/tiger_sentence_learning_<hash>.userdb` 被损坏或被其它工具写坏
 /// （值可能不是合法 UTF-8，`from_utf8_lossy` 会把 1 字节换成 3 字节 U+FFFD 使长度前缀错位），
@@ -495,7 +495,7 @@ fn host_commit_direct_choice_records_no_learning() {
 /// 于是 schema 的 key_binder 翻页绑定（`-`/`=`，以及绑到翻页的 `[`/`]`）在这条路径上被遮蔽
 /// （`Page_Down`/`Page_Up`/`Tab` 不受影响）。本仓在标点分支入口先问**与宿主同一套**判据
 /// `hux_core::host::paging_action`：判为翻页的键不由标点分支消费，落回宿主链执行翻页。
-/// 理由、最小复现（`j a equal`）与金样登记见 `docs/upstream-deviations.md`；
+/// 最小复现：`j a equal`（见 `interaction::tests` 的同名用例）；
 /// 受影响的上游金样用例在差分测试中按 `DEVIATIONS` 登记（金样字节保持原样）。
 ///
 /// **用户决定 B（语义强化）**：上翻页键与下翻页键**同前置**——只要菜单可见就判翻页，
@@ -503,7 +503,7 @@ fn host_commit_direct_choice_records_no_learning() {
 /// 代价：菜单可见时 `-`/`=`/`[`/`]` 不再能作为标点打出。
 ///
 /// 覆盖：① `=` 下翻不提交；② 翻页后 `-` 上翻不提交；③ **首屏**（未翻页）`-` 同样上翻
-/// （F2 回归场景，不再依赖任何标签）；④ `Page_Down` 始终翻页；⑤ 无菜单时 `=`/`-` 落标点；
+/// （回归场景，不再依赖任何标签）；④ `Page_Down` 始终翻页；⑤ 无菜单时 `=`/`-` 落标点；
 /// ⑥ **负向对照**：`ascii_mode` 打开时判据不成立 ⇒ `-` 不拦截、退回上游标点路径。
 #[test]
 fn menu_paging_keys_are_not_shadowed_by_the_punctuation_branch() {
@@ -561,7 +561,7 @@ fn menu_paging_keys_are_not_shadowed_by_the_punctuation_branch() {
         b"ja",
         "翻页不改动输入"
     );
-    //    同源路径（审计 F2 的原场景）：显式 `Page_Up` 停在首页后再按 `-`，同样不得提交。
+    //    同源路径（原场景）：显式 `Page_Up` 停在首页后再按 `-`，同样不得提交。
     COMMITS.lock().unwrap().clear();
     assert!(first_page_engine.key(0xff55, 0, false), "Page_Up 应被消费");
     assert!(COMMITS.lock().unwrap().is_empty(), "Page_Up 不提交");
@@ -572,7 +572,7 @@ fn menu_paging_keys_are_not_shadowed_by_the_punctuation_branch() {
     );
     assert!(
         COMMITS.lock().unwrap().is_empty(),
-        "`-` 不得提交组合（审计 F2 场景）"
+        "`-` 不得提交组合（原场景）"
     );
     assert_eq!(
         first_page_engine.session().context.input(),
@@ -714,7 +714,7 @@ fn digit_select_out_of_page_falls_through() {
 fn runtime_option_roundtrip_and_whitelist() {
     let _guard = serial();
     let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
-    // F10.2：循环体在返回空列表时一次都不执行 ⇒ 角色表整体失效会「空转通过」，
+    // 循环体在返回空列表时一次都不执行 ⇒ 角色表整体失效会「空转通过」，
     // 故先钉住长度（与 ABI 角色序同源）。
     let roles = engine.runtime_options().to_vec();
     assert_eq!(
@@ -963,7 +963,7 @@ fn uppercase_commits_composition_and_requests_forward() {
     );
 }
 
-/// 复核整改第 5 批 F13：`forward_after_commit` 是**粘性输出标志**，未知 / 已释放会话
+/// `forward_after_commit` 是**粘性输出标志**，未知 / 已释放会话
 /// 不得沿用上一次按键的取值。此前 `with_session` 返回 `None` 时直接 `unwrap_or(false)`，
 /// 标志保留 ⇒ `hux_engine_key` 只回 `HUX_KEY_FORWARD_AFTER_COMMIT`（无 CONSUMED），
 /// 宿主会 `filterAndAccept` + `forwardKey` 一个并不存在的提交。
@@ -1193,7 +1193,7 @@ fn preedit_mode_variants() {
     assert!(!candidates.is_empty(), "候选不受影响");
 }
 
-/// FFI 用例的引擎指针：**显式临时用户目录**（复核整改第 5 批 F9）。
+/// FFI 用例的引擎指针：**显式临时用户目录**。
 ///
 /// `hux_engine_new(std::ptr::null())` 会解析真实环境（`XDG_DATA_HOME`/`HOME`）并在
 /// `~/.local/share/fcitx5/hux/` 打开（必要时创建）学习库：本机 fcitx5 正在运行时会命中
@@ -1495,7 +1495,7 @@ fn ffi_roundtrip() {
     assert!(!engine.is_null());
     let status = unsafe { hux_engine_status(engine) };
     assert!(!status.is_null());
-    // F9 的另一半：临时用户目录里确实建起了学习库（不再是真实 `~/.local/share/fcitx5/hux`）。
+    // 另一半：临时用户目录里确实建起了学习库（不再是真实 `~/.local/share/fcitx5/hux`）。
     assert!(
         unsafe { &*engine }.learning.store_ready(),
         "临时用户目录的学习库应就绪"
@@ -1597,13 +1597,13 @@ fn option_save_error_is_visible_in_status() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// **运行期**学习库写入失败须进状态串（复核整改第 4 批 F6）。
+/// **运行期**学习库写入失败须进状态串。
 ///
 /// 此前 `learning.error` 只在构造期读一次：打开失败可见，`confirm` 里的 `db.put` 失败
 /// （磁盘满 / 库被改成只读 / 锁异常）则完全静默，用户只看到「学习不生效」。
 /// LevelDB 的写失败无法在测试里稳定构造，故直接注入错误值再走一次按键路径——
 /// 守护的是 `finish → observe_learning_error → refresh_status` 这条接线：
-/// 去掉那次调用，本用例即失败（负向对照见 `_tmp/批次4-文档工具CI.md`）。
+/// 去掉那次调用，本用例即失败。
 #[test]
 fn learning_write_failure_reaches_the_status_string() {
     let _guard = serial();
@@ -1625,7 +1625,7 @@ fn learning_write_failure_reaches_the_status_string() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// 配置页绑到**无名字的 keysym**（媒体键）时该绑定会被丢弃 ⇒ 必须点名（复核整改第 4 批 F15）。
+/// 配置页绑到**无名字的 keysym**（媒体键）时该绑定会被丢弃 ⇒ 必须点名。
 ///
 /// 反向路径：ABI 把 `keysym + 状态位` 经 `KeyEvent::repr()` 转成键名（`0x1008ff14`），
 /// `KeyEvent::from_repr` 不认；方案与 cfg 都在 `filter_map` 处静默丢。此处钉住
@@ -1692,7 +1692,7 @@ fn unparsable_hotkey_binding_reaches_the_status_string() {
     );
 }
 
-/// `hux_engine_status` 的指针契约（复核整改第 4 批 F8）：状态串在刷新时被**替换**，
+/// `hux_engine_status` 的指针契约：状态串在刷新时被**替换**，
 /// 契约是「每次调用取最新串，不得缓存指针」——故刷新后必须**重新调用**才能拿到新串。
 ///
 /// 头文件此前写「随引擎存活」，与 `refresh_status` 换 `CString` 的实现不符；
@@ -1773,7 +1773,7 @@ fn every_configured_role_is_declared_by_the_scheme() {
 ///
 /// 这是角色一致性的核心守护：`Config::parse` 对未知角色 `unwrap_or(0/false)` **静默回退**，
 /// 故单侧改名过去可让 `min_retained_raw_length`（→0，不再限制保留量）/ `high_freq_limit`
-/// （→0，高频过滤全放开）静默失效而全绿（审计 F1）。方案不依赖 `hux-cfg`、配置层不依赖方案，
+/// （→0，高频过滤全放开）静默失效而全绿。方案不依赖 `hux-cfg`、配置层不依赖方案，
 /// 两侧只能在此（装配根）对齐：清单逐项比对 + 真实装配路径无诊断 + 改名必报诊断。
 #[test]
 fn scheme_config_roles_match_the_scheme() {
@@ -1824,7 +1824,7 @@ fn scheme_config_roles_match_the_scheme() {
     );
 }
 
-/// 配置袋诊断通道（审计 F7）：逐角色诊断必须**进状态串**，且真实装配路径无诊断。
+/// 配置袋诊断通道：逐角色诊断必须**进状态串**，且真实装配路径无诊断。
 ///
 /// 此前 `Config::parse` 对未知角色 / 类型不符一律 `unwrap_or` 静默回退：单侧改名或把
 /// `Count` 塞进开关角色，用户侧只表现为「设置没生效」，状态串里什么都没有。
@@ -1884,7 +1884,7 @@ fn scheme_config_diagnostics_reach_the_status_string() {
     );
 }
 
-/// 角色表的分组 / 顺序 / 包含关系（审计 F12）：手工清单必须钉在角色表上。
+/// 角色表的分组 / 顺序 / 包含关系：手工清单必须钉在角色表上。
 ///
 /// 此前三条不变式（方案开关 ⊆ 运行时角色、存储缺省 ≡ 运行时角色、会话缺省 ⊇ 运行时角色）
 /// 只是「今天恰好成立」——新增一个方案开关角色时不会有任何断言失败。
@@ -1937,7 +1937,7 @@ fn runtime_role_tables_cover_the_declared_roles() {
 /// `hux_abi.h` 的 `HUX_OPTION_*` 枚举序 ↔ `hux_cfg::roles::RUNTIME_OPTION_ROLES`（顺序 / 个数 / 名字）。
 ///
 /// 角色序在三处手工同步（角色表、头文件枚举、C++ 文案表 `kLabels[role]`）：
-/// **调序**会让菜单文案与开关静默错位、`HUX_OPTION_DIGIT_SELECT` 取到别的选项键（审计 F2）。
+/// **调序**会让菜单文案与开关静默错位、`HUX_OPTION_DIGIT_SELECT` 取到别的选项键。
 /// C++ 侧只能守长度（`static_assert(std::size(kLabels) == HUX_OPTION_COUNT)`，见 `shell/hux.cpp`），
 /// 顺序由本用例从**头文件源码**解析后逐项比对——改名 / 加角色 / 调序都在此失败。
 #[test]
@@ -2047,7 +2047,7 @@ fn runtime_option_value_reaches_scheme_learning_mode() {
     let _guard = serial();
     let dir = temp_user_dir("duplicate-mode");
     let mut engine = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
-    // F14：mode 串对平台不透明 ⇒ 只断言「随配置变化而变化」与「重启后一致」，
+    // mode 串对平台不透明 ⇒ 只断言「随配置变化而变化」与「重启后一致」，
     // 具体格式（`dup=1` / `dup=0` 的映射）由方案自己的用例钉住
     // （`tiger` 的 `learning_mode_follows_config_and_rules`）。
     let default_mode = engine.engine.scheme.learning_mode().to_string();
@@ -2213,13 +2213,13 @@ fn schema_defaults_match_settings_defaults() {
     assert_eq!(checked, 17, "应逐项核对 17 个引擎设置");
 }
 
-/// 反向守护（复核整改 F10.3）：上面那条测试只保证「schema 里出现的项与 `Settings` 一致」，
+/// 反向守护：上面那条测试只保证「schema 里出现的项与 `Settings` 一致」，
 /// 是**单向**的——新增一个 `Settings` 字段而不写进 `shell/hux.cpp` 的 schema 不会失败。
 /// 本测试补上另一向：`Settings` 的每个字段都必须在 schema 中声明，反之 schema 里除
 /// `HOST_ONLY_PATHS`（只服务宿主显示、不经引擎的项）外不得出现引擎不认识的路径。
 ///
 /// 表内每项都用 `offset_of!` 引用真实字段名 ⇒ **改名字段即编译失败**；`FIELDS.len()` 被钉住
-/// ⇒ 新增字段必须同步本表与配置页（否则此测试先红）。这正是 F7/F10.3 要堵的漂移入口。
+/// ⇒ 新增字段必须同步本表与配置页（否则此测试先红）。这正是本表要堵的漂移入口。
 #[test]
 fn every_settings_field_is_declared_in_the_schema() {
     // （字段名，schema 路径名，偏移）。顺序 = `Settings` 声明序。

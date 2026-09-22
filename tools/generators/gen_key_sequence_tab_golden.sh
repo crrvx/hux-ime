@@ -2,11 +2,11 @@
 # SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-# 生成 Tab 锁路径金样（复核整改第 5 批，遗留③）：pin 版参照 Lua 核心 + 系统 librime +
+# 生成 Tab 锁路径金样：pin 版参照 Lua 核心 + 系统 librime +
 # librime-lua，夹具 `tiger_sentence/tab_learning: true` ⇒ 参照的学习库**就绪**。
 #
 # 用法：tools/generators/gen_key_sequence_tab_golden.sh [输出文件]
-#   REF  参照仓库本地检出（默认 `external/tiger-sentense-rime`，已 gitignore）
+#   REF  参照仓库本地检出（默认 `_external/tiger-sentense-rime`，已 gitignore）
 #   PIN  参照固定提交（默认主干 pin `abad411750…`，与主金样一致）
 #   CASES  用例文件（默认 `tools/cases/key_sequence_tab_cases.txt`）
 #
@@ -18,11 +18,11 @@
 #   ③ 写库前断言至少 1 个 `case` 且至少 1 步 `Tab` 被消费（否则说明夹具没生效）。
 #
 # 依赖：git、g++、python3、系统 librime（rime_api.h + librime-lua.so）。
-# 金样不在 CI 重生成（探针依赖具体 librime/librime-lua 版本），见 `goldens/regenerate.md`。
+# 金样不在 CI 重生成（探针依赖具体 librime/librime-lua 版本）——需本地按 `tools/generators/` 手动重生成。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-REF="${REF:-$ROOT/external/tiger-sentense-rime}"
+REF="${REF:-$ROOT/_external/tiger-sentense-rime}"
 REF_URL="${REF_URL:-https://github.com/lvyww/tiger-sentense-rime}"
 PIN="${PIN:-abad411750f79cfca750985fa266689b5d9b865f}"
 OUT="${1:-$ROOT/goldens/key_sequence_tab.tsv.gz}"

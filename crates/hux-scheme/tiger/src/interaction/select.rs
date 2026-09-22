@@ -26,7 +26,7 @@ pub fn apply_buffered_commit(context: &mut Context) {
 /// 末段覆盖整段输入且 `_auto_commit` 开启时，先合并缓冲前缀，再在清空前触发
 /// 提交通知器（学习选择/暂存/提交，`learning` 为 `None` 时跳过学习），随后立即提交
 /// （librime：确认 → 选择通知 → 引擎 `OnSelect` → 自动提交 → 提交通知器 → `Clear`）。
-/// 宿主（K3）需在会话初始化时置 `_auto_commit`（对应 librime `express_editor`
+/// 宿主需在会话初始化时置 `_auto_commit`（对应 librime `express_editor`
 /// 的默认 true），否则确认段会保持未提交。
 pub fn confirm_selection(
     learning: Option<&mut LearningCommit<'_>>,

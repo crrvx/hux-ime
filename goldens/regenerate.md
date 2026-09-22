@@ -14,13 +14,13 @@
 > `git -C "$REF" checkout --detach abad411750f79cfca750985fa266689b5d9b865f`（主干 pin）**，
 > 否则会静默读到工作区里更靠后的核心版本，产出与本次追平无关的金样差异。
 > 参照检出**只读**（无法 `checkout`，例如发行版打包目录 / 只读挂载）时的替代做法：
-> 在**工作区内**放一个可写克隆（本仓实践用 `_tmp/b1-ref`，`_tmp/` 已 gitignore），
-> 然后 `git fetch origin <sha> && git -C "$REF" checkout --detach <sha>`（主干 pin 与反查 pin 都取）：
+> 在**仓库之外**另放一个可写克隆，再对它 `fetch` + `checkout`（主干 pin 与反查 pin 都取）：
 >
 > ```sh
-> git clone https://github.com/lvyww/tiger-sentense-rime _tmp/b1-ref   # 或 cp -r 已有检出
-> git -C _tmp/b1-ref fetch origin abad411750f79cfca750985fa266689b5d9b865f
-> git -C _tmp/b1-ref fetch origin 92a0b54b53114e7e5aa6a1ff48efa95db0e21f9c
+> git clone https://github.com/lvyww/tiger-sentense-rime "$HOME/ref/tiger-sentense-rime"  # 或 cp -r 已有检出
+> RW="$HOME/ref/tiger-sentense-rime"
+> git -C "$RW" fetch origin abad411750f79cfca750985fa266689b5d9b865f
+> git -C "$RW" fetch origin 92a0b54b53114e7e5aa6a1ff48efa95db0e21f9c
 > ```
 >
 > **不要用 `--depth 1` / `--shallow`**：浅克隆会让需要「分支 pin + 主干 pin 本地合并」的历史操作
@@ -35,10 +35,10 @@
 ```sh
 # 参照仓库：https://github.com/lvyww/tiger-sentense-rime
 # 命令均在仓库根目录执行；外部检出统一放 external/（已 gitignore）。
-# `set -e`：中途失败即停，避免把不完整 TSV 压进入库金样（复核整改第 4 批 M10 的口径）。
+# `set -e`：中途失败即停，避免把不完整 TSV 压进入库金样。
 set -euo pipefail
-git clone https://github.com/lvyww/tiger-sentense-rime external/tiger-sentense-rime
-REF=external/tiger-sentense-rime
+git clone https://github.com/lvyww/tiger-sentense-rime _external/tiger-sentense-rime
+REF=_external/tiger-sentense-rime
 
 # ① 检出主干 pin（**必须**：以下 5 段夹具类生成器读参照工作区，不认 pin）
 git -C "$REF" checkout --detach abad411750f79cfca750985fa266689b5d9b865f
@@ -145,7 +145,7 @@ gzip -9 -n -c /tmp/lexical.tsv > goldens/lexical.tsv.gz
 # 表 ↔ 文件、三份探针金样的内部头部 ↔ 声明的 pin（无需网络 / 参照检出）
 python3 tools/checks/verify_golden_shas.py
 # 追加校验参照仓库文件（lua/*、tools/*）与各自 pin 的 sha256；需要完整检出（勿用 --depth 1）
-python3 tools/checks/verify_golden_shas.py --reference external/tiger-sentense-rime
+python3 tools/checks/verify_golden_shas.py --reference _external/tiger-sentense-rime
 ```
 
 ## 来源与校验和
@@ -172,7 +172,7 @@ python3 tools/checks/verify_golden_shas.py --reference external/tiger-sentense-r
   （[rime/librime#1233](https://github.com/rime/librime/pull/1233)），
   本机 librime 1.17.0 未含该修复，故输入撇号后反查段**无候选**（金样如实记录该行为）。
   真实索引（`data/tiger_sentence.pinyin.bin.gz`，sha256 `18a0931a…`）由同一生成器产出，本地复验可重新生成并比对：
-  `python3 tools/generators/gen_pinyin_index.py --source external/tiger-sentense-rime/PY_c.dict.yaml --out /tmp/pinyin.bin.gz && cmp /tmp/pinyin.bin.gz data/tiger_sentence.pinyin.bin.gz`
+  `python3 tools/generators/gen_pinyin_index.py --source _external/tiger-sentense-rime/PY_c.dict.yaml --out /tmp/pinyin.bin.gz && cmp /tmp/pinyin.bin.gz data/tiger_sentence.pinyin.bin.gz`
   （参照检出须含 `898579f` 的 `PY_c.dict.yaml`）。
 - **词先验**：`lexical.tsv.gz` 由 `tools/generators/gen_lexical_golden.lua` 以参照 main（词先验模块自 `35a10b9` 起提供）与
   入库位图生成（CC BY 4.0，见 [`../docs/LEXICAL_PRIOR_ATTRIBUTION.md`](../docs/LEXICAL_PRIOR_ATTRIBUTION.md)）；

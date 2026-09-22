@@ -4,7 +4,7 @@
 
 """音反查索引生成器（⑧-1）：PY_c.dict.yaml → TCSRV01 紧凑索引。
 
-语义依据（librime 1.17.0 的词典反查；本项目称「音反查」，见 docs/rust-migration.md）：
+语义依据（librime 1.17.0 的词典反查；本项目称「音反查」）：
 - 音节表 = 码列按空格切分的 token 去重，**字典序**（librime `Syllabary = set<string>`）；
 - 拼写表 = 音节本体 + 缩写（PY_c.schema.yaml 的 `speller/algebra`：
   `abbrev/^([a-z]).+$/$1/`、`abbrev/^[zcs]h.+$/$1/`）；缩写可信度罚 log(0.5)、

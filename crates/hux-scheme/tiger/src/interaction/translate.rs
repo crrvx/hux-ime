@@ -28,7 +28,7 @@ pub fn trim_segmented_after_raw_prefix(segmented: &str, raw_prefix_length: usize
     }
 }
 
-/// 码注释（上游音反查件；当前 pin 的 main 未含，K3 音反查接线用）：单字显示全部编码（源序），词组逐字 `字:码组`。
+/// 码注释（上游音反查件；当前 pin 的 main 未含，音反查接线用）：单字显示全部编码（源序），词组逐字 `字:码组`。
 pub fn code_comment(lexicon: &Lexicon, text: &str) -> Option<String> {
     if !lexicon.built {
         return None;
@@ -174,7 +174,7 @@ pub fn translate(
 /// 本仓末段是 raw 段（无菜单）⇒ `Up`/`Down`/`Page_*` 不被消费，上游主干单段 abc ⇒ 消费。
 /// 已按期望值登记在 `tests/key_sequence_differential.rs` 的 `DEVIATIONS`
 /// （种类 `BranchPinDelimiter`，用例 `apostrophe_digit_page`/`apostrophe_semicolon_page`），
-/// 理由与回归做法见 `docs/upstream-deviations.md` ③。
+/// 该常量追踪反查分支 pin `92a0b54` 的 schema（`speller/delimiter: " '"`），金样主干 pin 为 `" "`。
 pub(crate) const SEGMENTATION_ALPHABET: &str = "zyxwvutsrqponmlkjihgfedcba;';0123456789~";
 pub(crate) const SEGMENTATION_INITIALS: &str = "abcdefghijklmnopqrstuvwxyz~";
 pub(crate) const SEGMENTATION_DELIMITER: &str = " '";
@@ -580,7 +580,7 @@ pub fn buffer_filter(candidates: &[Candidate], buffered: bool) -> Vec<Candidate>
         .collect()
 }
 
-/// 码注释过滤器（同上；K3 音反查接线用）：音反查段候选写入虎码注释。
+/// 码注释过滤器（同上；音反查接线用）：音反查段候选写入虎码注释。
 pub fn code_comment_filter(candidates: &mut [Candidate], active: bool, lexicon: &Lexicon) {
     if !active {
         return;

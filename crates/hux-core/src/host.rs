@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! 宿主等价物（K3）：方案侧 `processor` 返回 Forward 后，参照链上由 librime 原生组件
+//! 宿主等价物：方案侧 `processor` 返回 Forward 后，参照链上由 librime 原生组件
 //! （`key_binder` → `speller` → `punctuator` → `selector` → `navigator` → `express_editor`）处理的按键。
 //!
 //! 分工：`speller` 由**方案侧**处理器承担（`hux-scheme/tiger` 的 `interaction::processor`）；
@@ -38,15 +38,14 @@ pub struct HostOptions {
     /// 每页候选个数（≥ 1；须与宿主候选面板一致）。
     pub page_size: usize,
     /// 上翻页键列表：**菜单可见时生效**（不要求参照 `when: paging` 的末段标签——本仓按
-    /// 用户决定把上/下翻页统一为「菜单可见即拦截」，见 [`paging_action`] 与
-    /// `docs/upstream-deviations.md` ①；代价是菜单可见时该键不再落标点）。
+    /// 把上/下翻页统一为「菜单可见即拦截」，见 [`paging_action`]；代价是菜单可见时该键不再落标点）。
     pub page_up_keys: Vec<KeyEvent>,
     /// 下翻页键列表：菜单可用（`has_menu`）时生效。
     pub page_down_keys: Vec<KeyEvent>,
     /// 翻页循环（参照 `menu/page_down_cycle`，默认关）：**末页再下翻回首页**。
     ///
     /// 只有下翻方向与参照一致：参照 `Selector::PreviousPage` 没有循环分支
-    /// （首页上翻恒 `Highlight(0)`），故本项不作用于上翻（审计 F3）。
+    /// （首页上翻恒 `Highlight(0)`），故本项不作用于上翻。
     pub page_cycle: bool,
 }
 
@@ -192,7 +191,7 @@ pub enum PagingDir {
 ///
 /// 宿主绑定与方案处理器共用本判据（避免两处条件漂移）。方案侧在「菜单可见 + 可打印 ASCII 标点」
 /// 分支入口先问一次：被宿主判为翻页的键（如缺省 `=`/`-`，以及 schema 绑到翻页的 `[`/`]`）
-/// 不由该分支消费，让出被其遮蔽的翻页绑定——**本仓有意偏离上游 `abad411`**，见 `docs/upstream-deviations.md`。
+/// 不由该分支消费，让出被其遮蔽的翻页绑定——**本仓有意偏离上游 `abad411`**。
 ///
 /// **上翻页的前置条件是本仓的语义强化（用户决定，2026-09）**：参照的 `-` 绑定带
 /// `when: paging`（`key_binder.cc:248-266` 的 `kWhenPaging` **只看末段 `paging` 标签**，
@@ -209,7 +208,7 @@ pub fn paging_action(
     // 参照 `key_binder.cc` 的绑定查表（`map<KeyEvent,…>::find(key_event)`）是**精确**的
     // `(keycode, modifier)` 比较；此前用 `repr()` 字符串比较（每次按键多一次分配，
     // 且 `K_MODIFIER_MASK` 内的**无名位**（16-20/24/25）会让不同修饰状态的键在字符串上
-    // 碰撞）——审计 F13.1。
+    // 碰撞）——。
     let bound = |keys: &[KeyEvent]| {
         keys.iter()
             .any(|key| key.keycode == key_event.keycode && key.modifier == key_event.modifier)
@@ -245,7 +244,7 @@ fn key_binder(key_event: &KeyEvent, context: &mut Context, options: &HostOptions
     if !menu_available(context) {
         return HostResult::Forward;
     }
-    // 固定绑定表同样是精确的 `(keycode, modifier)` 比较（F13.1）：`{Tab,0}` → 下一候选、
+    // 固定绑定表同样是精确的 `(keycode, modifier)` 比较：`{Tab,0}` → 下一候选、
     // `{Tab,Shift}` → 上一候选。注意 X11 的 `ISO_Left_Tab`（0xfe20）**不在**该表里
     // （与参照一致）：它由方案处理器/Tab 循环处理，落到宿主链时照旧 Forward。
     if key_event.keycode == 0xff09 && key_event.modifier == 0 {
@@ -363,8 +362,8 @@ fn selector_action(
             // `index = selected_index < page_size ? 0 : selected_index - page_size` ——
             // **已在首页也照常改写高亮**（归 0，不是「不动」）；参照另写
             // `comp.back().tags.insert("paging")`，本仓随其唯一读取方（`when: paging` 判据）
-            // 删除后不再写该标签（见 [`paging_action`]，审计 F2 的结论按新语义重述）；
-            // 参照的 `menu/page_down_cycle` 只在 `NextPage` 被读，上翻方向**不循环**（审计 F3）。
+            // 删除后不再写该标签（见 [`paging_action`]，结论按新语义重述）；
+            // 参照的 `menu/page_down_cycle` 只在 `NextPage` 被读，上翻方向**不循环**。
             // `saturating_sub` 即参照三元式 `selected < page_size ? 0 : selected - page_size`：
             // 已在首页（含第一页内的任意高亮）时归 0。
             let index = segment.selected_index.saturating_sub(page_size);
@@ -627,7 +626,7 @@ fn editor(
             //
             // **Ctrl 变体（有意偏离上游）**：参照是 `{XK_BackSpace, kControlMask}` =
             // `Editor::BackToPreviousSyllable`（按音节回退），本仓按要求**不做**该交互——
-            // `Ctrl+BackSpace` 与普通 `BackSpace` 同义，见 `docs/upstream-deviations.md` ④。
+            // `Ctrl+BackSpace` 与普通 `BackSpace` 同义。
             revert_last_edit(context);
             true
         }
@@ -646,7 +645,7 @@ fn editor(
             // `engine_->sink()(ctx->GetScriptText()); ctx->Clear();`
             // ——提交**脚本文本**（每段 preedit 优先且去首个 `\t`，否则原始输入切片；
             // 已确认段在 `keep_selection = true`（`composition.h` 默认实参）下取候选文字），
-            // 且**不经 `Commit()`**：不发提交通知 ⇒ 不产生学习事件（审计 F4）。
+            // 且**不经 `Commit()`**：不发提交通知 ⇒ 不产生学习事件。
             let text = context.get_script_text();
             context.direct_commit(&text);
             context.clear();
@@ -656,7 +655,7 @@ fn editor(
         (0xff0d, modifier) if modifier == K_CONTROL_MASK | K_SHIFT_MASK => {
             // 参照 `{XK_Return, kControlMask | kShiftMask}` = `Editor::CommitComment`
             // （`gear/editor.cc`）：**仅当**高亮候选存在且注释非空时 `sink(comment) + Clear()`；
-            // 注释为空则只吞键——不清组合、不提交空串（审计 F5）。
+            // 注释为空则只吞键——不清组合、不提交空串。
             let comment = context
                 .composition
                 .back()
@@ -674,7 +673,7 @@ fn editor(
             //
             // **Ctrl 变体（有意偏离上游）**：参照是 `{XK_Delete, kControlMask}` =
             // `Editor::DeleteCandidate`，本仓按要求**不做**该交互——`Ctrl+Delete` 与普通 `Delete`
-            // 同义，见 `docs/upstream-deviations.md` ④。
+            // 同义。
             context.delete_input(1);
             true
         }
@@ -930,7 +929,7 @@ mod tests {
         );
     }
 
-    /// 审计 F6：光标居中时参照在 caret 处插入标点，提交文本**只取到该段末尾**
+    /// 光标居中时参照在 caret 处插入标点，提交文本**只取到该段末尾**
     /// （`ConcreteEngine::Compose` 的 `active_input = input[..caret]`），标点后的剩余输入丢弃。
     #[test]
     fn punctuator_at_mid_caret_commits_only_up_to_the_punctuation() {
@@ -985,7 +984,7 @@ mod tests {
 
     /// 翻页循环（`page_cycle`）：**只作用于下翻**（参照 `menu/page_down_cycle` 仅在
     /// `Selector::NextPage` 被读）；首页上翻恒停在首页并写 `paging` 标签（参照
-    /// `Selector::PreviousPage` 无循环分支，审计 F3）。
+    /// `Selector::PreviousPage` 无循环分支）。
     #[test]
     fn selector_page_cycle_wraps_next_page_only() {
         let mut options = custom_page_options(2);
@@ -1016,7 +1015,7 @@ mod tests {
     }
 
     /// 参照 `Selector::PreviousPage`：`selected_index < page_size` 时 `index = 0`
-    /// ——**已在首页也照常归零高亮**（不是「不动」，审计 F2/F3）。
+    /// ——**已在首页也照常归零高亮**（不是「不动」）。
     ///
     /// 参照另写 `comp.back().tags.insert("paging")`；本仓该标签的**唯一读取方**
     /// （`when: paging` 判据）已随「菜单可见即拦截」的用户决定删除，故不再写
@@ -1044,7 +1043,7 @@ mod tests {
         );
     }
 
-    /// 审计 F2 的回归场景在新语义下仍须成立：`Page_Up` 停在首页后，紧随的上翻页键
+    /// 回归场景在新语义下仍须成立：`Page_Up` 停在首页后，紧随的上翻页键
     /// `-` 必须**翻页**（消费、不提交），不得落标点分支把组合提前上屏。
     ///
     /// 与旧语义的差别只在判据来源：原先靠「翻页写入 `paging` 标签」，现在靠「菜单可见」
@@ -1177,7 +1176,7 @@ mod tests {
 
     /// 方案侧「菜单可见 + 标点」分支与宿主 `key_binder` 共用此判据：
     /// 缺省绑定 `=` → Down、`-` → Up，**两侧同前置**（菜单可见；`ascii_mode` 关闭两侧）；
-    /// 判据不看 `paging` 标签（本仓语义强化，见函数文档与 `docs/upstream-deviations.md` ①）。
+    /// 判据不看 `paging` 标签（本仓语义强化，见函数文档）。
     #[test]
     fn paging_action_is_the_shared_key_binder_predicate() {
         let options = HostOptions::default();
@@ -1216,7 +1215,7 @@ mod tests {
         assert_eq!(
             paging_action(&ascii, &options, &key_of("minus")),
             None,
-            "`paging` 标签已不是判据（旧 F11 语义随用户决定退役）"
+            "`paging` 标签已不是判据（旧语义随用户决定退役）"
         );
 
         // schema 绑定的其它翻页键按 options 生效（`[`/`]`），未绑定的键不判翻页。
@@ -1457,7 +1456,7 @@ mod tests {
         assert!(!raw_only.is_composing(), "无段时取消应整体清空");
     }
 
-    /// **有意偏离上游**（见 `docs/upstream-deviations.md`）：参照把
+    /// **有意偏离上游**：参照把
     /// `Ctrl+BackSpace` 绑到 `BackToPreviousSyllable`（按音节回退）、`Ctrl+Delete` 绑到
     /// `DeleteCandidate`；本仓按要求**取消这两个交互**，让它们与不带修饰的
     /// `BackSpace`/`Delete` **同义**。
@@ -1630,7 +1629,7 @@ mod tests {
 
     #[test]
     fn editor_ctrl_shift_return_keeps_composition_without_comment() {
-        // 参照 `Editor::CommitComment`：注释为空 ⇒ 只吞键（不清组合、不提交）。审计 F5。
+        // 参照 `Editor::CommitComment`：注释为空 ⇒ 只吞键（不清组合、不提交）。
         let mut context = context_with_menu(&["甲", "乙"], 0);
         assert_eq!(
             press_raw(&mut context, 0xff0d, K_CONTROL_MASK | K_SHIFT_MASK),

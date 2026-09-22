@@ -93,7 +93,7 @@ fn min_retained_raw_length_clamps() {
     assert_eq!(min_retained_raw_length(None), 0);
 }
 
-/// 分段常量口径（复核整改 3b / B2）：`speller/delimiter` 追踪反查分支尖端 `92a0b54`
+/// 分段常量口径：`speller/delimiter` 追踪反查分支尖端 `92a0b54`
 /// 的 `" '"`——撇号按音节分隔符处理 ⇒ 段内 `'` 之后必须是首字母，数字/`;` 在此断开。
 /// 主干 pin `abad411`（`" "`）下 `ab'1` 是**单段**；该差异在金样层登记为本仓偏离
 /// （`tests/key_sequence_differential.rs` 的 `DEVIATIONS`：`apostrophe_digit_page` 等）。
@@ -260,7 +260,7 @@ fn tracker_better_prefers_chars_share_then_short_boundary() {
     let mut shorter_boundary = base.clone();
     shorter_boundary.raw_length = 1;
     assert!(tracker_better(&shorter_boundary, &base));
-    // 三元全等（复核整改 3b / A8）：参照在此对两者都返回 false ⇒ 胜者取决于哈希迭代序；
+    // 三元全等：参照在此对两者都返回 false ⇒ 胜者取决于哈希迭代序；
     // 本仓按 text 字典序兜底 ⇒ 判据自身反对称、与迭代序无关。
     let mut tied_earlier = base.clone();
     tied_earlier.text = "乙".to_string(); // U+4E59 < 甲 U+7532
@@ -451,7 +451,7 @@ fn reset_empties_committed_and_locks() {
     assert!(state.committed_raw.is_empty());
     assert!(state.locks.is_empty());
     assert!(state.continuation_after_auto_commit);
-    // 属性层只剩缓冲前缀：重置后同步清空（A3 后不再有 committed/locks 快照）。
+    // 属性层只剩缓冲前缀：重置后同步清空（不再有 committed/locks 快照）。
     assert_eq!(buffered_text(&context), "");
     assert!(state.buffered_text.is_empty());
 }
@@ -808,9 +808,9 @@ fn buffered_fallback_produces_no_learning_events() {
     assert!(live.baseline.is_none());
 }
 
-// ------------------------------------------------- 融合事件（产出侧 + 接受侧，B6）
+// ------------------------------------------------- 融合事件（产出侧 + 接受侧）
 
-/// 融合学习（复核整改 3b / B6）：`learning_stage` 的融合事件构造与 `learning_submit`
+/// 融合学习：`learning_stage` 的融合事件构造与 `learning_submit`
 /// 的融合放行分支原先在 tiger crate 内**零覆盖**（`fusion_ahead` 处处是 `Vec::new()`）。
 /// 下面两条走**真实链路**（`processor` → 未消费交宿主 → `CompositionBuilder::rebuild`
 /// → `update_notifier`，与 `TigerScheme::process_key` + `rebuild` 同序），
@@ -1584,7 +1584,7 @@ fn processor_menu_punctuation_stages_learning_before_the_punctuator() {
 /// 本仓在分支入口先问宿主同一套判据 `hux_core::host::paging_action`：
 /// `=`（下翻）与 `-`（上翻，**不再要求「已翻过页」**）都让给宿主翻页，
 /// 不确认组合、不暂存学习；`ascii_mode` 打开时判据不成立 ⇒ 回到上游路径。
-/// 理由、代价与金样登记见 `docs/upstream-deviations.md` ①。
+/// 代价：菜单可见时 `-`/`=`/`[`/`]` 不能作为标点打出；相关上游金样用例按 `DEVIATIONS` 登记。
 #[test]
 fn processor_menu_paging_keys_bypass_the_punctuation_branch() {
     let mut h = Harness::new();

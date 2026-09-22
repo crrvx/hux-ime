@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-# 「装 / 卸 / CMake」三处读同一份随包数据清单，且清单与 data/ 实况一致（复核整改第 4 批 M15/F5）。
+# 「装 / 卸 / CMake」三处读同一份随包数据清单，且清单与 data/ 实况一致。
 #
 #   bash tools/checks/check_data_manifest.sh
 #

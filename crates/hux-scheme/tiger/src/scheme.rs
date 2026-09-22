@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! 虎句方案对 [`hux_core::scheme::Scheme`] 的实现（P4c）。
+//! 虎句方案对 [`hux_core::scheme::Scheme`] 的实现。
 //!
 //! 共享资源（解码器 / 标点表）与每会话状态（组合、学习暂存、锁、早提交、附件态）
 //! 都集中在本类型内，平台只持有 `Box<dyn Scheme>` 与不透明的 [`SessionId`]；
@@ -143,7 +143,7 @@ const RUNTIME_CONFIG_ROLES: &[&str] = &[role::ALLOW_DUPLICATE_SINGLE];
 ///
 /// 逐角色的「缺失 / 类型不符」由 [`Config::parse`] 的 [`ConfigError`] 给出（见
 /// [`config_diagnostics`]）——两者都进状态串，用户侧不再是「设置没生效」的哑失败
-/// （审计 F1/F7）。
+/// 。
 fn config_role_notes(bag: &SchemeConfig) -> Vec<String> {
     let recognized =
         |role: &str| SCHEME_CONFIG_ROLES.contains(&role) || RUNTIME_CONFIG_ROLES.contains(&role);
@@ -155,7 +155,7 @@ fn config_role_notes(bag: &SchemeConfig) -> Vec<String> {
     }
 }
 
-/// 装配诊断汇总：角色集合（[`config_role_notes`]）+ 逐角色（[`ConfigError`]，审计 F7），
+/// 装配诊断汇总：角色集合（[`config_role_notes`]）+ 逐角色（[`ConfigError`]），
 /// 文案统一带 `config:` 前缀（与既有状态串诊断同风格）。
 fn config_diagnostics(bag: &SchemeConfig, errors: &[ConfigError]) -> Vec<String> {
     let mut notes = config_role_notes(bag);
@@ -175,8 +175,8 @@ struct Config {
     page_size: usize,
     page_cycle: bool,
     /// 翻页键：`None` = 角色缺失（用 core 缺省绑定）；`Some([])` = **显式给出空列表**
-    /// ⇒ 不绑定（复核整改第 5 批 F4）。此前 `Vec<String>` 把两者混为一谈，
-    /// 于是配置页清空翻页键仍保留 core 缺省的 `-`/`=`。
+    /// ⇒ 不绑定。`Vec<String>` 无法区分两者（配置页清空翻页键会退回 core 缺省的 `-`/`=`），
+    /// 故用 `Option`。
     page_up_keys: Option<Vec<String>>,
     page_down_keys: Option<Vec<String>>,
     reverse_lookup_pronunciation_keys: Vec<String>,
@@ -205,7 +205,7 @@ fn require_bool(config: &SchemeConfig, role: &'static str, errors: &mut Vec<Conf
     })
 }
 
-/// 取可选的文本列表角色：区分「角色缺失」与「显式空列表」（F4 的契约基础）。
+/// 取可选的文本列表角色：区分「角色缺失」与「显式空列表」（配置袋契约的基础）。
 ///
 /// `require_texts` 把两者都化成空 `Vec`；本函数的 `None` 只表示**角色缺失 / 类型不符**。
 fn optional_texts(
@@ -238,7 +238,7 @@ fn require_texts(
 }
 
 impl Config {
-    /// 解析配置袋；同时返回逐角色诊断（缺角色 / 类型不符，审计 F7）。
+    /// 解析配置袋；同时返回逐角色诊断（缺角色 / 类型不符）。
     ///
     /// 取值失败时按缺省值回退（与迁移前的 `unwrap_or` 同值），但**不再静默**：
     /// 诊断由 [`TigerScheme::load`] / [`TigerScheme::apply_config`] 回给平台进状态串。
@@ -397,7 +397,7 @@ fn host_options_from(config: &Config) -> HostOptions {
         page_cycle: config.page_cycle,
         ..HostOptions::default()
     };
-    // F4 契约：**角色显式给出即以此为准**（`Some([])` = 不绑定，与 `hux-cfg` 的
+    // 契约：**角色显式给出即以此为准**（`Some([])` = 不绑定，与 `hux-cfg` 的
     // `Settings::host_options()` 同语义）；只有角色**缺失**时才保留 core 缺省绑定。
     if let Some(reprs) = &config.page_up_keys {
         options.page_up_keys = parse(reprs);
@@ -465,7 +465,7 @@ impl Scheme for TigerScheme {
                 session.live.mode = self.learning_mode.clone();
             }
         }
-        // 诊断回给平台（进状态串）：装袋侧改名 / 类型不符不再静默回退（审计 F7）。
+        // 诊断回给平台（进状态串）：装袋侧改名 / 类型不符不再静默回退。
         // 「未识别角色」由装配期的 `config_diagnostics` 点名（袋的角色集合归装配方），
         // 运行期重新下发时逐角色诊断即可覆盖同一类漂移。
         if errors.is_empty() {
@@ -690,7 +690,7 @@ mod tests {
     }
 
     /// 全角色袋（每个角色都给一个**类型正确**的值），`overrides` 覆盖同名角色。
-    /// 真实装配路径（平台）就是这个形态：审计 F7 之后任何缺口都会回诊断。
+    /// 真实装配路径（平台）就是这个形态：此后任何缺口都会回诊断。
     fn full_bag(overrides: &[(&'static str, Value)]) -> SchemeConfig {
         let mut config = bag(&[
             (role::HIGH_FREQ_LIMIT, Value::Count(1500)),
@@ -798,7 +798,7 @@ mod tests {
         assert!(config.allow_duplicate_single);
 
         // 空袋 → 与迁移前的 `SchemeConfig::default()` 逐字段同值（缺角色回退不变），
-        // 但每个角色都产出「缺少角色」诊断（审计 F7：不再静默）。
+        // 但每个角色都产出「缺少角色」诊断（不再静默）。
         let (empty, empty_errors) = Config::parse(&SchemeConfig::default());
         assert_eq!(empty_errors.len(), SCHEME_CONFIG_ROLES.len() + 1);
         assert!(
@@ -833,7 +833,7 @@ mod tests {
     }
 
     /// 角色一致性守护的方案侧一半：装配方按 `hux-cfg` 的角色名装袋，本方案按自己的角色名读袋，
-    /// 单侧改名必须**可见**（进状态串诊断），不得静默回退默认值（审计 F1）。
+    /// 单侧改名必须**可见**（进状态串诊断），不得静默回退默认值。
     #[test]
     fn config_role_notes_expose_single_sided_role_renames() {
         // 按角色清单装袋（`keep` 过滤出需要的角色；每个角色给**类型正确**的值，
@@ -908,7 +908,7 @@ mod tests {
         );
 
         // 负例：**类型不符**（把 `Count` 塞进开关角色）——此前 `bool()` 只返回 `None`，
-        // 全链路静默；现在逐角色点名（审计 F7）。
+        // 全链路静默；现在逐角色点名。
         let wrong_type = bag_of(&|_| true, &[(role::LEARNING_ON_TAB, Value::Count(1))]);
         assert_eq!(config_role_notes(&wrong_type), Vec::<String>::new());
         assert_eq!(
@@ -983,7 +983,7 @@ mod tests {
         );
         assert!(scheme.learning_mode().starts_with("sentence-v2|rules="));
 
-        // 格式归属方案（F14：平台只看不透明串）⇒ 单字重码关闭时的 `dup=0` 也在本文件钉住。
+        // 格式归属方案（平台只看不透明串）⇒ 单字重码关闭时的 `dup=0` 也在本文件钉住。
         let mut no_duplicate = fixture_scheme();
         no_duplicate
             .apply_config(&full_bag(&[
@@ -1057,7 +1057,7 @@ mod tests {
 
     #[test]
     fn empty_page_key_lists_unbind_the_keys() {
-        // F4：角色**显式给出空列表** ⇒ 不绑定翻页键（与 `hux-cfg` 的
+        // 角色**显式给出空列表** ⇒ 不绑定翻页键（与 `hux-cfg` 的
         // `Settings::host_options()` 同语义，即配置页清空键列表后真的不再翻页）；
         // 角色**缺失** ⇒ 保留 core 缺省绑定（`HostOptions::default()` 的 `-`/`=`）。
         let mut scheme = fixture_scheme();
@@ -1077,7 +1077,7 @@ mod tests {
         );
         // 缺角色（空袋）⇒ 保持缺省绑定，与 core 一致。
         let mut missing = fixture_scheme();
-        // 空袋 ⇒ 逐角色诊断（F7），但配置照常落地（与 `apply_config` 的既有语义一致）。
+        // 空袋 ⇒ 逐角色诊断，但配置照常落地（与 `apply_config` 的既有语义一致）。
         let errors = missing
             .apply_config(&SchemeConfig::default())
             .expect_err("空袋必须回逐角色诊断");

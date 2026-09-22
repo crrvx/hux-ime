@@ -491,7 +491,7 @@ pub const SUPPLEMENT_MAXIMUM_REWARD: f64 = 16.0;
 
 /// 参照 `reward_for_weight`：重量 → 补充奖励。
 ///
-/// NaN 口径（复核整改 3b / A7）：Lua 的 `math.max(1, math.min(1e9, nan))` 返回 `1e9`，
+/// NaN 口径：Lua 的 `math.max(1, math.min(1e9, nan))` 返回 `1e9`，
 /// Rust 的 `clamp` 对 NaN 返回 NaN ⇒ 两端相反。此处**保持 Rust 语义**：正常数据不可达
 /// （`parse_supplement_content` 的 `weight > 0.0` 已排除 NaN），唯一可达面是
 /// [`Supplement::build`] 的公开入参（畸形输入、无金样支撑），故只注明差异、不改行为。
@@ -511,7 +511,7 @@ struct SupplementNode {
 /// 补充短语的 Aho–Corasick 匹配器（`supplement` 表）。
 ///
 /// 节点编号受构建顺序影响，但 `advance` 的奖励结果与顺序无关；
-/// 差分验证以奖励序列为准（随 K1 decode 金样覆盖）。
+/// 差分验证以奖励序列为准（随 decode 金样覆盖）。
 pub struct Supplement {
     nodes: Vec<SupplementNode>,
     pub path: Option<String>,

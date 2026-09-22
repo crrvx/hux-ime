@@ -8,7 +8,7 @@ use hux_core::host::{self, HostOptions};
 
 // ---------------------------------------------------------------- 处理器
 
-/// 处理器宿主环境（对应参照 `env` 的非会话部分；K3 补内存/词库/选项职责）。
+/// 处理器宿主环境（对应参照 `env` 的非会话部分；内存 / 词库 / 选项由宿主层补）。
 pub struct ProcessorEnv<'a> {
     /// 参照 `os.time()`（学习事件时间戳）。
     pub now: f64,
@@ -20,7 +20,7 @@ pub struct ProcessorEnv<'a> {
     pub page_size: usize,
     /// 宿主链选项（翻页键绑定）：菜单可见的标点分支据此先问
     /// [`hux_core::host::paging_action`]，让出会被它遮蔽的翻页绑定
-    /// （**本仓有意偏离上游 `abad411`**，见 `docs/upstream-deviations.md`）。
+    /// （**本仓有意偏离上游 `abad411`**）。
     pub host_options: &'a HostOptions,
 }
 
@@ -483,7 +483,7 @@ pub fn processor(
     // 再把原键交标点处理器（参照 `abad411`：标点段一旦追加进组合，
     // `learning_selection` 就再也不能解码该输入——例如 `zhhbi,`——或取回句子的选中项）。
     //
-    // **本仓有意偏离上游 `abad411`**（见 `docs/upstream-deviations.md`）：
+    // **本仓有意偏离上游 `abad411`**：
     // 上游对该分支内的**所有**可打印 ASCII 标点一律先确认组合再交标点表，于是宿主
     // `key_binder` 的翻页绑定（缺省 `-`/`=`，以及 schema 绑到翻页的 `[`/`]`）被永久遮蔽
     // （最小复现 `j a equal`：期望翻页，实际提交「一=」）。此处先问**与宿主同一套**翻页判据

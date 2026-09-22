@@ -4,8 +4,8 @@
 //! 键序列金样（2c）重放：真 librime 探针记录 vs Rust 会话逐步比对。
 //!
 //! 比对字段：`consumed`、输入、光标、提交、候选（按页：页码/数量/文本/注释/高亮）。
-//! `preedit`（预编辑串）属 K3 宿主职责，金样保留但不比对；
-//! `page_no`（`fields[9]`）自复核整改第 5 批 B7 起纳入比对（此前只以页切片间接约束）。
+//! `preedit`（预编辑串）属宿主层职责，金样保留但不比对；
+//! `page_no`（`fields[9]`）纳入比对（此前只以页切片间接约束）。
 //! 处理器链：方案 `processor` 未消费（Forward）的键交 core `host` 模块（librime
 //! `key_binder`/`selector`/`navigator`/`express_editor` 等价物）后比对 `consumed`；
 //! 组合重建用 core `CompositionBuilder`（参照 `ConcreteEngine::Compose`），
@@ -29,8 +29,7 @@
 //! 3. **不得静默跳过**：实际跳过的用例集合必须恰好等于登记集合（[`split_cases`]），
 //!    登记名必须真实存在、唯一、步数吻合（`registry_is_falsifiable`）。
 //!
-//! 负面路径（把实现改回上游行为 / 塞入一个不偏离的用例）的实测输出见
-//! `_tmp/批次3a-tiger整改.md` 与 `_tmp/b3a-negctl.sh`。
+//! 负面路径（把实现改回上游行为 / 塞入一个不偏离的用例）必须让本测试变红。
 
 use flate2::read::GzDecoder;
 use hux_test_support::hex;
@@ -56,13 +55,13 @@ use hux_scheme_tiger::lexicon::{Lexicon, Supplement};
 enum DeviationKind {
     /// 上游缺陷：`abad411` 起方案处理器在菜单可见时把**所有**可打印 ASCII 标点先
     /// 「暂存学习 + 确认组合」再交标点表，宿主 `key_binder` 的翻页绑定被永久遮蔽。
-    /// 本仓判定为缺陷并**有意修复**（详见 `docs/upstream-deviations.md` ①）：
+    /// 本仓判定为缺陷并**有意修复**：
     /// 标点分支先问宿主判据，判为翻页的键让给宿主链。
     ///
     /// **含用户决定的语义强化（2026-09）**：上翻页键不再要求参照 `when: paging` 的
     /// 末段标签——菜单可见即拦截（与下翻页同前置），故 `punct_menu_minus`（首屏 `-`）
     /// 也从「与上游逐位一致」转为偏离项。**代价**：菜单可见时 `-`/`=`/`[`/`]`
-    /// 不再能作为标点打出（已被用户接受，见 `docs/upstream-deviations.md` ① 的偏离表）。
+    /// 不再能作为标点打出（已接受该代价）。
     UpstreamDefectFix,
     /// addon 扩展：`tiger_sentence_digit_select`（出厂缺省 **true**）在上游方案核心里
     /// 不存在（上游把数字当作编码字符入串）。金样按上游行为记录，重放按出厂缺省开启。
@@ -71,7 +70,7 @@ enum DeviationKind {
     /// 追踪反查分支尖端 `92a0b54` 的 schema（`speller/delimiter: " '"`），而本金样的
     /// 主干 pin `abad411` 是 `" "` ⇒ `'` 之后的 `1`/`;` 在本仓切成「abc 段 + raw 段」，
     /// 上游主干保持单段。同 pin 的探针实测（`PIN=92a0b54` 重跑同一探针）与**本仓行完全
-    /// 相同**，即该差异是上游自己后续提交带来的，不是本仓发明。见 `docs/upstream-deviations.md` ③。
+    /// 相同**，即该差异是上游自己后续提交带来的，不是本仓发明。
     BranchPinDelimiter,
 }
 
@@ -224,7 +223,7 @@ struct Step {
     input: String,
     caret: usize,
     commit: String,
-    /// 参照 `RimeMenu::page_no`（0 基；B7 起参与比对）。
+    /// 参照 `RimeMenu::page_no`（0 基；参与比对）。
     page_no: usize,
     highlight: usize,
     count: usize,
@@ -538,7 +537,7 @@ fn replay(
     context.set_option("_auto_commit", true);
     context.set_option(OPTION_EARLY_COMMIT, true);
     context.set_option(OPTION_EARLY_COMMIT_TO_PREEDIT, false);
-    // **出厂缺省口径**（复核整改 B1）：`tiger_sentence_digit_select` 在
+    // **出厂缺省口径**：`tiger_sentence_digit_select` 在
     // `hux-cfg`/addon/`TigerScheme` 三处都是 `true`，差分层按同一口径重放
     // （addon 扩展，金样记录的是上游行为 ⇒ 数字直选用例登记在 `DEVIATIONS`）。
     context.set_option(OPTION_DIGIT_SELECT, true);
@@ -563,7 +562,7 @@ fn replay(
     let mut observed = Vec::with_capacity(case.steps.len());
     for step in case.steps.iter() {
         let key = KeyEvent::from_repr(&step.repr).expect("key repr");
-        // 遗留③ 的可证伪断言：夹具 `tab_learning: true`（⇒ `store_ready`）时，
+        // 可证伪断言：夹具 `tab_learning: true`（⇒ `store_ready`）时，
         // 每次「未处于 tab_pending 的 Tab」都必须走参照的基线捕获分支并留下 baseline。
         let expects_baseline = store_ready
             && !state.tab_pending
@@ -639,7 +638,7 @@ fn replay(
         let highlight = segment
             .map(|segment| segment.selected_index % page_size)
             .unwrap_or(0);
-        // B7：`menu.page_no` 同样按选中项所在页上报；无段（无菜单）时为 0
+        // `menu.page_no` 同样按选中项所在页上报；无段（无菜单）时为 0
         // （参照的 `RimeMenu` 零初始化）。
         let page_no = segment
             .map(|segment| segment.selected_index / page_size)
@@ -807,7 +806,7 @@ fn describe(row: &RowView) -> String {
 fn key_sequence_matches_reference() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let cases = load_cases(&root.join("goldens/key_sequence.tsv.gz"));
-    // 覆盖下限（复核整改 B4）：金样被截断 / 少解析若干 case 时必须失败，不得静默变少。
+    // 覆盖下限：金样被截断 / 少解析若干 case 时必须失败，不得静默变少。
     let golden_steps: usize = cases.iter().map(|case| case.steps.len()).sum();
     assert!(
         cases.len() >= 68,
@@ -830,7 +829,7 @@ fn key_sequence_matches_reference() {
             &data_dir,
             hux_core::host::DEFAULT_PAGE_SIZE,
             None,
-            // 夹具 `tab_learning: false` ⇒ 参照学习库不就绪（M6/遗留③ 的口径）。
+            // 夹具 `tab_learning: false` ⇒ 参照学习库不就绪（同探针口径）。
             false,
             &mut failures,
         );
@@ -866,7 +865,7 @@ fn key_sequence_matches_reference() {
     );
 }
 
-/// 遗留③：Tab 锁路径的**真机探针**金样。
+/// Tab 锁路径的**真机探针**金样。
 ///
 /// 主金样 `key_sequence.tsv.gz` 的夹具写 `tiger_sentence/tab_learning: false` ⇒ 参照的
 /// `learned.store` 为 nil，处理器里 `if not state.tab_pending and learned.store and
@@ -942,7 +941,7 @@ fn key_sequence_tab_matches_reference() {
 fn sound_to_char_shape_matches_reference() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let cases = load_cases(&root.join("goldens/sound_to_char_shape.tsv.gz"));
-    // 覆盖下限（复核整改 B4）：同上。
+    // 覆盖下限：同上。
     let golden_steps: usize = cases.iter().map(|case| case.steps.len()).sum();
     assert!(
         cases.len() >= 31,

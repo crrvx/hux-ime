@@ -31,7 +31,7 @@
 
 ## 3. 本仓库（hux-ime）改动
 
-- 平台层数据目录查找支持 **`XDG_DATA_DIRS`**（P2 已落地于 `platform/fcitx5/src/paths.rs`，内核不再读环境变量）：
+- 平台层数据目录查找支持 **`XDG_DATA_DIRS`**（落在 `platform/fcitx5/src/paths.rs`，内核不读环境变量）：
   顺序 `HUX_DATA_DIRS`（覆盖） > `XDG_DATA_HOME/fcitx5/hux` > `XDG_DATA_DIRS/*/fcitx5/hux` > `/usr/share/fcitx5/hux`；
   桌面行为不变（新路径只是补充）。
 - 视验收结果决定是否需要 `__ANDROID__` 差异（配置 schema、状态区子菜单；见 §6）。

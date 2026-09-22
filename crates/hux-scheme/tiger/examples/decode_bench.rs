@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! decode 冷路径基准（P6）：重放 `goldens/decode.tsv.gz` 的输入语料，报告单次耗时分布。
+//! decode 冷路径基准：重放 `goldens/decode.tsv.gz` 的输入语料，报告单次耗时分布。
 //!
 //! ```sh
 //! cargo run --release --example decode_bench -- [--model <bin>] [--lexical <bin>] [--repeat N]

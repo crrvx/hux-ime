@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""校验 `goldens/regenerate.md` 的校验和表与金样内部头部（复核整改第 4 批 M2）。
+"""校验 `goldens/regenerate.md` 的校验和表与金样内部头部。
 
-> 表与 pin 声明原在 `goldens/README.md`；2026-09 文档重整把「重新生成」与「来源与校验和」
-> 拆到 `goldens/regenerate.md`（README 只留清单 / transcript 格式 / 校验入口 / 规则），
+> 表与 pin 声明在 `goldens/regenerate.md`（`goldens/README.md` 只留清单 / transcript 格式 /
+> 校验入口 / 规则），
 > 校验项与强度不变。
 
 三件事，任一不符即 `exit 1`：
@@ -20,7 +20,7 @@
 
 用法：
     python3 tools/checks/verify_golden_shas.py                 # 本地文件 + 头部（无需网络）
-    python3 tools/checks/verify_golden_shas.py --reference external/tiger-sentense-rime
+    python3 tools/checks/verify_golden_shas.py --reference _external/tiger-sentense-rime
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-# sha 表与 pin 声明所在文档（2026-09 文档重整：原 `goldens/README.md` 拆出）。
+# sha 表与 pin 声明所在文档。
 SHA_DOC = Path("goldens/regenerate.md")
 SHA256_RE = re.compile(r"\b[0-9a-f]{64}\b")
 SHA1_RE = re.compile(r"\b[0-9a-f]{40}\b")
@@ -49,7 +49,7 @@ PROBE_HEADERS: dict[str, dict[str, object]] = {
         "pin": "main",
         "sha256": [("tiger_sentence.lua sha256", "lua/tiger_sentence.lua（主干金样）")],
     },
-    # Tab 锁路径金样（复核整改第 5 批，遗留③）：夹具 `tab_learning: true`，
+    # Tab 锁路径金样：夹具 `tab_learning: true`，
     # 但参照源码与 pin 同主干，故同样按「主干金样」核对。
     "goldens/key_sequence_tab.tsv.gz": {
         "pin": "main",

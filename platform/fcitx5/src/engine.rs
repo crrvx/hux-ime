@@ -72,7 +72,7 @@ impl Engine {
         self.apply_scheme_config(config);
     }
 
-    /// 下发一个配置袋并收录诊断（审计 F7）。
+    /// 下发一个配置袋并收录诊断。
     ///
     /// 方案的 `apply_config` 返回逐角色诊断（角色缺失 / 类型不符）：方案已按缺省值回退，
     /// 平台把诊断并入状态串（与装配期 `config:` 诊断同风格），避免运行期静默降级。
@@ -114,8 +114,7 @@ pub(crate) fn resolve_option_roles(declarations: &[OptionDecl]) -> (OptionKeys, 
 /// 而配置页可以绑到**没有名字的 keysym**（媒体键 / 厂商扩展键）：`repr()` 只能输出
 /// `0x1008ff14` / `(unknown)` 这类形式，`KeyEvent::from_repr` 不认 ⇒ 该绑定在
 /// `Settings::host_options` 与方案 `host_options_from` 的 `filter_map` 处**静默消失**。
-/// 这里点名，进 `hux_engine_status`（`hotkeys:` 前缀；C++ 壳在应用设置后落日志）——
-/// 复核整改第 4 批 F15。
+/// 这里点名，进 `hux_engine_status`（`hotkeys:` 前缀；C++ 壳在应用设置后落日志）。
 pub(crate) fn unparsable_key_bindings(settings: &Settings) -> Vec<String> {
     let mut notes = Vec::new();
     for (role, reprs) in [
@@ -175,7 +174,7 @@ pub(crate) fn scheme_config(settings: &Settings) -> SchemeConfig {
 
 pub struct Engine {
     pub(crate) host: Option<HostCallback>,
-    /// 方案（P4c：平台经 `dyn Scheme` 驱动，不直接引用方案模块；共享资源与会话态都在方案内）。
+    /// 方案（平台经 `dyn Scheme` 驱动，不直接引用方案模块；共享资源与会话态都在方案内）。
     pub(crate) scheme: Box<dyn Scheme>,
     pub(crate) sessions: HashMap<u64, Session>,
     pub(crate) next_session: u64,
@@ -209,7 +208,7 @@ pub struct Engine {
     /// 配置页热键绑定里无法解析的项（`角色=键名`，见 [`unparsable_key_bindings`]）。
     pub(crate) hotkey_notes: Vec<String>,
     /// 最近一次配置下发的逐角色诊断（角色缺失 / 类型不符，`config:` 前缀）。
-    /// 方案已按缺省值回退，此串只是把「设置没生效」的原因暴露到状态里（审计 F7）。
+    /// 方案已按缺省值回退，此串只是把「设置没生效」的原因暴露到状态里。
     pub(crate) config_notes: Vec<String>,
 }
 impl Engine {
@@ -376,7 +375,7 @@ impl Engine {
         }) {
             Some(consumed) => consumed,
             None => {
-                // F13：未知 / 已释放会话不得沿用**上一次**按键留下的粘性转发位——否则
+                // 未知 / 已释放会话不得沿用**上一次**按键留下的粘性转发位——否则
                 // `hux_engine_key` 会只回 `HUX_KEY_FORWARD_AFTER_COMMIT`（无 CONSUMED），
                 // 宿主据此 `filterAndAccept` + `forwardKey` 一个并不存在的提交。
                 self.forward_after_commit = false;
@@ -428,7 +427,7 @@ impl Engine {
         }) {
             Some(selected) => selected,
             None => {
-                // 同 `key`：候选点击也走 `hux_engine_key` 之外的路径，粘性位必须清掉（F13）。
+                // 同 `key`：候选点击也走 `hux_engine_key` 之外的路径，粘性位必须清掉。
                 self.forward_after_commit = false;
                 false
             }
@@ -494,7 +493,7 @@ impl Engine {
             self.learning.confirm(&submitted);
         }
         // 运行期落库失败（磁盘满 / 库被改成只读 / 锁异常）不进状态串的话，用户只看到
-        // 「学习不生效」（复核整改第 4 批 F6）。
+        // 「学习不生效」。
         self.observe_learning_error();
         self.push_scheme_config();
         if !session.context.is_composing() {
@@ -615,14 +614,14 @@ impl Engine {
             status.push_str("; options: ");
             status.push_str(error);
         }
-        // 学习库：构造期那条已在基线里，只有**运行期新增/变化**的诊断在此拼接（F6）。
+        // 学习库：构造期那条已在基线里，只有**运行期新增/变化**的诊断在此拼接。
         if let Some(error) = &self.learning_error
             && Some(error) != self.learning_error_baseline.as_ref()
         {
             status.push_str("; learning: ");
             status.push_str(error);
         }
-        // 配置页绑到无名字 keysym（媒体键等）时该绑定会被丢弃，此处点名（F15）。
+        // 配置页绑到无名字 keysym（媒体键等）时该绑定会被丢弃，此处点名。
         if !self.hotkey_notes.is_empty() {
             status.push_str("; hotkeys: 忽略无法识别的绑定 ");
             status.push_str(&self.hotkey_notes.join(", "));
@@ -630,7 +629,7 @@ impl Engine {
         self.status = crate::ui::cstring_lossy(&status);
     }
 
-    /// 学习库诊断变化 → 并入状态串（复核整改第 4 批 F6）。
+    /// 学习库诊断变化 → 并入状态串。
     ///
     /// 此前 `learning.error` 只在 `new_with_dirs` 里读一次：打开失败可见，而**运行期写盘失败**
     /// （LevelDB `put` 返回错误）既无日志也不进 `hux_engine_status`。这里在落库路径上调一次，
@@ -690,7 +689,7 @@ impl Engine {
     pub fn apply_settings(&mut self, settings: Settings) {
         self.settings = settings;
         self.config_dirty = true;
-        // 配置页热键绑定里无法解析的项：点名（此前在 `filter_map` 处静默消失，F15）。
+        // 配置页热键绑定里无法解析的项：点名（此前在 `filter_map` 处静默消失）。
         let hotkey_notes = unparsable_key_bindings(&self.settings);
         if hotkey_notes != self.hotkey_notes {
             self.hotkey_notes = hotkey_notes;

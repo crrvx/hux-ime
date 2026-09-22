@@ -14,7 +14,7 @@
 #
 # 写库护栏（与另外两个探针生成器同构）：先写 `$OUT.tmp.$$`，断言至少 1 条 `name` 与 1 条 `parse`，
 # 再原子 `mv`；`key_probe` 对「输入文件不可读」与「空输入」返回非零，故「输入缺失 ⇒ 入库金样被
-# 静默覆盖成 32 行 modifier」这条路径不再成立（复核整改第 4 批 M5）。
+# 静默覆盖成 32 行 modifier」这条路径不再成立。
 # 金样头部记录参照 pin 与 key_table.cc sha256，由 `tools/checks/verify_golden_shas.py` 复核。
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -22,7 +22,7 @@ src=${1:?usage: gen_key_golden.sh <librime-src>}
 key_table_cc="$src/src/rime/key_table.cc"
 cases="$root/tools/cases/key_cases.txt"
 out="$root/goldens/key.tsv.gz"
-# 参照 pin（键名表来源；与 goldens/regenerate.md、CI 的 `LIBRIME_COMMIT` 同值）。
+# 参照 pin（键名表来源；与 CI 的 `LIBRIME_COMMIT` 同值，校验表由 CI 比对）。
 librime_pin=33e78140250125871856cdc5b42ddc6a5fcd3cd4
 librime_url=${LIBRIME_URL:-https://github.com/rime/librime}
 work=$(mktemp -d)

@@ -263,7 +263,7 @@ mod tests {
             options.page_up_keys,
             vec![KeyEvent::from_repr("comma").unwrap()]
         );
-        // F4 契约：**显式给出即以此为准**（空列表 = 不绑定）。生产路径经配置袋把
+        // 契约：**显式给出即以此为准**（空列表 = 不绑定）。生产路径经配置袋把
         // 原始字符串交给方案（`hux-scheme/tiger` 的 `host_options_from`），
         // 两侧语义必须一致 —— 方案侧由 `empty_page_key_lists_unbind_the_keys` 钉住。
         assert!(options.page_down_keys.is_empty(), "空列表 = 不绑定翻页键");

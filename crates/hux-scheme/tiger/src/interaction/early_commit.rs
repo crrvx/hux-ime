@@ -156,7 +156,7 @@ pub(crate) fn competing_boundary_end(
 /// 参照 `tracker_better`：字符数 → `last_share` → 保留长度。
 ///
 /// 参照在该三元组**全等**时对两者都返回 false ⇒ 胜者取决于 `pairs(state.trackers)` 的
-/// 哈希迭代序（不确定）。本仓额外按 `text` 字典序兜底（复核整改 3b / A8）：
+/// 哈希迭代序（不确定）。本仓额外按 `text` 字典序兜底：
 /// 调用点的 key 已排序，兜底与「首个更优者获胜」的结果一致，但把确定性写进判据本身，
 /// 不再依赖调用点的排序。差异仅在「两个 tracker 三元全等」时可见，现有金样未触发。
 pub(crate) fn tracker_better(left: &Tracker, right: &Tracker) -> bool {

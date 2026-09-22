@@ -9,18 +9,18 @@
 # 重新引入本地合并），就**显式失败**，绝不静默产出与声明 pin 不符的金样。
 #
 # 用法：tools/generators/gen_sound_to_char_shape_golden.sh [输出文件]
-#   REF  参照仓库本地检出（默认仓库内 external/tiger-sentense-rime，已 gitignore）
+#   REF  参照仓库本地检出（默认仓库内 _external/tiger-sentense-rime，已 gitignore）
 #   REF_URL  写入金样头部的参照仓库线上地址（默认 https://github.com/lvyww/tiger-sentense-rime）
 #   PIN  参照提交（默认 92a0b54b53114e7e5aa6a1ff48efa95db0e21f9c = feat/reverse-lookup 尖端，含主干）
 #   CASES 用例文件（默认 tools/cases/sound_to_char_shape_cases.txt）
 #
 # 夹具（goldens/sound_to_char_shape/）：小 PY_c 词典 + 合成码表 + symbols.yaml（pin 同文件）；
 # 同一夹具供 Rust 重放（`tiger_sentence.pinyin.bin` 由 tools/generators/gen_pinyin_index.py 生成）。
-# 金样不在 CI 重生成（探针依赖具体 librime/librime-lua 版本），见 goldens/regenerate.md。
+# 金样不在 CI 重生成（探针依赖具体 librime/librime-lua 版本）——需本地按 `tools/generators/` 手动重生成。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-REF="${REF:-$ROOT/external/tiger-sentense-rime}"
+REF="${REF:-$ROOT/_external/tiger-sentense-rime}"
 REF_URL="${REF_URL:-https://github.com/lvyww/tiger-sentense-rime}"
 PIN="${PIN:-92a0b54b53114e7e5aa6a1ff48efa95db0e21f9c}"
 OUT="${1:-$ROOT/goldens/sound_to_char_shape.tsv.gz}"
@@ -36,7 +36,7 @@ shared="$WORK/shared"
 stage="$WORK/stage"
 mkdir -p "$user/lua" "$shared" "$stage"
 
-# 夹具护栏（M3）：入库夹具不得被生成器当副作用重写。
+# 夹具护栏：入库夹具不得被生成器当副作用重写。
 # 只做「逐字节比对」这一件事（不删传入文件——它可能是 pin 工作区里的真实文件）：
 # 一致才继续，入库文件保持原样不落盘；不一致即失败，并区分两种成因：
 # 上游 pin 变化（须同步更新金样与夹具）或夹具漂移（应还原）。
@@ -82,7 +82,7 @@ cp "$WT/PY_c.schema.yaml" "$user/PY_c.schema.yaml"
 cp "$FIXTURE/PY_c.dict.yaml" "$user/PY_c.dict.yaml"
 cp "$FIXTURE/tiger_sentence.codes.txt" "$user/tiger_sentence.codes.txt"
 
-# 标点表同源断言（M3）：探针输入（pin $PIN 的 symbols.yaml）、音反查夹具、键序列夹具
+# 标点表同源断言：探针输入（pin $PIN 的 symbols.yaml）、音反查夹具、键序列夹具
 # 必须逐字节相同——原先这里是 `cp 键序列夹具 → 音反查夹具`，一旦上游/pin 一变就会
 # 静默改写**另一个金样**的夹具。
 guard_fixture "$WT/symbols.yaml" "$FIXTURE/symbols.yaml" "标点表 symbols.yaml（pin $PIN）"
@@ -90,7 +90,7 @@ guard_fixture "$KEYSEQ_FIXTURE/symbols.yaml" "$FIXTURE/symbols.yaml" \
     "标点表 symbols.yaml（须等于 goldens/key_sequence/symbols.yaml）"
 
 # 音反查索引夹具：由小 PY_c 生成（Rust 重放用）。
-# 先写临时文件，再与入库文件逐字节比对，一致则保持入库文件不变（M3）。
+# 先写临时文件，再与入库文件逐字节比对，一致则保持入库文件不变。
 python3 "$ROOT/tools/generators/gen_pinyin_index.py" \
     --source "$FIXTURE/PY_c.dict.yaml" \
     --out "$stage/tiger_sentence.pinyin.bin"
@@ -115,7 +115,7 @@ recognizer:
   patterns: {}
 YAML
 
-# 插件缺失时显式报错：`set -e` 下裸 `test -f` 会静默退出，无从诊断（M7）。
+# 插件缺失时显式报错：`set -e` 下裸 `test -f` 会静默退出，无从诊断。
 plugin="${LUA_PLUGIN:-/usr/lib/rime-plugins/librime-lua.so}"
 if [ ! -f "$plugin" ]; then
     echo "生成失败：缺少 librime-lua 插件：$plugin（可用 LUA_PLUGIN 覆盖）" >&2

@@ -57,7 +57,7 @@ fcitx5 -r -d  # 或以所在发行版的方式重启
 - `/usr/lib/fcitx5/libhux.so`（或发行版 libdir，如 Fedora 的 `/usr/lib64/fcitx5/libhux.so`）
 - `/usr/share/fcitx5/{addon,inputmethod}/hux.conf`
 - `/usr/share/fcitx5/hux/`：**随包数据**（`data/MANIFEST` 列出的码表四件套、词先验位图、
-  音反查索引、标点表）——自复核整改第 4 批 F5 起由 `cmake --install` 一并安装，
+  音反查索引、标点表）——由 `cmake --install` 一并安装，
   与 `install.sh` 装出的布局一致；此前只有 `install.sh` 装数据，只走 CMake 会得到**无词库引擎**。
 
 数据也可放到用户级目录（引擎按「用户目录 → 系统目录」查找）：

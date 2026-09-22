@@ -106,7 +106,7 @@ impl Options {
     }
 
     /// 参照 `option_update_notifier` 回调：记录变更并递增 revision；
-    /// 返回是否需要持久化（写文件与失败属性由 K3 处理）。
+    /// 返回是否需要持久化（写文件与失败属性由宿主层处理）。
     /// `sync` 自身写入的选项事件在此被忽略（参照 `live.syncing`）。
     pub fn observe(&mut self, context: &Context, name: &str) -> bool {
         if !self.defaults.contains_key(name) {

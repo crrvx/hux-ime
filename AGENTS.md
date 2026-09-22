@@ -63,7 +63,7 @@
   - 集成测试的共享助手 `crates/hux-test-support`，请以 `dev-dependencies` 引入（不得使用 `tests/common/mod.rs`）
 - 参考实现：
   - tiger-sentense-rime 的 Lua 核心，仅作测试 oracle（不进运行时）
-  - 检出放仓库内 `_external/tiger-sentense-rime`（.gitignore，`HUX_REFERENCE_REPO` / `REF` 可覆盖）
+  - 检出不入库：本地由 `REF` 指定（生成器脚本读它），CI 自建临时检出后弃用
 - 移植纪律：
   - 计算部分机械翻译 + 差分逐位验证，交互部分按行为契约设计
   - 重构 / 优化不得改变可观测行为

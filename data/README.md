@@ -11,7 +11,7 @@
 
 - `platform/fcitx5/CMakeLists.txt` 的 `install(FILES …)` 按它安装（**只用 `cmake --install`
   也能得到完整引擎**——此前 CMake 不装数据，只走 CMake 会得到「无词库」引擎；见
-  [`../platform/fcitx5/README.md`](../platform/fcitx5/README.md) 与复核整改第 4 批 F5）；
+  [`../platform/fcitx5/README.md`](../platform/fcitx5/README.md) ）；
 - `install.sh` 装后逐条核对落盘（缺任一即失败并给出提示）；
 - `uninstall.sh` 无 `--purge` 时按同一清单删除（此前枚举 7 个文件名而安装侧用 glob，
   `data/` 增删文件就会残留）。

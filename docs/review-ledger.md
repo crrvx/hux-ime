@@ -3,7 +3,7 @@
 
 # 复核台账：历史与逐批记录（review ledger）
 
-> **本文是历史留档**：迁移映射、批次进度、上游追平与复核整改的逐批记录、四份只读审计的逐条归宿；
+> **本文是历史留档**：迁移映射、批次进度、上游追平与逐批整改的记录、四份只读审计的逐条归宿；
 > 末尾的「未闭合项」是**活口**（见 §0）。
 > **活规则**（结构正义 / 目标结构 / 方案契约 / 测试与性能 / 依赖校验 / 骨架）在 [`refactor.md`](refactor.md)；
 > **有意偏离上游**的活政策在 [`upstream-deviations.md`](upstream-deviations.md)。
@@ -16,11 +16,11 @@
 > 2026-09-21 全仓复核（5 路并行审计 + 人工核实）已修项见提交 `chore(review)` 三批与
 > `fix(review)`。
 >
-> **条目状态前缀（复核整改第 4 批 D1–D6 引入，逐条与代码/测试对齐）**：
+> **条目状态前缀（第 4 批 D1–D6 引入，逐条与代码/测试对齐）**：
 > `[✅ 已修]` ＝ 已落地且有守护（用例 / CI 守卫 / 金样）；`[待办]` ＝ 仍未做（含成本估计）；
 > `[已登记·不修+理由]` ＝ 评估后**有意不改**，理由随条目给出。
 > **不再保留「文档说未做、代码已做」（或反之）的条目**：每批追平/整改收尾时勾对一次。
-> `[误报·已核实]` ＝ 审计结论被实测否掉（反证随条目给出）——仅用于 §5 的「复核整改总账」。
+> `[误报·已核实]` ＝ 审计结论被实测否掉（反证随条目给出）——仅用于 §5 的「总账」。
 > 本节把四份审计总账里**仍活着**的条目提到最前（其余条目均已 `[✅ 已修]`，逐条归宿见 §5）。
 > 行文与 §5 总账**逐字相同**（两处同步，改动以 §5 总账为准）：共 **9 条**——`[待办]` 3 /
 > `[已登记·不修+理由]` 5 / `[误报·已核实]` 1。
@@ -31,7 +31,7 @@
 |---|---|---|---|
 | C7（`Group.code`） | 60 万次 `Group.code: Vec<u16>` 小分配 | [待办] | 未做（第 3b 批登记）：需先有基准数据，且要改组查找 / 前缀剪枝 / `collect_chunks` 的取值路径（扁平 `Vec<u16>` + `(start, len)`），收益与风险不匹配，留待性能批 |
 | F16 | C++ 壳两处脆弱模式：`applyUpdate` 每次 UI 刷新都重建状态区；`HuxCandidateWord::select` 内同步触发回调可能销毁候选对象自身 | [待办] | 未改（当前**无实测故障**，C++ 侧以 `session == nullptr` 早退规避）：需真机 fcitx5 压力验证后再定是否投递到事件循环；本机无 fcitx5 运行环境。**UAF 收尾批补充**：生命周期侧的悬垂风险已加固（候选词弱引用 + `~HuxEngine` 清状态区，见 §5.3 的「报告 §5①」结案段），**重入 / 自毁结构未动** |
-| M8 | 依赖 / 版本未固定的位置（action 移动标签、无 `rust-toolchain.toml`、`archlinux:latest`、`librime-dev` 版本） | [待办] | **③④ 已实施 / 已注明**：`pacman -Sy` → `-Syu`；`archlinux:latest` **有意不钉**（作业目的即「最新 Lua」）；已在 `goldens/regenerate.md` 注明 CI 的 librime 版本可不同、仅做语法检查。**② rust 工具链：pin 内容与验证已做完，但未落盘**——`channel = "1.98.1"`（= 本机 `rustc --version`；`rustup show` 的活动 channel 名仍是 `stable`）+ `components = ["rustfmt", "clippy"]` 已备在 `_tmp/rust-toolchain.toml.draft`；把该 channel 装进工作区本地 `RUSTUP_HOME` 后**实测**：活动工具链 = `1.98.1-x86_64-unknown-linux-gnu (overridden by …/rust-toolchain.toml)`，组件含 rustfmt/clippy，`cargo fmt --all --check` / `clippy --all-targets -- -D warnings` / `cargo test --workspace --locked` **347 例全绿**（输出 `_tmp/m8-pin-verify.txt`）。**不落盘的原因（实测）**：本机 `/home` 对沙箱是 `ro` 挂载（仅工作区可写）⇒ `~/.rustup` 只读，落盘后任何 `cargo` 命令立即失败（`could not create temp file /home/crux/.rustup/tmp/…: Read-only file system`），违反「不让 `cargo test` 变红」的约定。**落地步骤（用户在自己终端执行一次即可）**：`rustup toolchain install 1.98.1` → `cp _tmp/rust-toolchain.toml.draft rust-toolchain.toml`（内容已实测可用，含 `components = ["rustfmt", "clippy"]`），随后 `cargo fmt/clippy/test` 应仍全绿；若将来升级 rustc，改 channel 值即可。**在可写 `~/.rustup` 处一条命令即可生效**：`rustup toolchain install 1.98.1` 后 `cp _tmp/rust-toolchain.toml.draft rust-toolchain.toml`（内容已验证，无需再改）。**① action 钉 commit sha 仍待办**：离线无法验证 GitHub 侧可用性，擅自钉死有让 CI 无预警变红的实际风险 |
+| M8 | 依赖 / 版本未固定的位置（action 移动标签、`archlinux:latest`、`librime-dev` 版本） | [待办] | **③④ 已实施 / 已注明**：`pacman -Sy` → `-Syu`；`archlinux:latest` **有意不钉**（作业目的即「最新 Lua」）；已在 `goldens/regenerate.md` 注明 CI 的 librime 版本可不同、仅做语法检查。**② rust 工具链：有意不钉**（跟随 stable 最新版；CI 用 `dtolnay/rust-toolchain@stable`）——代价是 stable 漂移可能让 `cargo fmt --all --check` / clippy `-D warnings` 无预警变红，届时按当时的稳定版修正即可。**① action 钉 commit sha 仍待办**：离线无法验证 GitHub 侧可用性，擅自钉死有让 CI 无预警变红的实际风险 |
 
 ### 0.2 `[已登记·不修+理由]`（5 条：tiger `A7`/`C3`（跨 crate）/`C8`、文档工具CI `M12`/`M17`）
 
@@ -99,7 +99,7 @@
 > platform 的 `host_commit_direct_choice_records_no_learning`），
 > `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`reuse lint`（152/152）均干净；
 > CI `rust` 作业 11 步本机逐步通过；C++ 侧构建链接 + `DESTDIR` 安装 3 文件 + 导出 **14** 个 `hux_*`。
-> **当前基线（复核整改第 4 批实测）**：`cargo test --workspace --locked` **336 用例全绿**
+> **当前基线（第 4 批实测）**：`cargo test --workspace --locked` **336 用例全绿**
 > （core 84 / tiger 137 / cfg 20 / platform 76 / support 4 / ffi 1 及独立 `tests/`）；
 > `rust` 作业 **16 步**（新增金样校验器、清单自检、入口冒烟三步）；
 > `DESTDIR` 安装 **3 个插件文件 + 7 个随包数据文件**（`data/MANIFEST`）。
@@ -146,7 +146,7 @@
   提交反查候选、`92a0b54` 撇号音节分隔），它是主干 pin 的**后代**，故音反查金样 `sound_to_char_shape.tsv.gz`
   单独取自它、**不再做「分支 + 主干本地合并」**（生成器已简化为单 `PIN` + 显式失败护栏）。
 
-详见 `_tmp/批次1..5-追平记录.md`；金样来源与 sha 表见 [`../goldens/regenerate.md`](../goldens/regenerate.md)。
+详见下文各批次记录；金样来源与 sha 表见 [`../goldens/regenerate.md`](../goldens/regenerate.md)。
 
 ### 3.2 模型与格式侦察
 
@@ -184,7 +184,7 @@
     反查分支（`2c53111`/`f3b3049`/`ce5b840`/`898579f`）**不在 `201eb79` 的祖先链上**
     （上游至今未并入 main），本实现仍按 `8b615235..898579f` 的单文件 +48/−18 逐处核对为「已覆盖」。
 - **B2 ✅ 已完成（pin `201eb79` → `bd83900`）**——区间 `201eb79..bd83900` 的**运行时代码只有 6 笔**
-  （其余 7 笔为测试/CI/合并提交，逐笔判定依据见 `_tmp/批次2-融合偏好-分析.md` §1）：
+  （其余 7 笔为测试/CI/合并提交）：
   - `24e633e`：`learning` 侧新增 `fusion_mode`/`fusion_pair_code`/`fusion_score`/`fusion_event`
     （成对偏好：`D`/`C` 两个 choice 竞争，单次确认权重 1 ⇒ `min(16, 9+2ln w)`）；
   - `a3fc009`：**直接序保持 + 跨来源融合**——`State` 记 `source_mask`/`direct_rank`
@@ -214,7 +214,7 @@
 - **B3 ✅ 已完成（pin `bd83900` → `b2bbd23`）**——区间内**运行时代码只有 1 笔**：
   `b228c2d` perf(lua) reduce evidence allocation and repeated fusion work（`b30187c` 只改 README 的模型说明，
   `b2bbd23` 为 PR #19 合并）。逐行判定为**纯分配/重复计算优化、行为中性**，**Rust 侧无代码改动**
-  （仅 `crates/hux-core/src/learning.rs` 一条注释里的 pin 更新）；细节见 `_tmp/批次3-追平记录.md` §2：
+  （仅 `crates/hux-core/src/learning.rs` 一条注释里的 pin 更新）：
   - `dedup_limit`：本调用私有的 `result` 数组直接发布（不再复制第二份 `limited`），
     `reserved`/`kept` 表只在真有保留项时构造——空表 `table.sort` 与空 `ipairs` 本就是空操作；
   - `build_prefix_evidence`：权重改为「边遍历边累加」（候选迭代序与浮点加法序不变），
@@ -240,7 +240,7 @@
 
 - **B4 ✅ 已完成（pin `b2bbd23` → `d7b01e5`）**——区间内**运行时代码只有 2 笔**：
   `7b220ce`（经 `068936b` 分支合并落地）与 `d30867a`（`d7b01e5` 合并）；两个合并提交相对各自父提交在 `lua/` 上无独立差异
-  （`068936b -p1` 即 `7b220ce` 的净效果，`d7b01e5 -p1` 即 `d30867a` 的净效果）。细节见 `_tmp/批次4-追平记录.md`。
+  （`068936b -p1` 即 `7b220ce` 的净效果，`d7b01e5 -p1` 即 `d30867a` 的净效果）。
   - `7b220ce` **持久化人工纠错等级**：`lua/tiger_sentence_learning.lua` 由「时间衰减 + 连续权重」改为
     **离散等级**——每次人工纠错 `weight = min(10, weight + 1)`，同上下文分 `7 + 2L`（L1=9…L10=27）、
     跨上下文分 `4 + 2L`（L1=6…L10=24），等级之外手工竞争项仍 `×0.25` 降权；
@@ -271,7 +271,7 @@
     `learning_stage_reinforces_stable_first_choice` 改写为 `learning_stage_does_not_reinforce_stable_first_choice`）；
     fmt/clippy/reuse 152/152/CI 分层守卫全绿；pin/sha 程序化自验 0 处不一致。
 - **B5 ✅ 已完成（收尾批；主干 `d7b01e5` → `abad411`，反查支线 `898579f` → `92a0b54`）**——本批两个来源
-  （详见 `_tmp/批次5-追平记录.md`）：
+  ：
   - **主干 `abad411`**（`fix(rime): preserve punctuation learning and default to full-m5`，区间仅此 1 笔）：
     处理器把「缓冲态标点先冲组合」的判据由 `state.buffered_text ~= ""` 改为 `context:has_menu()`，
     并在确认前补 `learning_selection` + `learning_stage`——标点段一旦追加进组合，`learning_selection`
@@ -297,7 +297,7 @@
     另复验 C++ addon 的 configure→构建→`DESTDIR` 安装布局与 **14 个** `hux_*` 导出符号、
     `gen_pinyin_index.py --check`。
 
-## 4. 复核整改逐批记录（原 `refactor.md` §8）
+## 4. 逐批整改记录（原 `refactor.md` §8）
 
 ### 4.1 平台（fcitx5）（状态前缀：`[✅ 已修]` 已落地并有守护 / `[待办]` 未做 / `[已登记·不修+理由]` 评估后不改）
 - `[✅ 已修]`：C++ 壳不再硬编码方案选项名——ABI 新增 `hux_engine_option_role_count` /
@@ -308,19 +308,19 @@
   由新增测试 `schema_defaults_match_settings_defaults`（解析 `shell/hux.cpp` 的
   `.path{}`/`.defaultValue`，含 keysym→rime 键名转换）逐项比对并断言核对数为 17，
   使漂移在 CI 即失败。
-- `[✅ 已修]`（复核整改 F2）：状态菜单文案表 `kLabels[role]` 按 ABI 角色下标取，此前与
+- `[✅ 已修]`（F2）：状态菜单文案表 `kLabels[role]` 按 ABI 角色下标取，此前与
   `HUX_OPTION_*` 零绑定（加角色即越界读 UB、调序即菜单错位）。现 `hux_abi.h` 增 `HUX_OPTION_COUNT`、
   C++ 加 `static_assert(std::size(kLabels) == HUX_OPTION_COUNT)`、Rust 用例
   `option_role_order_matches_the_abi_header` 解析头文件枚举序并与 `RUNTIME_OPTION_ROLES` 逐项比对
   （顺序 / 个数 / 名字 / 下标连续）。
-- `[✅ 已修]`（复核整改 F3）：学习库读入的坏帧不再 panic（`learning::unframe` 改 `value.get(a..b)?`）——
+- `[✅ 已修]`（F3）：学习库读入的坏帧不再 panic（`learning::unframe` 改 `value.get(a..b)?`）——
   此前 LevelDB 任意值经 `from_utf8_lossy` 后若长度前缀落在 UTF-8 字符中间，`hux_engine_new`
   （`extern "C"`）即 abort；现坏帧跳过并计入既有 `error` 诊断（`hux_engine_status` 可见），库仍可用。
 - `[已登记·不修+理由]`：**页大小**仍是只读配置（`PageSize` 只在配置页改、重启生效），而引擎其余运行时选项
   （数字直选等）走状态菜单。理由：核心 `host::page_size` 是构造期/重建期参数，运行时改页大小要么中断
   当前候选页、要么让面板与引擎页大小不一致；`docs/config.md` 亦未承诺可运行时改。
   （**面板数字序号**此前与之并列登记为只读，实为已修：见上方 `hux_engine_option_value` + `HUX_OPTION_DIGIT_SELECT`
-  一条——复核整改第 4 批 D3 删去这条自相矛盾的登记。）
+  一条——第 4 批 D3 删去这条自相矛盾的登记。）
 - `[✅ 已修]`：无会话时状态菜单切换直写存储落盘（`OptionsStore::set_value` + 单测）。
 - `[✅ 已修]`：`CString` 含 NUL 时剔除并记日志（`ui::cstring_lossy` + 单测），不再整条丢空；
   事件泵上限具名为 `EVENT_PUMP_ROUNDS`。
@@ -386,7 +386,7 @@
     故 `Scheme::learning_mode` 由「固定入参计算」改为「不透明 getter」，输入经配置袋下发。
   - `apply_learning_mode`（已删 API）的 `mode` 参数、`Scheme::learning_rules`（已删契约方法）一并删除：
     平台不再需要 mode 串（`tiger` 内部的 `lexicon.learning_rules` 字段保留，见上）。
-- **口径名残留（复核整改后状态）**：**标识符已中性化**——`hux-cfg::Settings` 的字段、
+- **口径名残留（现状）**：**标识符已中性化**——`hux-cfg::Settings` 的字段、
   `roles` 常量、`crates/hux-ffi` 的 `HuxOptions` 与 `hux_abi.h` 的 `hux_options` 成员、
   `shell/hux.cpp` 的配置成员名，均改为引擎概念名（见 §5「口径命名」）；
   **线上字符串保留**：`ROLE_*` 的值（= 上游 schema / rime 选项键 `min_retained_raw_length` 等）、
@@ -400,9 +400,9 @@
   （`jj diff --stat` 无 `goldens/` 数据文件），差分金样逐位一致；C++ `addon` 作业本机复跑
   （configure → 构建 → 14 个 `hux_*` 导出 ↔ `hux_abi.h` → 探针语法 → `DESTDIR` 三文件）通过。
 
-### 4.3 复核整改第 2 批：hux-core 真缺陷 ✅ 已完成
+### 4.3 第 2 批：hux-core 真缺陷 ✅ 已完成
 
-依据 `_tmp/复核-core.md` 的 F2–F12；实施记录与逐条「参照依据 → 修法 → 守护 → 负向对照」见 `_tmp/批次2-core整改.md`。
+依据 core 侧 F2–F12；逐条「参照依据 → 修法 → 守护 → 负向对照」见 §5.1 总账。
 
 参照源码：librime pin `33e78140` 的 `gear/selector.cc`、`gear/editor.cc`、`gear/punctuator.cc`、
 `key_binder.cc`、`context.cc`、`composition.{h,cc}`、`segmentation.cc`、`engine.cc`（`ConcreteEngine::Compose`）。
@@ -447,7 +447,7 @@
   `menu_paging_keys_are_not_shadowed_by_the_punctuation_branch` 第 ⑥ 段
   （**用户决定 B 后**：core `page_up_key_holds_at_the_first_page`、
   `selector_page_up_requires_a_visible_menu`、平台用例第 ③ 段与第 ⑥ 段的 `ascii_mode` 负向对照、
-  差分 `punct_menu_minus` 的「登记的偏离已消失」——实测见 `_tmp/翻页语义B.md`）；
+  差分 `punct_menu_minus` 的「登记的偏离已消失」）；
   F2 归零高亮 → `key_sequence` 金样 `nav_page_up_home_reset`；
   F4/F5/F6 → 各自 core 单测 + 金样用例；F12 → core `highlight_skips_untranslated_segment_without_update`；
   F7 → 平台 `scheme_config_diagnostics_reach_the_status_string`。详见批次记录。
@@ -457,9 +457,9 @@
   C++ `addon` 作业本机复跑（configure → 构建链接 → 14 个 `hux_*` 导出 ↔ `hux_abi.h` →
   两个探针 `g++ -fsyntax-only` → `DESTDIR` 三文件）通过。
 
-### 4.4 复核整改第 3b 批：tiger 剩余项与遗留收口 ✅ 已完成
+### 4.4 第 3b 批：tiger 剩余项与遗留收口 ✅ 已完成
 
-依据 `_tmp/复核-tiger.md` 的 B2/B4/B5/B6/A3/A5–A8/C7 与 6 条已知遗留；逐条「审计条目 → 判定 → 守护 → 负向对照」见 `_tmp/批次3b-tiger收口.md`；门槛：`cargo test --workspace --locked` **333 用例 0 失败**，fmt/clippy/reuse 与 CI 分层守卫全绿。
+依据 tiger 侧 B2/B4/B5/B6/A3/A5–A8/C7 与 6 条已知遗留；逐条「审计条目 → 判定 → 守护 → 负向对照」见 §5.2；门槛：`cargo test --workspace --locked` **333 用例 0 失败**，fmt/clippy/reuse 与 CI 分层守卫全绿。
 
 - **B2 `SEGMENTATION_DELIMITER` 判定为「保留 + 登记为有意偏离（pin 差异）」**：见上方
   [`upstream-deviations.md`](upstream-deviations.md) ③（上游依据、探针实测、影响面、覆盖与回归做法）。**改回 `" "` 的方案已实测否决**：
@@ -510,13 +510,13 @@
   **跨 crate 重复只报告不合并**（`lexicon::candidate_paths` ↔ `hux_core::scheme::asset_paths`；
   `interaction::state::{live_input,input_caret}` ↔ `hux_core::session::{live_input,live_caret}`；
   `ngram::BOS/EOS`（`&str`）↔ `decode::BOS/EOS`（`char`）——三者合并都牵动契约或热路径类型，另行排期）。
-- **6 条已知遗留的结论**（逐条见 `_tmp/批次3b-tiger收口.md`）：
+- **6 条已知遗留的结论**（逐条见 §5.2）：
   ① 融合子串过滤无专用用例 → **已闭合**（B6 的
   `fusion_events_pass_the_filter_but_unrelated_diff_events_are_dropped`）；
   ② 无 `--learning 1 --early-commit 1` 组合金样 → **已闭合**（第 5 批 `5304bd357903`：新增
   `goldens/decode_learning_evidence.tsv.gz`（`--early-commit 1 --required 1 --learning 1`，12257 行）
   + `gen_decode_golden.lua` 的组合开关 + 差分位级比对 + CI 重生成比对；覆盖 `learning=1 && truncated=1`
-  的截断池与 `share`/`base_share` 双权重交互——重生成命令、覆盖点与门槛见 `_tmp/批次5-收尾.md`、
+  的截断池与 `share`/`base_share` 双权重交互——重生成命令、覆盖点与门槛见 
   `goldens/regenerate.md`）；
   ③ Tab 锁无真机探针 → **已闭合**（第 5 批 `5304bd357903`：新增 `goldens/key_sequence_tab.tsv.gz`
   （8 例 / 44 步）+ 夹具 `goldens/key_sequence_tab/`（`tiger_sentence.custom.yaml` 把
@@ -528,9 +528,9 @@
   ⑤ `learning_potential` 未随 Direct 剥离 → **仍成立但为空操作**（Direct 边两项皆 0，仅当将来给 Direct 赋非零 potential 才可见）；
   ⑥ root `learning_score` 恒 0 的构造性依赖 → **仍成立**（两侧同构；风险仅在将来给 root 写非零学习分时）。
 
-### 4.5 复核整改第 4 批：文档 / 工具脚本 / 金样机制 / CI 守卫 / 平台杂项 ✅ 已完成
+### 4.5 第 4 批：文档 / 工具脚本 / 金样机制 / CI 守卫 / 平台杂项 ✅ 已完成
 
-依据 `_tmp/复核-文档工具CI.md` 的 D1–D14 / M1–M17 与 `_tmp/复核-cfg-平台.md` 的 F5/F6/F8/F15；逐条「审计条目 → 修法 → 守护 → 负向对照」见 `_tmp/批次4-文档工具CI.md`，门槛：`cargo test --workspace --locked` **336 用例 0 失败**，fmt / clippy `-D warnings` / `reuse lint` / CI 分层与新增守卫全绿，本地复跑 `rust`（16 步）与 `addon` 作业。
+依据目录 / 工具侧 D1–D14 / M1–M17 与 cfg / 平台侧 F5/F6/F8/F15；逐条「审计条目 → 修法 → 守护 → 负向对照」见 §5.3 / §5.4，门槛：`cargo test --workspace --locked` **336 用例 0 失败**，fmt / clippy `-D warnings` / `reuse lint` / CI 分层与新增守卫全绿，本地复跑 `rust`（16 步）与 `addon` 作业。
 
 - **金样机制（M1/M2/M5）**：①`goldens/regenerate.md` 的「重新生成」命令块补上**先检出 pin**
   与自检，并写明只读检出的替代做法（可写克隆 + `git fetch origin <sha>` + `checkout --detach`，
@@ -554,9 +554,9 @@
   `hux_engine_status` 指针契约改为「下一次状态刷新前有效」并在测试里钉住（F8）；
   配置页绑到无名字 keysym 时不再静默——`hotkeys:` 诊断 + C++ 壳落日志 + README 说明（F15）。
 
-### 4.6 复核整改第 5 批：遗留②③ 补金样 + cfg / 平台 / 工具清尾 ✅ 已完成
+### 4.6 第 5 批：遗留②③ 补金样 + cfg / 平台 / 工具清尾 ✅ 已完成
 
-依据 `_tmp/复核-cfg-平台.md` 的 F4/F7/F9/F10.2/F13/F14/F17、`_tmp/复核-tiger.md` 的 B7 与遗留②③、`_tmp/复核-文档工具CI.md` 的 M3/M6/M7/M9/M11/M12；门槛：`cargo test --workspace --locked` **341 用例 0 失败**、`tools/checks/verify_golden_shas.py` **61 项通过**、`cargo fmt --all --check` / clippy `-D warnings` / `reuse lint`（164/164）全绿；提交 `5304bd357903` 一笔，逐项记录见 `_tmp/批次5-收尾.md`。
+依据 cfg / 平台侧 F4/F7/F9/F10.2/F13/F14/F17、tiger 侧 B7、目录 / 工具侧 M3/M6/M7/M9/M11/M12；门槛：`cargo test --workspace --locked` **341 用例 0 失败**、`tools/checks/verify_golden_shas.py` **61 项通过**、`cargo fmt --all --check` / clippy `-D warnings` / `reuse lint`（164/164）全绿；提交 `5304bd357903` 一笔，逐项记录见 下文各节。
 
 - **学习 × 早提交组合金样（遗留②）**：新增 `goldens/decode_learning_evidence.tsv.gz`
   （`--early-commit 1 --required 1 --learning 1`；12257 行）+ `gen_decode_golden.lua` 的组合开关
@@ -599,10 +599,10 @@
   缓冲判据取 `K_BUFFERED` 属性而非 `~` 前缀；两处由 `state.rs` 的 `save()`（写属性 + `set_buffered`）
   同步，**实测无可达差异**，故本轮只登记不改——合并要么把内核视图语义搬进方案，要么让方案委托核心，
   两者都动热路径，留待与属性层收尾一并评估。
-- `[✅ 已修]`（复核整改第 4 批 D4）：`punct::pair_oddness` 已不存在——成对交替状态移入**每上下文一份**的
+- `[✅ 已修]`（第 4 批 D4）：`punct::pair_oddness` 已不存在——成对交替状态移入**每上下文一份**的
   `punct::PairState`（`TigerScheme` 单实例不再串台），`PunctTable` 回归只读数据（注释明写）。
   文档此前把它登记为「待办」，实为已完成。
-- `[✅ 已修]`（复核整改第 4 批 D5）：`reopen_previous_selection` 的两条护栏（`status > kSelected`、
+- `[✅ 已修]`（第 4 批 D5）：`reopen_previous_selection` 的两条护栏（`status > kSelected`、
   `selected_before_editing`）经评估在本模型下**不可达**，已在 `host.rs` 就地写明理由，
   并留下「若将来引入编辑态须同步补这两道判据」的约束——按「已评估并结案」登记，不再列为待办。
 - `[已登记·不修+理由]`：core 内 `std::fs` 读文件（`PunctTable::load_first`）与 §1.2「core 零平台文件 API」
@@ -614,7 +614,7 @@
   （更早的清理：`K_HYPER_MASK`/`K_META_MASK`/`KeyEvent::caps`/`Context::has_events` 删除、
   `HostResult` 与 `KeyOutcome` 合并为 `pub use` 别名。）
 
-- `[✅ 已修]`（复核整改第 4 批 D2）：`editor` 绑定：参照 `ExpressEditor` 表（`_tmp/librime/editor.cc` @ pin `33e78140`）为
+- `[✅ 已修]`（第 4 批 D2）：`editor` 绑定：参照 `ExpressEditor` 表（librime `editor.cc` @ pin `33e78140`）为
   `{Return,0}→CommitRawInput`（✅ 已实现）、`{Return,Ctrl}→CommitScriptText`、
   `{Return,Ctrl+Shift}→CommitComment`、`{BackSpace,0}→RevertLastEdit`、
   `{Delete,0}→DeleteChar`、`{Escape,0}→CancelComposition`，
@@ -630,7 +630,7 @@
 - `[✅ 已修]`：覆盖缺口已补——宿主链绑定（金样走不到：真机路径上 `Return`/`space`/`Escape` 等先在方案
   `processor` 被消费）现有单测钉住：Confirm / Cancel / `Ctrl+BackSpace` / `Ctrl+Return` /
   `Ctrl+Shift+Return` / Shift 回退；`CancelComposition` 按参照 `ClearPreviousSegment() || Clear()` 断言。
-- `[✅ 已修]`（复核整改第 4 批 D1；**第 6 批按用户决定 B 再次改写**）：翻页键条件——原按参照
+- `[✅ 已修]`（第 4 批 D1；**第 6 批按用户决定 B 再次改写**）：翻页键条件——原按参照
   （`key_binder.cc:262`）严格化（下翻页 `when: has_menu`、上翻页 `when: paging`）；现改为
   **菜单可见时上/下翻页一律拦截**（`!ascii_mode && has_menu`，`paging` 标签已删除），
   菜单不可用时两侧都**不消费**、交后续处理器落作标点。
@@ -643,7 +643,7 @@
   `$OUT.tmp.$$` 并断言记录非空，再原子 `mv`。第 4 批 M5 补齐了此前漏掉的 `key`
   （`gen_key_golden.sh` 断言至少 1 条 `name` 与 1 条 `parse`，且两个输入文件不可读时
   `key_probe` 返回非零）——这正是「入库 `key.tsv.gz` 可被静默覆盖成 32 行」的路径；
-  负向对照（旧探针 32 行 / exit 0 ⇒ 新探针 exit 2、写库断言拦下）见 `_tmp/批次4-文档工具CI.md`。
+  负向对照（旧探针 32 行 / exit 0 ⇒ 新探针 exit 2、写库断言拦下）见 §5.4。
 - `[✅ 已修]`：`gen_pinyin_index.py --check` 与**由 `--source` 重建**的内容逐字节比对
   （此前不带 `--manifest` 时对任意文件都打印 `check ok`，属恒真检查）；显式传
   `--manifest` 而文件缺失即 `exit 1`。正负例均已验证。
@@ -665,18 +665,15 @@
 - `[待办]`（第 4 批 C8，供应链钉版本；本轮只登记不实施，因为无法在本机验证 GitHub 侧可用性）：
   ① `uses:` 的移动标签（`actions/checkout@v4`、`fsfe/reuse-action@v6`、`dtolnay/rust-toolchain@stable`）
   改为钉 commit sha（建议开 Dependabot 的 `github-actions` 生态自动更新）；
-  ② 新增 `rust-toolchain.toml`（`channel` 钉到本机验证版本 `1.98.1` + `components = ["rustfmt", "clippy"]`，
-  同时给 `dtolnay/rust-toolchain` 传 `toolchain:` 输入），避免 stable 漂移让 `cargo fmt --check` /
-  clippy `-D warnings` 无预警变红。**第 7 批：内容已备在 `_tmp/rust-toolchain.toml.draft` 并实测通过**
-  （装进工作区本地 `RUSTUP_HOME` 后 `fmt` / `clippy` / 347 例全绿），但**未落盘**——本机沙箱内
-  `~/.rustup` 只读（`/home` 为 `ro` 挂载、仅工作区可写），落盘后 `cargo` 立即失败；在可写
-  `~/.rustup` 处 `rustup toolchain install 1.98.1` 后 `cp _tmp/rust-toolchain.toml.draft rust-toolchain.toml` 即生效；
+  ② Rust 工具链**有意不钉**（**决定：跟随 stable 最新版**；CI 用 `dtolnay/rust-toolchain@stable`，
+  本地用 rustup 默认 stable）——代价是 stable 漂移可能让 `cargo fmt --all --check` / clippy
+  `-D warnings` 无预警变红，届时按当时的稳定版修正即可（不引入 `rust-toolchain.toml`）；
   ③ `archlinux:latest` 是 `golden-lua-latest` 作业的**目的**（测最新 Lua），故不钉镜像；已把
-  `pacman -Sy` 改 `-Syu`（Arch 不推荐部分升级）。③ 已实施；② 内容与实测已就绪、**待联网装该 channel 后落盘**；① 待办。
+  `pacman -Sy` 改 `-Syu`（Arch 不推荐部分升级）。③ 已实施；② **有意不钉（已定）**；① 待办。
 
-## 5. 复核整改总账：四份只读审计逐条归宿
+## 5. 总账：四份只读审计逐条归宿
 
-> 四份只读审计报告的原件在 `_tmp/复核-{core,tiger,cfg-平台,文档工具CI}.md`（`_tmp/` 已 gitignore、
+> 四份只读审计报告为本地临时件、未入库（
 > 会被清理）——**本小节即它们的归宿**：每条发现一行，`[✅ 已修]` 一律指到本仓提交或文件级守护，
 > 不依赖再读原件。编号沿用报告原编号（core `F1–F13`、tiger `A1–A8 / B1–B8 / C1–C8`、
 > cfg-平台 `F1–F17`、文档工具CI `D1–D14 / M1–M17`）。
@@ -694,9 +691,9 @@
 > 第 2 批 `a792e79d`（core F2–F12）+ `d94face3`（金样 +6 例）；第 3a 批 `56fca679`；
 > 第 3b 批 `f6372f37`/`63b8d74e`/`84e3beba`/`ff9217e1`；第 4 批 `37f27882`/`9774b639`/`d2f771cb`/`17f7bf2a`；
 > 第 5 批 `5304bd35`；第 6 批 `4cd0bcaa`/`e7b6054b`（翻页语义强化，用户决定 B）及随后的 `884e9798`（UAF 收尾）；
-> **第 7 批 `795e31cf`（C6 不透明容器）+ `10a2de6f`（F10.1 学习索引断言）**。逐批「修法 → 守护 → 负向对照」见 `_tmp/批次{1,2,3a,3b,4,5}-*.md` 与 `_tmp/收尾C6-F10.1-M8.md`。
+> **第 7 批 `795e31cf`（C6 不透明容器）+ `10a2de6f`（F10.1 学习索引断言）**。逐批「修法 → 守护 → 负向对照」见下文各节。
 
-### 5.1 总账 · hux-core（`_tmp/复核-core.md`）
+### 5.1 总账 · hux-core
 
 | 编号 | 一句话问题 | 状态 | 归宿（提交 / 批次 · 不修理由 · 待办成本） |
 |---|---|---|---|
@@ -716,7 +713,7 @@
 | F13.2 | `context_valid` 对同一串调用两次 `chars()` | [✅ 已修] | 第 2 批顺带合并为一次 |
 | F13.3 | `Segment::selected_index: usize` 无法表达参照的 `-1`（无选择）态，`Ctrl+Delete` 退化为吞键 | [✅ 已修] | **用户决定：不需要「删除候选」通道** —— `Ctrl+Delete` 与普通 `Delete` 同义、`Ctrl+BackSpace` 与普通 `BackSpace` 同义（`host.rs` 合并修饰位；守护 `ctrl_backspace_and_ctrl_delete_match_their_plain_variants` 比状态指纹）。`selected_index` 因此无需表达 `-1`；偏离登记见 [`upstream-deviations.md`](upstream-deviations.md) ④（金样覆盖不到宿主链，故不入 `DEVIATIONS` 表） |
 
-### 5.2 总账 · hux-scheme/tiger（`_tmp/复核-tiger.md`）
+### 5.2 总账 · hux-scheme/tiger
 
 | 编号 | 一句话问题 | 状态 | 归宿 |
 |---|---|---|---|
@@ -743,7 +740,7 @@
 | C3（跨 crate） | `lexicon::candidate_paths` ↔ `hux_core::scheme::asset_paths`（逐字同逻辑）、`state::{live_input,input_caret}` ↔ `core::session::{live_input,live_caret}`（同构双份）、两套 `BOS/EOS`（`&str` vs `char`） | [已登记·不修+理由] | 第 3b 批**只报告不合并**：三者都牵动契约面或热路径类型（core 版已有平台调用者），合并需单独排期；现状无行为漂移（判据已统一），风险是后人改一侧忘另一侧 |
 | C4 | 压警告与死赋值（`decode_bench` 的 `let _ = LEXICAL_FILE;`、`sound_to_char_shape` 的 `farthest` 死赋值与不可达 `else`） | [✅ 已修] | 第 3b 批：删死赋值与多余 import，不可达分支就地加说明 |
 | C5 | `Chunk.cursor` 恒为 0（构造处字面量 0，仅读一次当种子） | [✅ 已修] | 第 3b 批：去掉字段（`vec![0; n]`） |
-| C6 | 公开 API 暴露 `hashbrown::{HashMap, HashSet}`（跨 crate 复用需匹配 `hashbrown` 版本） | [✅ 已修] | 第 7 批 `795e31cf`（用户选定「不透明 newtype」）：新增 `hux_core::collections::{Map, Set}`——内部仍是**同一** `hashbrown` 容器与默认哈希器（增删查、`Debug` 输出、按实例取随机种子的迭代序语义逐位不变，故**不**走 `std::collections`），只暴露调用方真正使用的方法，迭代器一律以 `impl Iterator` 返回 ⇒ 底层库与其迭代器类型都不再出现在公开 API。逐处替换公开签名 / 公开字段 **20 处**：tiger `lexicon` 的 4 字段 + `parse_ranks_content` / `parse_whitelist_content` / `Supplement::build` / `parse_supplement_content`、`lexical::score_with_cache`、`decode::{DecodeOutput::visible_prefixes, Evidence::{by_boundary, raw_lengths}}`、`interaction::SentenceState::trackers`；cfg `option_defaults`、`Options::{defaults, values, new}`、`Settings::store_defaults`、`OptionsStore::{load_with_defaults, set_defaults}`（清单见 `_tmp/收尾C6-F10.1-M8.md`）。`grep -rn hashbrown crates/*/src` 后公开面 **0 命中**（余下全为 crate 内部私有字段 / 局部变量，不受限）；**无保留项**——没有任何公开面需要 `hashbrown` 特有 API（如 `raw_entry`）。守护：金样与 344 例全绿（+3 例包装单测 ⇒ 347）、fmt / clippy / reuse / 金样 sha / 数据清单全绿 |
+| C6 | 公开 API 暴露 `hashbrown::{HashMap, HashSet}`（跨 crate 复用需匹配 `hashbrown` 版本） | [✅ 已修] | 第 7 批 `795e31cf`（用户选定「不透明 newtype」）：新增 `hux_core::collections::{Map, Set}`——内部仍是**同一** `hashbrown` 容器与默认哈希器（增删查、`Debug` 输出、按实例取随机种子的迭代序语义逐位不变，故**不**走 `std::collections`），只暴露调用方真正使用的方法，迭代器一律以 `impl Iterator` 返回 ⇒ 底层库与其迭代器类型都不再出现在公开 API。逐处替换公开签名 / 公开字段 **20 处**：tiger `lexicon` 的 4 字段 + `parse_ranks_content` / `parse_whitelist_content` / `Supplement::build` / `parse_supplement_content`、`lexical::score_with_cache`、`decode::{DecodeOutput::visible_prefixes, Evidence::{by_boundary, raw_lengths}}`、`interaction::SentenceState::trackers`；cfg `option_defaults`、`Options::{defaults, values, new}`、`Settings::store_defaults`、`OptionsStore::{load_with_defaults, set_defaults}`（清单见 本节）。`grep -rn hashbrown crates/*/src` 后公开面 **0 命中**（余下全为 crate 内部私有字段 / 局部变量，不受限）；**无保留项**——没有任何公开面需要 `hashbrown` 特有 API（如 `raw_entry`）。守护：金样与 344 例全绿（+3 例包装单测 ⇒ 347）、fmt / clippy / reuse / 金样 sha / 数据清单全绿 |
 | C7（读音串） | 音反查索引首次加载的无效分配（为每个组构造 `Vec<&str>` + `String`） | [✅ 已修] | 第 3b 批：读音串改按需构造（`Option<String>` 惰性）——真实索引 600,869 组里仅 412 组含单字词条；实测首次加载 96–99 ms → **81–88 ms**（release，各 3 次） |
 | C7（`Group.code`） | 60 万次 `Group.code: Vec<u16>` 小分配 | [待办] | 未做（第 3b 批登记）：需先有基准数据，且要改组查找 / 前缀剪枝 / `collect_chunks` 的取值路径（扁平 `Vec<u16>` + `(start, len)`），收益与风险不匹配，留待性能批 |
 | C8 | 信息项：NaN 语义（见 A7）、`build_edges` 每位置线性扫全部拼写键（449 键 × 段长） | [已登记·不修+理由] | **非缺陷**：NaN 已按 A7 注明；449 键量级的线性扫经评估可接受，报告本身判「仅记录」 |
@@ -753,7 +750,7 @@
 > → **仍成立但为空操作**（两侧同构，仅当将来给 Direct 边 / root 写非零值时才会分叉）；
 > ② 组合金样、③ Tab 锁探针见上文 3b 段落（**第 5 批已闭合**）。
 
-### 5.3 总账 · hux-cfg / hux-ffi / platform（`_tmp/复核-cfg-平台.md`）
+### 5.3 总账 · hux-cfg / hux-ffi / platform
 
 | 编号 | 一句话问题 | 状态 | 归宿 |
 |---|---|---|---|
@@ -766,7 +763,7 @@
 | F7 | ABI 结构体三方对应缺「跨语言字段级」断言：同宽字段换序无法发现 | [✅ 已修] | 第 5 批 `5304bd35`：`hux-ffi` 增字段名表，`c_layout_matches_header` 以 `offset_of!` **逐字段引用**（改 Rust 字段名即编译失败）并新增 `options_field_names_match_header_order` 与 `hux_abi.h` 解析结果校对顺序；附注的「11 个标量」陈旧注释同批改（见 F15.1） |
 | F8 | `hux_engine_status` 的指针有效期与头文件承诺不符 | [✅ 已修] | 第 4 批：契约改为「**直到下一次状态刷新前有效**」（`hux_abi.h` + `abi.rs` + `platform/fcitx5/README.md`）；平台用例 `status_pointer_must_be_read_again_after_a_refresh` |
 | F9 | 三处测试污染真实用户目录（`hux_engine_new(nullptr)` 走生产构造并在 `~/.local/share/…` 开学习库） | [✅ 已修] | 第 5 批：改用 `ffi_engine(temp_user_dir(…))`（`Engine::new_with_dirs` 注入临时用户目录），并断言临时目录里确实建起学习库（不再触碰真实 `~/.local/share/fcitx5/hux`） |
-| F10.1 | `engine_applies_learning_after_key` 只断言 `store_ready` 与 mode 前缀（删掉 `apply_learning_index` 仍全绿） | [✅ 已修] | 第 7 批 `10a2de6f`：补一条能观察到「索引已作用到解码器」的断言——Tab 选第 2 个候选 + 大写 `A` 经宿主提交点落库（`learning.index_version()` 随之变化）后重打 `abab`，**宿主可见的候选序**必须随新索引改变（`甲甲 乙甲 甲乙 乙乙` → `乙乙 乙甲 甲乙 甲甲`）；判据只用已有可观测面，未新增测试专用 API。负向对照（实测）：注释掉 `Engine::finish` 的 `apply_learning_index` 调用 ⇒ 该用例 **FAILED**（`learned != baseline` 断言报「学习索引必须作用到解码器排序（仅 store_ready / mode 非空不足为证）」），还原即绿；原始输出见 `_tmp/negctl-F10.1.txt` |
+| F10.1 | `engine_applies_learning_after_key` 只断言 `store_ready` 与 mode 前缀（删掉 `apply_learning_index` 仍全绿） | [✅ 已修] | 第 7 批 `10a2de6f`：补一条能观察到「索引已作用到解码器」的断言——Tab 选第 2 个候选 + 大写 `A` 经宿主提交点落库（`learning.index_version()` 随之变化）后重打 `abab`，**宿主可见的候选序**必须随新索引改变（`甲甲 乙甲 甲乙 乙乙` → `乙乙 乙甲 甲乙 甲甲`）；判据只用已有可观测面，未新增测试专用 API。负向对照（实测）：注释掉 `Engine::finish` 的 `apply_learning_index` 调用 ⇒ 该用例 **FAILED**（`learned != baseline` 断言报「学习索引必须作用到解码器排序（仅 store_ready / mode 非空不足为证）」），还原即绿；原始输出见 本节 |
 | F10.2 | `runtime_option_roundtrip_and_whitelist` 在 `runtime_options()` 返回空列表时**空转通过** | [✅ 已修] | 第 5 批：循环前先 `assert_eq!(roles.len(), hux_cfg::roles::RUNTIME_OPTION_ROLES.len())` |
 | F10.3 | `schema_defaults_match_settings_defaults` 是**单向**的（新增 `Settings` 字段而无 `.path{}` 不会失败） | [✅ 已修] | 本次：新增测试 `every_settings_field_is_declared_in_the_schema`——`(字段, schema 路径, offset_of!(Settings, 字段))` 三列表（改字段名即**编译失败**）+ 字段数钉 17 + `Settings` 字段集与 `hux.cpp` 路径集**双向相等**（宿主显示项 `PanelPreedit` 单独登记）。负向对照实测：把路径改成 `PageSizeX` ⇒ 报「`Settings::page_size` 未在 shell/hux.cpp 的 schema 中声明」；还原即通过 |
 | F11 | 角色解析失败时「全有或全无」，与 §4.2 措辞（「该角色不接线」）不符 | [✅ 已修] | 本次：§4.2 第 4 步措辞改为**全有或全无**（`OptionKeys::resolve` 任一问题即 `Err` ⇒ 平台不接线**任何**角色），并同步 `engine.rs::resolve_option_roles` 的文档注释 |
@@ -783,7 +780,7 @@
 
 > 报告 §2 的**口径名逐条清单**（A1–A11 / B1–B8 / C1–C5，不计入 F1–F17 的 17 条发现）归宿：
 > (b) 全部**标识符**已中性化（第 1 批 `80c965a2`，含 `ROLE_*` 常量名、`Settings` 字段、`hux_options`
-> 成员、C++ 成员名；映射表见 `_tmp/批次1-守护与中性化.md`）；(a) **线上字符串全部保留**——
+> 成员、C++ 成员名；）；(a) **线上字符串全部保留**——
 > `tiger_sentence.options.yaml`、`tiger_sentence_options_error`、与上游同名的三个选项键 + hux 扩展
 > `tiger_sentence_digit_select`、学习库目录名 `tiger_sentence_learning_<hash>`、18 个 `.path{}` 键、
 > `Icon=fcitx-tiger`、`Library=libhux`（本轮口径 C 明确「只改标识符」，改值会破坏上游互通 / 老用户配置 /
@@ -818,13 +815,13 @@
 > **`~HuxEngine` 之后 `~HuxSession` 计数为 0** ⇒ 没有任何会话晚于引擎析构，审计提出的 UAF 假设不成立。
 > 一处如实澄清：这一轮里 4 个会话是**随各自 IC 在收尾时先销毁**的（故 `~HuxEngine` 那行虽在析构体首行却排在其后），
 > 即本轮的 `unregister()` 没赶上销毁会话；`unregister()` 路径的安全性由源码链条证明（见上），两条证据合起来闭环。
-> 步骤与判据见 `platform/fcitx5/README.md`「析构顺序核对（真机）」，明细见 `_tmp/UAF加固.md`、日志 `_tmp/hux-log.txt`。
+> 步骤与判据见 `platform/fcitx5/README.md`「析构顺序核对（真机）」。
 >
 > ② `HuxCandidateWord::select` 期间自毁：**仍未做真机压力验证**（见 F16 行；本批只加生命周期防护，未改重入结构）。
 > ③ C++ 侧编译 / 安装实测：CI `addon` 作业覆盖，第 4 批与本批均本机复跑
 > （configure → 构建 → 14 个 `hux_*` 导出 ↔ `hux_abi.h` → 2 个探针语法 → `DESTDIR` 3 插件 + 7 数据）。
 
-### 5.4 总账 · 文档 / 工具 / 金样机制 / CI（`_tmp/复核-文档工具CI.md`）
+### 5.4 总账 · 文档 / 工具 / 金样机制 / CI
 
 | 编号 | 一句话问题 | 状态 | 归宿 |
 |---|---|---|---|
@@ -849,7 +846,7 @@
 | M5 | `gen_key_golden.sh` 是唯一缺「原子写 + 非空断言」的生成器；`key_probe.cpp` 不检查输入 ⇒ 可把入库 `key.tsv.gz` 静默覆盖成 32 行 | [✅ 已修] | 第 4 批 `9774b639`：`key_probe.cpp` 两个 `ifstream` 加可读性检查（`return 2`）、空输入非零退出；`gen_key_golden.sh` 写 `$OUT.tmp.$$` → 断言至少 1 条 `name` + 1 条 `parse` → `mv`；负向对照 6 组、入库金样未被改动 |
 | M6 | `rime_sequence_probe.cpp` 设置选项不检查返回值（方案改键名即静默失效） | [✅ 已修] | 第 5 批：`set_option_checked` 断言「`tiger_sentence_` 前缀的选项已在已部署方案的 `switches` 里声明」，改键名即显式失败；并注明 librime 1.17 的 `set_option` 返回 `void` 且不校验名 ⇒「设完回读」是恒真检查，故不走回读 |
 | M7 | 插件路径检查失败时无任何提示（`set -e` 下静默退出） | [✅ 已修] | 第 5 批：三个探针生成器均显式报「生成失败：缺少 librime-lua 插件：$plugin（可用 `LUA_PLUGIN` 覆盖）」 |
-| M8 | 依赖 / 版本未固定的位置（action 移动标签、无 `rust-toolchain.toml`、`archlinux:latest`、`librime-dev` 版本） | [待办] | **③④ 已实施 / 已注明**：`pacman -Sy` → `-Syu`；`archlinux:latest` **有意不钉**（作业目的即「最新 Lua」）；已在 `goldens/regenerate.md` 注明 CI 的 librime 版本可不同、仅做语法检查。**② rust 工具链：pin 内容与验证已做完，但未落盘**——`channel = "1.98.1"`（= 本机 `rustc --version`；`rustup show` 的活动 channel 名仍是 `stable`）+ `components = ["rustfmt", "clippy"]` 已备在 `_tmp/rust-toolchain.toml.draft`；把该 channel 装进工作区本地 `RUSTUP_HOME` 后**实测**：活动工具链 = `1.98.1-x86_64-unknown-linux-gnu (overridden by …/rust-toolchain.toml)`，组件含 rustfmt/clippy，`cargo fmt --all --check` / `clippy --all-targets -- -D warnings` / `cargo test --workspace --locked` **347 例全绿**（输出 `_tmp/m8-pin-verify.txt`）。**不落盘的原因（实测）**：本机 `/home` 对沙箱是 `ro` 挂载（仅工作区可写）⇒ `~/.rustup` 只读，落盘后任何 `cargo` 命令立即失败（`could not create temp file /home/crux/.rustup/tmp/…: Read-only file system`），违反「不让 `cargo test` 变红」的约定。**落地步骤（用户在自己终端执行一次即可）**：`rustup toolchain install 1.98.1` → `cp _tmp/rust-toolchain.toml.draft rust-toolchain.toml`（内容已实测可用，含 `components = ["rustfmt", "clippy"]`），随后 `cargo fmt/clippy/test` 应仍全绿；若将来升级 rustc，改 channel 值即可。**在可写 `~/.rustup` 处一条命令即可生效**：`rustup toolchain install 1.98.1` 后 `cp _tmp/rust-toolchain.toml.draft rust-toolchain.toml`（内容已验证，无需再改）。**① action 钉 commit sha 仍待办**：离线无法验证 GitHub 侧可用性，擅自钉死有让 CI 无预警变红的实际风险 |
+| M8 | 依赖 / 版本未固定的位置（action 移动标签、`archlinux:latest`、`librime-dev` 版本） | [待办] | **③④ 已实施 / 已注明**：`pacman -Sy` → `-Syu`；`archlinux:latest` **有意不钉**（作业目的即「最新 Lua」）；已在 `goldens/regenerate.md` 注明 CI 的 librime 版本可不同、仅做语法检查。**② rust 工具链：有意不钉**（跟随 stable 最新版；CI 用 `dtolnay/rust-toolchain@stable`）——代价是 stable 漂移可能让 `cargo fmt --all --check` / clippy `-D warnings` 无预警变红，届时按当时的稳定版修正即可。**① action 钉 commit sha 仍待办**：离线无法验证 GitHub 侧可用性，擅自钉死有让 CI 无预警变红的实际风险 |
 | M9 | `gen_key_table.py` 直接写目标（含**源码**路径）、`ValueError` 以 traceback 呈现 | [✅ 已修] | 第 5 批：`write_atomic`（同目录 `mkstemp` + 权限对齐 + `os.replace`，非常规文件退回直写）+ `except ValueError` 干净退出（`gen_key_table: <消息>`，退出码 1） |
 | M10 | Lua 生成器与 README 的 `gzip > goldens/…` 之间无失败短路（可能压入不完整 TSV） | [✅ 已修] | 第 4 批：命令块首加 `set -euo pipefail` 并把「生成 → 压缩」串起来（与 M1 同批） |
 | M11 | 探针两处弱校验：忽略维护失败、不检测用例重名 | [✅ 已修] | 第 5 批：`start_maintenance` 结果入 `check`（先 `join` 再 `check`，失败不留后台线程）；用例名重复即显式失败（含行号） |

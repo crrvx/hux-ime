@@ -96,9 +96,8 @@ impl SentenceState {
     /// [`buffered_text`] 在 `select` / `early_commit` / `learning_glue` 都读它，
     /// 内核视图（`live_input` / `live_caret`）在同一处 `set_buffered` 同步。
     ///
-    /// 复核整改 3b（A3）：原先还会写出只写不读的 `tiger_sentence_committed` /
-    /// `tiger_sentence_locks` 快照，并做一次旧属性清理；已随 `load`/`read_locks` 一并删除
-    /// （无 FFI / 平台 / C++ 侧读取方），见 `docs/review-ledger.md` §4.4（A3）。
+    /// 只写不读的 `tiger_sentence_committed` / `tiger_sentence_locks` 快照与旧属性清理已随
+    /// `load`/`read_locks` 一并删除（无 FFI / 平台 / C++ 侧读取方）。
     pub fn save(&mut self, context: &mut Context) {
         set_property_if_changed(context, K_BUFFERED, &self.buffered_text.clone());
         context.set_buffered(!self.buffered_text.is_empty());
