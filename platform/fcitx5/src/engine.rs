@@ -172,6 +172,55 @@ pub(crate) fn scheme_config(settings: &Settings) -> SchemeConfig {
         .with(ROLE_LEARNING_ON_TAB, Value::Bool(settings.learning_on_tab))
 }
 
+/// 模型路径的**来源**：构造与「重新部署」按同一来源重新解析。
+///
+/// 「重新部署」要能拿到新装入的模型，故默认查找（[`ModelSource::Auto`]）在重新部署时
+/// 重新查找；而显式指定的路径（`HUX_MODEL` / 调用方传入）保持权威，不会退化成默认查找。
+#[derive(Clone, Debug)]
+pub(crate) enum ModelSource {
+    /// 显式指定的模型路径（`HUX_MODEL` 或调用方传入）：重新部署沿用。
+    Fixed(PathBuf),
+    /// 未指定：在各数据目录里查找方案声明的模型资产（重新部署时重新查找）。
+    Auto,
+}
+
+impl ModelSource {
+    /// 解析出模型路径（`None` = 不装载模型）。
+    pub(crate) fn resolve(&self, dirs: &[PathBuf]) -> Option<PathBuf> {
+        match self {
+            Self::Fixed(path) => Some(path.clone()),
+            Self::Auto => default_model_path(dirs, ASSETS),
+        }
+    }
+}
+
+/// 装配方案（数据 + 模型）并解析选项角色：构造与「重新部署」共用同一条路径
+/// （两处各拼一份时漏一项即成为「重新部署后配置没下发」这类哑失败）。
+///
+/// `notes` 是装配诊断基线（数据目录 + 装载说明 + 角色解析错误），进状态串。
+pub(crate) fn assemble_scheme(
+    dirs: &[PathBuf],
+    model: Option<PathBuf>,
+    config: &SchemeConfig,
+) -> (TigerScheme, OptionKeys, Vec<String>) {
+    let mut notes = vec![format!(
+        "dirs: {}",
+        dirs.iter()
+            .map(|dir| dir.display().to_string())
+            .collect::<Vec<_>>()
+            .join(":")
+    )];
+    let (scheme, scheme_notes) = TigerScheme::load(dirs, model, config);
+    notes.extend(scheme_notes);
+    // 选项键的唯一来源 = 方案的声明；**缺角色即报错**（状态串可见），缺的角色不参与
+    // 选项接线（无键 → 宿主跳过该项），不静默落到别的键上。
+    let (option_roles, roles_error) = resolve_option_roles(scheme.option_declarations());
+    if let Some(error) = roles_error {
+        notes.push(format!("options: {error}"));
+    }
+    (scheme, option_roles, notes)
+}
+
 pub struct Engine {
     pub(crate) host: Option<HostCallback>,
     /// 方案（平台经 `dyn Scheme` 驱动，不直接引用方案模块；共享资源与会话态都在方案内）。
@@ -210,44 +259,59 @@ pub struct Engine {
     /// 最近一次配置下发的逐角色诊断（角色缺失 / 类型不符，`config:` 前缀）。
     /// 方案已按缺省值回退，此串只是把「设置没生效」的原因暴露到状态里。
     pub(crate) config_notes: Vec<String>,
+    /// 只读数据目录（构造时解析；「重新部署」据此重新查找模型资产）。
+    dirs: Vec<PathBuf>,
+    /// 模型路径来源（见 [`ModelSource`]）。
+    model_source: ModelSource,
+    /// 模型摘要（`hux_engine_model_info` 的指针来源）：**重新部署后替换**，
+    /// 此前返回的指针随即失效（同 `status` 的契约）。
+    pub(crate) model_info: CString,
 }
 impl Engine {
     pub(crate) fn new(host: Option<HostCallback>) -> Self {
         let dirs = data_dirs();
-        let model = std::env::var_os("HUX_MODEL")
-            .map(PathBuf::from)
-            .or_else(|| default_model_path(&dirs, ASSETS));
         // 选项存于标准用户目录（与数据目录的开发覆盖解耦）。
         let options_dir = user_data_dir();
-        Self::new_with_dirs(host, dirs, model, options_dir)
+        // `HUX_MODEL` 显式覆盖（此时路径固定）；未设置则按数据目录查找
+        // （`Auto` ⇒「重新部署」会重新查找，新装入的模型随之生效）。
+        let model_source = match std::env::var_os("HUX_MODEL") {
+            Some(path) => ModelSource::Fixed(PathBuf::from(path)),
+            None => ModelSource::Auto,
+        };
+        Self::with_model_source(host, dirs, model_source, options_dir)
     }
 
+    /// 测试用构造：目录 / 模型 / 选项目录全部显式注入。
+    ///
+    /// 模型传 `None` 即「未指定」⇒ 走默认查找（各数据目录里的方案模型资产）；夹具目录
+    /// 里都没有模型文件，故与「不装模型」同效，而重新部署时按同一来源重新查找。
+    #[cfg(test)]
     pub(crate) fn new_with_dirs(
         host: Option<HostCallback>,
         dirs: Vec<PathBuf>,
         model_path: Option<PathBuf>,
         options_dir: Option<PathBuf>,
     ) -> Self {
-        let mut notes = vec![format!(
-            "dirs: {}",
-            dirs.iter()
-                .map(|dir| dir.display().to_string())
-                .collect::<Vec<_>>()
-                .join(":")
-        )];
+        let model_source = match model_path {
+            Some(path) => ModelSource::Fixed(path),
+            None => ModelSource::Auto,
+        };
+        Self::with_model_source(host, dirs, model_source, options_dir)
+    }
+
+    fn with_model_source(
+        host: Option<HostCallback>,
+        dirs: Vec<PathBuf>,
+        model_source: ModelSource,
+        options_dir: Option<PathBuf>,
+    ) -> Self {
         let settings = Settings::default();
         // 构造方案前先按设置装配配置袋；单字重码的初始值取设置缺省（尚无会话与存储）。
         let applied_duplicate = settings.allow_duplicate_single;
         let initial = scheme_config(&settings)
             .with(ROLE_ALLOW_DUPLICATE_SINGLE, Value::Bool(applied_duplicate));
-        let (mut scheme, scheme_notes) = TigerScheme::load(&dirs, model_path, &initial);
-        notes.extend(scheme_notes);
-        // 选项键的唯一来源 = 方案的声明；**缺角色即报错**（状态串可见），缺的角色不参与
-        // 选项接线（无键 → 宿主跳过该项），不静默落到别的键上。
-        let (option_roles, roles_error) = resolve_option_roles(scheme.option_declarations());
-        if let Some(error) = roles_error {
-            notes.push(format!("options: {error}"));
-        }
+        let (mut scheme, option_roles, mut notes) =
+            assemble_scheme(&dirs, model_source.resolve(&dirs), &initial);
         // 选项：有存储则同步（参照 `M.options.sync`，同步写入由核心抑制观察）；
         // 无存储时直接用内建缺省。会话创建时逐个同步（见 `session_new`）。
         let options = options_dir.as_deref().map(|dir| {
@@ -275,6 +339,7 @@ impl Engine {
             .iter()
             .map(|role| option_roles.key(role).map(crate::ui::cstring_lossy))
             .collect();
+        let model_info = crate::ui::cstring_lossy(scheme.model_info());
         Self {
             host,
             scheme: Box::new(scheme),
@@ -295,6 +360,9 @@ impl Engine {
             learning_error,
             hotkey_notes: Vec::new(),
             config_notes: Vec::new(),
+            dirs,
+            model_source,
+            model_info,
         }
     }
 
@@ -732,6 +800,78 @@ impl Engine {
         if session.context.get_option("_vertical") != vertical {
             session.context.set_option("_vertical", vertical);
         }
+    }
+
+    /// 重新部署：按当前设置重新装配方案（数据 + 模型），并**重置全部现有会话状态**。
+    ///
+    /// 平台侧会话 id 不变（宿主的输入上下文与 id 的对应关系保持，IC 不需要重建），
+    /// 方案侧会话全部重建 ⇒ 组合、候选、学习暂存、反查态一并作废（宿主负责清面板）。
+    /// 模型路径按**同一来源**重新解析：默认查找会拿到新装入的模型，显式指定（`HUX_MODEL`）
+    /// 则沿用原路径。返回 `true` = 已重新装配。
+    pub fn redeploy(&mut self) -> bool {
+        // 模型路径：与构造同一来源（见 [`ModelSource`]）。
+        let model = self.model_source.resolve(&self.dirs);
+        // 配置袋与构造同源：设置派生的角色 + 运行时选项的生效值（单字重码）。
+        let config = scheme_config(&self.settings).with(
+            ROLE_ALLOW_DUPLICATE_SINGLE,
+            Value::Bool(self.effective_duplicate()),
+        );
+        let (mut scheme, option_roles, mut notes) = assemble_scheme(&self.dirs, model, &config);
+        // 学习库沿用（不重开）：就绪状态与诊断按构造期同一口径并入基线，
+        // 使新方案拿到 store_ready，状态串也不因重新部署而丢掉这条诊断。
+        if let Some(error) = &self.learning.error {
+            notes.push(format!("learning: {error}"));
+        } else {
+            notes.push(format!("learning: {}", self.learning.name));
+        }
+        scheme.set_store_ready(self.learning.store_ready());
+        // 释放旧方案的会话（平台侧 id 与宿主输入上下文不受影响），再换上重新装配的方案。
+        let old_sessions: Vec<_> = self
+            .sessions
+            .values()
+            .map(|session| session.scheme_session)
+            .collect();
+        for scheme_session in old_sessions {
+            self.scheme.free_session(scheme_session);
+        }
+        self.scheme = Box::new(scheme);
+        // 角色表随方案重新解析（角色缺失时宿主菜单跳过该项，诊断进状态串）。
+        self.option_roles = option_roles;
+        self.option_keys = RUNTIME_OPTION_ROLES
+            .iter()
+            .map(|role| self.option_roles.key(role).map(crate::ui::cstring_lossy))
+            .collect();
+        self.status_base = notes.join("; ");
+        // 逐角色诊断由随后的配置下发重新产出，先清掉旧方案的（避免拼出过期诊断）。
+        self.config_notes.clear();
+        self.refresh_status();
+        // 逐会话重置：平台 id 保留，方案侧会话重建（触发键 / 最小保留量随新方案刷新）。
+        let ids: Vec<u64> = self.sessions.keys().copied().collect();
+        for id in ids {
+            self.with_session(id, |engine, session| engine.redeploy_session(session));
+        }
+        // 新方案拿到配置袋（与构造同源；学习索引在下一次按键时下发）。
+        self.config_dirty = true;
+        self.applied_duplicate = None;
+        self.push_scheme_config();
+        // 模型摘要：指针在此替换（此前返回的指针随即失效，见 `hux_abi.h`）。
+        self.model_info = crate::ui::cstring_lossy(self.scheme.model_info());
+        true
+    }
+
+    /// 重新部署时重置单个会话：平台 id 不变，方案侧会话重建。
+    ///
+    /// 顺序与 [`Engine::reset_in`] 一致（先丢弃未派发事件，再清组合与反查态）；
+    /// 不推 UI 快照——宿主在重新部署动作里统一清面板（旧候选已随会话作废）。
+    fn redeploy_session(&mut self, session: &mut Session) {
+        session.context.drain_events();
+        session.reverse_lookup = ReverseLookupState::default();
+        session.context.clear();
+        session.scheme_session = self.scheme.new_session(&mut session.context);
+        if let Some(options) = self.options.as_mut() {
+            options.sync(&mut session.context);
+        }
+        self.apply_layout_options(session);
     }
 
     /// 提交回调（`engine:commit_text`）。

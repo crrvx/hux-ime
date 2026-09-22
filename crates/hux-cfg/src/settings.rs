@@ -100,8 +100,8 @@ impl Default for Settings {
             ascii_punct: false,
             learning_on_tab: true,
             high_freq_limit: DEFAULT_HIGH_FREQ_LIMIT,
-            reverse_lookup_pronunciation_keys: vec!["Alt+colon".to_string()],
-            reverse_lookup_character_keys: vec!["Alt+quotedbl".to_string()],
+            reverse_lookup_pronunciation_keys: vec!["grave".to_string()],
+            reverse_lookup_character_keys: vec!["asciitilde".to_string()],
             page_size: DEFAULT_PAGE_SIZE,
             page_up_keys: vec!["minus".to_string(), "bracketleft".to_string()],
             page_down_keys: vec!["equal".to_string(), "bracketright".to_string()],
@@ -212,11 +212,11 @@ mod tests {
         );
         assert_eq!(
             settings.reverse_lookup_pronunciation_keys,
-            vec!["Alt+colon".to_string()]
+            vec!["grave".to_string()]
         );
         assert_eq!(
             settings.reverse_lookup_character_keys,
-            vec!["Alt+quotedbl".to_string()]
+            vec!["asciitilde".to_string()]
         );
         assert!(settings.digit_select);
         assert_eq!(settings.candidate_layout, CandidateLayout::FollowGlobal);

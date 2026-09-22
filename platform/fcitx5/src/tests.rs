@@ -1282,12 +1282,12 @@ fn reverse_lookup_pronunciation_end_to_end() {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data"),
     ];
     let mut engine = TestEngine::new(host(), dirs, None, None);
-    assert!(engine.key(0x3a, FCITX_ALT, false), "音反查触发键应被消费");
+    assert!(engine.key(0x60, 0, false), "音反查触发键（默认 `）应被消费");
     for code in *b"zho" {
         assert!(engine.key(u32::from(code), 0, false), "音反查输入应被消费");
     }
     let (preedit, _, candidates, _, _, _) = last_update();
-    assert_eq!(preedit, ":zho〔拼音〕");
+    assert_eq!(preedit, "`zho〔拼音〕");
     assert_eq!(
         candidates,
         vec!["中哦", "中龘", "中欧", "找哦", "兆欧", "找欧"]
@@ -1296,17 +1296,17 @@ fn reverse_lookup_pronunciation_end_to_end() {
     assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "中哦");
     // 音反查预编辑「按音节分码」：全拼音节之间插空格。
     engine.reset();
-    assert!(engine.key(0x3a, FCITX_ALT, false));
+    assert!(engine.key(0x60, 0, false));
     for code in *b"zhongguo" {
         assert!(engine.key(u32::from(code), 0, false));
     }
     let (preedit, _, candidates, _, _, _) = last_update();
     assert_eq!(candidates.first().map(String::as_str), Some("中国"));
-    assert_eq!(preedit, ":zhong guo〔拼音〕");
+    assert_eq!(preedit, "`zhong guo〔拼音〕");
 }
 
-/// 字反查：默认 Alt+" 进入组合（**带修饰键不给默认候选**）；
-/// 上排 = 光标左侧 1 字拼音、下排 = 虎码，步长 1；改为单字符键时才给默认可上屏候选。
+/// 字反查：默认 `~` 进入组合（**单字符触发键 ⇒ 给默认可上屏候选**）；
+/// 上排 = 光标左侧 1 字拼音、下排 = 虎码，步长 1；改成带修饰的触发键时不给默认候选。
 #[test]
 fn reverse_lookup_character_end_to_end() {
     let _guard = serial();
@@ -1319,14 +1319,14 @@ fn reverse_lookup_character_end_to_end() {
     let mut engine = TestEngine::new(host(), dirs, None, None);
     // 应用侧周边文本「中欧中兴」，光标在第 2 个字符后（锚点 = 2）。
     engine.set_surrounding(Some("中欧中兴"), 2);
-    // 默认 Alt+"（带修饰）→ 组合无默认候选；上排「咅」、下排「虍」。
-    assert!(engine.key(0x22, FCITX_ALT, false), "Alt+\" 应被消费");
+    // 默认 ~（无修饰单字符）→ 有默认可上屏候选（触发字符本身）；上排「咅」、下排「虍」。
+    assert!(engine.key(0x7e, 0, false), "~ 应被消费");
     let (preedit, _, candidates, _, up, down) = last_update();
-    assert_eq!(engine.session().context.input(), b"\"");
+    assert_eq!(engine.session().context.input(), b"~");
     assert!(preedit.is_empty(), "查码段不下发预编辑：{preedit:?}");
     assert!(
-        candidates.is_empty(),
-        "带修饰触发键不给默认候选：{candidates:?}"
+        candidates.iter().any(|candidate| candidate == "~"),
+        "单字符触发键应给默认候选：{candidates:?}"
     );
     assert_eq!(up, "咅 ?");
     assert_eq!(down, "虍 nbe/nbeq");
@@ -1343,8 +1343,31 @@ fn reverse_lookup_character_end_to_end() {
     // 其它键：退出查码段并照常处理。
     assert!(engine.key(u32::from(b'a'), 0, false), "普通键照常处理");
     assert_eq!(engine.session().context.input(), b"a");
-    // 音反查：带修饰键（默认 Alt+:）**不给**默认候选；单字符键（;）才给。
+    // 同一契约的另一半：显式把触发键改成带修饰的 Alt+" → **不给**默认候选。
     engine.reset();
+    engine.apply_settings(Settings {
+        reverse_lookup_character_keys: vec!["Alt+quotedbl".to_string()],
+        ..Settings::default()
+    });
+    assert!(engine.key(0x22, FCITX_ALT, false), "Alt+\" 应被消费");
+    let (_, _, candidates, _, _, _) = last_update();
+    assert!(
+        candidates.is_empty(),
+        "带修饰触发键不给默认候选：{candidates:?}"
+    );
+    // 音反查：默认 `（无修饰单字符）给默认候选；带修饰键（显式 Alt+:）不给。
+    engine.reset();
+    assert!(engine.key(0x60, 0, false), "默认 ` 应被消费");
+    let (_, _, candidates, _, _, _) = last_update();
+    assert!(
+        candidates.iter().any(|candidate| candidate == "`"),
+        "音反查单字符触发键应给默认候选：{candidates:?}"
+    );
+    engine.reset();
+    engine.apply_settings(Settings {
+        reverse_lookup_pronunciation_keys: vec!["Alt+colon".to_string()],
+        ..Settings::default()
+    });
     assert!(engine.key(0x3a, FCITX_ALT, false), "Alt+: 应被消费");
     let (_, _, candidates, _, _, _) = last_update();
     assert!(
@@ -1409,7 +1432,7 @@ fn reverse_lookup_character_without_surrounding_shows_nothing() {
     UPDATES.lock().unwrap().clear();
     let mut engine = TestEngine::new(host(), reverse_lookup_character_dirs(), None, None);
     engine.set_surrounding(None, 0);
-    assert!(engine.key(0x22, FCITX_ALT, false), "Alt+\" 应被消费");
+    assert!(engine.key(0x7e, 0, false), "~ 应被消费");
     let (_, _, _, _, up, down) = last_update();
     assert!(up.is_empty(), "周边文本不可用时上排应为空：{up:?}");
     assert!(down.is_empty(), "周边文本不可用时下排应为空：{down:?}");
@@ -1422,7 +1445,7 @@ fn reverse_lookup_character_refreshes_when_surrounding_available() {
     UPDATES.lock().unwrap().clear();
     let mut engine = TestEngine::new(host(), reverse_lookup_character_dirs(), None, None);
     engine.set_surrounding(None, 0);
-    assert!(engine.key(0x22, FCITX_ALT, false), "Alt+\" 应被消费");
+    assert!(engine.key(0x7e, 0, false), "~ 应被消费");
     engine.set_surrounding(Some("中欧中兴"), 2);
     assert!(!engine.key(0xffe1, 0, false), "修饰键不消费（触发刷新）");
     let (_, _, _, _, up, down) = last_update();
@@ -2119,6 +2142,91 @@ fn option_role_keys_follow_scheme_declarations() {
     assert!(unsafe { hux_engine_option_key(std::ptr::null(), 0) }.is_null());
 }
 
+/// 取 C++ 配置 schema（`shell/hux.cpp`）里 `.path{"<name>"}` 之后的 `.defaultValue` 字面量。
+///
+/// C++ 侧的默认值不参与 cargo 测试（`hux.cpp` 由 cmake 单独编译），改错了两侧都编译得过；
+/// 这里以「解析源码」把它变成可断言的字面量（剥掉行注释；`KeyList` 的默认值跨多行，
+/// 按花括号配平补齐）。
+fn schema_default(name: &str) -> String {
+    let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/shell/hux.cpp"))
+        .expect("read hux.cpp");
+    let lines: Vec<String> = source
+        .lines()
+        .map(|line| {
+            line.trim()
+                .split("//")
+                .next()
+                .unwrap_or("")
+                .trim_end()
+                .to_string()
+        })
+        .collect();
+    for (index, line) in lines.iter().enumerate() {
+        let Some(rest) = line.strip_prefix(".path{") else {
+            continue;
+        };
+        if rest.trim_end_matches("},").trim_matches('"') != name {
+            continue;
+        }
+        for (offset, next) in lines[index + 1..].iter().enumerate() {
+            if next.starts_with(".path{") {
+                break;
+            }
+            let Some(rest) = next.strip_prefix(".defaultValue = ") else {
+                continue;
+            };
+            let mut value = rest.trim_end_matches(',').to_string();
+            let mut open = value.matches('{').count() as i32 - value.matches('}').count() as i32;
+            let mut cursor = index + offset + 2;
+            while open > 0 && cursor < lines.len() {
+                let more = lines[cursor].trim_end_matches(',');
+                value.push_str(more);
+                open += more.matches('{').count() as i32 - more.matches('}').count() as i32;
+                cursor += 1;
+            }
+            return value;
+        }
+        panic!("schema 项 {name} 没有 defaultValue");
+    }
+    panic!("schema 缺少项 {name}");
+}
+
+/// 「候选窗口显示预编辑」是宿主显示项（不进引擎 `Settings`，故
+/// `schema_defaults_match_settings_defaults` 明确跳过它）：默认值在这里单独钉住——
+/// 改回「关」不会让任何编译或其它测试失败，而用户侧就是「预编辑又没了」。
+#[test]
+fn host_schema_panel_preedit_defaults_to_on() {
+    assert_eq!(schema_default("PanelPreedit"), "true");
+}
+
+/// 默认反查触发键：音反查 `` ` ``（`grave`）、字反查 `~`（`asciitilde`），且都**无修饰**。
+///
+/// `~` 在物理键盘上是 Shift+`` ` ``，但前端上报的是该 level 的 keysym（`asciitilde`+Shift），
+/// 而 fcitx5 `Key::normalize()` 会去掉这类「本身就产字符」键的 Shift（旧默认 `Alt+:` 同理：
+/// `:` = Shift+`;` 归一化成 `colon`+Alt）⇒ 引擎收到的是 `asciitilde` + 无修饰。
+/// 断言按语义给（含 keysym 且无修饰），不钉源码的书写形式。
+#[test]
+fn host_schema_reverse_lookup_defaults_are_grave_and_asciitilde() {
+    let pronunciation = schema_default("SoundToCharShapeKey");
+    assert!(
+        pronunciation.contains("FcitxKey_grave") && pronunciation.contains("KeyState::NoState"),
+        "音反查默认键应为无修饰的 `（grave）：{pronunciation}"
+    );
+    assert!(
+        !pronunciation.contains("KeyState::Alt"),
+        "音反查默认键不应带修饰：{pronunciation}"
+    );
+    let character = schema_default("CharToSoundShapeKey");
+    assert!(
+        character.contains("FcitxKey_asciitilde") && character.contains("KeyState::NoState"),
+        "字反查默认键应为无修饰的 ~（asciitilde）：{character}"
+    );
+    assert!(
+        !character.contains("KeyState::Alt"),
+        "字反查默认键不应带修饰：{character}"
+    );
+}
+
 /// C++ 配置 schema（`shell/hux.cpp`）的默认值必须与 `hux-cfg::Settings::default()` 一致。
 ///
 /// 两边各写一份默认值且此前无任何校验：C++ 构造时即 `applyConfig` 覆盖引擎侧默认，
@@ -2152,8 +2260,9 @@ fn schema_defaults_match_settings_defaults() {
         defaults.push((name, value));
     }
 
-    // C++ 用 keysym 常量声明默认键：`fcitx::Key(FcitxKey_colon, fcitx::KeyState::Alt)`
-    // → rime 键名 `Alt+colon`（`FcitxKey_<name>` 即 X11 键名，与 librime 键名表同名）。
+    // C++ 用 keysym 常量声明默认键：`fcitx::Key(FcitxKey_grave, fcitx::KeyState::NoState)`
+    // → rime 键名 `grave`（`FcitxKey_<name>` 即 X11 键名，与 librime 键名表同名）；
+    // 带 `KeyState::Alt` 的项加 `Alt+` 前缀（旧默认形态）。
     let keys = |raw: &str| -> Vec<String> {
         raw.split("fcitx::Key(FcitxKey_")
             .skip(1)
@@ -2360,4 +2469,159 @@ fn every_settings_field_is_declared_in_the_schema() {
         engine_paths, expected,
         "schema 路径集合与 Settings 字段表不一致（双向守护：两侧都必须有对方）"
     );
+}
+
+/// 模型摘要（`hux_engine_model_info`）的三种状态 + 空指针：已装载（三阶夹具）/
+/// 未找到 / 装载失败（非模型文件）；摘要由方案侧结构化产出，平台只搬运。
+#[test]
+fn model_info_reports_file_format_and_state() {
+    let _guard = serial();
+    let goldens = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens");
+    let read = |engine: *const Engine| -> String {
+        let info = unsafe { hux_engine_model_info(engine) };
+        assert!(!info.is_null(), "引擎存活期内摘要指针不应为空");
+        unsafe { std::ffi::CStr::from_ptr(info) }
+            .to_string_lossy()
+            .into_owned()
+    };
+
+    // 已装载：三阶夹具（文件名 + 格式标签都来自模型自身）。
+    let engine = Box::into_raw(Box::new(Engine::new_with_dirs(
+        host(),
+        fixture_dirs(),
+        Some(goldens.join("ngram_fixture.bin")),
+        Some(temp_user_dir("model-info-loaded")),
+    )));
+    assert_eq!(read(engine), "ngram_fixture.bin — 已加载（三阶 TCSKNM02）");
+    unsafe { hux_engine_free(engine) };
+
+    // 未找到：数据目录里没有模型资产。
+    let empty_dir = hux_test_support::temp_dir("model-info-empty");
+    let engine = Box::into_raw(Box::new(Engine::new_with_dirs(
+        host(),
+        vec![empty_dir.clone()],
+        None,
+        Some(temp_user_dir("model-info-none")),
+    )));
+    assert_eq!(read(engine), "未找到模型（整句排序退化为码表名次）");
+    unsafe { hux_engine_free(engine) };
+    std::fs::remove_dir_all(&empty_dir).ok();
+
+    // 装载失败：错误原文来自装载器（平台不拼、不解析）。
+    let engine = Box::into_raw(Box::new(Engine::new_with_dirs(
+        host(),
+        fixture_dirs(),
+        Some(goldens.join("lexicon/tiger_sentence.codes.txt")),
+        Some(temp_user_dir("model-info-failed")),
+    )));
+    let failed = read(engine);
+    assert!(
+        failed.starts_with("tiger_sentence.codes.txt — 装载失败："),
+        "{failed}"
+    );
+    assert!(
+        failed.contains("TCSKNM02"),
+        "失败原因应说明期望的模型格式：{failed}"
+    );
+    unsafe { hux_engine_free(engine) };
+
+    // 空指针 ⇒ NULL（宿主据此早退）。
+    assert!(unsafe { hux_engine_model_info(std::ptr::null()) }.is_null());
+}
+
+/// 模型路径来源：默认查找（`Auto`）按数据目录解析，「重新部署」据此拿到新装入的模型；
+/// 显式路径（`Fixed`）不受目录内容影响。
+#[test]
+fn model_source_resolves_by_source() {
+    let dir = hux_test_support::temp_dir("model-source-auto");
+    let auto = crate::engine::ModelSource::Auto;
+    assert_eq!(
+        auto.resolve(std::slice::from_ref(&dir)),
+        None,
+        "空目录里没有模型资产"
+    );
+    let model = dir.join("models/sentence-ngram-mobile.bin");
+    std::fs::create_dir_all(model.parent().expect("parent")).expect("mkdir");
+    std::fs::write(&model, b"TCSKNM02").expect("write");
+    assert_eq!(
+        auto.resolve(std::slice::from_ref(&dir)),
+        Some(model.clone())
+    );
+    let fixed = crate::engine::ModelSource::Fixed(dir.join("fixed.bin"));
+    assert_eq!(
+        fixed.resolve(std::slice::from_ref(&dir)),
+        Some(dir.join("fixed.bin"))
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// 重新部署（`hux_engine_redeploy`）：返回 1、既有会话 id 继续可用但状态被重置、
+/// 模型摘要随重新装载刷新；引擎为空指针返回 0。
+#[test]
+fn redeploy_refreshes_model_info_and_resets_sessions() {
+    let _guard = serial();
+    let goldens = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens");
+    let dir = hux_test_support::temp_dir("redeploy-model");
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    // 指向一个尚不存在的模型：先「装载失败」，装入文件后再重新部署应变成「已加载」。
+    let model = dir.join("sentence-ngram-mobile.bin");
+    let engine = Box::into_raw(Box::new(Engine::new_with_dirs(
+        host(),
+        fixture_dirs(),
+        Some(model.clone()),
+        Some(temp_user_dir("redeploy-user")),
+    )));
+    let read = || {
+        let info = unsafe { hux_engine_model_info(engine) };
+        assert!(!info.is_null());
+        unsafe { std::ffi::CStr::from_ptr(info) }
+            .to_string_lossy()
+            .into_owned()
+    };
+    let failed = read();
+    assert!(
+        failed.starts_with("sentence-ngram-mobile.bin — 装载失败："),
+        "{failed}"
+    );
+
+    // 建一个会话并留下组合状态：重新部署后 id 必须仍然有效、组合必须被清空。
+    let session = unsafe { hux_engine_session_new(engine) };
+    assert!(session > 0);
+    assert_ne!(
+        unsafe { hux_engine_key(engine, session, u32::from(b'a'), 0, 0) } & HUX_KEY_CONSUMED,
+        0,
+        "夹具码表里 a 应被消费（组合已开始）"
+    );
+    assert_eq!(unsafe { &*engine }.sessions[&session].context.input(), b"a");
+
+    // 「装好数据再重新部署」：模型文件就位 → 摘要刷新成已加载。
+    std::fs::copy(goldens.join("ngram_fixture.bin"), &model).expect("copy");
+    assert_eq!(unsafe { hux_engine_redeploy(engine) }, 1);
+    assert_eq!(
+        read(),
+        "sentence-ngram-mobile.bin — 已加载（三阶 TCSKNM02）"
+    );
+
+    // 会话 id 仍可用（重置而非释放）；未知 id 仍被忽略。
+    let state = unsafe { &*engine };
+    assert!(state.sessions.contains_key(&session));
+    assert_eq!(
+        state.sessions[&session].context.input(),
+        b"",
+        "重新部署应清空组合"
+    );
+    assert_ne!(
+        unsafe { hux_engine_key(engine, session, u32::from(b'a'), 0, 0) } & HUX_KEY_CONSUMED,
+        0
+    );
+    assert_eq!(
+        unsafe { hux_engine_key(engine, session + 100, u32::from(b'a'), 0, 0) },
+        0
+    );
+    unsafe { hux_engine_session_free(engine, session) };
+    unsafe { hux_engine_free(engine) };
+    std::fs::remove_dir_all(&dir).ok();
+
+    // 空指针：返回 0（宿主据此报错，而不是假装成功）。
+    assert_eq!(unsafe { hux_engine_redeploy(std::ptr::null_mut()) }, 0);
 }

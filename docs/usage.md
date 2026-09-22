@@ -89,8 +89,8 @@ cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
   组合再落标点，从而遮蔽翻页绑定（见 [`upstream-deviations.md`](upstream-deviations.md) ①）；**未翻页的** `-` 仍按上游
   行为先上屏组合再落 `-`。其余 ASCII 标点维持「先上屏组合再落标点」（见 [`config.md`](config.md)）
 - `Enter` 提交原文，`Esc` 取消。
-- `Alt+:` 音反查
-- `Alt+"` 字反查
+- `` ` `` 音反查
+- `~` 字反查
 
 ![虎句](images/虎句.png)
 
@@ -98,7 +98,9 @@ cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
 
 状态菜单「**虎虚**」子菜单可随时切换： \
 提前上屏、提前上屏至预编辑、单字重码组句、全角标点、数字直选 \
-（写入 `tiger_sentence.options.yaml`，重启后保持）。
+（写入 `tiger_sentence.options.yaml`，重启后保持）；此外还有「候选窗口显示预编辑」\
+（写入 `conf/hux.conf`，切换即时生效）、「重新部署」（重读配置、重装数据与模型、重置全部会话）\
+与一行模型信息（`模型：<文件名> — <状态>`）。
 
 ![虍](images/虍.png)
 
@@ -109,7 +111,7 @@ cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
 - `Esc` / 再次触发：退出
 
 ```
-Alt+:  zhongguo   →   :zhong guo〔拼音〕   候选：中国 …
+`  zhongguo   →   `zhong guo〔拼音〕   候选：中国 …
 ```
 
 ![音反查](images/音反查.png)

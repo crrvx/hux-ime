@@ -64,6 +64,27 @@ void hux_engine_reset(hux_engine *engine, uint64_t session);
 const char *hux_engine_status(const hux_engine *engine);
 
 /*
+ * 模型信息（宿主状态菜单「模型」项；一行 UTF-8 摘要：文件名 + 装载状态）。
+ *
+ * **指针有效期 = 下一次 hux_engine_redeploy 之前**：重新部署会替换内部摘要串，此前返回的
+ * 指针随即失效（同 hux_engine_status 的风格，宿主每次需要时重新调用、不要缓存）。
+ * 引擎为空指针时返回 NULL。
+ *
+ * 摘要由方案侧结构化产出（文件名 / 格式标签 / 装载状态 / 错误），宿主直接展示、
+ * 不得解析。
+ */
+const char *hux_engine_model_info(const hux_engine *engine);
+
+/*
+ * 重新部署：重新装配方案数据与模型，并重置全部会话状态。
+ *
+ * 会话 id 继续有效（宿主侧的输入上下文不需要重建），但旧组合与旧候选作废：宿主应在调用后
+ * 清空面板/客户端预编辑，并重新读取 hux_engine_model_info 与 hux_engine_status 刷新展示。
+ * 返回 1 = 成功；0 = 引擎不可用。
+ */
+int32_t hux_engine_redeploy(hux_engine *engine);
+
+/*
  * hux_engine_key 返回值位掩码：
  * HUX_KEY_CONSUMED              已消费（宿主不应再处理该键）。
  * HUX_KEY_FORWARD_AFTER_COMMIT  已提交且未消费——宿主应消费该键并以 forwardKey 重发，

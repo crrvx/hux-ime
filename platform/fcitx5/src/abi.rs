@@ -124,6 +124,38 @@ pub unsafe extern "C" fn hux_engine_status(engine: *const Engine) -> *const c_ch
     }
 }
 
+/// 模型信息（一行摘要；引擎为空指针返回 NULL）。
+///
+/// **指针有效期 = 下一次 [`hux_engine_redeploy`] 之前**：重新部署会替换内部摘要串
+/// （同 `hux_engine_status` 的风格）。宿主每次需要时重新调用，不要缓存。
+///
+/// # Safety
+/// `engine` 须有效（可为空指针）。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hux_engine_model_info(engine: *const Engine) -> *const c_char {
+    match unsafe { engine.as_ref() } {
+        Some(engine) => engine.model_info.as_ptr(),
+        None => std::ptr::null(),
+    }
+}
+
+/// 重新部署：重新装配方案数据与模型，并重置全部会话（会话 id 继续有效）。
+/// 返回 1 = 成功；0 = 引擎为空指针。
+///
+/// 宿主侧的分工：调用**前**重新读取配置并 [`hux_engine_apply_settings`]，调用**后**
+/// 清空面板/客户端预编辑（会话状态已作废），再重新读取 [`hux_engine_model_info`] 与
+/// `hux_engine_status` 刷新展示。
+///
+/// # Safety
+/// `engine` 须为 [`hux_engine_new`] 的返回值且尚未释放（可为空指针）。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hux_engine_redeploy(engine: *mut Engine) -> i32 {
+    match unsafe { engine.as_mut() } {
+        Some(engine) => i32::from(engine.redeploy()),
+        None => 0,
+    }
+}
+
 /// 应用外部配置（fcitx5 配置界面 → C++ 壳 → 本入口）。返回 1 = 已应用。
 ///
 /// # Safety

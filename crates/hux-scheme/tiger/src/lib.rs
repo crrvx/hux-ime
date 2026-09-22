@@ -19,6 +19,7 @@ pub mod decode;
 pub mod interaction;
 pub mod lexical;
 pub mod lexicon;
+pub mod model_status;
 pub mod ngram;
 pub mod scheme;
 pub mod sound_to_char_shape;
