@@ -98,7 +98,9 @@ cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
 
 状态菜单「**虎虚**」子菜单可随时切换： \
 提前上屏、提前上屏至预编辑、单字重码组句、全角标点、数字直选 \
-（写入 `tiger_sentence.options.yaml`，重启后保持）。
+（写入 `tiger_sentence.options.yaml`，重启后保持）；此外还有「候选窗口显示预编辑」\
+（写入 `conf/hux.conf`，切换即时生效）、「重新部署」（重读配置、重装数据与模型、重置全部会话）\
+与一行模型信息（`模型：<文件名> — <状态>`）。
 
 ![虍](images/虍.png)
 

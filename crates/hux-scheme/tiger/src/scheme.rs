@@ -294,6 +294,8 @@ pub struct TigerScheme {
     applied_learning: Option<u64>,
     sessions: HashMap<u64, TigerSession>,
     next_session: u64,
+    /// 模型装载状态的一行摘要（宿主状态菜单「模型」项；见 [`crate::model_status`]）。
+    model_info: String,
 }
 
 impl TigerScheme {
@@ -314,10 +316,16 @@ impl TigerScheme {
         notes.push(format!("lexicon: {}", lexicon.data_status().canonical()));
         let learning_rules = lexicon.learning_rules.clone();
         let supplement = Supplement::load_default(supplement_dir(dirs).as_deref());
+        // 模型状态（宿主状态菜单「模型」项）：文件名 / 格式标签 / 装载结果，见 `model_status`。
+        let mut model_status = crate::model_status::ModelStatus::not_found();
         let model = model_path.and_then(|path| match MobileModel::load(&path, None) {
-            Ok(model) => Some(model),
+            Ok(model) => {
+                model_status.record_loaded(&path);
+                Some(model)
+            }
             Err(error) => {
                 notes.push(format!("model: {error}"));
+                model_status.record_failed(&path, error.to_string());
                 None
             }
         });
@@ -345,6 +353,7 @@ impl TigerScheme {
             applied_learning: None,
             sessions: HashMap::new(),
             next_session: 1,
+            model_info: model_status.summary(),
         };
         // 构造即自算学习 mode（平台随后下发的配置袋与之一致，不会造成 mode 抖动）。
         scheme.learning_mode = scheme.mode_from_config();
@@ -444,6 +453,10 @@ impl Scheme for TigerScheme {
 
     fn learning_mode(&self) -> &str {
         &self.learning_mode
+    }
+
+    fn model_info(&self) -> &str {
+        &self.model_info
     }
 
     fn apply_config(&mut self, config: &SchemeConfig) -> Result<(), Vec<ConfigError>> {

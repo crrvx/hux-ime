@@ -352,6 +352,33 @@ private:
     std::function<void(fcitx::InputContext *)> toggled_;
 };
 
+/// 宿主项动作（「重新部署」与「模型」信息行）：文案每次取用时现算——「模型」行随重新
+/// 部署变化，故宿主不另存一份；`activate` 可缺省（信息项不可点，点击为无操作）。
+class HuxHostAction : public fcitx::Action {
+public:
+    HuxHostAction(std::function<std::string()> label,
+                  std::function<void(fcitx::InputContext *)> activate = {})
+        : label_(std::move(label)), activate_(std::move(activate)) {}
+
+    std::string shortText(fcitx::InputContext * /*unused*/) const override {
+        return label_();
+    }
+
+    std::string icon(fcitx::InputContext * /*unused*/) const override {
+        return {};
+    }
+
+    void activate(fcitx::InputContext *inputContext) override {
+        if (activate_) {
+            activate_(inputContext);
+        }
+    }
+
+private:
+    std::function<std::string()> label_;
+    std::function<void(fcitx::InputContext *)> activate_;
+};
+
 /// 最近一次 UI 快照（面板预编辑 / 候选 / 高亮 / 两排辅助文本）。
 ///
 /// 宿主开关（「候选窗口显示预编辑」）切换后要**立即**重放当前界面，而关闭期间面板里
@@ -613,6 +640,17 @@ private:
         instance_->userInterfaceManager().registerAction("hux-panel-preedit",
                                                          panelPreeditAction_.get());
         menu_.addAction(panelPreeditAction_.get());
+        // 「重新部署」与「模型」信息行：文案现算（模型摘要来自引擎，见 `modelText`）。
+        redeployAction_ = std::make_unique<HuxHostAction>(
+            [] { return std::string("重新部署"); },
+            [this](fcitx::InputContext *inputContext) { redeploy(inputContext); });
+        instance_->userInterfaceManager().registerAction("hux-redeploy",
+                                                         redeployAction_.get());
+        menu_.addAction(redeployAction_.get());
+        modelAction_ = std::make_unique<HuxHostAction>([this] { return modelText(); });
+        instance_->userInterfaceManager().registerAction("hux-model",
+                                                         modelAction_.get());
+        menu_.addAction(modelAction_.get());
         menuAction_.setMenu(&menu_);
         instance_->userInterfaceManager().registerAction("hux-menu",
                                                          &menuAction_);
@@ -830,6 +868,76 @@ private:
         }
     }
 
+    /// 「模型」行的文案 = `模型：` + 引擎给出的一行摘要（方案侧结构化产出，本层不解析）。
+    std::string modelText() const {
+        const char *info = hux_engine_model_info(engine_);
+        return std::string("模型：") + (info != nullptr ? info : "不可用");
+    }
+
+    /// 重新部署：重读配置 → 重装方案数据与模型 → 清面板 → 刷新状态菜单与日志。
+    ///
+    /// 会话 id 不变（宿主侧的输入上下文不需要重建），但组合与候选全部作废，故第 3 步
+    /// 必须清面板——否则面板上留着已失效的旧候选。
+    void redeploy(fcitx::InputContext *inputContext) {
+        // 1) 重新读取本 addon 的配置文件（与构造同一入口）并推给引擎（含快捷键绑定）。
+        fcitx::readAsIni(config_, kConfigPath);
+        applyConfig();
+        // 2) 引擎侧：重装数据与模型 + 重置全部会话状态（旧候选/预编辑随之作废）。
+        if (hux_engine_redeploy(engine_) == 0) {
+            FCITX_WARN() << "hux: 重新部署失败（引擎不可用）";
+            return;
+        }
+        // 3) 清空各输入上下文的面板与会话里的 UI 快照。
+        clearPanels();
+        // 4) 「模型」行与状态菜单刷新（文案现算，这里只通知 UI 重取）。
+        refreshHostActions(inputContext);
+        // 5) 新状态串落日志：排查「重新部署后还是老样子」时先看这里。
+        if (const char *status = hux_engine_status(engine_)) {
+            FCITX_INFO() << "hux: " << status;
+        }
+    }
+
+    /// 清空全部输入上下文的面板（预编辑 / 候选 / 两排辅助文本）与会话里的 UI 快照。
+    ///
+    /// 重新部署后引擎侧会话状态已重置（见 `hux_engine_redeploy` 契约），留在面板上的旧候选
+    /// 不再有效；宿主侧会话仍然存活，故快照也要一并清掉（否则开关切换会把旧快照重放出来）。
+    void clearPanels() {
+        if (instance_ == nullptr) {
+            return;
+        }
+        instance_->inputContextManager().foreach(
+            [this](fcitx::InputContext *inputContext) {
+                if (HuxSession *huxSession = session(inputContext)) {
+                    huxSession->ui() = HuxUiSnapshot();
+                }
+                inputContext->inputPanel().setPreedit(fcitx::Text());
+                inputContext->inputPanel().setClientPreedit(fcitx::Text());
+                inputContext->inputPanel().setCandidateList(nullptr);
+                inputContext->inputPanel().setAuxUp(fcitx::Text());
+                inputContext->inputPanel().setAuxDown(fcitx::Text());
+                inputContext->updatePreedit();
+                inputContext->updateUserInterface(
+                    fcitx::UserInterfaceComponent::InputPanel);
+                return true;
+            });
+    }
+
+    /// 通知状态菜单里的宿主项重新取文案/勾选态（重新部署后「模型」行会变）。
+    void refreshHostActions(fcitx::InputContext *inputContext) {
+        if (inputContext == nullptr) {
+            return;
+        }
+        if (panelPreeditAction_ != nullptr) {
+            panelPreeditAction_->update(inputContext);
+        }
+        if (redeployAction_ != nullptr) {
+            redeployAction_->update(inputContext);
+        }
+        if (modelAction_ != nullptr) {
+            modelAction_->update(inputContext);
+        }
+    }
+
     /// 把 schema 值经 C ABI 推给 Rust 侧（`Settings::apply_settings`）。
     void applyConfig() {
         if (engine_ == nullptr) {
@@ -899,6 +1007,10 @@ private:
     std::vector<std::unique_ptr<HuxToggleAction>> toggleActions_;
     /// 宿主项开关「候选窗口显示预编辑」（引擎选项之外的一项，见 `HuxHostToggleAction`）。
     std::unique_ptr<HuxHostToggleAction> panelPreeditAction_;
+    /// 宿主项「重新部署」。
+    std::unique_ptr<HuxHostAction> redeployAction_;
+    /// 宿主项「模型」信息行（不可点）。
+    std::unique_ptr<HuxHostAction> modelAction_;
 };
 
 void HuxCandidateWord::select(fcitx::InputContext *inputContext) const {

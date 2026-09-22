@@ -2470,3 +2470,158 @@ fn every_settings_field_is_declared_in_the_schema() {
         "schema 路径集合与 Settings 字段表不一致（双向守护：两侧都必须有对方）"
     );
 }
+
+/// 模型摘要（`hux_engine_model_info`）的三种状态 + 空指针：已装载（三阶夹具）/
+/// 未找到 / 装载失败（非模型文件）；摘要由方案侧结构化产出，平台只搬运。
+#[test]
+fn model_info_reports_file_format_and_state() {
+    let _guard = serial();
+    let goldens = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens");
+    let read = |engine: *const Engine| -> String {
+        let info = unsafe { hux_engine_model_info(engine) };
+        assert!(!info.is_null(), "引擎存活期内摘要指针不应为空");
+        unsafe { std::ffi::CStr::from_ptr(info) }
+            .to_string_lossy()
+            .into_owned()
+    };
+
+    // 已装载：三阶夹具（文件名 + 格式标签都来自模型自身）。
+    let engine = Box::into_raw(Box::new(Engine::new_with_dirs(
+        host(),
+        fixture_dirs(),
+        Some(goldens.join("ngram_fixture.bin")),
+        Some(temp_user_dir("model-info-loaded")),
+    )));
+    assert_eq!(read(engine), "ngram_fixture.bin — 已加载（三阶 TCSKNM02）");
+    unsafe { hux_engine_free(engine) };
+
+    // 未找到：数据目录里没有模型资产。
+    let empty_dir = hux_test_support::temp_dir("model-info-empty");
+    let engine = Box::into_raw(Box::new(Engine::new_with_dirs(
+        host(),
+        vec![empty_dir.clone()],
+        None,
+        Some(temp_user_dir("model-info-none")),
+    )));
+    assert_eq!(read(engine), "未找到模型（整句排序退化为码表名次）");
+    unsafe { hux_engine_free(engine) };
+    std::fs::remove_dir_all(&empty_dir).ok();
+
+    // 装载失败：错误原文来自装载器（平台不拼、不解析）。
+    let engine = Box::into_raw(Box::new(Engine::new_with_dirs(
+        host(),
+        fixture_dirs(),
+        Some(goldens.join("lexicon/tiger_sentence.codes.txt")),
+        Some(temp_user_dir("model-info-failed")),
+    )));
+    let failed = read(engine);
+    assert!(
+        failed.starts_with("tiger_sentence.codes.txt — 装载失败："),
+        "{failed}"
+    );
+    assert!(
+        failed.contains("TCSKNM02"),
+        "失败原因应说明期望的模型格式：{failed}"
+    );
+    unsafe { hux_engine_free(engine) };
+
+    // 空指针 ⇒ NULL（宿主据此早退）。
+    assert!(unsafe { hux_engine_model_info(std::ptr::null()) }.is_null());
+}
+
+/// 模型路径来源：默认查找（`Auto`）按数据目录解析，「重新部署」据此拿到新装入的模型；
+/// 显式路径（`Fixed`）不受目录内容影响。
+#[test]
+fn model_source_resolves_by_source() {
+    let dir = hux_test_support::temp_dir("model-source-auto");
+    let auto = crate::engine::ModelSource::Auto;
+    assert_eq!(
+        auto.resolve(std::slice::from_ref(&dir)),
+        None,
+        "空目录里没有模型资产"
+    );
+    let model = dir.join("models/sentence-ngram-mobile.bin");
+    std::fs::create_dir_all(model.parent().expect("parent")).expect("mkdir");
+    std::fs::write(&model, b"TCSKNM02").expect("write");
+    assert_eq!(
+        auto.resolve(std::slice::from_ref(&dir)),
+        Some(model.clone())
+    );
+    let fixed = crate::engine::ModelSource::Fixed(dir.join("fixed.bin"));
+    assert_eq!(
+        fixed.resolve(std::slice::from_ref(&dir)),
+        Some(dir.join("fixed.bin"))
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// 重新部署（`hux_engine_redeploy`）：返回 1、既有会话 id 继续可用但状态被重置、
+/// 模型摘要随重新装载刷新；引擎为空指针返回 0。
+#[test]
+fn redeploy_refreshes_model_info_and_resets_sessions() {
+    let _guard = serial();
+    let goldens = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens");
+    let dir = hux_test_support::temp_dir("redeploy-model");
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    // 指向一个尚不存在的模型：先「装载失败」，装入文件后再重新部署应变成「已加载」。
+    let model = dir.join("sentence-ngram-mobile.bin");
+    let engine = Box::into_raw(Box::new(Engine::new_with_dirs(
+        host(),
+        fixture_dirs(),
+        Some(model.clone()),
+        Some(temp_user_dir("redeploy-user")),
+    )));
+    let read = || {
+        let info = unsafe { hux_engine_model_info(engine) };
+        assert!(!info.is_null());
+        unsafe { std::ffi::CStr::from_ptr(info) }
+            .to_string_lossy()
+            .into_owned()
+    };
+    let failed = read();
+    assert!(
+        failed.starts_with("sentence-ngram-mobile.bin — 装载失败："),
+        "{failed}"
+    );
+
+    // 建一个会话并留下组合状态：重新部署后 id 必须仍然有效、组合必须被清空。
+    let session = unsafe { hux_engine_session_new(engine) };
+    assert!(session > 0);
+    assert_ne!(
+        unsafe { hux_engine_key(engine, session, u32::from(b'a'), 0, 0) } & HUX_KEY_CONSUMED,
+        0,
+        "夹具码表里 a 应被消费（组合已开始）"
+    );
+    assert_eq!(unsafe { &*engine }.sessions[&session].context.input(), b"a");
+
+    // 「装好数据再重新部署」：模型文件就位 → 摘要刷新成已加载。
+    std::fs::copy(goldens.join("ngram_fixture.bin"), &model).expect("copy");
+    assert_eq!(unsafe { hux_engine_redeploy(engine) }, 1);
+    assert_eq!(
+        read(),
+        "sentence-ngram-mobile.bin — 已加载（三阶 TCSKNM02）"
+    );
+
+    // 会话 id 仍可用（重置而非释放）；未知 id 仍被忽略。
+    let state = unsafe { &*engine };
+    assert!(state.sessions.contains_key(&session));
+    assert_eq!(
+        state.sessions[&session].context.input(),
+        b"",
+        "重新部署应清空组合"
+    );
+    assert_ne!(
+        unsafe { hux_engine_key(engine, session, u32::from(b'a'), 0, 0) } & HUX_KEY_CONSUMED,
+        0
+    );
+    assert_eq!(
+        unsafe { hux_engine_key(engine, session + 100, u32::from(b'a'), 0, 0) },
+        0
+    );
+    unsafe { hux_engine_session_free(engine, session) };
+    unsafe { hux_engine_free(engine) };
+    std::fs::remove_dir_all(&dir).ok();
+
+    // 空指针：返回 0（宿主据此报错，而不是假装成功）。
+    assert_eq!(unsafe { hux_engine_redeploy(std::ptr::null_mut()) }, 0);
+}
