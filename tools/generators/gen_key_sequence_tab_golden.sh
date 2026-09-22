@@ -7,7 +7,7 @@
 #
 # 用法：tools/generators/gen_key_sequence_tab_golden.sh [输出文件]
 #   REF  参照仓库本地检出（默认 `_external/tiger-sentense-rime`，已 gitignore）
-#   PIN  参照固定提交（默认主干 pin `abad411750…`，与主金样一致）
+#   PIN  参照固定提交（默认主干 pin `9f742d2…`，与主金样一致）
 #   CASES  用例文件（默认 `tools/cases/key_sequence_tab_cases.txt`）
 #
 # 与 `gen_key_sequence_golden.sh` 的差异：
@@ -24,7 +24,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 REF="${REF:-$ROOT/_external/tiger-sentense-rime}"
 REF_URL="${REF_URL:-https://github.com/lvyww/tiger-sentense-rime}"
-PIN="${PIN:-abad411750f79cfca750985fa266689b5d9b865f}"
+PIN="${PIN:-9f742d275c2bd50c7c664be1c258a7b8429e83a1}"
 OUT="${1:-$ROOT/goldens/key_sequence_tab.tsv.gz}"
 CASES="${CASES:-$ROOT/tools/cases/key_sequence_tab_cases.txt}"
 FIXTURE="$ROOT/goldens/key_sequence_tab"
@@ -38,9 +38,9 @@ shared="$WORK/shared"
 mkdir -p "$user/lua" "$shared"
 
 # pin 版 Lua 核心与 schema（保证与已入库金样同一参照修订）。
-for name in tiger_sentence.lua tiger_sentence_learning.lua tiger_sentence_ngram.lua \
-    tiger_sentence_cache.lua tiger_sentence_lexical.lua; do
-    git -C "$REF" show "$PIN:lua/$name" > "$user/lua/$name"
+# 取该 pin 的**全部** `lua/*.lua`：pin 可能新增模块（如 fivegram），写死清单会漏 ⇒ 运行期缺模块。
+for path in $(git -C "$REF" ls-tree --name-only "$PIN" lua/ | grep '\.lua$'); do
+    git -C "$REF" show "$PIN:$path" > "$user/lua/${path#lua/}"
 done
 git -C "$REF" show "$PIN:rime.lua" > "$user/rime.lua"
 git -C "$REF" show "$PIN:tiger_sentence.schema.yaml" > "$user/tiger_sentence.schema.yaml"

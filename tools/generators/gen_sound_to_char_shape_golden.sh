@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 # 生成音反查金样（⑧-1）：参照 `feat/reverse-lookup` 尖端 pin 的 Lua 核心 + 系统 librime + librime-lua。
-# 该 pin **已包含主干**（`abad411` 等主干提交都在其祖先链上），故金样即 pin 树本身，
+# 该 pin 含 `abad411` 等主干提交（主干其后新增的 TCSKNM03 提交不在其中，不影响本金样的 TCSKNM02 路径），
+# 故金样即 pin 树本身，
 # 不再需要「分支 pin + 主干 pin 本地合并」；`PIN` 取分支尖端（当前 92a0b54）。
 # 仍保留原合并护栏的精神：参与生成的文件只要与声明 pin 不符（工作区被改动、或有人
 # 重新引入本地合并），就**显式失败**，绝不静默产出与声明 pin 不符的金样。
@@ -69,10 +70,8 @@ if [ "$(git -C "$WT" rev-parse HEAD)" != "$PIN" ] ||
     exit 1
 fi
 
-for name in tiger_sentence.lua tiger_sentence_learning.lua tiger_sentence_ngram.lua \
-    tiger_sentence_cache.lua tiger_sentence_lexical.lua; do
-    cp "$WT/lua/$name" "$user/lua/$name"
-done
+# 取该 pin 的**全部** `lua/*.lua`（pin 可能新增模块，写死清单会漏）
+cp "$WT"/lua/*.lua "$user/lua/"
 cp "$WT/rime.lua" "$user/rime.lua"
 cp "$WT/tiger_sentence.schema.yaml" "$user/tiger_sentence.schema.yaml"
 cp "$WT/symbols.yaml" "$user/symbols.yaml"

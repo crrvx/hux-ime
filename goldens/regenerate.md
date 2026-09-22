@@ -11,7 +11,7 @@
 > **先决条件（实测踩坑）**：夹具类生成器（`gen_ngram_/lexicon_/decode_/learning_/lexical_golden.lua`）
 > 通过 `package.path = <reference>/lua/?.lua` 读参照仓库的**工作区**，**不认 pin**。
 > 因此生成前必须把参照检出租到目标 pin——下面的命令块**第一件事就是
-> `git -C "$REF" checkout --detach abad411750f79cfca750985fa266689b5d9b865f`（主干 pin）**，
+> `git -C "$REF" checkout --detach 9f742d275c2bd50c7c664be1c258a7b8429e83a1`（主干 pin）**，
 > 否则会静默读到工作区里更靠后的核心版本，产出与本次追平无关的金样差异。
 > 参照检出**只读**（无法 `checkout`，例如发行版打包目录 / 只读挂载）时的替代做法：
 > 在**仓库之外**另放一个可写克隆，再对它 `fetch` + `checkout`（主干 pin 与反查 pin 都取）：
@@ -19,7 +19,7 @@
 > ```sh
 > git clone https://github.com/lvyww/tiger-sentense-rime "$HOME/ref/tiger-sentense-rime"  # 或 cp -r 已有检出
 > RW="$HOME/ref/tiger-sentense-rime"
-> git -C "$RW" fetch origin abad411750f79cfca750985fa266689b5d9b865f
+> git -C "$RW" fetch origin 9f742d275c2bd50c7c664be1c258a7b8429e83a1
 > git -C "$RW" fetch origin 92a0b54b53114e7e5aa6a1ff48efa95db0e21f9c
 > ```
 >
@@ -41,9 +41,9 @@ git clone https://github.com/lvyww/tiger-sentense-rime _external/tiger-sentense-
 REF=_external/tiger-sentense-rime
 
 # ① 检出主干 pin（**必须**：以下 5 段夹具类生成器读参照工作区，不认 pin）
-git -C "$REF" checkout --detach abad411750f79cfca750985fa266689b5d9b865f
+git -C "$REF" checkout --detach 9f742d275c2bd50c7c664be1c258a7b8429e83a1
 # ② 生成前自检：HEAD 必须是该 pin（检出失败/被切走即停）
-test "$(git -C "$REF" rev-parse HEAD)" = abad411750f79cfca750985fa266689b5d9b865f
+test "$(git -C "$REF" rev-parse HEAD)" = 9f742d275c2bd50c7c664be1c258a7b8429e83a1
 
 # ③ ngram fixture（入库）
 lua tools/generators/gen_ngram_golden.lua --reference "$REF" \
@@ -119,7 +119,7 @@ curl -fsSL -o external/librime/src/rime/key_table.cc \
   https://raw.githubusercontent.com/rime/librime/33e78140250125871856cdc5b42ddc6a5fcd3cd4/src/rime/key_table.cc
 bash tools/generators/gen_key_golden.sh external/librime    # 脚本校验文件 sha 与 key_table.rs 头部一致
 
-# key_sequence（入库；需要系统 librime + librime-lua；脚本自建 `PIN=abad411` 隔离工作区，
+# key_sequence（入库；需要系统 librime + librime-lua；脚本自建 `PIN=9f742d2` 隔离工作区，
 # 与上面的检出状态无关——不必先 checkout）
 bash tools/generators/gen_key_sequence_golden.sh
 # 探索新用例时可用 CASES 指向临时用例文件（输出默认仍写入入库文件，建议显式给输出路径）：
@@ -151,12 +151,14 @@ python3 tools/checks/verify_golden_shas.py --reference _external/tiger-sentense-
 ## 来源与校验和
 
 - **主干 pin**：[`lvyww/tiger-sentense-rime`](https://github.com/lvyww/tiger-sentense-rime) @
-  `abad411750f79cfca750985fa266689b5d9b865f`（main 尖端，`fix(rime): preserve punctuation learning and default to full-m5`）。
+  `9f742d275c2bd50c7c664be1c258a7b8429e83a1`（main 尖端，`feat: add pure Lua TCSKNM03 fivegram search`；该提交只对提供 `step` 的新模型生效，
+  对 TCSKNM02 金样路径逐行无差异）。
   **由 Lua 核心生成的 16 份夹具 / decode / learning / lexical 金样，以及两份键序列探针金样
   （`key_sequence.tsv.gz`、`key_sequence_tab.tsv.gz`），都取自该 pin。**
 - **反查分支 pin**：[`lvyww/tiger-sentense-rime`](https://github.com/lvyww/tiger-sentense-rime) @
   `92a0b54b53114e7e5aa6a1ff48efa95db0e21f9c`（`feat/reverse-lookup` 尖端：`4ff37c4` 数字选择器提交反查候选、
-  `92a0b54` 撇号音节分隔）。该 pin 是**主干 pin 的后代**（`abad411` 在其祖先链上），因此音反查探针金样
+  `92a0b54` 撇号音节分隔）。该 pin 是 `abad411`（当时的主干 pin）的**后代**；主干其后新增的 TCSKNM03 提交不在其中（不影响本金样的
+  TCSKNM02 路径）。因此音反查探针金样
   `sound_to_char_shape.tsv.gz` 单独取自它，**不再需要「分支 + 主干本地合并」**：
   `tools/generators/gen_sound_to_char_shape_golden.sh` 已简化为单 `PIN` + 护栏
   （HEAD 必须等于 `PIN` 且工作区干净，否则显式失败）。
@@ -181,13 +183,15 @@ python3 tools/checks/verify_golden_shas.py --reference _external/tiger-sentense-
 
 | 文件 | 来源 pin | sha256 |
 |---|---|---|
-| `lua/tiger_sentence.lua`（主干金样） | 主干 `abad411` | `b77a747597a140e6fec315d8bc78344b8d8d3bdc007132bc7c53a9c6a3f22dd3` |
+| `lua/tiger_sentence.lua`（主干金样） | 主干 `9f742d2` | `702df0c49e6402cd216e1fad8b26353e80fd01d3f3923366768a5b3b058df735` |
 | `lua/tiger_sentence.lua`（音反查金样） | 反查 `92a0b54` | `f33cee28f78a612d77570297a6949732f46eeb3c4011b7fe760f43c3b3120b89` |
 | `lua/tiger_sentence_learning.lua` | 两 pin 相同 | `0f685ae57fb4e70662492b7a3e56b91b5e8e9592cc64d881db181c9bf7acd9c6` |
-| `lua/tiger_sentence_ngram.lua` | 两 pin 相同 | `fd7b2337d5215f51ffea092c76f07951a8e2172087e823d8a4b1641f11d8bf4e` |
+| `lua/tiger_sentence_ngram.lua`（主干金样） | 主干 `9f742d2` | `f05a1beb0a6347aaf3c436c41a1ea91e8b64845271bfc9db8139044ffe066926` |
+| `lua/tiger_sentence_ngram.lua`（音反查金样） | 反查 `92a0b54` | `fd7b2337d5215f51ffea092c76f07951a8e2172087e823d8a4b1641f11d8bf4e` |
+| `lua/tiger_sentence_fivegram.lua`（主干新增） | 主干 `9f742d2` | `0514c61727c037f336194c012daf7ed32c034cad3197555417e96bc0fef2cce6` |
 | `lua/tiger_sentence_cache.lua` | 两 pin 相同 | `8ebd209588fb62d0bf888e752b95d8588ecbcdef2af40f8b009865fc3c41da7c` |
 | `lua/tiger_sentence_lexical.lua` | 两 pin 相同 | `d49f45f0ee0033fd2466269d967b4784f508da220ec62215806e227ea590fe8d` |
-| `tools/model_fixture.lua` | 主干 `abad411` | `ed5c771ee29835c20b46476635809ed37d70ad0c79d14df0ae13233f5da7d45a` |
+| `tools/model_fixture.lua` | 主干 `9f742d2` | `ed5c771ee29835c20b46476635809ed37d70ad0c79d14df0ae13233f5da7d45a` |
 
 - 数据夹具（`lexicon/`，取自参照仓库同名文件）：
 
@@ -227,8 +231,8 @@ python3 tools/checks/verify_golden_shas.py --reference _external/tiger-sentense-
 | `decode_learning_model.tsv.gz` | `13797b96097bcc133f862528350f4765d2c021f88c9f8e7ad56d5e6e02de881c` |
 | `decode_learning_evidence.tsv.gz` | `86dec38d94f05e57de281e254262a40aef86176965d739afee6eb6b644464398` |
 | `key.tsv.gz` | `7fae4983ab69e36ebd2e5cac267df81e9bc325731deaefcaa22873aeca8660c0` |
-| `key_sequence.tsv.gz` | `8ce095cf98bae0bbfbd561e6b1e3aa7f1961af6e8e3c3b62b692a7e89e325aa1` |
-| `key_sequence_tab.tsv.gz` | `3c89618d0fb067bb0ce5562646a62924576c0610226aed3fa70689b6549da9bc` |
+| `key_sequence.tsv.gz` | `68994c55aeee8a8a0a74c3e1683b6a605b1dfed6d34fc05adde39e3da1a05b24` |
+| `key_sequence_tab.tsv.gz` | `dd2dcd5549ff6f1ef5f532bd0fffe4f109359a8a7fdb5ce098d6c800232ae7b1` |
 | `sound_to_char_shape.tsv.gz` | `e9d48698bf73807a37933b7c2324afbc27fffe7b0492f0dd2787116ec06a7545` |
 | `lexical.tsv.gz` | `5b559b2504e21c69b4f702678a96d2947abfe7d7c26adcd2b25c3d4de761e0c3` |
 
