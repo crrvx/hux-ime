@@ -16,6 +16,7 @@
 
 pub mod char_to_sound_shape;
 pub mod decode;
+pub mod fivegram;
 pub mod interaction;
 pub mod lexical;
 pub mod lexicon;
