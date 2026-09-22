@@ -13,6 +13,8 @@
 
 | 文件 | 用途 | 规模 |
 |---|---|---|
+| `fivegram_fixture_paged.bin` | TCSKNM03 分页夹具（65 个 context 的桶 ⇒ 2 个索引点；覆盖页边界、`bow_q==0` 块、空 block、FIFO 淘汰回访；ARPA 规则见 `crates/hux-scheme/tiger/src/fivegram/tests.rs` 模块注释） | 43,798 B |
+| `fivegram_fixture.bin` | TCSKNM03 五阶确定性小模型（上游 `tools/build_tcs_knm03.cpp` + `tools/test_tcs_knm03.py` 的 ARPA 生成；460,693,519 B 生产模型的可复现缩小版） | 41,603 B |
 | `ngram_fixture.bin` | ngram 确定性小模型（参照仓库 `tools/model_fixture.lua` 生成） | 17,480 B |
 | `ngram_fixture.tsv.gz` | ngram 金样：`logp`/`obs`/`status`/`cfg`/`trim` | 29617 行 |
 | `lexicon/` | 码表数据夹具（codes / char_ranks / full_code_whitelist / supplement） | 4 文件 |

@@ -50,6 +50,9 @@ lua tools/generators/gen_ngram_golden.lua --reference "$REF" \
   --model goldens/ngram_fixture.bin --out /tmp/ngram_fixture.tsv --mode fixture
 gzip -9 -n -c /tmp/ngram_fixture.tsv > goldens/ngram_fixture.tsv.gz
 
+# 五阶 fixture（入库；上游 builder 编译 + 固定 ARPA，脚本产出后自检 sha；依赖 g++/python3）
+bash tools/generators/gen_fivegram_fixture.sh
+
 # ngram 真实模型抽样（本地）
 lua tools/generators/gen_ngram_golden.lua --reference "$REF" \
   --model ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
@@ -215,6 +218,8 @@ python3 tools/checks/verify_golden_shas.py --reference _external/tiger-sentense-
 
 | 文件 | sha256 |
 |---|---|
+| `fivegram_fixture_paged.bin` | `357f3adc8cb57e11ed788ee59fa55f8a89ae4c4fd6eca62e9b9a44564b026132` |
+| `fivegram_fixture.bin` | `0c3581b2b84baa7e782de25bcbe513e26fabb8835e9b2f370de88a614f8ebda9` |
 | `ngram_fixture.bin` | `b50a12fc5292fabbd4841fd61dd7f85cfa6ae9987d1f74aa752287aa6f86862f` |
 | `ngram_fixture.tsv.gz` | `905dfac57fafd2a4eb55d18cc0d23b9ac5b363aecee55cc610f755bd8ccfb9ee` |
 | `lexicon.tsv.gz` | `28b410dc42a5a17bfb93138843139d3946a6decc3d3ea5d867f70740f5242135` |
