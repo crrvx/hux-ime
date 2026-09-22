@@ -2119,6 +2119,63 @@ fn option_role_keys_follow_scheme_declarations() {
     assert!(unsafe { hux_engine_option_key(std::ptr::null(), 0) }.is_null());
 }
 
+/// 取 C++ 配置 schema（`shell/hux.cpp`）里 `.path{"<name>"}` 之后的 `.defaultValue` 字面量。
+///
+/// C++ 侧的默认值不参与 cargo 测试（`hux.cpp` 由 cmake 单独编译），改错了两侧都编译得过；
+/// 这里以「解析源码」把它变成可断言的字面量（剥掉行注释；`KeyList` 的默认值跨多行，
+/// 按花括号配平补齐）。
+fn schema_default(name: &str) -> String {
+    let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/shell/hux.cpp"))
+        .expect("read hux.cpp");
+    let lines: Vec<String> = source
+        .lines()
+        .map(|line| {
+            line.trim()
+                .split("//")
+                .next()
+                .unwrap_or("")
+                .trim_end()
+                .to_string()
+        })
+        .collect();
+    for (index, line) in lines.iter().enumerate() {
+        let Some(rest) = line.strip_prefix(".path{") else {
+            continue;
+        };
+        if rest.trim_end_matches("},").trim_matches('"') != name {
+            continue;
+        }
+        for (offset, next) in lines[index + 1..].iter().enumerate() {
+            if next.starts_with(".path{") {
+                break;
+            }
+            let Some(rest) = next.strip_prefix(".defaultValue = ") else {
+                continue;
+            };
+            let mut value = rest.trim_end_matches(',').to_string();
+            let mut open = value.matches('{').count() as i32 - value.matches('}').count() as i32;
+            let mut cursor = index + offset + 2;
+            while open > 0 && cursor < lines.len() {
+                let more = lines[cursor].trim_end_matches(',');
+                value.push_str(more);
+                open += more.matches('{').count() as i32 - more.matches('}').count() as i32;
+                cursor += 1;
+            }
+            return value;
+        }
+        panic!("schema 项 {name} 没有 defaultValue");
+    }
+    panic!("schema 缺少项 {name}");
+}
+
+/// 「候选窗口显示预编辑」是宿主显示项（不进引擎 `Settings`，故
+/// `schema_defaults_match_settings_defaults` 明确跳过它）：默认值在这里单独钉住——
+/// 改回「关」不会让任何编译或其它测试失败，而用户侧就是「预编辑又没了」。
+#[test]
+fn host_schema_panel_preedit_defaults_to_on() {
+    assert_eq!(schema_default("PanelPreedit"), "true");
+}
+
 /// C++ 配置 schema（`shell/hux.cpp`）的默认值必须与 `hux-cfg::Settings::default()` 一致。
 ///
 /// 两边各写一份默认值且此前无任何校验：C++ 构造时即 `applyConfig` 覆盖引擎侧默认，
