@@ -8,7 +8,7 @@
 ## 1. 已确认决策
 
 - **仓库**：fork `fcitx5-android`，新增 `plugin/hux`，以 git submodule 引本仓库（`hux-ime`）。
-- **模型**：单独「模型插件」APK（仅 assets 携带 `usr/share/fcitx5/hux/models/sentence-ngram-mobile.bin`）。
+- **模型**：单独「模型插件」APK（仅 assets 携带 `usr/share/fcitx5/hux/models/` 下的整句模型，三阶 / 五阶择一）。
 - **ABI**：仅 `arm64-v8a`（Rust 目标 `aarch64-linux-android`）。
 - **分发**：GitHub Releases。
 - **构建**：本地 Gradle 为主；CI 待定。
@@ -48,7 +48,7 @@
   - `add_library(hux SHARED <hux-ime>/platform/fcitx5/shell/hux.cpp)` + 链接 `libhux_platform_fcitx5.a`、`Fcitx5::Core`（按需 `log dl m unwind`）；
   - `install(TARGETS hux LIBRARY DESTINATION /usr/lib/fcitx5 COMPONENT config)`、
     `install(FILES conf/* … COMPONENT config)`、`install(DIRECTORY data/ … COMPONENT prebuilt-assets)`（排除 `README.md`）。
-- [ ] 模型插件模块：仅 `assets/usr/share/fcitx5/hux/models/sentence-ngram-mobile.bin` + `plugin.xml`。
+- [ ] 模型插件模块：仅 `assets/usr/share/fcitx5/hux/models/`（整句模型择一）+ `plugin.xml`。
 - [ ] 本地构建：`./gradlew :plugin:hux:assembleRelease`（需 Android SDK/NDK、`rustup target add aarch64-linux-android`）。
 
 ## 5. 验收（真机）
@@ -65,7 +65,7 @@
 - **Rust × AGP**：若 CMake 内调 cargo 不稳 → 改为「先脚本 cargo 构建，CMake 只链接」。
 - **配置页渲染**：`List|Key` 与嵌套子配置受支持（对照 Android `ConfigType`）；若异常 → Android 分支扁平 schema。
 - **状态区**：`SimpleAction`+`Menu` 子菜单若不被 Android 状态区渲染 → 平铺 5 个开关。
-- **模型体积**（~224 MB）：GitHub Releases 直发；F-Droid/Play 暂不做。
+- **模型体积**（三阶 ~224 MB / 五阶 ~460 MB）：GitHub Releases 直发；F-Droid/Play 暂不做。
 - **上游收编**：先 fork 自用；视情况再提 PR（其 CI 是否接受 Rust 构建待议）。
 
 ## 7. 里程碑

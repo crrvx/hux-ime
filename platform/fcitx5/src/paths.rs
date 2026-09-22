@@ -10,7 +10,7 @@
 
 use std::path::PathBuf;
 
-use hux_core::scheme::{Asset, AssetKind, find_asset};
+use hux_core::scheme::{Asset, AssetKind};
 
 /// 只读数据目录（按优先级）；开发可用 `HUX_DATA_DIRS` 覆盖。
 pub(crate) fn data_dirs() -> Vec<PathBuf> {
@@ -35,12 +35,28 @@ pub(crate) fn user_data_dir() -> Option<PathBuf> {
     )
 }
 
-/// 在各数据目录中查找**方案声明的模型资产**（`HUX_MODEL` 覆盖在调用处处理）。
+/// 在各数据目录中查找**方案声明的模型候选**（`HUX_MODEL` 覆盖在调用处处理）。
+///
+/// **目录优先**：先在用户目录里按声明顺序试候选，全部落空才看下一个目录——用户自备的模型
+/// 不会被系统目录里的另一种格式顶掉。目录内先五阶（`sentence-fivegram-mobile.bin`）再三阶；
+/// **裸文件名（不带 `models/`）只在第一个目录尝试**（与上游「裸名只认用户目录」一致）。
 pub(crate) fn default_model_path(dirs: &[PathBuf], assets: &[Asset]) -> Option<PathBuf> {
-    assets
+    let models: Vec<&Asset> = assets
         .iter()
-        .find(|asset| asset.kind == AssetKind::Model)
-        .and_then(|asset| find_asset(dirs, asset.file))
+        .filter(|asset| asset.kind == AssetKind::Model)
+        .collect();
+    for (index, dir) in dirs.iter().enumerate() {
+        for asset in &models {
+            if index > 0 && !asset.file.contains('/') {
+                continue;
+            }
+            let candidate = dir.join(asset.file);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
 }
 
 // ---------------------------------------------------------------- 纯函数（可测）
@@ -122,6 +138,68 @@ mod tests {
             Some(PathBuf::from("/home/u/.local/share/fcitx5/hux"))
         );
         assert_eq!(user_data_dir_from(None, None), None);
+    }
+
+    #[test]
+    fn model_lookup_prefers_user_directory_then_fivegram() {
+        let root = hux_test_support::temp_dir("model-lookup");
+        let user = root.join("user");
+        let shared = root.join("shared");
+        for dir in [&user, &shared] {
+            std::fs::create_dir_all(dir.join("models")).expect("create models dir");
+        }
+        let assets = [
+            Asset {
+                kind: AssetKind::Model,
+                file: "models/sentence-fivegram-mobile.bin",
+            },
+            Asset {
+                kind: AssetKind::Model,
+                file: "sentence-fivegram-mobile.bin",
+            },
+            Asset {
+                kind: AssetKind::Model,
+                file: "models/sentence-ngram-mobile.bin",
+            },
+            Asset {
+                kind: AssetKind::Model,
+                file: "sentence-ngram-mobile.bin",
+            },
+        ];
+        let dirs = [user.clone(), shared.clone()];
+        // 只有共享目录有五阶 ⇒ 用它
+        std::fs::write(shared.join("models/sentence-fivegram-mobile.bin"), b"x").expect("write");
+        assert_eq!(
+            default_model_path(&dirs, &assets),
+            Some(shared.join("models/sentence-fivegram-mobile.bin"))
+        );
+        // 用户目录的三阶优先于共享目录的五阶（用户自备者不被顶掉）
+        std::fs::write(user.join("models/sentence-ngram-mobile.bin"), b"x").expect("write");
+        assert_eq!(
+            default_model_path(&dirs, &assets),
+            Some(user.join("models/sentence-ngram-mobile.bin"))
+        );
+        // 同目录内五阶优先
+        std::fs::write(user.join("models/sentence-fivegram-mobile.bin"), b"x").expect("write");
+        assert_eq!(
+            default_model_path(&dirs, &assets),
+            Some(user.join("models/sentence-fivegram-mobile.bin"))
+        );
+        // 非首个目录的裸名不参与
+        std::fs::write(shared.join("sentence-ngram-mobile.bin"), b"x").expect("write");
+        std::fs::remove_file(user.join("models/sentence-fivegram-mobile.bin")).ok();
+        std::fs::remove_file(user.join("models/sentence-ngram-mobile.bin")).ok();
+        assert_eq!(
+            default_model_path(&dirs, &assets),
+            Some(shared.join("models/sentence-fivegram-mobile.bin"))
+        );
+        // 首个目录的裸名可用
+        std::fs::write(user.join("sentence-fivegram-mobile.bin"), b"x").expect("write");
+        assert_eq!(
+            default_model_path(&dirs, &assets),
+            Some(user.join("sentence-fivegram-mobile.bin"))
+        );
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]

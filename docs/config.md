@@ -107,7 +107,7 @@ A 组四项（候选排列、预编辑内容、翻页循环、最短保留码数
 
 ### 4. 明确不做
 - 早提交概率阈值（share / 证据数）：调参危险，参照亦未暴露为 UI；
-- `memory_profile`（compact/balanced）：本实现仅支持 TCSKNM02 mobile 模型；
+- `memory_profile`（compact/balanced）：模型按文件自身 magic 识别（三阶 TCSKNM02 / 五阶 TCSKNM03），不暴露内存档位；
 - `ascii_composer` 系列（Caps/Shift 行为）：无内置英文模式。
 
 ### 5. 记录规则

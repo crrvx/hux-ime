@@ -10,7 +10,7 @@
 //!
 //! 组成：
 //! - 数据与计算：`lexicon`（码表/字频/白名单/补充）、`decode`（beam 解码与早提交证据）、
-//!   `lexical`（TCSLEX01 词先验）、`ngram`（TCSKNM02 模型）；
+//!   `lexical`（TCSLEX01 词先验）、`ngram`（TCSKNM02 三阶模型）、`fivegram`（TCSKNM03 五阶模型）；
 //! - 反查：`sound_to_char_shape`（音反查）、`char_to_sound_shape`（字反查）；
 //! - 交互策略：`interaction`（处理器管线、锁与瞬态状态、早提交、学习粘合、宿主提交点回调实现）。
 

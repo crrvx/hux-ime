@@ -40,12 +40,33 @@ const WHITELIST_FILE: &str = "tiger_sentence.full_code_whitelist.txt";
 const SUPPLEMENT_FILE: &str = "tiger_sentence.supplement.txt";
 const PINYIN_FILE: &str = "tiger_sentence.pinyin.bin.gz";
 const SYMBOLS_FILE: &str = "symbols.yaml";
+/// 五阶模型（TCSKNM03）：`models/` 下与裸名两种落点（裸名只在用户目录尝试）。
+const FIVEGRAM_FILE: &str = "models/sentence-fivegram-mobile.bin";
+const FIVEGRAM_BARE_FILE: &str = "sentence-fivegram-mobile.bin";
+/// 三阶模型（TCSKNM02）的裸名落点。
+const NGRAM_BARE_FILE: &str = "sentence-ngram-mobile.bin";
 
 /// 数据资产清单（相对数据目录）。
+///
+/// 模型按候选顺序列出（与上游查找顺序一致）：同一目录内先五阶 `sentence-fivegram-mobile.bin`、
+/// 再三阶 `MODEL_PATH`，各自先 `models/` 下再裸名；**裸名只在第一个数据目录（用户目录）尝试**，
+/// 目录之间以先者为准（用户自备的模型优先于系统目录里的更新格式）。
 pub const ASSETS: &[Asset] = &[
     Asset {
         kind: AssetKind::Model,
+        file: FIVEGRAM_FILE,
+    },
+    Asset {
+        kind: AssetKind::Model,
+        file: FIVEGRAM_BARE_FILE,
+    },
+    Asset {
+        kind: AssetKind::Model,
         file: MODEL_PATH,
+    },
+    Asset {
+        kind: AssetKind::Model,
+        file: NGRAM_BARE_FILE,
     },
     Asset {
         kind: AssetKind::Data,

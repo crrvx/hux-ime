@@ -7,7 +7,7 @@
 
 - 拼音族：同双拼，差异在拼写解析与键位映射；
 - 数据需求：拼音词典与音节表（同双拼）、简拼/纠错规则表、可选词先验与 n-gram 模型
-  （TCSKNM02，模型不随包）。
+  （三阶 TCSKNM02 / 五阶 TCSKNM03，模型不随包）。
 - 依赖方向：`hux-scheme/<方案> → hux-core`（内核零方案依赖，CI 守卫见 `docs/refactor.md` §7）；
   `hux-cfg` 只提供角色词汇与设置，装配由平台（`platform/fcitx5`）构造，方案不反向依赖二者。
 - 契约需求（`hux_core::scheme`，见 `docs/refactor.md` §5）：实现 `Scheme` 的

@@ -31,7 +31,9 @@ fcitx5 -r -d
 运行时数据目录查找顺序（平台层解析）：`HUX_DATA_DIRS`（覆盖）→ `$XDG_DATA_HOME/fcitx5/hux`
 （缺省 `~/.local/share/fcitx5/hux`）→ `$XDG_DATA_DIRS/*/fcitx5/hux`
 （缺省 `/usr/local/share`、`/usr/share`）；选项 / 学习库 / 模型写入用户目录； \
-模型另在 `models/sentence-ngram-mobile.bin` 查找。
+整句模型按「目录优先」在**用户目录**内依名次查找：`models/sentence-fivegram-mobile.bin`、
+`sentence-fivegram-mobile.bin`、`models/sentence-ngram-mobile.bin`、`sentence-ngram-mobile.bin`，
+其后才轮到共享目录内的两个 `models/` 形式（`HUX_MODEL` 覆盖以上全部）；文件按自身 magic 识别三阶 / 五阶。
 
 ## 安装
 

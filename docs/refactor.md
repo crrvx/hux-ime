@@ -63,8 +63,8 @@ platform/                     # 平台适配
 主要模块（文件级）：
 
 - `hux-core`：`cache` / `learning` / `key` / `key_table` / `session` / `host` / `punct` / `scheme`（方案契约）；
-- `hux-scheme/tiger`：`lexicon` / `decode` / `lexical` / `ngram` / `sound_to_char_shape` /
-  `char_to_sound_shape` / `interaction`（+ `interaction/`）；
+- `hux-scheme/tiger`：`lexicon` / `decode` / `lexical` / `ngram`（TCSKNM02 三阶）/ `fivegram`（TCSKNM03 五阶）/
+  `sound_to_char_shape` / `char_to_sound_shape` / `interaction`（+ `interaction/`）；
 - `hux-cfg`（设置与默认值、选项存储与合并顺序）、`hux-ffi`（C 布局类型 + `include/hux_abi.h`，
   桌面 / Android 共用）、`hux-test-support`（dev 依赖：金样路径 / transcript 编解码 / 临时目录）；
 - `platform/fcitx5`：C++ 薄壳（`shell/hux.cpp`）+ Rust 组装（`engine` / `session` / `ui` / `paths` /

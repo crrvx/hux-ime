@@ -3,7 +3,8 @@
 
 //! TCSKNM02 分页 KN 语言模型读取，对应参照实现 `lua/tiger_sentence_ngram.lua`。
 //!
-//! 模型格式：TCSKNM02（mobile）。加载器仅接受该格式。
+//! 模型格式：TCSKNM02（mobile）。本模块只读这一种；TCSKNM03（五阶）见 [`crate::fivegram`]，
+//! 装载侧按文件头 magic 派发（[`crate::decode::SentenceModel`]）。
 //! 语义保真要点：两级稀疏索引、按字节分页的 LRU 页缓存、列式上下文缓存、
 //! FIFO 索引缓存、`cache_status` 计数（`#keys` 语义）。
 

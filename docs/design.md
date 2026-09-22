@@ -24,6 +24,7 @@ crate / 模块级结构与「结构正义」硬规则见 [`refactor.md`](refacto
 |---|---|---|
 | `lua/tiger_sentence_cache.lua` | `hux-core`: `cache.rs` | fixture 金样（状态/淘汰序） |
 | `lua/tiger_sentence_ngram.lua` | `tiger/ngram.rs` | `logp`/`obs`/`status` 逐位 |
+| `lua/tiger_sentence_fivegram.lua` | `tiger/fivegram.rs`（TCSKNM03 五阶） | `step`/`obs`/`status` 逐位 + 五阶解码金样 |
 | `lua/tiger_sentence.lua`（词库/解码/证据） | `tiger/lexicon.rs` + `tiger/decode.rs` | 数据索引 + 解码/证据/学习快照 |
 | `lua/tiger_sentence_learning.lua` | `hux-core`: `learning.rs`（机制）+ `tiger/interaction/learning_glue.rs`（策略） | 检查重放 + learning 金样 |
 | `lua/tiger_sentence_lexical.lua` | `tiger/lexical.rs`（TCSLEX01） | 词先验金样 |
@@ -40,8 +41,14 @@ crate / 模块级结构与「结构正义」硬规则见 [`refactor.md`](refacto
   可写数据（选项 / 学习库 / 模型）落用户目录；开发可用 `HUX_DATA_DIRS`（冒号分隔）
   与 `HUX_MODEL` 覆盖。
 - 运行数据：码表四件套（`tiger_sentence.{codes,char_ranks,full_code_whitelist,supplement}.txt`）、
-  `models/sentence-ngram-mobile.bin`（TCSKNM02）、`symbols.yaml`、词先验（TCSLEX01）、音反查索引（TCSRV01）、
-  `tiger_sentence.options.yaml`、学习库 `tiger_sentence_learning_<hash>.userdb/`（LevelDB 同构）。
+  整句模型（`models/sentence-fivegram-mobile.bin` TCSKNM03 五阶 / `models/sentence-ngram-mobile.bin`
+  TCSKNM02 三阶，按文件自身 magic 识别，取先命中者）、`symbols.yaml`、词先验（TCSLEX01）、
+  音反查索引（TCSRV01）、`tiger_sentence.options.yaml`、
+  学习库 `tiger_sentence_learning_<hash>.userdb/`（LevelDB 同构）。
+- 整句模型的文件名只决定**候选顺序**，不声明格式：装进哪个名字都由文件头 magic 派发
+  （同一个名字可放任一格式）。三阶口径打分是 `logp(prev2, prev1, target)` 的无状态调用；
+  五阶口径的 beam 状态额外携带 `LmHistory`（最近 4 个 token + count），打分走 `step` **就地**推进
+  （`prev2`/`prev1` 仍随路径滚动，但只服务三阶口径）。
 - 仓库 `data/` 的清单、来源与署名见 [`../data/README.md`](../data/README.md) 与
   [`LEXICAL_PRIOR_ATTRIBUTION.md`](LEXICAL_PRIOR_ATTRIBUTION.md)。
 

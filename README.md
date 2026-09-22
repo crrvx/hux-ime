@@ -37,15 +37,19 @@ git clone https://github.com/crrvx/hux-ime && cd hux-ime
 
 n-gram 模型不随包，能明显提升整句质量： \
 从 [上游 model release](https://github.com/lvyww/tiger-sentense-rime/releases/tag/model)
-获取 `sentence-ngram-mobile.bin`，放入位置（二选一）：
+获取整句模型，放入位置（二选一）：
 
 - 用户级 `~/.local/share/fcitx5/hux/models/`（推荐）
 - 系统级 `/usr/share/fcitx5/hux/models/`
 
-不装也能使用，仅整句排序略弱。 \
-上游自 2026-09-20 起默认模型为 `full-kn-m5-v2`（469,886,928 字节 / 448.12 MiB，
-sha256 `c0063898fdff27c1fb00c1c72fa28a6c1b375fade1ec2045d731b9db958bdecc`；文件名与
-`TCSKNM02` 格式不变，另有 fused 214 MiB 变体）。本仓不捆绑模型，以 Release 附件校验值为准。
+上游自 2026-09-22 起默认五阶 `sentence-fivegram-mobile.bin`（TCSKNM03，460,693,519 字节 /
+439.35 MiB，sha256 `4e6d79b957a55edf35cd9e2e66c62bd0bbe598581b7dc088b462122a713172a7`）；
+旧三阶 `sentence-ngram-mobile.bin`（TCSKNM02 三阶，`full-kn-m5-v2` 469,886,928 字节 / 448.12 MiB，
+sha256 `c0063898fdff27c1fb00c1c72fa28a6c1b375fade1ec2045d731b9db958bdecc`）仍可作兼容回退。
+两者按文件自身格式识别，查找时**先五阶后三阶**（用户目录 `models/` → 用户目录根部 →
+共享目录 `models/`，细则见 [`docs/usage.md`](docs/usage.md)）。
+
+不装也能使用，仅整句排序略弱。本仓不捆绑模型，以 Release 附件校验值为准。
 
 **基本键位**
 

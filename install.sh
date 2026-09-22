@@ -101,7 +101,8 @@ cat <<'EOF'
   1. 在 fcitx5 配置工具里「添加输入法」→ 虎虚（hux）。
   2. （可选）n-gram 模型不随包，但能明显提升整句质量：
      下载：https://github.com/lvyww/tiger-sentense-rime/releases/tag/model
-     放置：~/.local/share/fcitx5/hux/models/sentence-ngram-mobile.bin
+     放置：~/.local/share/fcitx5/hux/models/sentence-fivegram-mobile.bin（五阶，推荐）
+           或 ~/.local/share/fcitx5/hux/models/sentence-ngram-mobile.bin（三阶，兼容回退）
      或系统级：/usr/share/fcitx5/hux/models/（与 rime 共用同一份也可）
 
 卸载：./uninstall.sh（保留用户数据）；./uninstall.sh --purge（连用户数据一起清除）。
