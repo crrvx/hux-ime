@@ -631,7 +631,7 @@ fn punct_shape_comment(punct: &str) -> String {
 /// 本仓只落地「模式放行 + 撇号保留在输入中」，**不实现音节切分**：反查段由本段独占，
 /// 音节按拼写键前缀匹配建边，而拼写表不含 `'` ⇒ 含撇号的反查段同样无候选（与金样一致）。
 /// 撇号在 abc 段一侧的效果见 `interaction::translate::SEGMENTATION_DELIMITER`
-/// 与 `docs/refactor.md` §8「delimiter pin 差异」。
+/// 与 `docs/upstream-deviations.md` ③。
 pub fn matches_pattern(input: &[u8], prefix: char) -> bool {
     let prefix = prefix as u8;
     let Some(rest) = input.strip_prefix(&[prefix][..]) else {

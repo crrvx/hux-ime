@@ -174,7 +174,7 @@ pub fn translate(
 /// 本仓末段是 raw 段（无菜单）⇒ `Up`/`Down`/`Page_*` 不被消费，上游主干单段 abc ⇒ 消费。
 /// 已按期望值登记在 `tests/key_sequence_differential.rs` 的 `DEVIATIONS`
 /// （种类 `BranchPinDelimiter`，用例 `apostrophe_digit_page`/`apostrophe_semicolon_page`），
-/// 理由与回归做法见 `docs/refactor.md` §8「delimiter pin 差异」。
+/// 理由与回归做法见 `docs/upstream-deviations.md` ③。
 pub(crate) const SEGMENTATION_ALPHABET: &str = "zyxwvutsrqponmlkjihgfedcba;';0123456789~";
 pub(crate) const SEGMENTATION_INITIALS: &str = "abcdefghijklmnopqrstuvwxyz~";
 pub(crate) const SEGMENTATION_DELIMITER: &str = " '";

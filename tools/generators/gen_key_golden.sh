@@ -22,7 +22,7 @@ src=${1:?usage: gen_key_golden.sh <librime-src>}
 key_table_cc="$src/src/rime/key_table.cc"
 cases="$root/tools/cases/key_cases.txt"
 out="$root/goldens/key.tsv.gz"
-# 参照 pin（键名表来源；与 goldens/README.md、CI 的 `LIBRIME_COMMIT` 同值）。
+# 参照 pin（键名表来源；与 goldens/regenerate.md、CI 的 `LIBRIME_COMMIT` 同值）。
 librime_pin=33e78140250125871856cdc5b42ddc6a5fcd3cd4
 librime_url=${LIBRIME_URL:-https://github.com/rime/librime}
 work=$(mktemp -d)

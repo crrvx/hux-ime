@@ -10,7 +10,7 @@
 //! `values` 却**不会**作用到会话上——宿主标准项由宿主自身维护，方案/内核不接管。
 //! 若将来要让某个键也走持久化，须先把角色加入 `store_defaults`（否则等同死读）。
 
-use hashbrown::HashMap;
+use hux_core::collections::Map;
 use std::path::{Path, PathBuf};
 
 use crate::Options;
@@ -48,7 +48,7 @@ fn child<'a>(value: &'a Yaml, key: &str) -> Option<&'a Yaml> {
 }
 
 /// 读取 `options:` 下的布尔键值（可选限制为“仅补缺失项”）。
-fn read_options(value: &Yaml, values: &mut HashMap<String, bool>, fill_missing_only: bool) {
+fn read_options(value: &Yaml, values: &mut Map<String, bool>, fill_missing_only: bool) {
     let Some(Yaml::Hash(map)) = child(value, OPTIONS_KEY) else {
         return;
     };
@@ -71,7 +71,7 @@ impl OptionsStore {
 
     /// 同 [`OptionsStore::load`]，但以给定缺省回退缺失项
     /// （addon `Settings` 经此成为存储层缺省，合并顺序仍为 `options.yaml` > 设置 > 内建）。
-    pub fn load_with_defaults(user_dir: &Path, defaults: HashMap<String, bool>) -> Self {
+    pub fn load_with_defaults(user_dir: &Path, defaults: Map<String, bool>) -> Self {
         let path = user_dir.join(OPTIONS_FILE);
         let mut document = match std::fs::read_to_string(&path) {
             Ok(text) => YamlLoader::load_from_str(&text)
@@ -83,7 +83,7 @@ impl OptionsStore {
         if !matches!(document, Yaml::Hash(_)) {
             document = Yaml::Hash(yaml_rust2::yaml::Hash::new());
         }
-        let mut values = HashMap::new();
+        let mut values = Map::new();
         read_options(&document, &mut values, false);
         // legacy：`user.yaml` 的 `var/option/<name>`（只读，仅补缺失项）。
         if let Ok(text) = std::fs::read_to_string(user_dir.join(LEGACY_FILE))
@@ -127,7 +127,7 @@ impl OptionsStore {
         self.save().is_ok()
     }
 
-    pub fn set_defaults(&mut self, defaults: HashMap<String, bool>) {
+    pub fn set_defaults(&mut self, defaults: Map<String, bool>) {
         self.options.defaults = defaults;
     }
 
@@ -299,7 +299,7 @@ mod tests {
     #[test]
     fn provided_defaults_fill_missing_keys() {
         let dir = temp_dir("defaults");
-        let defaults = HashMap::from([("tiger_sentence_early_commit".to_string(), false)]);
+        let defaults = Map::from([("tiger_sentence_early_commit".to_string(), false)]);
         let mut store = OptionsStore::load_with_defaults(&dir, defaults);
         let mut context = hux_core::session::Context::new();
         store.sync(&mut context);

@@ -10,7 +10,8 @@
 //! 映射依据（pin `33e78140` / 参照 schema）：
 //! - 菜单布局 `Horizontal | Stacked`（未设 `_vertical`/`_linear`/`_horizontal`）；
 //! - `menu/page_size: 5`（`page_down_cycle` 缺省 false）；页大小与翻页键可由 addon 经
-//!   [`HostOptions`] 配置（缺省同参照：`-`（paging）→ Page_Up、`=`（has_menu）→ Page_Down）；
+//!   [`HostOptions`] 配置（缺省取参照 schema 的键：`-` → Page_Up、`=` → Page_Down；**前置条件
+//!   按本仓语义**——菜单可见即判翻页，不要求参照 `when: paging` 的标签，见 [`paging_action`]）；
 //! - `key_binder/bindings`：`Tab` → Down、`Shift+Tab` → Up（`when: has_menu`）。
 //!
 //! 简化（有金样覆盖的部分一律按真值实现）：
@@ -29,21 +30,23 @@ pub const MAX_PAGE_SIZE: usize = 10;
 
 /// 宿主可配置项（addon 设置注入）：每页候选个数与上/下翻页键（可多项）。
 ///
-/// 缺省即参照 schema：`menu/page_size: 5`、`-`（`when: paging`）→ Page_Up、
-/// `=`（`when: has_menu`）→ Page_Down；Page_Up/Page_Down 等导航键不随此变化。
+/// 缺省即参照 schema 的键位：`menu/page_size: 5`、`-` → Page_Up、`=` → Page_Down；
+/// 前置条件按本仓语义（**菜单可见即判翻页，两侧同前置**，见 [`paging_action`]）；
+/// Page_Up/Page_Down 等导航键不随此变化。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostOptions {
     /// 每页候选个数（≥ 1；须与宿主候选面板一致）。
     pub page_size: usize,
-    /// 上翻页键列表：**已翻过页时生效**（参照 `when: paging`；标签由翻页写入，
-    /// 未翻页时不消费该键，落作标点/输入——见 [`key_binder`] 与 `docs/config.md`）。
+    /// 上翻页键列表：**菜单可见时生效**（不要求参照 `when: paging` 的末段标签——本仓按
+    /// 用户决定把上/下翻页统一为「菜单可见即拦截」，见 [`paging_action`] 与
+    /// `docs/upstream-deviations.md` ①；代价是菜单可见时该键不再落标点）。
     pub page_up_keys: Vec<KeyEvent>,
     /// 下翻页键列表：菜单可用（`has_menu`）时生效。
     pub page_down_keys: Vec<KeyEvent>,
     /// 翻页循环（参照 `menu/page_down_cycle`，默认关）：**末页再下翻回首页**。
     ///
     /// 只有下翻方向与参照一致：参照 `Selector::PreviousPage` 没有循环分支
-    /// （首页上翻恒 `Highlight(0)` 并写 `paging` 标签），故本项不作用于上翻（审计 F3）。
+    /// （首页上翻恒 `Highlight(0)`），故本项不作用于上翻（审计 F3）。
     pub page_cycle: bool,
 }
 
@@ -182,16 +185,22 @@ pub enum PagingDir {
 
 /// `key_binder` 的翻页判据：该键是否会被判为翻页。
 ///
-/// 两侧条件**分别**对齐参照 `KeyBindingConditions`（`key_binder.cc:248-266`，审计 F11）：
-/// - 命中 `page_up_keys` 且末段带 `paging` 标签（`kWhenPaging`：**只看标签**，
-///   不带 `has_menu` / `!ascii_mode` 前置）→ [`PagingDir::Up`]；
-/// - 命中 `page_down_keys` 且菜单可用（`kWhenHasMenu` = `HasMenu() && !ascii_mode`）
-///   → [`PagingDir::Down`]；
-/// - 其余（未命中绑定 / 上翻页键未翻过页 / 下翻页键无菜单）→ `None`。
+/// 两侧**同一前置条件**（[`menu_available`] = `!ascii_mode && has_menu`）：
+/// - 命中 `page_up_keys` → [`PagingDir::Up`]；
+/// - 命中 `page_down_keys` → [`PagingDir::Down`]；
+/// - 其余（菜单不可用 / 未命中绑定）→ `None`。
 ///
 /// 宿主绑定与方案处理器共用本判据（避免两处条件漂移）。方案侧在「菜单可见 + 可打印 ASCII 标点」
 /// 分支入口先问一次：被宿主判为翻页的键（如缺省 `=`/`-`，以及 schema 绑到翻页的 `[`/`]`）
-/// 不由该分支消费，让出被其遮蔽的翻页绑定——**本仓有意偏离上游 `abad411`**，见 `docs/refactor.md` §8。
+/// 不由该分支消费，让出被其遮蔽的翻页绑定——**本仓有意偏离上游 `abad411`**，见 `docs/upstream-deviations.md`。
+///
+/// **上翻页的前置条件是本仓的语义强化（用户决定，2026-09）**：参照的 `-` 绑定带
+/// `when: paging`（`key_binder.cc:248-266` 的 `kWhenPaging` **只看末段 `paging` 标签**，
+/// 先翻过页才吃该键），本仓改为与下翻页同前置「菜单可见即拦截」，不再看标签。
+/// **已知并接受的代价**：菜单可见时 `-`/`=`/`[`/`]` 不再能作为标点打出（被判为翻页而消费）。
+/// 偏离登记见 `crates/hux-scheme/tiger/tests/key_sequence_differential.rs` 的 `DEVIATIONS`。
+///
+/// `ascii_mode` 前置**两侧都保留**：`ascii_mode` 打开时翻页键一律不拦截，仍落标点/原路径。
 pub fn paging_action(
     context: &Context,
     options: &HostOptions,
@@ -205,11 +214,11 @@ pub fn paging_action(
         keys.iter()
             .any(|key| key.keycode == key_event.keycode && key.modifier == key_event.modifier)
     };
-    if bound(&options.page_up_keys) {
-        return has_paging_tag(context).then_some(PagingDir::Up);
-    }
     if !menu_available(context) {
         return None;
+    }
+    if bound(&options.page_up_keys) {
+        return Some(PagingDir::Up);
     }
     if bound(&options.page_down_keys) {
         return Some(PagingDir::Down);
@@ -217,15 +226,15 @@ pub fn paging_action(
     None
 }
 
-/// 参照 `KeyBinder` 的前置条件：非 `ascii_mode` 且 `has_menu`（下翻页判据与
-/// [`key_binder`] 的 Tab/Ctrl 绑定共用；上翻页判据只有 `paging` 标签，见 [`paging_action`]）。
+/// 参照 `KeyBinder` 的前置条件：非 `ascii_mode` 且 `has_menu`
+/// （上/下翻页判据与 [`key_binder`] 的 Tab/Ctrl 绑定共用）。
 fn menu_available(context: &Context) -> bool {
     !context.get_option("ascii_mode") && context.has_menu()
 }
 
 /// 参照 `KeyBinder::ProcessKeyEvent`：Tab/Shift+Tab 固定，翻页键取 [`HostOptions`]。
-/// 翻页判据统一走 [`paging_action`]（上翻页键的 `when: paging` 标签未置位时**不消费**——
-/// 交后续处理器落作标点/输入，与参照一致）。
+/// 翻页判据统一走 [`paging_action`]（菜单不可用时翻页键**不消费**——
+/// 交后续处理器落作标点/输入）。
 fn key_binder(key_event: &KeyEvent, context: &mut Context, options: &HostOptions) -> HostResult {
     if let Some(dir) = paging_action(context, options, key_event) {
         return match dir {
@@ -319,7 +328,6 @@ fn selector_action(
                     !linear
                 } else {
                     context.highlight(index - 1);
-                    mark_paging(context);
                     true
                 }
             }
@@ -340,7 +348,6 @@ fn selector_action(
                     true // 末页不再前进，但吞键
                 } else {
                     context.highlight(index);
-                    mark_paging(context);
                     true
                 }
             }
@@ -354,14 +361,14 @@ fn selector_action(
             }
             // 参照 `Selector::PreviousPage`（`gear/selector.cc`）：
             // `index = selected_index < page_size ? 0 : selected_index - page_size` ——
-            // **已在首页也照常改写高亮**（归 0，不是「不动」），随后**无条件**写 `paging` 标签
-            // （即便停在首页：`when: paging` 的上翻页绑定据此成立，审计 F2）；
+            // **已在首页也照常改写高亮**（归 0，不是「不动」）；参照另写
+            // `comp.back().tags.insert("paging")`，本仓随其唯一读取方（`when: paging` 判据）
+            // 删除后不再写该标签（见 [`paging_action`]，审计 F2 的结论按新语义重述）；
             // 参照的 `menu/page_down_cycle` 只在 `NextPage` 被读，上翻方向**不循环**（审计 F3）。
             // `saturating_sub` 即参照三元式 `selected < page_size ? 0 : selected - page_size`：
             // 已在首页（含第一页内的任意高亮）时归 0。
             let index = segment.selected_index.saturating_sub(page_size);
             context.highlight(index);
-            mark_paging(context);
             true
         }
         SelectorAction::NextPage => {
@@ -378,7 +385,6 @@ fn selector_action(
                 // 已在末页：默认吞键不循环；开启循环则回到首页。
                 if options.page_cycle {
                     context.highlight(0);
-                    mark_paging(context);
                 }
                 true
             } else {
@@ -388,7 +394,6 @@ fn selector_action(
                     index
                 };
                 context.highlight(index);
-                mark_paging(context);
                 true
             }
         }
@@ -414,23 +419,6 @@ fn selector_action(
         HostResult::Consumed
     } else {
         HostResult::Forward
-    }
-}
-
-/// 参照 `comp.back().tags.insert("paging")`：翻过页后置位，使上翻页键的 `when: paging` 成立。
-/// 末段是否带 `paging` 标签（参照 `KeyBinder` 的 `kWhenPaging` 判据）。
-fn has_paging_tag(context: &Context) -> bool {
-    context
-        .composition
-        .back()
-        .is_some_and(|segment| segment.has_tag("paging"))
-}
-
-fn mark_paging(context: &mut Context) {
-    if let Some(segment) = context.composition.back_mut()
-        && !segment.has_tag("paging")
-    {
-        segment.tags.push("paging".to_string());
     }
 }
 
@@ -634,13 +622,13 @@ fn editor(
             }
             true
         }
-        (0xff08, 0) | (0xff08, K_SHIFT_MASK) => {
+        (0xff08, 0) | (0xff08, K_SHIFT_MASK) | (0xff08, K_CONTROL_MASK) => {
             // `{XK_BackSpace, 0}` = RevertLastEdit；Shift 变体走 `FallbackOptions::All` 回退。
+            //
+            // **Ctrl 变体（有意偏离上游）**：参照是 `{XK_BackSpace, kControlMask}` =
+            // `Editor::BackToPreviousSyllable`（按音节回退），本仓按要求**不做**该交互——
+            // `Ctrl+BackSpace` 与普通 `BackSpace` 同义，见 `docs/upstream-deviations.md` ④。
             revert_last_edit(context);
-            true
-        }
-        (0xff08, K_CONTROL_MASK) => {
-            back_to_previous_syllable(context);
             true
         }
         (0xff0d, 0) => {
@@ -681,12 +669,15 @@ fn editor(
             }
             true
         }
-        (0xffff, 0) | (0xffff, K_SHIFT_MASK) => {
+        (0xffff, 0) | (0xffff, K_SHIFT_MASK) | (0xffff, K_CONTROL_MASK) => {
             // `{XK_Delete, 0}` = DeleteChar；Shift 变体走回退。
+            //
+            // **Ctrl 变体（有意偏离上游）**：参照是 `{XK_Delete, kControlMask}` =
+            // `Editor::DeleteCandidate`，本仓按要求**不做**该交互——`Ctrl+Delete` 与普通 `Delete`
+            // 同义，见 `docs/upstream-deviations.md` ④。
             context.delete_input(1);
             true
         }
-        (0xffff, K_CONTROL_MASK) => true, // DeleteCandidate：设置选中并通知（本实现无删除通道）
         (0xff1b, 0) => {
             cancel_composition(context);
             true
@@ -719,16 +710,6 @@ fn confirm(context: &mut Context) -> bool {
 
 /// 参照 `Editor::RevertLastEdit`：`ReopenPreviousSelection() || (PopInput() && ReopenPreviousSegment())`。
 fn revert_last_edit(context: &mut Context) {
-    if reopen_previous_selection(context) {
-        return;
-    }
-    if context.pop_input(1) {
-        reopen_previous_segment(context);
-    }
-}
-
-/// 参照 `Editor::BackToPreviousSyllable`：无词组 spans 时等价于退格。
-fn back_to_previous_syllable(context: &mut Context) {
     if reopen_previous_selection(context) {
         return;
     }
@@ -1035,10 +1016,14 @@ mod tests {
     }
 
     /// 参照 `Selector::PreviousPage`：`selected_index < page_size` 时 `index = 0`
-    /// ——**已在首页也照常归零高亮**（不是「不动」），并**无条件**写 `paging` 标签。
+    /// ——**已在首页也照常归零高亮**（不是「不动」，审计 F2/F3）。
+    ///
+    /// 参照另写 `comp.back().tags.insert("paging")`；本仓该标签的**唯一读取方**
+    /// （`when: paging` 判据）已随「菜单可见即拦截」的用户决定删除，故不再写
+    /// （不留「写了但没人读」的字段——反向断言见本用例）。
     #[test]
-    fn selector_page_up_home_resets_highlight_and_marks_paging() {
-        // 显式 `Page_Up`（selector keymap，不经 `when: paging` 绑定）。
+    fn selector_page_up_home_resets_highlight_without_a_write_only_tag() {
+        // 显式 `Page_Up`（selector keymap，不经翻页键绑定）。
         let options = custom_page_options(2);
         let mut context = context_with_menu(&["a", "b", "c", "d", "e"], 1);
         assert_eq!(
@@ -1051,39 +1036,36 @@ mod tests {
             "首页上翻归零高亮（参照 Highlight(0)）"
         );
         assert!(
-            context
+            !context
                 .composition
                 .back()
                 .is_some_and(|segment| segment.has_tag("paging")),
-            "首页上翻同样写 `paging` 标签（参照无条件 insert，审计 F2）"
+            "本仓不再写 `paging` 标签（唯一读取方已删除，见 `paging_action`）"
         );
     }
 
-    /// 审计 F2：`Page_Up` 停在首页后，默认上翻页键 `-`（`when: paging`）必须成立，
-    /// 不得落标点分支把组合提前上屏。
+    /// 审计 F2 的回归场景在新语义下仍须成立：`Page_Up` 停在首页后，紧随的上翻页键
+    /// `-` 必须**翻页**（消费、不提交），不得落标点分支把组合提前上屏。
+    ///
+    /// 与旧语义的差别只在判据来源：原先靠「翻页写入 `paging` 标签」，现在靠「菜单可见」
+    /// （[`paging_action`]），故用例在按 `Page_Up` **之前**就断言 `Some(Up)`——
+    /// 若有人把标签判据加回来（而标签已无人写），本用例立刻失败。
     #[test]
-    fn page_up_at_first_page_arms_the_paging_binding() {
+    fn page_up_key_holds_at_the_first_page() {
         let options = HostOptions::default();
         let mut context = context_with_menu(&["a", "b", "c", "d", "e", "f"], 0);
         assert_eq!(
             paging_action(&context, &options, &key_of("minus")),
-            None,
-            "未翻页时 `when: paging` 不成立"
+            Some(PagingDir::Up),
+            "菜单可见即判上翻页（不要求 `paging` 标签）"
         );
         assert_eq!(press(&mut context, "Page_Up"), HostResult::Consumed);
-        assert!(
-            context
-                .composition
-                .back()
-                .is_some_and(|segment| segment.has_tag("paging")),
-            "Page_Up 停在首页也必须写 `paging` 标签"
-        );
         assert_eq!(
             paging_action(&context, &options, &key_of("minus")),
             Some(PagingDir::Up),
-            "标签置位后上翻页键判为翻页"
+            "首页上翻后判据不变（高亮仍 0，菜单仍在）"
         );
-        // 宿主链：`-` 走翻页（消费、不提交、输入不变）。
+        // 宿主链：`-` 走翻页（消费、不提交、输入不变、高亮留在首页）。
         assert_eq!(press(&mut context, "minus"), HostResult::Consumed);
         assert_eq!(context.last_commit_text(), "");
         assert_eq!(context.input(), b"ab");
@@ -1153,43 +1135,51 @@ mod tests {
         assert_eq!(selected(&single), 1);
     }
 
+    /// 新语义（用户决定）：上翻页键**只要菜单可见**就判为翻页并消费，不再要求
+    /// 「已翻过页」（参照 `when: paging` 标签已删除）；菜单不可用（无菜单 / `ascii_mode`）时
+    /// 不消费——该键继续下落（无标点表时由 `editor` 的可打印字符路径提交组合，
+    /// 有标点表时落作标点）。
     #[test]
-    fn selector_page_up_requires_paging_tag() {
-        // 参照 `key_binder`：上翻页键的绑定条件是 `when: paging`。
-        // 未翻页时不消费——该键继续下落（无标点表时由 `editor` 的可打印字符路径
-        // 提交组合，有标点表时落作标点），与参照一致。
+    fn selector_page_up_requires_a_visible_menu() {
         let mut fresh = context_with_menu(&["a", "b", "c", "d", "e", "f"], 0);
         assert_eq!(
             press(&mut fresh, "minus"),
-            HostResult::Forward,
-            "未翻页时上翻页键不消费"
-        );
-
-        // 独立上下文：先下翻一页（`=`，`when: has_menu`）写入 `paging` 标签，再按上翻页键。
-        let mut paged = context_with_menu(&["a", "b", "c", "d", "e", "f"], 0);
-        assert_eq!(press(&mut paged, "equal"), HostResult::Consumed);
-        assert!(
-            paged
-                .composition
-                .back()
-                .is_some_and(|segment| segment.has_tag("paging")),
-            "翻页应写入 paging 标签"
-        );
-        assert_eq!(
-            press(&mut paged, "minus"),
             HostResult::Consumed,
-            "翻过页后上翻页键生效"
+            "菜单可见时上翻页键生效（首屏亦然）"
         );
+        assert_eq!(selected(&fresh), 0, "已在首页 ⇒ 归零高亮（不循环）");
+        assert_eq!(fresh.last_commit_text(), "");
+        assert_eq!(fresh.input(), b"ab", "翻页不改动输入");
 
         // 无菜单：不消费（交宿主）。
         let mut idle = Context::new();
         assert_eq!(press(&mut idle, "minus"), HostResult::Forward);
+
+        // `ascii_mode`：两侧翻页键都不拦截（`menu_available` 前置）——键落回后续处理器，
+        // 而不是被 `key_binder` 吞成翻页（证据：组合被后续处理器提交，翻页从不提交）。
+        let options = HostOptions::default();
+        let mut ascii = context_with_menu(&["甲", "乙"], 0);
+        ascii.set_option("ascii_mode", true);
+        assert_eq!(paging_action(&ascii, &options, &key_of("minus")), None);
+        assert_eq!(paging_action(&ascii, &options, &key_of("equal")), None);
+        assert_eq!(
+            press(&mut ascii, "minus"),
+            HostResult::Forward,
+            "键交宿主的可打印字符路径（翻页会返回 Consumed）"
+        );
+        assert_eq!(
+            ascii.last_commit_text(),
+            "甲",
+            "键落回后续处理器（editor 提交组合）；翻页路径不提交"
+        );
+        assert!(ascii.input().is_empty());
     }
 
+    /// 方案侧「菜单可见 + 标点」分支与宿主 `key_binder` 共用此判据：
+    /// 缺省绑定 `=` → Down、`-` → Up，**两侧同前置**（菜单可见；`ascii_mode` 关闭两侧）；
+    /// 判据不看 `paging` 标签（本仓语义强化，见函数文档与 `docs/upstream-deviations.md` ①）。
     #[test]
     fn paging_action_is_the_shared_key_binder_predicate() {
-        // 方案侧「菜单可见 + 标点」分支与宿主 `key_binder` 共用此判据：
-        // 缺省绑定 `=`（`when: has_menu`）→ Down、`-`（`when: paging`）→ 未翻页 None / 翻页后 Up。
         let options = HostOptions::default();
         let mut menu = context_with_menu(&["a", "b", "c", "d", "e", "f"], 0);
         assert_eq!(
@@ -1198,24 +1188,25 @@ mod tests {
         );
         assert_eq!(
             paging_action(&menu, &options, &key_of("minus")),
-            None,
-            "未翻页时 `when: paging` 不成立"
+            Some(PagingDir::Up),
+            "菜单可见即判上翻页（不要求先翻过页）"
         );
         assert_eq!(press(&mut menu, "equal"), HostResult::Consumed);
         assert_eq!(
             paging_action(&menu, &options, &key_of("minus")),
             Some(PagingDir::Up),
-            "翻过页后 `paging` 标签置位"
+            "翻页后判据不变"
         );
 
-        // 无菜单 / `ascii_mode`：下翻页（`when: has_menu`）一律不成立。
+        // 无菜单 / `ascii_mode`：两侧一律不成立。
         let idle = Context::new();
         assert_eq!(paging_action(&idle, &options, &key_of("equal")), None);
+        assert_eq!(paging_action(&idle, &options, &key_of("minus")), None);
         let mut ascii = context_with_menu(&["a", "b"], 0);
         ascii.set_option("ascii_mode", true);
         assert_eq!(paging_action(&ascii, &options, &key_of("equal")), None);
-        // 上翻页判据只有 `paging` 标签（参照 `kWhenPaging` 不带 `has_menu`/`ascii_mode`
-        // 前置，审计 F11）：`ascii_mode` 下标签置位仍判为翻页。
+        assert_eq!(paging_action(&ascii, &options, &key_of("minus")), None);
+        // 标签不再参与判据：即便人为置位（本仓已无写入方），`ascii_mode` 下仍不判翻页。
         ascii
             .composition
             .back_mut()
@@ -1224,7 +1215,8 @@ mod tests {
             .push("paging".to_string());
         assert_eq!(
             paging_action(&ascii, &options, &key_of("minus")),
-            Some(PagingDir::Up)
+            None,
+            "`paging` 标签已不是判据（旧 F11 语义随用户决定退役）"
         );
 
         // schema 绑定的其它翻页键按 options 生效（`[`/`]`），未绑定的键不判翻页。
@@ -1241,8 +1233,8 @@ mod tests {
         );
         assert_eq!(
             paging_action(&menu, &custom, &key_of("bracketleft")),
-            None,
-            "`[` 同样要求 `paging` 标签"
+            Some(PagingDir::Up),
+            "`[` 与 `-` 同前置（菜单可见即翻页）"
         );
         assert_eq!(
             paging_action(&menu, &custom, &key_of("equal")),
@@ -1257,6 +1249,41 @@ mod tests {
             paging_action(&menu, &custom, &key_of("bracketleft")),
             Some(PagingDir::Up)
         );
+    }
+
+    /// **负向对照（用户决定 B 的另一半）**：`ascii_mode` 打开时翻页键**不**被拦截，
+    /// 仍落标点路径（`punctuator` 消费并提交「组合 + 标点」）；同一上下文关掉 `ascii_mode`
+    /// 则判为翻页（消费、不提交、输入不变）。
+    #[test]
+    fn ascii_mode_paging_keys_fall_through_to_punctuation() {
+        let table = PunctTable::parse(
+            "punctuator:\n  half_shape:\n    \"-\": { commit: － }\n    \"=\": { commit: ＝ }\n",
+        )
+        .expect("punct table");
+        let options = HostOptions::default();
+        // `ascii_mode` 打开：`-`/`=` 都不判翻页。
+        let mut ascii = context_with_menu(&["甲", "乙"], 0);
+        ascii.set_option("ascii_mode", true);
+        assert_eq!(
+            paging_action(&ascii, &options, &key_of("minus")),
+            None,
+            "`ascii_mode` 下上翻页键不拦截"
+        );
+        assert_eq!(
+            process(&mut ascii, "minus", Some(&table), &options),
+            HostResult::Consumed,
+            "`-` 落标点分支"
+        );
+        assert_eq!(ascii.last_commit_text(), "甲－", "确认组合后落标点");
+        assert!(ascii.input().is_empty());
+        // 同一形态的上下文关掉 `ascii_mode`：判为翻页（不提交、输入不变）。
+        let mut menu = context_with_menu(&["甲", "乙"], 0);
+        assert_eq!(
+            process(&mut menu, "minus", Some(&table), &options),
+            HostResult::Consumed
+        );
+        assert_eq!(menu.last_commit_text(), "", "翻页不提交");
+        assert_eq!(menu.input(), b"ab", "翻页不改动输入");
     }
 
     #[test]
@@ -1407,9 +1434,8 @@ mod tests {
     }
 
     #[test]
-    fn editor_confirm_cancel_and_syllable_bindings() {
-        // 参照 `ExpressEditor`：`{XK_space,0}`=Confirm、`{XK_Escape,0}`=CancelComposition、
-        // `{XK_BackSpace,kControlMask}`=BackToPreviousSyllable。
+    fn editor_confirm_cancel_and_bindings() {
+        // 参照 `ExpressEditor`：`{XK_space,0}`=Confirm、`{XK_Escape,0}`=CancelComposition。
         // 这些键在真机路径上会先被方案 `processor` 消费，故金样覆盖不到宿主链，须在此钉住。
         let mut context = context_with_menu(&["甲", "乙"], 0);
         assert_eq!(press(&mut context, "space"), HostResult::Consumed);
@@ -1429,11 +1455,86 @@ mod tests {
         assert!(raw_only.is_composing());
         assert_eq!(press(&mut raw_only, "Escape"), HostResult::Consumed);
         assert!(!raw_only.is_composing(), "无段时取消应整体清空");
+    }
 
-        let mut context = context_with_menu(&["甲", "乙"], 0);
+    /// **有意偏离上游**（见 `docs/upstream-deviations.md`）：参照把
+    /// `Ctrl+BackSpace` 绑到 `BackToPreviousSyllable`（按音节回退）、`Ctrl+Delete` 绑到
+    /// `DeleteCandidate`；本仓按要求**取消这两个交互**，让它们与不带修饰的
+    /// `BackSpace`/`Delete` **同义**。
+    ///
+    /// 守护方式：对同一初始状态分别按「带 Ctrl」与「不带 Ctrl」，断言**结果状态逐字段相等**
+    /// ——这样即使将来 `BackSpace`/`Delete` 的语义变了，等价关系仍被钉住。
+    #[test]
+    fn ctrl_backspace_and_ctrl_delete_match_their_plain_variants() {
+        // 造一个「有组合输入 + 有菜单 + 有已选段」的状态：三种路径（pop_input /
+        // reopen_previous_selection / delete_input）都可能被走到，故等价断言必须比状态。
+        let build = || {
+            let mut context = context_with_menu(&["甲乙", "甲"], 0);
+            context.push_input(b"ab");
+            context
+        };
+
+        // `Context` 没有 `Debug`，故比对**可观测状态指纹**：输入 / 光标 / 组合段数与
+        // 选中态 / 菜单候选与高亮 / 已上屏文本。
+        let fingerprint = |context: &Context| -> String {
+            let segments = context
+                .composition
+                .segments
+                .iter()
+                .map(|segment| {
+                    format!(
+                        "{}..{}/sel={}/tr={}/idx={}/{:?}",
+                        segment.start,
+                        segment.end,
+                        segment.selected,
+                        segment.translated,
+                        segment.selected_index,
+                        segment.selected_candidate().map(|c| c.text.clone())
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(
+                "input={:?} caret={} composing={} menu={} segs=[{}] commit={:?}",
+                String::from_utf8_lossy(context.input()),
+                context.caret(),
+                context.is_composing(),
+                context.has_menu(),
+                segments,
+                context.last_commit_text(),
+            )
+        };
+
+        let mut plain_backspace = build();
+        let mut ctrl_backspace = build();
         assert_eq!(
-            press_raw(&mut context, 0xff08, K_CONTROL_MASK),
+            press_raw(&mut plain_backspace, 0xff08, 0),
             HostResult::Consumed
+        );
+        assert_eq!(
+            press_raw(&mut ctrl_backspace, 0xff08, K_CONTROL_MASK),
+            HostResult::Consumed
+        );
+        assert_eq!(
+            fingerprint(&plain_backspace),
+            fingerprint(&ctrl_backspace),
+            "Ctrl+BackSpace 必须与普通 BackSpace 完全同义（有意偏离）"
+        );
+
+        let mut plain_delete = build();
+        let mut ctrl_delete = build();
+        assert_eq!(
+            press_raw(&mut plain_delete, 0xffff, 0),
+            HostResult::Consumed
+        );
+        assert_eq!(
+            press_raw(&mut ctrl_delete, 0xffff, K_CONTROL_MASK),
+            HostResult::Consumed
+        );
+        assert_eq!(
+            fingerprint(&plain_delete),
+            fingerprint(&ctrl_delete),
+            "Ctrl+Delete 必须与普通 Delete 完全同义（有意偏离）"
         );
     }
 

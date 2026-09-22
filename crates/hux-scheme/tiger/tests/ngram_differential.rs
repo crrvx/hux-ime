@@ -15,9 +15,9 @@ use std::path::PathBuf;
 /// 真实模型样例差分（`goldens/local/`，不入库）缺失时的处理。
 ///
 /// 缺省**跳过**（CI 无 448 MiB 模型与本地抽样，`cargo test --workspace` 仍应全绿——
-/// 该口径已登记在 `docs/refactor.md` §8：CI 对真实模型路径零守护）；
+/// 该口径已登记在 `docs/review-ledger.md` §5.2 的 B5 行：CI 对真实模型路径零守护）；
 /// 置 `HUX_REQUIRE_SAMPLE=1` 时改为**失败**：本地复验 / 专项 CI 用它强制覆盖真实路径
-/// （配合 `goldens/README.md` 的 sample 生成命令）。
+/// （配合 `goldens/regenerate.md` 的 sample 生成命令）。
 fn sample_missing(reason: &str) {
     assert!(
         std::env::var_os("HUX_REQUIRE_SAMPLE").as_deref() != Some(std::ffi::OsStr::new("1")),

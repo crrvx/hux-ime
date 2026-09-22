@@ -370,7 +370,7 @@ fn context_valid(context: &str) -> bool {
 }
 
 /// 参照 `M.build` / `M.runtime_index` 的共用事件过滤（`build_valid` 曾是其同义包装，
-/// 已按 §8 清理口径删除，审计 F8）。
+/// 已按复核整改口径删除，审计 F8——见 `docs/review-ledger.md` §5.1）。
 fn event_valid(e: &Event) -> bool {
     mode_valid(&e.mode)
         && code_valid(&e.code)

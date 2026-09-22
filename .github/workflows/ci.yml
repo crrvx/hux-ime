@@ -12,10 +12,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# 供应链钉版本（复核整改第 4 批 C8，方案登记在 docs/refactor.md §8）：
-#   ① `uses: <action>@vN` 是移动标签 ⇒ 改为钉 commit sha（Dependabot 维护）；本轮未改，待办见 §8；
+# 供应链钉版本（复核整改第 4 批 C8，方案登记在 docs/review-ledger.md §5.4 的 M8 行）：
+#   ① `uses: <action>@vN` 是移动标签 ⇒ 改为钉 commit sha（Dependabot 维护）；本轮未改，待办见 review-ledger §0；
 #   ② Rust 工具链钉在 `rust-toolchain.toml`（channel + components），避免 stable 漂移让
-#      `cargo fmt --check` / clippy `-D warnings` 无预警变红；本轮未改，待办见 §8；
+#      `cargo fmt --check` / clippy `-D warnings` 无预警变红；本轮未改，待办见 review-ledger §0；
 #   ③ `archlinux:latest` 是 `golden-lua-latest` 作业的**目的**（测最新 Lua），故不钉镜像；
 #      但 `pacman -Sy` 部分升级已改为 `-Syu`（Arch 官方不推荐部分升级）。
 jobs:
@@ -110,14 +110,14 @@ jobs:
             echo "::error::hux-core 不得引用 hux_scheme / hux-scheme（注释除外，见 docs/refactor.md §7）"
             exit 1
           fi
-          # 契约去方案语义（docs/refactor.md §8①）：内核只留通用容器——角色词汇归 hux-cfg、
+          # 契约去方案语义（docs/review-ledger.md §4.2）：内核只留通用容器——角色词汇归 hux-cfg、
           # 选项键归方案，故 core 不得出现**带引号的**角色名 / 方案选项键字面量
           # （rime 标准名 full_shape/ascii_punct 由 core 宿主链自持，不在此列）。
           # 复核整改第 4 批 C6：先剥离注释再匹配 ⇒ 与 §7「注释与文档叙述不受影响」一致。
           if ! python3 tools/checks/rust_source_grep.py --root crates/hux-core/src \
               --pattern '"(early_commit|early_commit_to_preedit|allow_duplicate_single|digit_select|high_freq_limit|min_retained_raw_length|page_size|page_cycle|page_up_keys|page_down_keys|sound_to_char_shape_keys|char_to_sound_shape_keys|tab_learning)"|"tiger_sentence_' \
               --label "core 角色名/选项键字面量"; then
-            echo "::error::hux-core 契约不得出现角色名 / 方案选项键字面量（见 docs/refactor.md §8①）"
+            echo "::error::hux-core 契约不得出现角色名 / 方案选项键字面量（见 docs/review-ledger.md §4.2）"
             exit 1
           fi
           # 模块布局纪律（AGENTS.md：全仓无 `mod.rs`，只用 `foo.rs` + `foo/`）：
@@ -128,9 +128,9 @@ jobs:
             exit 1
           fi
       - name: Verify golden checksums & headers
-        # 复核整改第 4 批 M2：逐行解析 goldens/README.md 的 sha256 表并与实际文件比对，
+        # 复核整改第 4 批 M2：逐行解析 goldens/regenerate.md 的 sha256 表并与实际文件比对，
         # 另核对三份「不重生成」金样（key / key_sequence / sound_to_char_shape）的内部头部
-        # （`# reference … @ <pin>` 与来源文件 sha256）与 README 声明的 pin 是否一致。
+        # （`# reference … @ <pin>` 与来源文件 sha256）与 regenerate.md 声明的 pin 是否一致。
         run: python3 tools/checks/verify_golden_shas.py
       - name: Verify non-regenerated goldens (sha256)
         run: |

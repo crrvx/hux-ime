@@ -43,7 +43,7 @@ pub struct SentenceState {
     pub committed_raw: String,
     pub buffered_text: String,
     pub locks: Vec<Lock>,
-    pub trackers: HashMap<String, Tracker>,
+    pub trackers: Map<String, Tracker>,
     pub empty_code_pending: Option<EmptyCodePending>,
     pub last_seen_raw: String,
     pub last_auto_commit_raw_length: usize,
@@ -61,7 +61,7 @@ impl SentenceState {
             committed_raw: String::new(),
             buffered_text: String::new(),
             locks: Vec::new(),
-            trackers: HashMap::new(),
+            trackers: Map::new(),
             empty_code_pending: None,
             last_seen_raw: String::new(),
             last_auto_commit_raw_length: 0,
@@ -98,7 +98,7 @@ impl SentenceState {
     ///
     /// 复核整改 3b（A3）：原先还会写出只写不读的 `tiger_sentence_committed` /
     /// `tiger_sentence_locks` 快照，并做一次旧属性清理；已随 `load`/`read_locks` 一并删除
-    /// （无 FFI / 平台 / C++ 侧读取方），见 `docs/refactor.md` §8。
+    /// （无 FFI / 平台 / C++ 侧读取方），见 `docs/review-ledger.md` §4.4（A3）。
     pub fn save(&mut self, context: &mut Context) {
         set_property_if_changed(context, K_BUFFERED, &self.buffered_text.clone());
         context.set_buffered(!self.buffered_text.is_empty());

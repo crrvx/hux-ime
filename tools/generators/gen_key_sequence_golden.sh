@@ -8,11 +8,11 @@
 #   REF  参照仓库本地检出（默认仓库内 external/tiger-sentense-rime，已 gitignore）
 #   REF_URL  写入金样头部的参照仓库线上地址（默认 https://github.com/lvyww/tiger-sentense-rime）
 #   PIN  参照固定提交（默认 abad411750f79cfca750985fa266689b5d9b865f＝主干 pin，与入库金样一致；
-#        音反查金样取「反查分支尖端」92a0b54，见 goldens/README.md 与 gen_sound_to_char_shape_golden.sh）
+#        音反查金样取「反查分支尖端」92a0b54，见 goldens/regenerate.md 与 gen_sound_to_char_shape_golden.sh）
 #   CASES 用例文件（默认 tools/cases/key_sequence_cases.txt；可指向临时用例做探索）
 #
 # 依赖：git、g++、python3、系统 librime（rime_api.h + librime-lua.so）。
-# 金样不在 CI 重生成（探针依赖具体 librime/librime-lua 版本），见 goldens/README.md。
+# 金样不在 CI 重生成（探针依赖具体 librime/librime-lua 版本），见 goldens/regenerate.md。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"

@@ -67,7 +67,7 @@ punct_buffered_period	tiger_sentence_early_commit_to_preedit=1,full_shape=0	a b 
 # 参照 abad411：菜单可见时的 ASCII 标点先确认组合（`_auto_commit` 下即上屏）再交标点表，
 # 故 schema 的 key_binder `=`/`-` 翻页绑定在这条路径上被遮蔽（显式 Page_* 键不受影响）。
 # 本仓判定其为上游缺陷并有意偏离：`punct_menu_equal` 在差分测试里按 DEVIATED_CASES 登记跳过
-# （金样仍记录上游行为、字节不动），`punct_menu_minus` 仍逐位一致；见 docs/refactor.md §8。
+# （金样仍记录上游行为、字节不动），`punct_menu_minus` 仍逐位一致；见 docs/upstream-deviations.md ①。
 punct_menu_equal		j a equal
 punct_menu_minus		j a minus
 # K3 ⑦b：大写字母（editor char_handler：DirectCommit 先提交组合再交宿主）
@@ -89,7 +89,7 @@ punct_mid_caret_no_menu		x x Left comma
 # `selected_index < page_size` 时 `Highlight(0)`（**归零高亮**，不是不动），并**无条件**
 # 写 `paging` 标签 —— 故紧随其后的上翻页键 `-`（`when: paging`）成立。
 # `nav_page_up_home_reset` 逐位覆盖「归零高亮」；`nav_page_home_minus` 记录的是**上游**
-# 行为（`-` 被方案标点分支吃掉 ⇒ 提交「乙-」），本仓按 §8「有意偏离上游」翻页，
+# 行为（`-` 被方案标点分支吃掉 ⇒ 提交「乙-」），本仓按 docs/upstream-deviations.md「有意偏离上游」翻页，
 # 故该用例在差分测试中登记为 DEVIATED_CASES（金样仍如实记录上游）。
 nav_page_up_home_reset		j a Down Page_Up
 nav_page_home_minus		a b Page_Up minus
@@ -105,7 +105,7 @@ digit_menu_select		a b 1
 # ② `*_page` 两例：末段类型不同 ⇒ 宿主导航键的消费不同（raw 末段不消费
 #    `Up`/`Down`/`Page_*`，上游的 abc 单段消费）。金样如实记录**主干 pin** 的行为，
 #    本仓行为在差分测试的 `DEVIATIONS` 里登记（同 pin 的探针实测：`PIN=92a0b54`
-#    重跑同一探针即得本仓行），见 docs/refactor.md §8「delimiter pin 差异」。
+#    重跑同一探针即得本仓行），见 docs/upstream-deviations.md ③「delimiter pin 差异」。
 apostrophe_digit_split		a b apostrophe 1
 apostrophe_semicolon_split		a b apostrophe semicolon
 apostrophe_digit_page		a b apostrophe 1 Page_Down

@@ -8,7 +8,7 @@
 
 ## 基准
 
-本阶段新增两个 `--release` 示例（另有既存 `ngram_bench.rs`，见 `goldens/README.md`）；
+本阶段新增两个 `--release` 示例（另有既存 `ngram_bench.rs`，见 `goldens/README.md` 的「校验」节）；
 不引入新依赖，故不建 `hux-bench` crate（与 `docs/refactor.md` §6 的取舍一致）：
 
 ```sh

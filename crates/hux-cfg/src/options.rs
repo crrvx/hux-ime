@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use hashbrown::HashMap;
+use hux_core::collections::Map;
 
 #[cfg(test)]
 use crate::roles::ROLE_DIGIT_SELECT;
@@ -13,8 +13,8 @@ use hux_core::scheme::OptionDecl;
 use hux_core::session::Context;
 
 /// 参照 `M.options` 的内建缺省表（键 = 方案声明的选项键；本层不硬编码方案选项名）。
-pub fn option_defaults(keys: &OptionKeys) -> HashMap<String, bool> {
-    let mut defaults = HashMap::new();
+pub fn option_defaults(keys: &OptionKeys) -> Map<String, bool> {
+    let mut defaults = Map::new();
     for (role, value) in [
         (ROLE_EARLY_COMMIT, true),
         (ROLE_ALLOW_DUPLICATE_SINGLE, true),
@@ -56,17 +56,17 @@ pub(crate) fn test_option_keys() -> OptionKeys {
 #[derive(Clone, Debug, Default)]
 pub struct Options {
     /// 设置缺省（平台经 [`OptionsStore::set_defaults`] 传入；缺省表见 [`option_defaults`]）。
-    pub defaults: HashMap<String, bool>,
+    pub defaults: Map<String, bool>,
     /// 持久化值（`options/<name>`；缺失时回退设置缺省，读时还可回退 `user.yaml` 的 `var/option/<name>`）。
-    pub values: HashMap<String, bool>,
+    pub values: Map<String, bool>,
     pub revision: u64,
 }
 
 impl Options {
-    pub fn new(defaults: HashMap<String, bool>) -> Self {
+    pub fn new(defaults: Map<String, bool>) -> Self {
         Self {
             defaults,
-            values: HashMap::new(),
+            values: Map::new(),
             revision: 0,
         }
     }

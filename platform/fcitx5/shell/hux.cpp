@@ -25,6 +25,7 @@
 #include <fcitx/userinterfacemanager.h>
 #include <fcitx-utils/key.h>
 #include <fcitx-utils/log.h>
+#include <fcitx-utils/trackableobject.h>
 
 #include <algorithm>
 #include <iterator>
@@ -35,6 +36,17 @@
 #include "hux_abi.h"
 
 namespace {
+
+/// 本层专属日志类别 `hux`。
+///
+/// `fcitx::Log::setLogRule` 按**类别名**匹配规则，而 `FCITX_DEBUG()` 走的是名为 `default`
+/// 的类别（`log.h`：`FCITX_LOG(LEVEL)` → `FCITX_LOGC(::fcitx::Log::defaultCategory, LEVEL)`；
+/// `log.cpp` 里默认类别名就是 `"default"`）。因此这里显式定义一个名为 `hux` 的类别，
+/// 让 `fcitx5 --verbose='hux=5'` 只打开本层 DEBUG（见 `platform/fcitx5/README.md`）。
+FCITX_DEFINE_LOG_CATEGORY(huxLog, "hux");
+
+/// 本层调试日志（默认级别 Info ⇒ 平时静默；`hux=5` 时输出）。
+#define HUX_DEBUG() FCITX_LOGC(huxLog, Debug)
 
 /// 注意：`CommonCandidateList::setCursorIndex` 是**页内索引**（越界抛异常），
 /// 绝对索引必须用 `setGlobalCursorIndex` + `setPage`；页大小来自配置 `PageSize`。
@@ -296,7 +308,13 @@ class HuxSession : public fcitx::InputContextProperty {
 public:
     HuxSession(hux_engine *engine, uint64_t id) : engine_(engine), id_(id) {}
 
-    ~HuxSession() override { hux_engine_session_free(engine_, id_); }
+    /// 析构时引擎**必须仍存活**：本类由 `HuxEngine::~HuxEngine` 的
+    /// `sessionFactory_.unregister()` 统一销毁（见该析构函数的契约注释），
+    /// 那时 `hux_engine_free` 尚未执行。
+    ~HuxSession() override {
+        HUX_DEBUG() << "hux: ~HuxSession id=" << id_;
+        hux_engine_session_free(engine_, id_);
+    }
 
     uint64_t id() const { return id_; }
 
@@ -306,9 +324,16 @@ private:
 };
 
 /// 面板候选：点击（`select`）按全局索引选中并上屏（与空格相同的确认/学习链）。
+///
+/// **生命周期**：候选列表归 `InputContext` 的输入面板所有，而 IC **晚于** addon 实例
+/// （含本引擎）析构（`InstancePrivate` 先声明 `icManager_`、后声明 `addonManager_`，
+/// 故 `~HuxEngine` 运行时 IC 全部存活）⇒ 引擎释放后，面板里可能仍留着本对象，
+/// 用户点一下就走到已释放的引擎上。故这里只持 `TrackableObjectReference`（弱引用，
+/// fcitx5 惯用法，见 `cloudpinyin_public.h`），失效即早退。
 class HuxCandidateWord : public fcitx::CandidateWord {
 public:
-    HuxCandidateWord(fcitx::Text text, fcitx::Text comment, HuxEngine *owner,
+    HuxCandidateWord(fcitx::Text text, fcitx::Text comment,
+                     fcitx::TrackableObjectReference<HuxEngine> owner,
                      int32_t index)
         : CandidateWord(std::move(text)), owner_(owner), index_(index) {
         setComment(std::move(comment));
@@ -317,11 +342,16 @@ public:
     void select(fcitx::InputContext *inputContext) const override;
 
 private:
-    HuxEngine *owner_;
+    fcitx::TrackableObjectReference<HuxEngine> owner_;
     int32_t index_;
 };
 
-class HuxEngine : public fcitx::InputMethodEngine {
+/// 引擎 addon。
+///
+/// 继承 `fcitx::TrackableObject<HuxEngine>`：让「归 IC / 面板所有、可能比引擎活得久」的
+/// UI 对象（`HuxCandidateWord`）持弱引用，避免悬垂（见 `HuxCandidateWord` 注释）。
+class HuxEngine : public fcitx::InputMethodEngine,
+                  public fcitx::TrackableObject<HuxEngine> {
 public:
     explicit HuxEngine(fcitx::Instance *instance)
         : instance_(instance),
@@ -338,15 +368,47 @@ public:
             FCITX_INFO() << "hux: " << status;
         }
         // 每输入上下文一个会话（现存的与后续新建的都会经工厂创建）。
-        instance_->inputContextManager().registerProperty("huxSession",
-                                                          &sessionFactory_);
+        // 注册成功是 `~HuxEngine` 里 `unregister()` 能**销毁全部会话**的前提
+        // （名字冲突时 fcitx5 直接返回 false 且不创建任何会话）；失败必须显式可见，
+        // 否则「会话从不释放」会静默（见 `~HuxEngine` 契约注释）。
+        if (!instance_->inputContextManager().registerProperty("huxSession",
+                                                               &sessionFactory_)) {
+            FCITX_WARN() << "hux: 会话属性注册失败（huxSession 名字冲突？）";
+        }
         applyConfig();
         setupStatusMenu();
     }
+    /// 析构契约：**必须先 `sessionFactory_.unregister()`，再 `hux_engine_free(engine_)`**。
+    ///
+    /// 这不是风格问题，而是「每个 `HuxSession` 析构时都要拿**仍存活**的引擎调
+    /// `hux_engine_session_free`」这一前提。依据（按 fcitx5 源码逐层核对；所用版本
+    /// 5.1.22 与 master 在这几个文件上**逐字节相同**，master 最后改动这些文件的提交
+    /// 早于 5.1.22 tag）：
+    ///   1. `src/lib/fcitx/inputcontextproperty.cpp`：`InputContextPropertyFactory::unregister()`
+    ///      → `d->manager_->unregisterProperty(d->name_)`（析构函数亦调 `unregister()`）；
+    ///   2. `src/lib/fcitx/inputcontextmanager.cpp`：`InputContextManagerPrivate::unregisterProperty(name)`
+    ///      **遍历 `inputContexts_`** 逐个 `inputContext.d_func()->unregisterProperty(slot)`；
+    ///   3. `src/lib/fcitx/inputcontext_p.h`：`InputContextPrivate::unregisterProperty(slot)` 是
+    ///      `properties_[slot] = std::move(properties_.back()); properties_.pop_back();`，
+    ///      而 `properties_` 是 `std::vector<std::unique_ptr<InputContextProperty>>`
+    ///      ⇒ 被覆盖的 `unique_ptr` 在赋值当场析构 ⇒ **每个 `HuxSession` 当场析构**
+    ///      （各自跑 `hux_engine_session_free(engine_, id_)`，此刻引擎仍存活）；
+    ///   4. `src/lib/fcitx/inputcontextproperty.h` 注释：工厂「must unregister before the
+    ///      destruction of `InputContextManager`」——addon 实例（含本引擎）先死、IC 后死
+    ///      （`InstancePrivate` 先声明 `icManager_` 再声明 `addonManager_`，反向析构
+    ///      ⇒ `~AddonManager`（`unload()` → 删 addon 实例）在 IC 之前）。
+    /// 若调换（先 `free` 再 `unregister`）：每个 `HuxSession` 会对已释放的引擎调
+    /// `hux_engine_session_free` ⇒ UAF。**因此本顺序是安全性的前提，改动前请重读本节。**
+    /// 真机核对方法（析构顺序）：见 `platform/fcitx5/README.md`「析构顺序核对」。
     ~HuxEngine() override {
-        // 先注销并销毁全部会话（属性析构回调 `hux_engine_session_free`），再释放引擎。
+        HUX_DEBUG() << "hux: ~HuxEngine";
+        // 1) 注销工厂 ⇒ fcitx5 立刻销毁全部已注册会话（见上方契约注释）。
         sessionFactory_.unregister();
+        // 2) 摘掉 IC 状态区里指向本对象成员的裸指针（此时本对象成员仍存活）。
+        clearStatusAreas();
+        // 3) 引擎最后释放；指针置空，任何迟到的宿主回调都只是无操作。
         hux_engine_free(engine_);
+        engine_ = nullptr;
     }
 
     /// 配置 schema（fcitx5-configtool 生成设置页；保存到 ~/.config/fcitx5/conf/hux.conf）。
@@ -484,6 +546,27 @@ private:
         statusArea.addAction(fcitx::StatusGroup::InputMethod, &menuAction_);
     }
 
+    /// 摘掉**所有**输入上下文状态区里指向本对象成员的裸指针（`&menuAction_` 及其子菜单）。
+    ///
+    /// 归 IC 所有的对象比 addon 实例活得久（见 `~HuxEngine` 契约注释），故引擎释放前
+    /// 必须把「虎虚」子菜单从每个 IC 摘除。这里用 `InputContextManager::foreach`
+    /// （`inputcontextmanager.cpp`：遍历 `inputContexts_`，visitor 返回 false 即中止）
+    /// + `StatusArea::clearGroup`（`statusarea.cpp`：逐个 `removeAction`）。
+    ///
+    /// 与 fcitx5 自带清理的关系：`StatusArea::addAction` 也连了 `Action::ObjectDestroyed`
+    /// （动作析构时自摘 + `d->update()`），`~Element` 还会把自身从父节点摘除——本调用
+    /// **不替代**它们，而是在自身成员仍有效时先把 UI 刷新一次，使状态区不再引用本对象
+    /// 的任何成员；不把安全性寄托在「析构中途才触发的自清」上。
+    void clearStatusAreas() {
+        if (instance_ == nullptr) {
+            return;
+        }
+        instance_->inputContextManager().foreach([](fcitx::InputContext *ic) {
+            ic->statusArea().clearGroup(fcitx::StatusGroup::InputMethod);
+            return true;
+        });
+    }
+
     /// 清空会话与面板（deactivate/reset 共用）。
     void resetSession(fcitx::InputContextEvent &event) {
         fcitx::InputContext *inputContext = event.inputContext();
@@ -496,6 +579,12 @@ private:
         context_ = nullptr;
     }
 
+    /// 引擎 → 宿主的两个回调（`hux_host.user` 就是 `this`）。
+    ///
+    /// `user` 指针安全性：Rust 侧只在 `hux_engine_*` 调用**内部**同步回调，而引擎的
+    /// 整个生命周期都包在 `~HuxEngine` 内（`hux_engine_free` 是析构体的一步），
+    /// 故回调期间 `this` 必存活。`~HuxEngine` 里把 `engine_` 置空，使「引擎已释放后
+    /// 仍被调用」这种本不该发生的路径退化成无操作而非解引用悬垂指针。
     static void commitCallback(void *user, const char *text) {
         static_cast<HuxEngine *>(user)->applyCommit(text);
     }
@@ -510,6 +599,9 @@ private:
     }
 
     void applyCommit(const char *text) {
+        if (engine_ == nullptr) {
+            return;
+        }
         if (context_ != nullptr && text != nullptr && *text != '\0') {
             context_->commitString(text);
         }
@@ -520,7 +612,9 @@ private:
                      const char *const *texts, const char *const *comments,
                      int32_t count, int32_t selected, const char *auxUp,
                      const char *auxDown) {
-        if (context_ == nullptr) {
+        // 引擎已释放（理论上不会发生，见 `commitCallback` 注释）：本函数后面还要经
+        // `hux_engine_option_key(engine_, …)` 触碰引擎，故先早退。
+        if (engine_ == nullptr || context_ == nullptr) {
             return;
         }
         std::string preeditString = preedit != nullptr ? preedit : "";
@@ -556,7 +650,7 @@ private:
                         ? comments[index]
                         : "";
                 candidateList->append<HuxCandidateWord>(
-                    fcitx::Text(text), fcitx::Text(comment), this, index);
+                    fcitx::Text(text), fcitx::Text(comment), watch(), index);
             }
             // 数字直选：面板显示 1–9 / 0 序号（与引擎页内定位一致）。
             // 取**运行时生效值**（状态菜单可切换、options.yaml 优先），而非仅读配置页设置。
@@ -659,6 +753,9 @@ private:
     hux_engine *engine_ = nullptr;
     /// 会话工厂（每输入上下文一个 [`HuxSession`]）。
     fcitx::FactoryFor<HuxSession> sessionFactory_;
+    /// 当前引擎调用的目标输入上下文：只在一次 `hux_engine_*` 调用期间置位、随即清空。
+    /// IC 的生命周期长于本对象（见 `~HuxEngine` 契约注释），故该指针本身不会悬垂；
+    /// 引擎释放后由 `applyCommit`/`applyUpdate` 的 `engine_ == nullptr` 早退兜住。
     fcitx::InputContext *context_ = nullptr;
     fcitx::Menu menu_;
     fcitx::SimpleAction menuAction_;
@@ -666,7 +763,13 @@ private:
 };
 
 void HuxCandidateWord::select(fcitx::InputContext *inputContext) const {
-    owner_->selectCandidate(inputContext, index_);
+    // 引擎（addon 实例）可能已先于本候选对象析构（IC 晚于 addon，见类注释）：
+    // 弱引用失效 ⇒ 直接返回，**不触碰**已释放的引擎。
+    HuxEngine *owner = owner_.get();
+    if (owner == nullptr) {
+        return;
+    }
+    owner->selectCandidate(inputContext, index_);
 }
 
 class HuxFactory : public fcitx::AddonFactory {

@@ -69,12 +69,12 @@ pub(crate) fn prefix_contradicted(tracker: &Tracker, evidence: &Evidence) -> boo
 /// `evidence_count`/`strong_count` 清零：低置信度缺口只能保住「身份」，
 /// 不能把缺口前的成熟度带到缺口之后。
 pub(crate) fn retain_trackers_without_counting(
-    trackers: &HashMap<String, Tracker>,
+    trackers: &Map<String, Tracker>,
     evidence: &Evidence,
     reset_maturity: bool,
-) -> HashMap<String, Tracker> {
-    let mut next = HashMap::new();
-    for (key, tracker) in trackers {
+) -> Map<String, Tracker> {
+    let mut next = Map::new();
+    for (key, tracker) in trackers.iter() {
         let Some(current) = evidence.find(&tracker.text, tracker.raw_length) else {
             continue;
         };
@@ -552,7 +552,7 @@ pub fn try_early_commit(
         ));
     }
 
-    let mut next_trackers: HashMap<String, Tracker> = HashMap::new();
+    let mut next_trackers: Map<String, Tracker> = Map::new();
     for (key, prefix) in qualifying {
         let mut tracker = state.trackers.get(&key).cloned().unwrap_or(Tracker {
             text: prefix.text.clone(),

@@ -326,7 +326,7 @@ fn prefix_contradicted_detects_higher_share_stem() {
 fn retain_trackers_drops_missing_or_contradicted() {
     let evidence = prefix_evidence();
     // 缺失或矛盾时丢弃
-    let mut trackers = HashMap::new();
+    let mut trackers = Map::new();
     trackers.insert("keep".to_string(), tracker("甲丙", 0.2));
     trackers.insert("gone".to_string(), tracker("不存在", 0.2));
     let retained = retain_trackers_without_counting(&trackers, &evidence, false);
@@ -334,7 +334,7 @@ fn retain_trackers_drops_missing_or_contradicted() {
     // gap_count 超过上限（3）应丢弃
     let mut stable = tracker("甲乙", 0.3);
     stable.gap_count = 3;
-    let mut map = HashMap::new();
+    let mut map = Map::new();
     map.insert("stable".to_string(), stable);
     let retained = retain_trackers_without_counting(&map, &evidence, false);
     assert!(retained.is_empty(), "gap_count 超过上限应丢弃");
@@ -376,7 +376,7 @@ fn retain_trackers_resets_maturity_only_for_low_confidence_gaps() {
         tracker.gap_count = 0;
         tracker
     };
-    let mut map = HashMap::new();
+    let mut map = Map::new();
     map.insert("mature".to_string(), mature());
     let kept = retain_trackers_without_counting(&map, &stale, true);
     let kept = kept.get("mature").expect("低置信度缺口仍保留身份");
@@ -385,7 +385,7 @@ fn retain_trackers_resets_maturity_only_for_low_confidence_gaps() {
     assert_eq!(kept.strong_count, 0, "强证据计数同样清零");
     assert_eq!(kept.last_share, 0.99);
 
-    let mut map = HashMap::new();
+    let mut map = Map::new();
     map.insert("mature".to_string(), mature());
     let kept = retain_trackers_without_counting(&map, &stale, false);
     let kept = kept.get("mature").expect("普通比较型缺口保留");
@@ -1576,14 +1576,15 @@ fn processor_menu_punctuation_stages_learning_before_the_punctuator() {
     assert_eq!(h.live.submitted[0].mode, mode);
 }
 
-/// **本仓有意偏离上游 `abad411`**：菜单可见时，会被宿主判为翻页的标点键不由标点分支消费。
+/// **本仓有意偏离上游 `abad411`**（用户决定 B：菜单可见时翻页键一律拦截）：
+/// 菜单可见时，凡会落入宿主翻页绑定的标点键都不由标点分支消费。
 ///
 /// 上游对「菜单可见 + 可打印 ASCII 标点」一律「暂存学习 + 确认组合 + 交标点表」，于是
 /// `-/=`（以及 schema 绑到翻页的 `[/]`）的 key_binder 绑定被永久遮蔽（最小复现 `j a equal`）。
 /// 本仓在分支入口先问宿主同一套判据 `hux_core::host::paging_action`：
-/// `=`（`when: has_menu`）与落入 `paging` 标签后的 `-`（`when: paging`）让给宿主翻页，
-/// 不确认组合、不暂存学习；未翻页的 `-` 与普通标点（`,`）维持上游行为。
-/// 理由、最小复现与金样登记见 `docs/refactor.md` §8「有意偏离上游」。
+/// `=`（下翻）与 `-`（上翻，**不再要求「已翻过页」**）都让给宿主翻页，
+/// 不确认组合、不暂存学习；`ascii_mode` 打开时判据不成立 ⇒ 回到上游路径。
+/// 理由、代价与金样登记见 `docs/upstream-deviations.md` ①。
 #[test]
 fn processor_menu_paging_keys_bypass_the_punctuation_branch() {
     let mut h = Harness::new();
@@ -1600,31 +1601,35 @@ fn processor_menu_paging_keys_bypass_the_punctuation_branch() {
     assert_eq!(h.context.input(), b"ab", "`=` 后组合原样保留（交宿主翻页）");
     assert!(h.context.has_menu(), "`=` 后菜单仍在（交宿主翻页）");
 
-    // `-`：未翻页、`when: paging` 不成立 ⇒ 仍走上游标点分支（确认组合后交标点表）。
+    // `-`：菜单可见即判上翻页（新语义，不再看 `paging` 标签）⇒ 同样让给宿主。
     assert_eq!(h.press("minus"), ProcessorResult::Forward);
     assert_eq!(
         h.context.last_commit_text(),
-        "疒",
-        "未翻页的 `-` 仍落上游路径"
+        "",
+        "菜单可见时 `-` 不得确认组合"
     );
-    assert!(h.context.input().is_empty());
+    assert_eq!(h.context.input(), b"ab", "`-` 后组合原样保留（交宿主翻页）");
+    assert!(h.context.has_menu(), "`-` 后菜单仍在（交宿主翻页）");
+    assert!(
+        h.live.submitted.is_empty(),
+        "让给宿主的键不暂存学习（否则标点路径会记一次人工纠错）"
+    );
 
-    // 同一判据的另一半：落入 `paging` 标签（宿主翻页写入）后，`-` 同样让给宿主上翻页。
-    h.push_segment(b"ab", &["交", "疒"]);
-    h.context.highlight(1);
-    h.context
-        .composition
-        .back_mut()
-        .expect("段")
-        .tags
-        .push("paging".to_string());
-    assert_eq!(h.press("minus"), ProcessorResult::Forward);
+    // 判据的另一半：`ascii_mode` 打开时翻页键**不**拦截 ⇒ `-` 回到上游标点路径
+    // （确认组合后交标点表；本用例不跑宿主链，故只断言处理器的确认行为）。
+    let mut ascii = Harness::new();
+    ascii.context.set_option("_auto_commit", true);
+    ascii.context.set_option("ascii_mode", true);
+    ascii.live.store_ready = true;
+    ascii.push_segment(b"ab", &["交", "疒"]);
+    ascii.context.highlight(1);
+    assert_eq!(ascii.press("minus"), ProcessorResult::Forward);
     assert_eq!(
-        h.context.last_commit_text(),
+        ascii.context.last_commit_text(),
         "疒",
-        "翻页后 `-` 不得再确认新组合"
+        "`ascii_mode` 下 `-` 退回上游标点路径（确认组合）"
     );
-    assert_eq!(h.context.input(), b"ab", "翻页后 `-` 不消费组合");
+    assert!(ascii.context.input().is_empty());
 }
 
 #[test]

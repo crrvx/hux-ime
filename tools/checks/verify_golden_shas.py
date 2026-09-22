@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""校验 `goldens/README.md` 的校验和表与金样内部头部（复核整改第 4 批 M2）。
+"""校验 `goldens/regenerate.md` 的校验和表与金样内部头部（复核整改第 4 批 M2）。
+
+> 表与 pin 声明原在 `goldens/README.md`；2026-09 文档重整把「重新生成」与「来源与校验和」
+> 拆到 `goldens/regenerate.md`（README 只留清单 / transcript 格式 / 校验入口 / 规则），
+> 校验项与强度不变。
 
 三件事，任一不符即 `exit 1`：
 
-1. **表 ↔ 文件**：README「数据夹具」「已入库金样 sha256」两张表里每一条 `| 文件 | sha256 |`
+1. **表 ↔ 文件**：`regenerate.md`「数据夹具」「已入库金样 sha256」两张表里每一条 `| 文件 | sha256 |`
    都按候选根（仓库根 / `goldens/` / `goldens/lexicon/`）唯一解析到实际文件并逐字节比对；
    且顶层金样（`goldens/*.tsv.gz`、`goldens/ngram_fixture.bin`）**必须**都在表里（防新增未登记）。
-2. **内部头部 ↔ 表 / README 声明的 pin**：三份探针 / 表金样（`key`、`key_sequence`、
-   `sound_to_char_shape`）头部的 `# reference: … @ <pin>` 与 `<来源文件> sha256:` 必须与
-   README「来源与校验和」声明的 pin / sha 一致（换 pin 重生成后只改表、不改头部即失败）。
+2. **内部头部 ↔ 表 / 文档声明的 pin**：四份探针 / 表金样（`key`、`key_sequence`、
+   `key_sequence_tab`、`sound_to_char_shape`）头部的 `# reference: … @ <pin>` 与 `<来源文件> sha256:` 必须与
+   `regenerate.md`「来源与校验和」声明的 pin / sha 一致（换 pin 重生成后只改表、不改头部即失败）。
 3. **参照仓库文件 ↔ pin**（`--reference DIR`，需要参照检出）：`lua/*`、`tools/*` 行按该行声明的
    pin 用 `git show <pin>:<path>` 取内容比对；「两 pin 相同」的行两个 pin 都必须相符。
 
@@ -29,16 +33,17 @@ import subprocess
 import sys
 from pathlib import Path
 
-README = Path("goldens/README.md")
+# sha 表与 pin 声明所在文档（2026-09 文档重整：原 `goldens/README.md` 拆出）。
+SHA_DOC = Path("goldens/regenerate.md")
 SHA256_RE = re.compile(r"\b[0-9a-f]{64}\b")
 SHA1_RE = re.compile(r"\b[0-9a-f]{40}\b")
 TOP_LEVEL_GLOBS = ("*.tsv.gz", "ngram_fixture.bin")
-# 三份「CI 不重生成」的金样：头部必须自述 pin 与来源文件 sha256。
-# pin 名对应 README「来源与校验和」声明的两个参照 pin + 键名表的 librime pin。
+# 四份「CI 不重生成」的金样：头部必须自述 pin 与来源文件 sha256。
+# pin 名对应 SHA_DOC「来源与校验和」声明的两个参照 pin + 键名表的 librime pin。
 PROBE_HEADERS: dict[str, dict[str, object]] = {
     "goldens/key.tsv.gz": {
         "pin": "librime",
-        "sha256": [("key_table.cc sha256", None)],  # None = 取 README 键名表行的 sha
+        "sha256": [("key_table.cc sha256", None)],  # None = 取 SHA_DOC 键名表行的 sha
     },
     "goldens/key_sequence.tsv.gz": {
         "pin": "main",
@@ -92,7 +97,7 @@ def parse_tables(text: str) -> tuple[dict[str, str], dict[str, tuple[str, str, s
             continue
         path = path_match.group(1)
         label = cells[0].replace("`", "")
-        # 参照仓库文件行：首列以 `lua/` / `tools/` 开头（README 明标「均为参照仓库路径」）。
+        # 参照仓库文件行：首列以 `lua/` / `tools/` 开头（`regenerate.md` 明标「均为参照仓库路径」）。
         if path.startswith(("lua/", "tools/")):
             reference[label] = (cells[1], shas[0], path)
         else:
@@ -116,15 +121,15 @@ def resolve_local(root: Path, label: str) -> Path:
 
 
 def next_hex(text: str, marker: str, pattern: re.Pattern[str]) -> str:
-    """取唯一标记 `marker` 之后出现的第一个十六进制串（README 的 pin 说明跨行折行）。"""
+    """取唯一标记 `marker` 之后出现的第一个十六进制串（校验和文档的 pin 说明跨行折行）。"""
     if text.count(marker) != 1:
-        raise Failure(f"README 里的标记 {marker} 出现 {text.count(marker)} 次（应为 1 次）")
+        raise Failure(f"{SHA_DOC} 里的标记 {marker} 出现 {text.count(marker)} 次（应为 1 次）")
     index = text.find(marker)
     if index < 0:
-        raise Failure(f"README 缺少标记：{marker}")
+        raise Failure(f"{SHA_DOC} 缺少标记：{marker}")
     found = pattern.search(text, index)
     if not found:
-        raise Failure(f"README 的「{marker}」之后没有 {pattern.pattern} 串")
+        raise Failure(f"{SHA_DOC} 的「{marker}」之后没有 {pattern.pattern} 串")
     return found.group(0)
 
 
@@ -202,8 +207,11 @@ def main() -> int:
         else:
             failures.append(failure if failure is not None else ok_message)
 
-    readme_path = root / README
-    text = readme_path.read_text(encoding="utf-8")
+    sha_doc_path = root / SHA_DOC
+    if not sha_doc_path.is_file():
+        print(f"FAIL 找不到校验和文档：{SHA_DOC}", file=sys.stderr)
+        return 1
+    text = sha_doc_path.read_text(encoding="utf-8")
     local, reference = parse_tables(text)
     pins = {
         "main": next_hex(text, "**主干 pin**", SHA1_RE),
@@ -220,8 +228,8 @@ def main() -> int:
         actual = sha256_file(path)
         note(
             actual == sha,
-            f"{path.relative_to(root)} sha256 与 README 表一致",
-            f"{path.relative_to(root)} sha256 与 README 表不符：表 {sha}，实际 {actual}",
+            f"{path.relative_to(root)} sha256 与 {SHA_DOC} 表一致",
+            f"{path.relative_to(root)} sha256 与 {SHA_DOC} 表不符：表 {sha}，实际 {actual}",
         )
 
     # 1b. 顶层金样必须全部登记（新增未登记即失败）
@@ -229,13 +237,13 @@ def main() -> int:
         for path in sorted((root / "goldens").glob(pattern)):
             note(
                 path.name in local,
-                f"{path.relative_to(root)} 已登记在 README 的 sha256 表中",
-                f"{path.relative_to(root)} 未登记在 README 的 sha256 表中",
+                f"{path.relative_to(root)} 已登记在 {SHA_DOC} 的 sha256 表中",
+                f"{path.relative_to(root)} 未登记在 {SHA_DOC} 的 sha256 表中",
             )
     note(
         bool(local),
-        f"README 的 sha256 表解析出 {len(local)} 行",
-        "README 的 sha256 表为空（解析失败？）",
+        f"{SHA_DOC} 的 sha256 表解析出 {len(local)} 行",
+        f"{SHA_DOC} 的 sha256 表为空（解析失败？）",
     )
 
     # 2. 内部头部 ↔ 表 / 声明的 pin
@@ -247,8 +255,8 @@ def main() -> int:
             wanted_pin = pins[str(spec["pin"])]
             note(
                 pin == wanted_pin,
-                f"{label} 头部 pin {pin} 与 README 声明的 {spec['pin']} pin 一致",
-                f"{label} 头部 pin {pin} 与 README 声明的 {spec['pin']} pin {wanted_pin} 不符",
+                f"{label} 头部 pin {pin} 与 {SHA_DOC} 声明的 {spec['pin']} pin 一致",
+                f"{label} 头部 pin {pin} 与 {SHA_DOC} 声明的 {spec['pin']} pin {wanted_pin} 不符",
             )
             for key, table_label in spec["sha256"]:  # type: ignore[union-attr]
                 declared = header_value(lines, str(key))
@@ -257,8 +265,8 @@ def main() -> int:
                 )
                 note(
                     declared == expected,
-                    f"{label} 头部 `{key}` 与 README 表一致",
-                    f"{label} 头部 `{key}` = {declared}，与 README 表的 {expected} 不符",
+                    f"{label} 头部 `{key}` 与 {SHA_DOC} 表一致",
+                    f"{label} 头部 `{key}` = {declared}，与 {SHA_DOC} 表的 {expected} 不符",
                 )
         except Failure as error:
             failures.append(f"{label}: {error}")
@@ -288,8 +296,8 @@ def main() -> int:
                         continue
                     note(
                         actual == sha,
-                        f"{path} @ {name} pin {pin[:7]} sha256 与 README 表一致",
-                        f"{path} @ {name} pin {pin[:7]} sha256 不符：README 表 {sha}，检出 {actual}",
+                        f"{path} @ {name} pin {pin[:7]} sha256 与 {SHA_DOC} 表一致",
+                        f"{path} @ {name} pin {pin[:7]} sha256 不符：{SHA_DOC} 表 {sha}，检出 {actual}",
                     )
 
     for message in failures:

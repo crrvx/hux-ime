@@ -37,6 +37,60 @@ C ABI 契约在 [`../../crates/hux-ffi/`](../../crates/hux-ffi/)（CI 校验 `hu
   ←/→/↑/↓ 交应用处理（应用光标随动，本层不消费；查码段不下发预编辑，避免应用端 marked text 锁住光标）；
   Esc / 再次触发 / 其它键退出（打字照常输入）。展示面为输入面板辅助文本条（auxUp/auxDown）。
 
+## 析构顺序核对（真机）
+
+`HuxEngine` 的析构契约是「**先** `sessionFactory_.unregister()`（fcitx5 当场销毁全部
+`HuxSession`，各自调 `hux_engine_session_free`）**再** `hux_engine_free(engine_)`」；
+源码依据（文件 + 函数 + 结论）见 `shell/hux.cpp` 的 `~HuxEngine` 注释与
+[`../../docs/review-ledger.md`](../../docs/review-ledger.md) §5.3 的「报告 §5①」段。真机可用日志复核：
+
+两条析构日志打在**专属日志类别 `hux`** 上（`shell/hux.cpp` 用
+`FCITX_DEFINE_LOG_CATEGORY(huxLog, "hux")` + `FCITX_LOGC(huxLog, Debug)`——`FCITX_DEBUG()`
+走的是名为 `default` 的类别，用它会要求放宽全局级别）：
+
+```
+D… hux.cpp:NNN] hux: ~HuxSession id=1
+D… hux.cpp:NNN] hux: ~HuxSession id=2
+D… hux.cpp:NNN] hux: ~HuxEngine
+```
+
+打开方式：日志规则**只能经命令行**给出（`fcitx5 --help`：`--verbose <logging rule>`，
+形如 `category1=level1,…`，级别 `5` = Debug；本机 5.1.22 的二进制与源码
+`InstanceArgument::parseOption` / `fcitx::Log::setLogRule` 都只有 `--verbose` 一条路径，
+**没有** `FCITX_LOG_RULE` 之类的环境变量）：
+
+```bash
+fcitx5 -r --verbose='hux=5'   # 前台运行：析构日志直接打在 stderr（或用 -d + journalctl -t fcitx5）
+fcitx5-remote -e              # 另开终端让它退出（等价于 Ctrl+C / kill <pid>）
+```
+
+### 实测结果（2026-09-22，fcitx5 5.1.22）
+
+用户实跑一次（先在各应用里打字建立会话，再 `fcitx5-remote -e` 退出），观察到：
+
+```
+D 16:41:47.539570 hux.cpp:315] hux: ~HuxSession id=1
+D 16:41:47.539666 hux.cpp:315] hux: ~HuxSession id=2
+D 16:41:47.539687 hux.cpp:315] hux: ~HuxSession id=4
+D 16:41:47.539722 hux.cpp:315] hux: ~HuxSession id=3
+I 16:41:47.539734 addonmanager.cpp:306] Unloading addon hux
+D 16:41:47.539737 hux.cpp:404] hux: ~HuxEngine
+```
+
+判据通过：4 个会话**全部早于** `~HuxEngine`，且 `~HuxEngine` 之后 `~HuxSession` 计数为 **0**
+⇒ 没有任何会话在引擎释放后回调。注意本轮 4 个会话是**随各自 IC 在收尾时先销毁**的（因此
+`~HuxEngine` 那行虽在析构体首行却排在它们之后）；`unregister()` 那条路径的安全性由源码链条保证
+（见 `~HuxEngine` 注释）。完整日志留档于 `_tmp/hux-log.txt`。
+
+规则是**进程启动期**读入的，故必须让「带 `--verbose` 启动的那个进程」退出，才能看到它自己的
+析构日志（`systemd --user` 托管的场合：先给该 unit 的 `ExecStart` 加上 `--verbose=hux=5` 并重启，
+再 `systemctl --user stop fcitx5`）。
+
+**判据**：日志里全部 `hux: ~HuxSession …` 行必须**早于** `hux: ~HuxEngine` 行。
+若顺序相反（或 `~HuxEngine` 之后又冒出 `~HuxSession`），即命中 UAF 路径，请附日志回报。
+
+**状态**：本机当前没有运行中的 fcitx5 实例，**该真机日志尚未实跑**——以上是待执行的核对步骤。
+
 ## 安装（`cmake --install` 与 `install.sh` 等价）
 
 `cmake --install`（前缀 `/usr`）装 **3 个插件文件 + `data/MANIFEST` 列出的全部随包数据**：
@@ -57,6 +111,12 @@ C ABI 契约在 [`../../crates/hux-ffi/`](../../crates/hux-ffi/)（CI 校验 `hu
 会话按输入上下文隔离；失焦时由 fcitx5 核心/前端把客户端预编辑以**原文提交**（fcitx5 惯例，
 不保留组合）；切换输入法/重置由本层**直接丢弃**（不提交）。上游默认在切换输入法时提交
 候选/预编辑，本实现有意取「丢弃」契约；打包待做（发行版打包脚本，不影响上面的安装布局）。
+
+- **引擎 ↔ UI 对象的生命周期**：fcitx5 中 addon 实例（含本引擎）**先于** `InputContext` 析构，
+  而候选列表 / 状态区条目归 IC 所有 ⇒ 引擎释放后 UI 仍可能持有指向引擎或其成员的指针。
+  本层两处加固：① `~HuxEngine` 对每个 IC `clearGroup(StatusGroup::InputMethod)`，摘掉状态区里
+  的 `&menuAction_`（含子菜单）；② `HuxCandidateWord` 改持 `TrackableObjectReference<HuxEngine>`
+  （fcitx5 弱引用惯用法），引用失效时 `select()` 直接返回、不触碰引擎。
 
 - **配置页热键绑定的名字要求（复核整改第 4 批 F15）**：快捷键分区的四项（音反查 / 字反查 /
   上翻页 / 下翻页）经 ABI 以 `keysym + 状态位` 交给引擎，引擎按 librime 键名表解释。配置页若绑到

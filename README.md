@@ -54,7 +54,7 @@ sha256 `c0063898fdff27c1fb00c1c72fa28a6c1b375fade1ec2045d731b9db958bdecc`；文�
 - `PgUp/PgDn` 翻页；`Enter` 提交原文；`Esc` 取消
 - 菜单可见时 `,` `.` `;` 等 ASCII 标点会**先上屏当前组合再落标点**
   （追平上游 `abad411` 的「标点学习保留」）；但 `-/=`、`[/]` 等**翻页键不会被遮蔽**——
-  本仓有意偏离上游缺陷，翻页绑定优先于标点分支，详见 `docs/refactor.md` §8「有意偏离上游」
+  本仓有意偏离上游缺陷，翻页绑定优先于标点分支，详见 [`docs/upstream-deviations.md`](docs/upstream-deviations.md) ①
 - `Alt+:` 音反查（拼音 → 虎码）；`Alt+"` 字反查（光标左侧汉字 → 拼音 + 虎码）
 - 状态菜单「虎虚」：提前上屏、提前上屏至预编辑、单字重码组句、全角标点、数字直选
 
@@ -78,18 +78,25 @@ sha256 `c0063898fdff27c1fb00c1c72fa28a6c1b375fade1ec2045d731b9db958bdecc`；文�
 | 文档                                                       | 内容                                                |
 | ---------------------------------------------------------- | --------------------------------------------------- |
 | [`docs/usage.md`](docs/usage.md)                           | 指南：开发 / 安装 / 使用 / 卸载                     |
-| [`docs/config.md`](docs/config.md)                         | 配置项：行为 / 快捷键 / 选项与学习存储              |
+| [`docs/config.md`](docs/config.md)                         | 配置项：行为 / 快捷键 / 选项与学习存储 / 待扩展（B/C 组） |
 | [`docs/rust-migration.md`](docs/rust-migration.md)         | 设计：路线与状态、模块映射、数据、集成要点          |
-| [`docs/refactor.md`](docs/refactor.md)                     | 计划：核心引擎化 / 平台无关 / 码表无关 / 测试正式化 |
+| [`docs/refactor.md`](docs/refactor.md)                     | 活规则：结构正义 / 目标结构 / 方案契约 / 测试与性能 / 依赖校验 / 骨架 |
+| [`docs/review-ledger.md`](docs/review-ledger.md)           | 台账：未闭合项（活口）、迁移映射与批次（留档）、逐批整改记录、四份审计总账（96 行） |
+| [`docs/upstream-deviations.md`](docs/upstream-deviations.md) | 政策：有意偏离上游（①②③④）的依据、可证伪期望值表与回归做法 |
 | [`docs/android.md`](docs/android.md)                       | 计划：fcitx5-android 插件适配                       |
-| [`docs/config-options.md`](docs/config-options.md)         | 待定：可配置项扩展（B/C 组记录）                    |
 | [`docs/LEXICAL_PRIOR_ATTRIBUTION.md`](docs/LEXICAL_PRIOR_ATTRIBUTION.md) | 署名：词先验数据的来源与许可         |
 | [`docs/perf.md`](docs/perf.md)                             | 性能：基准用法、基线数据与优化决定                  |
 | [`platform/fcitx5/README.md`](platform/fcitx5/README.md) | addon 实现：分工、按键语义、反查机制、已知限制      |
-| [`goldens/README.md`](goldens/README.md)                   | 差分金样：清单、来源、复现命令                      |
+| [`goldens/README.md`](goldens/README.md)                   | 差分金样：清单、transcript 格式、校验入口与规则     |
+| [`goldens/regenerate.md`](goldens/regenerate.md)           | 金样：重新生成命令全表、来源与校验和（sha 表）      |
 | [`data/README.md`](data/README.md)                         | 随包数据说明                                        |
-| [`AGENTS.md`](AGENTS.md)                                   | 协作约定：流程 / 命名 / 代码与移植纪律              |
+| [`AGENTS.md`](AGENTS.md)                                   | 协作约定：流程 / 命名 / 代码与移植纪律 / 文档边界   |
 | `crates/hux-scheme/*/README.md`、`platform/*/README.md`     | 各方案骨架与各平台目录的职责与现状（就地索引）      |
+
+> **文档分工（纪律见 `AGENTS.md`「背景与约定」）**：活文档只写**现状与做法**——`docs/refactor.md`
+> （结构与契约等活规则）、`docs/config.md`、`docs/usage.md`、`docs/rust-migration.md`、
+> `goldens/README.md` 与 `goldens/regenerate.md`；**历史与逐批记录**（迁移映射、批次、审计总账、
+> 未闭合项）进 `docs/review-ledger.md`；**有意偏离上游**进 `docs/upstream-deviations.md`。
 
 ## 虎码信息汇总
 

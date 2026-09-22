@@ -18,6 +18,7 @@ use crate::roles::{
     OptionKeys, ROLE_ALLOW_DUPLICATE_SINGLE, ROLE_ASCII_PUNCT, ROLE_DIGIT_SELECT,
     ROLE_EARLY_COMMIT, ROLE_EARLY_COMMIT_TO_PREEDIT, ROLE_FULL_SHAPE,
 };
+use hux_core::collections::Map;
 use hux_core::host::{DEFAULT_PAGE_SIZE, HostOptions, MAX_PAGE_SIZE};
 use hux_core::key::KeyEvent;
 
@@ -146,8 +147,8 @@ impl Settings {
     }
 
     /// 存储层缺省：可持久化的核心开关（`options.yaml` 缺失键回退到这些值）。
-    pub fn store_defaults(&self, keys: &OptionKeys) -> hashbrown::HashMap<String, bool> {
-        let mut defaults: hashbrown::HashMap<String, bool> = hashbrown::HashMap::new();
+    pub fn store_defaults(&self, keys: &OptionKeys) -> Map<String, bool> {
+        let mut defaults: Map<String, bool> = Map::new();
         for (role, value) in [
             (ROLE_EARLY_COMMIT, self.early_commit),
             (ROLE_EARLY_COMMIT_TO_PREEDIT, self.early_commit_to_preedit),

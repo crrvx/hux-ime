@@ -72,7 +72,7 @@ pub struct OptionDecl {
 /// 方案配置袋的取值：小枚举，覆盖「开关 / 计数 / 文本 / 文本列表」四类。
 ///
 /// **契约不解释取值含义**，只保证类型可携带；含义由方案的配置解析决定。
-/// `Text` 目前无角色使用（通用容器词汇，见 `docs/refactor.md` §8①），但由
+/// `Text` 目前无角色使用（通用容器词汇，见 `docs/review-ledger.md` §4.2），但由
 /// [`SchemeConfig::require_text`] 提供服务，仍是活契约的一部分。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Value {

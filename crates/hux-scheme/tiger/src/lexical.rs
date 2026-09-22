@@ -6,7 +6,7 @@
 //! 数据来源、许可（CC BY 4.0）与参数摘要见 `docs/LEXICAL_PRIOR_ATTRIBUTION.md`。
 //! 只用于最终排序（Top-5 重排），不进入 mass/置信度。
 
-use hashbrown::HashMap;
+use hux_core::collections::Map;
 use std::path::{Path, PathBuf};
 
 const MAGIC: &[u8; 8] = b"TCSLEX01";
@@ -140,11 +140,11 @@ impl LexicalModel {
 
     /// 参照 `M.score`（无缓存）。
     pub fn score(&self, text: &str) -> f64 {
-        self.score_with_cache(text, &mut HashMap::new())
+        self.score_with_cache(text, &mut Map::new())
     }
 
     /// 参照 `M.score`：最大权不重叠词覆盖；`cache` 复刻参照的 `lookup_cache`。
-    pub fn score_with_cache(&self, text: &str, cache: &mut HashMap<String, bool>) -> f64 {
+    pub fn score_with_cache(&self, text: &str, cache: &mut Map<String, bool>) -> f64 {
         if text.is_empty() {
             return 0.0;
         }
@@ -257,7 +257,7 @@ mod tests {
     fn score_with_cache_matches_uncached() {
         let model = synthetic(&["甲乙", "甲乙丙"], 8192, 4);
         let text = "甲乙甲甲乙丙";
-        let mut cache = HashMap::new();
+        let mut cache = Map::new();
         // 缓存路径与无缓存路径必须逐位一致（重复子串触发缓存命中）。
         assert_eq!(
             model.score_with_cache(text, &mut cache).to_bits(),

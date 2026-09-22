@@ -18,7 +18,7 @@
 #   ③ 写库前断言至少 1 个 `case` 且至少 1 步 `Tab` 被消费（否则说明夹具没生效）。
 #
 # 依赖：git、g++、python3、系统 librime（rime_api.h + librime-lua.so）。
-# 金样不在 CI 重生成（探针依赖具体 librime/librime-lua 版本），见 `goldens/README.md`。
+# 金样不在 CI 重生成（探针依赖具体 librime/librime-lua 版本），见 `goldens/regenerate.md`。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"

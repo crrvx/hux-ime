@@ -56,7 +56,13 @@ use hux_scheme_tiger::lexicon::{Lexicon, Supplement};
 enum DeviationKind {
     /// 上游缺陷：`abad411` 起方案处理器在菜单可见时把**所有**可打印 ASCII 标点先
     /// 「暂存学习 + 确认组合」再交标点表，宿主 `key_binder` 的翻页绑定被永久遮蔽。
-    /// 本仓判定为缺陷并**有意修复**（详见 `docs/refactor.md` §8「有意偏离上游」）。
+    /// 本仓判定为缺陷并**有意修复**（详见 `docs/upstream-deviations.md` ①）：
+    /// 标点分支先问宿主判据，判为翻页的键让给宿主链。
+    ///
+    /// **含用户决定的语义强化（2026-09）**：上翻页键不再要求参照 `when: paging` 的
+    /// 末段标签——菜单可见即拦截（与下翻页同前置），故 `punct_menu_minus`（首屏 `-`）
+    /// 也从「与上游逐位一致」转为偏离项。**代价**：菜单可见时 `-`/`=`/`[`/`]`
+    /// 不再能作为标点打出（已被用户接受，见 `docs/upstream-deviations.md` ① 的偏离表）。
     UpstreamDefectFix,
     /// addon 扩展：`tiger_sentence_digit_select`（出厂缺省 **true**）在上游方案核心里
     /// 不存在（上游把数字当作编码字符入串）。金样按上游行为记录，重放按出厂缺省开启。
@@ -65,7 +71,7 @@ enum DeviationKind {
     /// 追踪反查分支尖端 `92a0b54` 的 schema（`speller/delimiter: " '"`），而本金样的
     /// 主干 pin `abad411` 是 `" "` ⇒ `'` 之后的 `1`/`;` 在本仓切成「abc 段 + raw 段」，
     /// 上游主干保持单段。同 pin 的探针实测（`PIN=92a0b54` 重跑同一探针）与**本仓行完全
-    /// 相同**，即该差异是上游自己后续提交带来的，不是本仓发明。见 `docs/refactor.md` §8。
+    /// 相同**，即该差异是上游自己后续提交带来的，不是本仓发明。见 `docs/upstream-deviations.md` ③。
     BranchPinDelimiter,
 }
 
@@ -101,10 +107,23 @@ const DEVIATIONS: &[Deviation] = &[
     },
     Deviation {
         golden: "key_sequence.tsv.gz",
+        case: "punct_menu_minus",
+        kind: UpstreamDefectFix,
+        // `j a minus`：上翻页键在**菜单可见**时即判翻页（本仓语义强化：不要求参照
+        // `when: paging` 的末段标签）⇒ 本仓上翻页（首屏归零高亮、不提交）。
+        // **代价（用户已接受）**：菜单可见时 `-` 不再能作为标点打出。
+        steps: &[
+            "j\t1\t6a\t1\t-\t0\t0\t0\t-\t-",
+            "a\t1\t6a61\t2\t-\t0\t0\t5\te4b880,e4b881,e4b882,e4b883,e4b884\t-,-,-,-,-",
+            "minus\t1\t6a61\t2\t-\t0\t0\t5\te4b880,e4b881,e4b882,e4b883,e4b884\t-,-,-,-,-",
+        ],
+    },
+    Deviation {
+        golden: "key_sequence.tsv.gz",
         case: "nav_page_home_minus",
         kind: UpstreamDefectFix,
-        // `a b Page_Up minus`：首页 `Page_Up` 写 `paging` 标签（复核整改 F2）⇒
-        // `-` 在本仓上翻页；上游在确认组合时清空组合、标签消失 ⇒ 落标点提交「乙-」。
+        // `a b Page_Up minus`：`-` 在菜单可见时判上翻页（高亮仍在首页，归零）⇒
+        // 不提交、输入不变；上游在确认组合时清空组合 ⇒ 落标点提交「乙-」。
         steps: &[
             "a\t1\t61\t1\t-\t0\t0\t0\t-\t-",
             "b\t1\t6162\t2\t-\t0\t0\t2\te794b2,e4b999\t-,-",
@@ -828,9 +847,11 @@ fn key_sequence_matches_reference() {
         );
     }
     // 重放面下限（同上）：非登记用例与步数不得变少（登记项由 `DEVIATIONS` 单独钉住）。
+    // 68 例 / 285 步 − 6 个登记项（`punct_menu_equal` 3 + `punct_menu_minus` 3 +
+    // `nav_page_home_minus` 4 + `digit_menu_select` 3 + `apostrophe_*_page` 各 5）= 62 例 / 262 步。
     assert!(
-        kept.len() >= 63 && steps >= 265,
-        "key_sequence 重放覆盖不足：{} 例 / {} 步（下限 63 例 / 265 步）",
+        kept.len() >= 62 && steps >= 262,
+        "key_sequence 重放覆盖不足：{} 例 / {} 步（下限 62 例 / 262 步）",
         kept.len(),
         steps
     );
@@ -1028,18 +1049,41 @@ fn registry_is_falsifiable() {
     }
 }
 
-/// 临时工具（**不提交**）：打印登记用例的实测行（登记表期望值格式）。
+/// 维护工具（`#[ignore]`，不随 `cargo test` 运行）：打印用例的实测行
+/// （与 [`Deviation::steps`] 同格式的 10 列，可直接粘进 `DEVIATIONS`）。
+///
+/// - 缺省打印 `DEVIATIONS` 里全部登记用例（复核/更新期望值时用）；
+/// - 另可用 `HUX_DUMP_CASES="key_sequence.tsv.gz/case-a,sound_to_char_shape.tsv.gz/case-b"`
+///   打印任意用例（**新增偏离项**时先跑它，再核对「期望 ≠ 金样」的步集合）。
+/// - 与 `DEVIATIONS` 同口径重放（出厂缺省 + 金样夹具），故输出即当前实现的行为。
 #[test]
 #[ignore]
 fn dump_registered_expectations() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    for deviation in DEVIATIONS {
-        let cases = load_cases(&root.join("goldens").join(deviation.golden));
+    let mut targets: Vec<(String, String)> = DEVIATIONS
+        .iter()
+        .map(|deviation| (deviation.golden.to_string(), deviation.case.to_string()))
+        .collect();
+    if let Ok(extra) = std::env::var("HUX_DUMP_CASES") {
+        targets.extend(
+            extra
+                .split(',')
+                .filter(|item| !item.is_empty())
+                .map(|item| {
+                    let (golden, case) = item
+                        .split_once('/')
+                        .expect("HUX_DUMP_CASES 形如 <金样>/<用例>");
+                    (golden.to_string(), case.to_string())
+                }),
+        );
+    }
+    for (golden, case_name) in targets {
+        let cases = load_cases(&root.join("goldens").join(&golden));
         let case = cases
             .iter()
-            .find(|case| case.name == deviation.case)
+            .find(|case| case.name == case_name)
             .expect("case");
-        let (data_dir, lookup) = if deviation.golden == "key_sequence.tsv.gz" {
+        let (data_dir, lookup) = if golden == "key_sequence.tsv.gz" {
             (root.join("goldens/key_sequence"), None)
         } else {
             (root.join("goldens/sound_to_char_shape"), Some("grave"))
@@ -1051,8 +1095,8 @@ fn dump_registered_expectations() {
             lookup,
             false,
         );
-        println!("--- {} / {}", deviation.golden, deviation.case);
-        for actual in &observed {
+        println!("--- {golden} / {case_name}");
+        for (step, actual) in case.steps.iter().zip(&observed) {
             let row = &actual.row;
             let join = |values: &[String]| -> String {
                 if values.is_empty() {
@@ -1061,17 +1105,24 @@ fn dump_registered_expectations() {
                     values.join(",")
                 }
             };
+            let golden_row = RowView::of_golden(step);
             println!(
-                "        \"{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\",",
+                "        \"{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\",{}",
                 actual.repr,
                 row.consumed as u8,
                 row.input,
                 row.caret,
                 row.commit,
+                row.page_no,
                 row.highlight,
                 row.count,
                 join(&row.candidates),
-                join(&row.comments)
+                join(&row.comments),
+                if rows_differ(row, &golden_row) {
+                    "  // 偏离金样"
+                } else {
+                    ""
+                }
             );
         }
     }

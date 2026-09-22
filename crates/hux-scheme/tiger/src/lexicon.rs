@@ -12,6 +12,7 @@
 //! - `-` 字节序：纯 UTF-8，按字符切分；Lua `%s` 语义 = ASCII 空白。
 
 use hashbrown::{HashMap, HashSet};
+use hux_core::collections::{Map, Set};
 use std::path::{Path, PathBuf};
 
 /// 未知字符的字频回退（参照 `unknown_character_rank`）。
@@ -147,13 +148,13 @@ pub struct Lexicon {
     dirs: Vec<PathBuf>,
     pub built: bool,
     pub high_freq_limit: usize,
-    pub codes: HashMap<String, Vec<CodeEntry>>,
+    pub codes: Map<String, Vec<CodeEntry>>,
     /// 每个单字出现的全部编码（源序）。
-    pub character_codes: HashMap<String, Vec<String>>,
+    pub character_codes: Map<String, Vec<String>>,
     pub lengths: Vec<usize>,
     pub max_code_len: usize,
-    pub proper_code_prefixes: HashSet<String>,
-    pub character_ranks: Option<HashMap<String, usize>>,
+    pub proper_code_prefixes: Set<String>,
+    pub character_ranks: Option<Map<String, usize>>,
     pub ranks_count: usize,
     pub unknown_character_rank: usize,
     pub isolation_enabled: bool,
@@ -174,11 +175,11 @@ impl Lexicon {
             dirs: dirs.to_vec(),
             built: false,
             high_freq_limit: limit,
-            codes: HashMap::new(),
-            character_codes: HashMap::new(),
+            codes: Map::new(),
+            character_codes: Map::new(),
             lengths: Vec::new(),
             max_code_len: 1,
-            proper_code_prefixes: HashSet::new(),
+            proper_code_prefixes: Set::new(),
             character_ranks: None,
             ranks_count: 0,
             unknown_character_rank: UNKNOWN_CHARACTER_RANK_FALLBACK,
@@ -227,7 +228,7 @@ impl Lexicon {
         let whitelist_file = self.read_data_file(WHITELIST_FILE);
         let whitelist = match &whitelist_file {
             Some((content, _)) => parse_whitelist_content(content),
-            None => HashSet::new(),
+            None => Set::new(),
         };
         let whitelist_count = whitelist.len();
 
@@ -331,8 +332,8 @@ pub fn parse_codes_content(content: &str) -> Vec<(String, String)> {
 }
 
 /// 参照 `parse_ranks_content`：每行首字符按行序获得稠密 rank。
-pub fn parse_ranks_content(content: &str) -> (HashMap<String, usize>, usize) {
-    let mut ranks = HashMap::new();
+pub fn parse_ranks_content(content: &str) -> (Map<String, usize>, usize) {
+    let mut ranks = Map::new();
     let mut count = 0usize;
     each_content_line(&normalize_text_content(content), |line| {
         let Some(character) = line.chars().next() else {
@@ -348,8 +349,8 @@ pub fn parse_ranks_content(content: &str) -> (HashMap<String, usize>, usize) {
 }
 
 /// 参照 `parse_whitelist_content`：行内每个字符入白名单。
-pub fn parse_whitelist_content(content: &str) -> HashSet<String> {
-    let mut characters = HashSet::new();
+pub fn parse_whitelist_content(content: &str) -> Set<String> {
+    let mut characters = Set::new();
     each_content_line(&normalize_text_content(content), |line| {
         for character in line.chars() {
             characters.insert(character.to_string());
@@ -359,28 +360,27 @@ pub fn parse_whitelist_content(content: &str) -> HashSet<String> {
 }
 
 struct LexiconIndex {
-    codes: HashMap<String, Vec<CodeEntry>>,
-    character_codes: HashMap<String, Vec<String>>,
+    codes: Map<String, Vec<CodeEntry>>,
+    character_codes: Map<String, Vec<String>>,
     lengths: Vec<usize>,
     max_code_len: usize,
-    proper_code_prefixes: HashSet<String>,
+    proper_code_prefixes: Set<String>,
 }
 
 /// 参照 `build_lexicon_index`：精确码表 + 主码/最优码 + 高频过滤 + 前缀集。
 fn build_lexicon_index(
     entries: &[(String, String)],
-    character_ranks: Option<&HashMap<String, usize>>,
+    character_ranks: Option<&Map<String, usize>>,
     high_freq_limit: usize,
-    whitelist: &HashSet<String>,
+    whitelist: &Set<String>,
 ) -> LexiconIndex {
     let mut exact: HashMap<String, Vec<String>> = HashMap::new();
-    let mut codes_by_character: HashMap<String, Vec<String>> = HashMap::new();
+    let mut codes_by_character: Map<String, Vec<String>> = Map::new();
     for (word, code) in entries {
         exact.entry(code.clone()).or_default().push(word.clone());
         if is_single_character(word) {
             codes_by_character
-                .entry(word.clone())
-                .or_default()
+                .entry_or_default(word.clone())
                 .push(code.clone());
         }
     }
@@ -398,7 +398,7 @@ fn build_lexicon_index(
 
     // 主码：优先“短且以该字为首候选”的码，否则最短码；并列取先见。
     let mut primary: HashMap<String, String> = HashMap::new();
-    for (character, codes) in &codes_by_character {
+    for (character, codes) in codes_by_character.iter() {
         let (mut best_first, mut best_any): (Option<&str>, Option<&str>) = (None, None);
         for code in codes {
             if code.len() < 2 {
@@ -420,7 +420,7 @@ fn build_lexicon_index(
     }
 
     let mut optimal_input: HashMap<String, String> = HashMap::new();
-    for (character, codes) in &codes_by_character {
+    for (character, codes) in codes_by_character.iter() {
         let mut chosen: Option<&str> = None;
         for code in codes {
             if chosen.is_none_or(|current| code.len() < current.len()) {
@@ -432,10 +432,10 @@ fn build_lexicon_index(
         }
     }
 
-    let mut codes: HashMap<String, Vec<CodeEntry>> = HashMap::new();
+    let mut codes: Map<String, Vec<CodeEntry>> = Map::new();
     let mut length_values: HashSet<usize> = HashSet::new();
     let mut max_len = 1usize;
-    let mut prefixes: HashSet<String> = HashSet::new();
+    let mut prefixes: Set<String> = Set::new();
     for (code, texts) in &exact {
         let mut allowed = Vec::new();
         for (position, text) in texts.iter().enumerate() {
@@ -552,14 +552,14 @@ impl Supplement {
         Self::build(&parse_supplement_content(&content), Some(display))
     }
 
-    pub fn build(entries: &HashMap<String, f64>, path: Option<String>) -> Self {
+    pub fn build(entries: &Map<String, f64>, path: Option<String>) -> Self {
         let mut nodes = vec![SupplementNode {
             transitions: HashMap::new(),
             failure: 0,
             reward: 0.0,
         }];
         let mut count = 0usize;
-        for (text, weight) in entries {
+        for (text, weight) in entries.iter() {
             let reward = reward_for_weight(*weight);
             if text.is_empty() || reward <= 0.0 {
                 continue;
@@ -675,8 +675,8 @@ impl SupplementStatus {
 }
 
 /// 参照 `supplement.load_file` 的行解析：`text [weight]`，非法权重丢弃该行。
-pub fn parse_supplement_content(content: &str) -> HashMap<String, f64> {
-    let mut entries = HashMap::new();
+pub fn parse_supplement_content(content: &str) -> Map<String, f64> {
+    let mut entries = Map::new();
     let body = content.strip_prefix('\u{feff}').unwrap_or(content);
     // `(content .. "\n"):gmatch("(.-)\r?\n")`：按行切分，含空行。
     for raw_line in body.split('\n') {
@@ -755,7 +755,7 @@ mod tests {
 
     #[test]
     fn supplement_advance_walks_trie() {
-        let mut entries = HashMap::new();
+        let mut entries = Map::new();
         entries.insert("甲乙".to_string(), 4000.0);
         let matcher = Supplement::build(&entries, None);
         assert_eq!(matcher.count, 1);

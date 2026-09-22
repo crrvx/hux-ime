@@ -14,4 +14,5 @@
 - 差分测试在 `tests/`（`cargo test --workspace`；本地真实模型抽样缺失自动跳过）；
 - 依赖方向：`hux-scheme/* → hux-core`；内核不依赖本 crate，平台仅在装配处构造方案；
 - 语义、数据与金样参照 [tiger-sentense-rime](https://github.com/lvyww/tiger-sentense-rime)，
-  方案标识保持 `tiger_sentence`。结构与批次见 [`../../../docs/refactor.md`](../../../docs/refactor.md)。
+  方案标识保持 `tiger_sentence`。活规则（结构 / 契约）见 [`../../../docs/refactor.md`](../../../docs/refactor.md)，批次与复核整改记录见
+  [`../../../docs/review-ledger.md`](../../../docs/review-ledger.md)。

@@ -5,7 +5,8 @@
 
 hux-ime（虎虚）：虎句（`tiger_sentence`）输入方案的 fcitx5 原生 Rust 实现。
 参照实现（测试 oracle，仅开发/CI 使用）：<https://github.com/lvyww/tiger-sentense-rime>；
-金样清单与复现命令见 [`../goldens/README.md`](../goldens/README.md)。
+金样清单见 [`../goldens/README.md`](../goldens/README.md)，重新生成命令与校验和见
+[`../goldens/regenerate.md`](../goldens/regenerate.md)。
 
 ## 1. 路线与状态
 
@@ -32,33 +33,11 @@ hux-ime（虎虚）：虎句（`tiger_sentence`）输入方案的 fcitx5 原生 
 
 ## 2. 仓库结构
 
-```
-crates/hux-core/         # 引擎内核：与方案、平台无关（无 fcitx5 依赖）
-  cache.rs  learning.rs                  # K0/K1：有界缓存、学习机制
-  key.rs  key_table.rs  session.rs  host.rs   # K2：键事件、会话、宿主链（含提交点回调）
-  punct.rs                               # 标点表（symbols.yaml）
-  scheme.rs                              # 方案契约（P4c：dyn Scheme 驱动；§8① 去方案语义：
-                                         #     角色声明 OptionDecl + 配置袋 SchemeConfig）
-crates/hux-scheme/tiger/ # 虎句方案（唯一全量实现；hux-scheme/* → hux-core）
-  lexicon.rs  decode.rs  lexical.rs  ngram.rs # K0/K1/K1.5：码表、beam 解码、词先验、TCSKNM02
-  sound_to_char_shape.rs  char_to_sound_shape.rs  # 反查：音反查、字反查
-  interaction.rs  interaction/           # K2：交互层根 + 子模块（keys/state/early_commit/
-                                         #     select/translate/learning_glue/processor/tests）
-crates/hux-cfg/          # hux 自身可配置项：设置与默认值、选项存储与合并顺序
-crates/hux-test-support/ # 测试助手（dev 依赖）：金样路径 / transcript 编解码 / 临时目录
-crates/hux-ffi/          # C ABI 契约：C 布局类型 + include/hux_abi.h（桌面 / Android 共用）
-platform/fcitx5/         # K3：C++ 薄壳（shell/hux.cpp）+ Rust 组装（engine/session/ui/
-                         #     paths/learning_store/abi，导出 C ABI）
-platform/linux/          # 桌面：构建 / 安装（脚本入口在仓库根；打包待做）
-platform/android/        # Android：fcitx5-android 插件接线（待启动，见 android.md）
-data/                    # 随包数据源
-goldens/                 # 差分金样与夹具
-tools/                   # 金样生成器（generators/）、探针与基准（probes/）、探针用例（cases/）
-docs/                    # 设计/重构/使用/配置/性能/Android 等，索引见根 README「文档」表
-```
+crate / 模块级结构与「结构正义」硬规则见 [`refactor.md`](refactor.md) §1 / §2（**单一来源**，此处不重复）；
+参照实现 → Rust 的模块映射见下节 §3，fcitx5 侧集成要点见 §5。
 
 依赖方向：`platform/* → hux-ffi / hux-cfg / hux-core`，`hux-scheme/* → hux-core`；
-内核不依赖方案与平台、不依赖 fcitx5、不依赖 Lua。目标结构与「结构正义」规则见 [`refactor.md`](refactor.md)。
+内核不依赖方案与平台、不依赖 fcitx5、不依赖 Lua。
 
 ## 3. 模块映射（参照 → Rust）
 
@@ -102,7 +81,7 @@ docs/                    # 设计/重构/使用/配置/性能/Android 等，索�
   | 组件 | 行为要点 |
   |---|---|
   | `key_binder` | `Tab`→Down、`Shift+Tab`→Up（`when: has_menu`） |
-  | `selector` | 菜单导航与翻页（`page_size`、上/下翻页键与翻页循环可由配置覆盖；默认 `-`/`[` → Page_Up（`when: paging`，翻过页后生效）、`=`/`]` → Page_Down（`when: has_menu`））、Home/End；候选排列由配置写入 `_vertical`。参照 `Selector::PreviousPage` 在首页也 `Highlight(0)` 并**无条件**写 `paging` 标签（`menu/page_down_cycle` 只作用于 `NextPage`），本实现按参照（审计 F2/F3） |
+  | `selector` | 菜单导航与翻页（`page_size`、上/下翻页键与翻页循环可由配置覆盖；默认 `-`/`[` → Page_Up、`=`/`]` → Page_Down，**两侧同前置**：菜单可见（且非 `ascii_mode`）即判翻页——用户决定 B，见下）、Home/End；候选排列由配置写入 `_vertical`。参照 `Selector::PreviousPage` 在首页也 `Highlight(0)`（`menu/page_down_cycle` 只作用于 `NextPage`），本实现按参照（审计 F2/F3）；参照另写 `paging` 标签，本仓随其唯一读取方一并删除 |
   | `navigator` | 字节光标移动；Ctrl/Shift+Left/Right 跳到段首/段尾（未做音节 spans 细分）；Home/End 到组合起点/末尾 |
   | `express_editor` | space 确认/提交、BackSpace 撤销编辑、Delete 删光标处、Return 提交原文、Escape 取消；可打印字符先提交组合再交宿主 |
   | `punctuator` | 单键可打印 ASCII 查 `symbols.yaml`；组合中提交「组合文本 + 标点」；`{pair}` 交替 |
@@ -111,11 +90,15 @@ docs/                    # 设计/重构/使用/配置/性能/Android 等，索�
   > 可打印 ASCII 标点」先确认组合（`_auto_commit` 下即上屏）再把原键 Forward 给宿主，使上面
   > `selector`/`key_binder` 的 `-`/`=`/`[`/`]` 翻页绑定在这条路径上永远轮不到。本仓在标点分支入口
   > 先问与宿主**同一套**判据 `hux_core::host::paging_action(context, options, key_event)`
-  > （`Up`＝`page_up_keys` 且带 `paging` 标签；`Down`＝`page_down_keys`；`key_binder` 与之共用）：
-  > 判为翻页的键不消费、落回宿主链翻页，其余标点（含**未翻页的 `-`**）维持上游行为。
-  > 依据与最小复现（`j a equal`：期望翻页、上游提交「一=」）见 `docs/refactor.md` §8「有意偏离上游」；
-  > 受影响金样用例 `punct_menu_equal` 与 `nav-page-equal`/`nav-page-minus`/`nav-page-zho` 在差分测试中
-  > 按 `DEVIATED_CASES` 登记跳过（金样字节不动），`Page_Up`/`Page_Down` 与 `Tab` 循环不受影响。
+  > （`Up`＝命中 `page_up_keys` 且**菜单可见**；`Down`＝命中 `page_down_keys`，同前置；`key_binder` 与之共用）：
+  > 判为翻页的键不消费、落回宿主链翻页，其余标点维持上游行为。
+  > **用户决定 B（2026-09）**：上翻页不再要求参照 `when: paging` 的「已翻过页」标签
+  > （`paging` 标签与其读写点已删除）——代价是菜单可见时这几个键打不出标点；
+  > `ascii_mode` 或无菜单时判据不成立，仍按原路径落标点。
+  > 依据与最小复现（`j a equal`：期望翻页、上游提交「一=」）见 [`upstream-deviations.md`](upstream-deviations.md) ①；
+  > 受影响金样用例 `punct_menu_equal`、`punct_menu_minus`、`nav_page_home_minus` 与
+  > `nav-page-equal`/`nav-page-minus`/`nav-page-zho` 在差分测试中按 `DEVIATIONS` 登记期望值
+  > （金样字节不动），`Page_Up`/`Page_Down` 与 `Tab` 循环不受影响。
 
 - **英文模式不实现**（设计取舍）：英文输入交由 fcitx5 切换输入法；大写字母经 `char_handler` 直通（先提交组合）。
 - **提交与按键顺序**：可打印字符的 `char_handler` 在核心语义为「提交组合 + 不消费」（同 librime）；宿主层
@@ -155,4 +138,4 @@ docs/                    # 设计/重构/使用/配置/性能/Android 等，索�
 1. **Rust 差分**：模块对金样逐位断言（fixture 入库；真实模型本地/定期）；
 2. **键序列金样**：真 librime 探针生成「键序列 → 提交/候选/预编辑」，Rust 重放比对；
 3. **CI**：fmt/clippy/差分 + 以固定参照提交重生成 fixture 金样比对（溯源校验），见
-   [`../goldens/README.md`](../goldens/README.md)。
+   [`../goldens/regenerate.md`](../goldens/regenerate.md)。

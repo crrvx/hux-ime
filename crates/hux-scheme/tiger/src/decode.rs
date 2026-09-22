@@ -14,6 +14,7 @@ use crate::lexicon::{CodeEntry, Lexicon, Supplement};
 use crate::ngram::MobileModel;
 use anyhow::Result;
 use hashbrown::{HashMap, HashSet};
+use hux_core::collections::{Map, Set};
 use hux_core::learning::{DiffItem, DiffPathNode, LearningIndex};
 use hux_core::punct::{PairState, PunctTable};
 use hux_core::session::Candidate;
@@ -201,7 +202,7 @@ pub struct DecodeOutput {
     pub evidence: Evidence,
     /// 可见顶层候选路径上的全部 (raw_length, text) 前缀（对应参照
     /// `prefix_belongs_to_visible` 的 membership 判定）。
-    pub visible_prefixes: HashSet<(usize, String)>,
+    pub visible_prefixes: Set<(usize, String)>,
     pub learning_affected: bool,
     pub completed_truncated: bool,
 }
@@ -212,7 +213,7 @@ impl DecodeOutput {
             items: Vec::new(),
             confidence_candidates: Vec::new(),
             evidence: Evidence::default_for(false),
-            visible_prefixes: HashSet::new(),
+            visible_prefixes: Set::new(),
             learning_affected: false,
             completed_truncated: false,
         }
@@ -246,10 +247,10 @@ pub struct PrefixEvidence {
 pub struct Evidence {
     pub prefixes: Vec<PrefixEvidence>,
     /// raw_length → text → `prefixes` 下标（对应参照 `_by_boundary`）。
-    pub by_boundary: HashMap<usize, HashMap<String, usize>>,
+    pub by_boundary: Map<usize, Map<String, usize>>,
     pub proposal: String,
     pub proposal_share: f64,
-    pub raw_lengths: HashMap<String, usize>,
+    pub raw_lengths: Map<String, usize>,
     pub neutral_incomplete_tail: bool,
     pub merged_incomplete_tail: bool,
     pub neutral_low_confidence: bool,
@@ -260,10 +261,10 @@ impl Evidence {
     fn default_for(truncated: bool) -> Self {
         Self {
             prefixes: Vec::new(),
-            by_boundary: HashMap::new(),
+            by_boundary: Map::new(),
             proposal: String::new(),
             proposal_share: 0.0,
-            raw_lengths: HashMap::new(),
+            raw_lengths: Map::new(),
             neutral_incomplete_tail: false,
             merged_incomplete_tail: false,
             neutral_low_confidence: false,
@@ -1375,7 +1376,7 @@ impl Decoder {
             && self.ranking_prior.lexical_prior_weight > 0.0
             && self.model.is_some()
         {
-            let mut cache = HashMap::new();
+            let mut cache = Map::new();
             let limit = self.ranking_prior.lexical_candidate_limit.min(items.len());
             for (position, item) in items.iter_mut().take(limit).enumerate() {
                 let lexical_score = model.score_with_cache(&item.text, &mut cache)
@@ -1411,7 +1412,7 @@ impl Decoder {
             )?;
         }
         // 可见顶层候选路径上的全部前缀（参照 `prefix_belongs_to_visible`）。
-        let mut visible_prefixes: HashSet<(usize, String)> = HashSet::new();
+        let mut visible_prefixes: Set<(usize, String)> = Set::new();
         for item in &items {
             let mut current = Some(item.path);
             while let Some(index) = current {
@@ -1755,7 +1756,7 @@ impl Decoder {
         let mut proposal_share = 0.0;
         let mut proposal_raw_length = 0usize;
         let mut proposal_chars = 0usize;
-        let mut raw_lengths: HashMap<String, usize> = HashMap::new();
+        let mut raw_lengths: Map<String, usize> = Map::new();
         let mut raw_share: HashMap<String, f64> = HashMap::new();
         for prefix in &prefixes {
             if !prefix.boundary_closed {
@@ -1891,12 +1892,11 @@ fn build_prefix_evidence(pool: &[EvidenceCandidate], arena: &[State]) -> Vec<Pre
     entries
 }
 
-fn prefix_lookup(prefixes: &[PrefixEvidence]) -> HashMap<usize, HashMap<String, usize>> {
-    let mut lookup: HashMap<usize, HashMap<String, usize>> = HashMap::new();
+fn prefix_lookup(prefixes: &[PrefixEvidence]) -> Map<usize, Map<String, usize>> {
+    let mut lookup: Map<usize, Map<String, usize>> = Map::new();
     for (index, prefix) in prefixes.iter().enumerate() {
         lookup
-            .entry(prefix.raw_length)
-            .or_default()
+            .entry_or_default(prefix.raw_length)
             .insert(prefix.text.clone(), index);
     }
     lookup

@@ -15,8 +15,10 @@ reuse lint                      # 许可标注（CI 亦跑）
 ```
 
 设计、模块映射与测试说明见 [`rust-migration.md`](rust-migration.md)； \
-差分金样与复现命令见 [`../goldens/README.md`](../goldens/README.md)；
-性能基准与基线见 [`perf.md`](perf.md)（`cargo run --release --example {decode_bench,key_bench}`）。
+差分金样清单见 [`../goldens/README.md`](../goldens/README.md)，重新生成命令与校验和见
+[`../goldens/regenerate.md`](../goldens/regenerate.md)； \
+性能基准与基线见 [`perf.md`](perf.md)（`cargo run --release --example {decode_bench,key_bench}`）。 \
+**一键安装 / 卸载命令只写在根 [`README.md`](../README.md)「快速指南」**——本文只留手工步骤与产物清单。
 
 开发可用环境变量覆盖数据目录与模型（目录冒号分隔；`data/` 已含全部随包数据）：
 
@@ -33,13 +35,9 @@ fcitx5 -r -d
 
 ## 安装
 
-一键安装（构建 → 装插件与随包数据 → 重启 fcitx5）：
+一键安装（构建 → 装插件与随包数据 → 重启 fcitx5；`--dry-run` 预览）见根 [`README.md`](../README.md)
+「快速指南」——命令只留那处。脚本结尾会提示自行获取 n-gram 模型（见下）。
 
-```sh
-./install.sh            # 预览将执行的命令：./install.sh --dry-run
-```
-
-脚本结尾会提示自行获取 n-gram 模型（见下）。\
 手工安装（自定义前缀或打包时参考）：
 
 依赖：CMake 3.20+，以及提供 CMake 包 `Fcitx5Core` 的 fcitx5 开发文件。 \
@@ -88,7 +86,7 @@ cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
 - `Up/Down` 或 `Tab / Shift+Tab` 高亮选择
 - `PgUp/PgDn` 翻页；`-`/`=`、`[`/`]` 同为翻页键，**菜单可见时优先翻页**（`=` 下翻一页、
   翻过页后 `-` 上翻一页，都不上屏组合）——此处有意偏离上游 `abad411`：上游会让标点分支先上屏
-  组合再落标点，从而遮蔽翻页绑定（见 [`refactor.md` §8](refactor.md)）；**未翻页的** `-` 仍按上游
+  组合再落标点，从而遮蔽翻页绑定（见 [`upstream-deviations.md`](upstream-deviations.md) ①）；**未翻页的** `-` 仍按上游
   行为先上屏组合再落 `-`。其余 ASCII 标点维持「先上屏组合再落标点」（见 [`config.md`](config.md)）
 - `Enter` 提交原文，`Esc` 取消。
 - `Alt+:` 音反查
@@ -134,12 +132,7 @@ Alt+:  zhongguo   →   :zhong guo〔拼音〕   候选：中国 …
 
 ## 卸载（无残留）
 
-一键卸载：
-
-```sh
-./uninstall.sh          # 移除系统文件，保留用户数据（选项/学习库/模型）
-./uninstall.sh --purge  # 连用户数据一起清除
-```
+一键卸载（`--purge` 连用户数据一起清除）见根 [`README.md`](../README.md)「快速指南」——命令只留那处。
 
 手工步骤：
 
