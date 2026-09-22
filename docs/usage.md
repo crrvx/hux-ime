@@ -89,8 +89,8 @@ cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
   组合再落标点，从而遮蔽翻页绑定（见 [`upstream-deviations.md`](upstream-deviations.md) ①）；**未翻页的** `-` 仍按上游
   行为先上屏组合再落 `-`。其余 ASCII 标点维持「先上屏组合再落标点」（见 [`config.md`](config.md)）
 - `Enter` 提交原文，`Esc` 取消。
-- `Alt+:` 音反查
-- `Alt+"` 字反查
+- `` ` `` 音反查
+- `~` 字反查
 
 ![虎句](images/虎句.png)
 
@@ -109,7 +109,7 @@ cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
 - `Esc` / 再次触发：退出
 
 ```
-Alt+:  zhongguo   →   :zhong guo〔拼音〕   候选：中国 …
+`  zhongguo   →   `zhong guo〔拼音〕   候选：中国 …
 ```
 
 ![音反查](images/音反查.png)

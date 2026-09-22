@@ -223,6 +223,13 @@ FCITX_CONFIGURATION(
                         "（概率型早提交仍不少于 3）。"}}};);
 
 /// 快捷键设置（配置页「快捷键」分区；`KeyList` 可多项，与全局设置同款）。
+///
+/// 两个反查默认键按**无修饰的 keysym** 声明（`` ` `` = `grave`、`~` = `asciitilde`）：
+/// `~` 在物理键盘上是 Shift+`` ` ``，但前端上报的是该 level 的 keysym（`asciitilde` +
+/// Shift），而 fcitx5 `Key::normalize()`（「usually used when key is from frontend」）
+/// 对本身就产字符的非字母键会去掉 Shift ⇒ 引擎实际收到 `asciitilde` + 无修饰。
+/// 旧默认 `Alt+:` / `Alt+"` 走的是同一条归一化（`:` = Shift+`;` → `colon` + Alt），
+/// 故此处声明形态与之一致即可命中真实按键。
 FCITX_CONFIGURATION(
     HuxHotkeyConfig,
     fcitx::KeyListOptionWithAnnotation<fcitx::ToolTipAnnotation>
@@ -231,22 +238,22 @@ FCITX_CONFIGURATION(
             .path{"SoundToCharShapeKey"},
             .description{"音反查"},
             .defaultValue = fcitx::KeyList{
-                fcitx::Key(FcitxKey_colon, fcitx::KeyState::Alt)},
+                fcitx::Key(FcitxKey_grave, fcitx::KeyState::NoState)},
             .constrain = fcitx::KeyListConstrain(
                 fcitx::KeyConstrainFlag::AllowModifierLess),
             .annotation{"可多项。按下后输入拼音（支持拼写缩写），候选为对应词语、"
-                        "注释显示虎码。"}}};
+                        "注释显示虎码；触发键本身不再作为普通字符输入。"}}};
     fcitx::KeyListOptionWithAnnotation<fcitx::ToolTipAnnotation>
         reverseLookupCharacterKeys{{
             .parent = this,
             .path{"CharToSoundShapeKey"},
             .description{"字反查"},
             .defaultValue = fcitx::KeyList{
-                fcitx::Key(FcitxKey_quotedbl, fcitx::KeyState::Alt)},
+                fcitx::Key(FcitxKey_asciitilde, fcitx::KeyState::NoState)},
             .constrain = fcitx::KeyListConstrain(
                 fcitx::KeyConstrainFlag::AllowModifierLess),
             .annotation{"可多项。按下后显示光标左侧汉字的拼音与虎码"
-                        "（需应用支持周边文本）。"}}};
+                        "（需应用支持周边文本）；触发键本身不再作为普通字符输入。"}}};
     fcitx::KeyListOptionWithAnnotation<fcitx::ToolTipAnnotation> pageUpKeys{{
         .parent = this,
         .path{"PageUpKey"},

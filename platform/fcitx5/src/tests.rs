@@ -1282,12 +1282,12 @@ fn reverse_lookup_pronunciation_end_to_end() {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data"),
     ];
     let mut engine = TestEngine::new(host(), dirs, None, None);
-    assert!(engine.key(0x3a, FCITX_ALT, false), "音反查触发键应被消费");
+    assert!(engine.key(0x60, 0, false), "音反查触发键（默认 `）应被消费");
     for code in *b"zho" {
         assert!(engine.key(u32::from(code), 0, false), "音反查输入应被消费");
     }
     let (preedit, _, candidates, _, _, _) = last_update();
-    assert_eq!(preedit, ":zho〔拼音〕");
+    assert_eq!(preedit, "`zho〔拼音〕");
     assert_eq!(
         candidates,
         vec!["中哦", "中龘", "中欧", "找哦", "兆欧", "找欧"]
@@ -1296,17 +1296,17 @@ fn reverse_lookup_pronunciation_end_to_end() {
     assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "中哦");
     // 音反查预编辑「按音节分码」：全拼音节之间插空格。
     engine.reset();
-    assert!(engine.key(0x3a, FCITX_ALT, false));
+    assert!(engine.key(0x60, 0, false));
     for code in *b"zhongguo" {
         assert!(engine.key(u32::from(code), 0, false));
     }
     let (preedit, _, candidates, _, _, _) = last_update();
     assert_eq!(candidates.first().map(String::as_str), Some("中国"));
-    assert_eq!(preedit, ":zhong guo〔拼音〕");
+    assert_eq!(preedit, "`zhong guo〔拼音〕");
 }
 
-/// 字反查：默认 Alt+" 进入组合（**带修饰键不给默认候选**）；
-/// 上排 = 光标左侧 1 字拼音、下排 = 虎码，步长 1；改为单字符键时才给默认可上屏候选。
+/// 字反查：默认 `~` 进入组合（**单字符触发键 ⇒ 给默认可上屏候选**）；
+/// 上排 = 光标左侧 1 字拼音、下排 = 虎码，步长 1；改成带修饰的触发键时不给默认候选。
 #[test]
 fn reverse_lookup_character_end_to_end() {
     let _guard = serial();
@@ -1319,14 +1319,14 @@ fn reverse_lookup_character_end_to_end() {
     let mut engine = TestEngine::new(host(), dirs, None, None);
     // 应用侧周边文本「中欧中兴」，光标在第 2 个字符后（锚点 = 2）。
     engine.set_surrounding(Some("中欧中兴"), 2);
-    // 默认 Alt+"（带修饰）→ 组合无默认候选；上排「咅」、下排「虍」。
-    assert!(engine.key(0x22, FCITX_ALT, false), "Alt+\" 应被消费");
+    // 默认 ~（无修饰单字符）→ 有默认可上屏候选（触发字符本身）；上排「咅」、下排「虍」。
+    assert!(engine.key(0x7e, 0, false), "~ 应被消费");
     let (preedit, _, candidates, _, up, down) = last_update();
-    assert_eq!(engine.session().context.input(), b"\"");
+    assert_eq!(engine.session().context.input(), b"~");
     assert!(preedit.is_empty(), "查码段不下发预编辑：{preedit:?}");
     assert!(
-        candidates.is_empty(),
-        "带修饰触发键不给默认候选：{candidates:?}"
+        candidates.iter().any(|candidate| candidate == "~"),
+        "单字符触发键应给默认候选：{candidates:?}"
     );
     assert_eq!(up, "咅 ?");
     assert_eq!(down, "虍 nbe/nbeq");
@@ -1343,8 +1343,31 @@ fn reverse_lookup_character_end_to_end() {
     // 其它键：退出查码段并照常处理。
     assert!(engine.key(u32::from(b'a'), 0, false), "普通键照常处理");
     assert_eq!(engine.session().context.input(), b"a");
-    // 音反查：带修饰键（默认 Alt+:）**不给**默认候选；单字符键（;）才给。
+    // 同一契约的另一半：显式把触发键改成带修饰的 Alt+" → **不给**默认候选。
     engine.reset();
+    engine.apply_settings(Settings {
+        reverse_lookup_character_keys: vec!["Alt+quotedbl".to_string()],
+        ..Settings::default()
+    });
+    assert!(engine.key(0x22, FCITX_ALT, false), "Alt+\" 应被消费");
+    let (_, _, candidates, _, _, _) = last_update();
+    assert!(
+        candidates.is_empty(),
+        "带修饰触发键不给默认候选：{candidates:?}"
+    );
+    // 音反查：默认 `（无修饰单字符）给默认候选；带修饰键（显式 Alt+:）不给。
+    engine.reset();
+    assert!(engine.key(0x60, 0, false), "默认 ` 应被消费");
+    let (_, _, candidates, _, _, _) = last_update();
+    assert!(
+        candidates.iter().any(|candidate| candidate == "`"),
+        "音反查单字符触发键应给默认候选：{candidates:?}"
+    );
+    engine.reset();
+    engine.apply_settings(Settings {
+        reverse_lookup_pronunciation_keys: vec!["Alt+colon".to_string()],
+        ..Settings::default()
+    });
     assert!(engine.key(0x3a, FCITX_ALT, false), "Alt+: 应被消费");
     let (_, _, candidates, _, _, _) = last_update();
     assert!(
@@ -1409,7 +1432,7 @@ fn reverse_lookup_character_without_surrounding_shows_nothing() {
     UPDATES.lock().unwrap().clear();
     let mut engine = TestEngine::new(host(), reverse_lookup_character_dirs(), None, None);
     engine.set_surrounding(None, 0);
-    assert!(engine.key(0x22, FCITX_ALT, false), "Alt+\" 应被消费");
+    assert!(engine.key(0x7e, 0, false), "~ 应被消费");
     let (_, _, _, _, up, down) = last_update();
     assert!(up.is_empty(), "周边文本不可用时上排应为空：{up:?}");
     assert!(down.is_empty(), "周边文本不可用时下排应为空：{down:?}");
@@ -1422,7 +1445,7 @@ fn reverse_lookup_character_refreshes_when_surrounding_available() {
     UPDATES.lock().unwrap().clear();
     let mut engine = TestEngine::new(host(), reverse_lookup_character_dirs(), None, None);
     engine.set_surrounding(None, 0);
-    assert!(engine.key(0x22, FCITX_ALT, false), "Alt+\" 应被消费");
+    assert!(engine.key(0x7e, 0, false), "~ 应被消费");
     engine.set_surrounding(Some("中欧中兴"), 2);
     assert!(!engine.key(0xffe1, 0, false), "修饰键不消费（触发刷新）");
     let (_, _, _, _, up, down) = last_update();
@@ -2176,6 +2199,34 @@ fn host_schema_panel_preedit_defaults_to_on() {
     assert_eq!(schema_default("PanelPreedit"), "true");
 }
 
+/// 默认反查触发键：音反查 `` ` ``（`grave`）、字反查 `~`（`asciitilde`），且都**无修饰**。
+///
+/// `~` 在物理键盘上是 Shift+`` ` ``，但前端上报的是该 level 的 keysym（`asciitilde`+Shift），
+/// 而 fcitx5 `Key::normalize()` 会去掉这类「本身就产字符」键的 Shift（旧默认 `Alt+:` 同理：
+/// `:` = Shift+`;` 归一化成 `colon`+Alt）⇒ 引擎收到的是 `asciitilde` + 无修饰。
+/// 断言按语义给（含 keysym 且无修饰），不钉源码的书写形式。
+#[test]
+fn host_schema_reverse_lookup_defaults_are_grave_and_asciitilde() {
+    let pronunciation = schema_default("SoundToCharShapeKey");
+    assert!(
+        pronunciation.contains("FcitxKey_grave") && pronunciation.contains("KeyState::NoState"),
+        "音反查默认键应为无修饰的 `（grave）：{pronunciation}"
+    );
+    assert!(
+        !pronunciation.contains("KeyState::Alt"),
+        "音反查默认键不应带修饰：{pronunciation}"
+    );
+    let character = schema_default("CharToSoundShapeKey");
+    assert!(
+        character.contains("FcitxKey_asciitilde") && character.contains("KeyState::NoState"),
+        "字反查默认键应为无修饰的 ~（asciitilde）：{character}"
+    );
+    assert!(
+        !character.contains("KeyState::Alt"),
+        "字反查默认键不应带修饰：{character}"
+    );
+}
+
 /// C++ 配置 schema（`shell/hux.cpp`）的默认值必须与 `hux-cfg::Settings::default()` 一致。
 ///
 /// 两边各写一份默认值且此前无任何校验：C++ 构造时即 `applyConfig` 覆盖引擎侧默认，
@@ -2209,8 +2260,9 @@ fn schema_defaults_match_settings_defaults() {
         defaults.push((name, value));
     }
 
-    // C++ 用 keysym 常量声明默认键：`fcitx::Key(FcitxKey_colon, fcitx::KeyState::Alt)`
-    // → rime 键名 `Alt+colon`（`FcitxKey_<name>` 即 X11 键名，与 librime 键名表同名）。
+    // C++ 用 keysym 常量声明默认键：`fcitx::Key(FcitxKey_grave, fcitx::KeyState::NoState)`
+    // → rime 键名 `grave`（`FcitxKey_<name>` 即 X11 键名，与 librime 键名表同名）；
+    // 带 `KeyState::Alt` 的项加 `Alt+` 前缀（旧默认形态）。
     let keys = |raw: &str| -> Vec<String> {
         raw.split("fcitx::Key(FcitxKey_")
             .skip(1)
