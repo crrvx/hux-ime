@@ -31,6 +31,7 @@
 | `decode_learning.tsv.gz` | 解码接入学习（无模型；含一条成对融合偏好） | 1988 行 |
 | `decode_learning_model.tsv.gz` | 解码接入学习（fixture 模型，抽样；同上） | 359 行 |
 | `decode_learning_evidence.tsv.gz` | 早提交证据 **+ 学习接入**（`--early-commit 1 --required 1 --learning 1`，无模型；学习 × 证据抑制的交互——`learning=1 && truncated=1` 的截断池与 `share`/`base_share` 双权重） | 12257 行 |
+| `decode_fivegram.tsv.gz` | decode 金样（TCSKNM03 五阶 fixture，抽样；按 magic 派发的模型装配 + `step` 槽位平移 + EOS 打分，另含整段与**前缀**锁定重放的 `locked` 用例） | 790 行 |
 | `key.tsv.gz` | 键名/键事件金样（librime 探针）：`name`/`repr`/`parse`/`modifier` | 5136 行（5132 条记录 + 4 行头部） |
 | `key_sequence.tsv.gz` | 键序列金样（真 librime 探针；主干 pin）：逐步 `consumed`/输入/光标/提交/候选/注释/高亮 | 68 例 / 285 步（含空码自动上屏、编辑/导航键、标点表、大写字母直接提交、`Return` 修饰键变体（`Ctrl(+Shift)+Return`）、标点表 caret 语义、selector 首页上翻、数字直选、撇号分段；`punct_menu_equal`/`punct_menu_minus`/`nav_page_home_minus` 记录**上游行为**「菜单可见的 ASCII 标点先确认组合再交标点表」——三例都因本仓**有意偏离**在差分测试中按期望值登记：`punct_menu_equal` 是上游缺陷（翻页绑定被标点分支遮蔽）修复，`punct_menu_minus` 是**用户决定的语义强化**（菜单可见时上翻页键一律拦截、不再要求 `when: paging` 的「已翻过页」标签；代价：菜单可见时这些键打不出标点——见 [`../docs/upstream-deviations.md`](../docs/upstream-deviations.md) ①），`nav_page_home_minus` 两者兼有；`digit_menu_select`（addon 数字直选）、`apostrophe_digit_page`/`apostrophe_semicolon_page`（本仓分段常量追踪反查分支尖端 `92a0b54` 的 `delimiter: " '"`）同样按期望值登记，见 [`../docs/upstream-deviations.md`](../docs/upstream-deviations.md)） |
 | `key_sequence/` | 键序列夹具（合成码表 + `symbols.yaml`＝参照 pin 同文件；探针与 Rust 重放共用；发布默认见 `data/symbols.yaml`） | 2 文件 |
@@ -60,6 +61,7 @@ limit   <n>                           # 执行 apply_high_freq_limit
 supp    count=<n> error=<0|1>
 
 # decode（冷路径；include_early_commit=false，未接入学习）
+locked <hex lock.raw> <hex lock.text> <raw_length>,<text_length>;   # --lock 1：作用于紧随其后的 decode（整段锁 / 前缀锁各一行）
 decode <hex input> count=<n> learning=<0|1> truncated=<0|1> required=<hex prefix|->
 result <hex text> <hex segmented> <bits score> <bits confidence_score> <max_rank> <edge_count> <bits supplement_score> <bits learning_score> <bits early_commit_confidence_score>
 # decode + 早提交证据（--early-commit 1）

@@ -10,6 +10,7 @@
 //! `locked_decode_cache`）**当前不做**：收益集中在 >20 字符的长整句，而缓存需与解码 arena 的
 //! 路径下标生命周期绑定（改动语义边界），不符合「金样不变 + 按需」的前提。
 
+use crate::fivegram::{FivegramModel, LmHistory};
 use crate::lexical::{self, LexicalModel};
 use crate::lexicon::{CodeEntry, Lexicon, Supplement};
 use crate::ngram::MobileModel;
@@ -19,7 +20,8 @@ use hux_core::collections::{Map, Set};
 use hux_core::learning::{DiffItem, DiffPathNode, LearningIndex};
 use hux_core::punct::{PairState, PunctTable};
 use hux_core::session::Candidate;
-use std::path::PathBuf;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 
 pub const BOS: char = '\u{2}';
 pub const EOS: char = '\u{3}';
@@ -121,6 +123,39 @@ enum Comparator {
     NoModel,
 }
 
+/// 句模型：按模型文件头 magic 派发的两种格式。
+///
+/// 参照的模型查找只看候选文件名与 **magic**（`tiger_sentence_ngram.lua` 的 `load`）：
+/// 同一个文件名可以放任意格式，文件名只是候选顺序。因此这里同样只按 magic 派发。
+/// 两种格式的打分口径不同——TCSKNM02 是 `logp(prev2, prev1, target)` 的无状态口径，
+/// TCSKNM03 的 `step` 是「调用方持有最近 4 个 token 并就地推进」的另一套语义——
+/// 故不共用实现，由 [`Decoder::search_logp`] 分派。
+pub enum SentenceModel {
+    /// TCSKNM02 三阶移动端模型。
+    Mobile(Box<MobileModel>),
+    /// TCSKNM03 五阶分页模型。
+    Fivegram(Box<FivegramModel>),
+}
+
+impl SentenceModel {
+    /// 读文件头 8 字节按 magic 装载（`TCSKNM03` → 五阶，其余 → 三阶装载器）。
+    ///
+    /// 打不开或不足 8 字节时一律交给三阶装载器，未知 magic 因此沿用既有报错口径
+    /// （`not a mobile TCSKNM02 model`）。
+    pub fn load(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref();
+        let mut magic = [0u8; 8];
+        let fivegram = match std::fs::File::open(path) {
+            Ok(mut file) => file.read_exact(&mut magic).is_ok() && &magic == b"TCSKNM03",
+            Err(_) => false,
+        };
+        if fivegram {
+            return Ok(Self::Fivegram(Box::new(FivegramModel::load(path, None)?)));
+        }
+        Ok(Self::Mobile(Box::new(MobileModel::load(path, None)?)))
+    }
+}
+
 struct State {
     score: f64,
     mass_score: f64,
@@ -129,6 +164,9 @@ struct State {
     text: String,
     prev2: char,
     prev1: char,
+    /// 句模型 history 槽位（参照 `lm1..lm4`/`lm_count`）；只在五阶 `step` 口径下参与
+    /// 打分，三阶与无模型时恒为全零。**不进入任何比较器**（tie-break 与排序不受影响）。
+    lm: LmHistory,
     max_rank: usize,
     supplement_state: usize,
     supplement_score: f64,
@@ -297,11 +335,11 @@ impl EvidenceCandidate {
     }
 }
 
-/// 解码器：持有数据与可选 n-gram 模型（`None` = 无模型回退）。
+/// 解码器：持有数据与可选句模型（`None` = 无模型回退）。
 pub struct Decoder {
     lexicon: Lexicon,
     supplement: Supplement,
-    model: Option<MobileModel>,
+    model: Option<SentenceModel>,
     learning: Option<LearningWiring>,
     rank_of: Option<HashMap<char, usize>>,
     arena: Vec<State>,
@@ -323,7 +361,21 @@ struct LearningWiring {
 }
 
 impl Decoder {
+    /// 既有入口：只接三阶（TCSKNM02）模型。
     pub fn new(lexicon: Lexicon, supplement: Supplement, model: Option<MobileModel>) -> Self {
+        Self::with_model(
+            lexicon,
+            supplement,
+            model.map(|model| SentenceModel::Mobile(Box::new(model))),
+        )
+    }
+
+    /// 句模型入口：接按 magic 派发后的模型（三阶或五阶）。
+    pub fn with_model(
+        lexicon: Lexicon,
+        supplement: Supplement,
+        model: Option<SentenceModel>,
+    ) -> Self {
         let rank_of = lexicon.character_ranks.as_ref().map(|ranks| {
             ranks
                 .iter()
@@ -426,7 +478,7 @@ impl Decoder {
         &self.lexicon
     }
 
-    pub fn model(&self) -> Option<&MobileModel> {
+    pub fn model(&self) -> Option<&SentenceModel> {
         self.model.as_ref()
     }
 
@@ -635,6 +687,7 @@ impl Decoder {
             let seed_code_score = seed.code_score;
             let seed_prev2 = seed.prev2;
             let seed_prev1 = seed.prev1;
+            let seed_lm = seed.lm;
             let seed_supplement_state = seed.supplement_state;
             let seed_supplement_score = seed.supplement_score;
             let seed_learning_score = seed.learning_score;
@@ -659,10 +712,11 @@ impl Decoder {
             let mut score = seed_score;
             let mut prev2 = seed_prev2;
             let mut prev1 = seed_prev1;
+            let mut lm = seed_lm;
             let mut supplement_state = seed_supplement_state;
             let mut supplement_added = 0.0;
             for &ch in &chars {
-                score += self.logp(prev2, prev1, ch)?;
+                score += self.search_logp(&mut lm, prev2, prev1, ch)?;
                 score += EMITTED_CHARACTER_REWARD;
                 if self.supplement.count > 0 {
                     let (state, reward) = self.supplement.advance(supplement_state, ch);
@@ -712,6 +766,7 @@ impl Decoder {
                 text,
                 prev2,
                 prev1,
+                lm,
                 max_rank: 1,
                 supplement_state,
                 supplement_score,
@@ -762,6 +817,7 @@ impl Decoder {
             text: String::new(),
             prev2: BOS,
             prev1: BOS,
+            lm: self.begin_search_history(),
             max_rank: 1,
             supplement_state: 1,
             supplement_score: 0.0,
@@ -785,18 +841,41 @@ impl Decoder {
         states
     }
 
-    fn logp(&mut self, prev2: char, prev1: char, target: char) -> Result<f64> {
-        let Some(model) = self.model.as_mut() else {
-            return Ok(0.0);
-        };
-        model.logp_codes(prev2 as u32, prev1 as u32, target as u32)
+    /// 参照 `ranking_prior.begin_search_history`：五阶模型（有 `step`）取
+    /// `(bos_id, 0, 0, 0, 1)`；三阶与无模型保持 `(0, 0, 0, 0, 0)`。
+    fn begin_search_history(&self) -> LmHistory {
+        match &self.model {
+            Some(SentenceModel::Fivegram(model)) => LmHistory::begin(model.bos_id()),
+            _ => LmHistory::default(),
+        }
+    }
+
+    /// 统一打分入口：五阶走 `step`（**就地**推进 `lm` 并回写槽位），三阶走既有
+    /// `logp(prev2, prev1, target)` 口径（`lm` 原地不动），无模型恒 `0.0`。
+    fn search_logp(
+        &mut self,
+        lm: &mut LmHistory,
+        prev2: char,
+        prev1: char,
+        target: char,
+    ) -> Result<f64> {
+        match self.model.as_mut() {
+            None => Ok(0.0),
+            Some(SentenceModel::Mobile(model)) => {
+                model.logp_codes(prev2 as u32, prev1 as u32, target as u32)
+            }
+            Some(SentenceModel::Fivegram(model)) => model.step_char(lm, target),
+        }
     }
 
     fn has_observed_bigram(&mut self, prev: char, target: char) -> Result<bool> {
-        let Some(model) = self.model.as_mut() else {
-            return Ok(false);
-        };
-        model.has_observed_bigram_codes(prev as u32, target as u32)
+        match self.model.as_mut() {
+            None => Ok(false),
+            Some(SentenceModel::Mobile(model)) => {
+                model.has_observed_bigram_codes(prev as u32, target as u32)
+            }
+            Some(SentenceModel::Fivegram(model)) => model.has_observed_bigram_chars(prev, target),
+        }
     }
 
     fn current_comparator(&self) -> Comparator {
@@ -1088,10 +1167,11 @@ impl Decoder {
                         let mut score = item.score;
                         let mut prev2 = item.prev2;
                         let mut prev1 = item.prev1;
+                        let mut lm = item.lm;
                         let mut supplement_state = item.supplement_state;
                         let mut supplement_added = 0.0;
                         for &ch in &candidate.chars {
-                            score += self.logp(prev2, prev1, ch)?;
+                            score += self.search_logp(&mut lm, prev2, prev1, ch)?;
                             score += EMITTED_CHARACTER_REWARD;
                             if self.supplement.count > 0 {
                                 let (state, reward) = self.supplement.advance(supplement_state, ch);
@@ -1158,6 +1238,7 @@ impl Decoder {
                             text,
                             prev2,
                             prev1,
+                            lm,
                             max_rank: item.max_rank.max(candidate.rank),
                             supplement_state,
                             supplement_score: item.supplement_score + supplement_added,
@@ -1195,7 +1276,11 @@ impl Decoder {
     }
 
     fn evaluate_state(&mut self, index: usize) -> Result<Evaluated> {
-        let eos_score = self.logp(self.arena[index].prev2, self.arena[index].prev1, EOS)?;
+        // EOS 打分用 history 的**副本**（参照在 `evaluate_state` 里丢弃 `step` 回写的槽位：
+        // 状态本身不再被扩展，history 无副作用）。
+        let mut lm = self.arena[index].lm;
+        let (prev2, prev1) = (self.arena[index].prev2, self.arena[index].prev1);
+        let eos_score = self.search_logp(&mut lm, prev2, prev1, EOS)?;
         let path_penalty = self.path_isolation_penalty(index)?;
         let text = self.arena[index].text.clone();
         let code_score = self.arena[index].code_score;
@@ -1951,6 +2036,7 @@ struct StateView {
     text: String,
     prev2: char,
     prev1: char,
+    lm: LmHistory,
     max_rank: usize,
     supplement_state: usize,
     supplement_score: f64,
@@ -1968,6 +2054,7 @@ impl State {
             text: self.text.clone(),
             prev2: self.prev2,
             prev1: self.prev1,
+            lm: self.lm,
             max_rank: self.max_rank,
             supplement_state: self.supplement_state,
             supplement_score: self.supplement_score,
@@ -2905,5 +2992,53 @@ mod tests {
         // gmatch 语义：失败起点右移重试
         assert_eq!(parse_boundaries("12,34,56;"), vec![(34, 56)]);
         assert_eq!(parse_boundaries("1,2,3;"), vec![(2, 3)]);
+    }
+
+    fn golden_path(relative: &str) -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../goldens")
+            .join(relative)
+    }
+
+    /// 模型装载按文件头 magic 派发：五阶夹具 → 五阶变体，三阶夹具 → 三阶变体；
+    /// 其余文件（未知 magic、缺文件）保持三阶装载器的既有报错路径。
+    #[test]
+    fn sentence_model_dispatches_on_magic() {
+        let fivegram = SentenceModel::load(golden_path("fivegram_fixture.bin")).expect("五阶夹具");
+        assert!(
+            matches!(fivegram, SentenceModel::Fivegram(_)),
+            "TCSKNM03 magic 必须派发到五阶"
+        );
+        let mobile = SentenceModel::load(golden_path("ngram_fixture.bin")).expect("三阶夹具");
+        assert!(matches!(mobile, SentenceModel::Mobile(_)));
+        let error = SentenceModel::load(golden_path("lexicon/tiger_sentence.codes.txt"))
+            .err()
+            .expect("非模型文件必须报错");
+        assert!(
+            error.to_string().contains("not a mobile TCSKNM02 model"),
+            "{error}"
+        );
+        let error = SentenceModel::load(golden_path("no-such-model.bin"))
+            .err()
+            .expect("缺文件必须报错");
+        assert!(error.to_string().contains("cannot open n-gram"), "{error}");
+    }
+
+    /// 五阶模型接入后 `has_observed_bigram` 的分派（契约「该二元组是否有观测记录」不变；
+    /// 期望值取自参照实现对该夹具的实测）。
+    #[test]
+    fn fivegram_decoder_dispatches_observed_bigram() {
+        let dir =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../goldens/lexicon");
+        let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
+        let supplement = Supplement::load_default(Some(&dir));
+        let model = SentenceModel::load(golden_path("fivegram_fixture.bin")).expect("五阶夹具");
+        let mut decoder = Decoder::with_model(lexicon, supplement, Some(model));
+        assert!(decoder.has_observed_bigram('你', '好').expect("查询"));
+        assert!(decoder.has_observed_bigram(BOS, '你').expect("查询"));
+        assert!(!decoder.has_observed_bigram('吗', '你').expect("查询"));
+        assert!(!decoder.has_observed_bigram('你', EOS).expect("查询"));
+        // 词表外（且非 BOS/EOS）⇒ false：与 `step` 的 unknown 兜底口径不同。
+        assert!(!decoder.has_observed_bigram('猫', '你').expect("查询"));
     }
 }

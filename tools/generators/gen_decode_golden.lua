@@ -3,19 +3,24 @@
 
 -- 生成 decode 金样（冷路径：include_early_commit=false；未接入学习）。
 --
---   lua tools/generators/gen_decode_golden.lua --reference <repo> --data <dir> --out <tsv> [--model <bin>] [--every N] [--duplicate 0|1] [--early-commit 0|1] [--required 0|1] [--learning 0|1]
+--   lua tools/generators/gen_decode_golden.lua --reference <repo> --data <dir> --out <tsv> [--model <bin>] [--every N] [--duplicate 0|1] [--early-commit 0|1] [--required 0|1] [--learning 0|1] [--lock 0|1]
 --
 -- --required 1：对每 3 个输入追加一次“必需前缀”遍（前缀取该输入首候选的首字符），
 -- 覆盖 build_early_commit_evidence 的 required_text_prefix 过滤路径。
 -- --learning 1：用数据中的真实候选构造纠错事件，经 set_learning_for_test 接入解码，
 -- 并在 transcript 头部输出 learningsetup + levent 使 Rust 侧可重建同一索引。
--- 两个开关**可并用**：`--early-commit 1 --required 1 --learning 1` 即
+-- --lock 1：对每个 normalize 不变的输入追加「整段锁定重放」遍（锁取该输入首候选路径的整段
+-- 边界），并在存在「多于一条边」的候选时再加一遍**前缀锁**（种子之后仍要扩展）；
+-- 两者都在 decode 记录前多一行 locked 记录，覆盖 decode(..., locked) 的种子重放路径。
+-- 各开关**可并用**：`--early-commit 1 --required 1 --learning 1` 即
 -- `goldens/decode_learning_evidence.tsv.gz`（遗留②，覆盖「学习 × 证据抑制」的交互：
 -- 学习生效且截断的记录、`share`/`base_share` 双权重）。
 --
--- 数据目录需含四个数据文件；--model 时把模型拷贝为临时用户目录的
--- models/sentence-ngram-mobile.bin 并启用（走参照的 try_load 路径）。
+-- 数据目录需含四个数据文件；--model 时按模型文件头的 magic 把模型拷贝为临时用户目录的
+-- 候选名（TCSKNM03 → models/sentence-fivegram-mobile.bin，其余 → models/sentence-ngram-mobile.bin）
+-- 并启用——与参照的 try_load 同口径：文件名只决定候选顺序，格式由 magic 派发。
 -- transcript 记录（tab 分隔，`#` 注释，`-` 表示空串）：
+--   locked <hex lock.raw> <hex lock.text> <boundaries>            （--lock 1；作用于紧随其后的 decode）
 --   decode <hex input> count=<n> learning=<0|1> truncated=<0|1> required=<hex prefix|->
 --   result <hex text> <hex segmented> <bits score> <bits confidence_score> <max_rank> <edge_count> <bits supplement_score> <bits learning_score> <bits early_commit_confidence_score>
 --   evidence <hex proposal> <bits proposal_share> nit= mit= nlc= trunc= prefixes= raws=   （--early-commit 1）
@@ -59,6 +64,15 @@ local function copy_file(source, destination)
     return true
 end
 
+-- 文件头 8 字节（magic）；打不开或不足 8 字节返回 nil。
+local function file_magic(path)
+    local input = io.open(path, "rb")
+    if not input then return nil end
+    local magic = input:read(8)
+    input:close()
+    return magic
+end
+
 for _, name in ipairs({
     "tiger_sentence.codes.txt",
     "tiger_sentence.char_ranks.txt",
@@ -67,8 +81,14 @@ for _, name in ipairs({
 }) do
     assert(copy_file(opts.data .. "/" .. name, work .. "/" .. name), "missing data file: " .. name)
 end
+-- 参照按 magic 派发格式、文件名只决定候选顺序；此处同口径落候选名：
+-- TCSKNM03 落五阶候选名，其余（含未知 magic，交由加载器报错）落三阶候选名。
+local model_format = nil
 if opts.model then
-    assert(copy_file(opts.model, work .. "/models/sentence-ngram-mobile.bin"), "model copy failed")
+    model_format = file_magic(opts.model) == "TCSKNM03" and "TCSKNM03" or "TCSKNM02"
+    local name = model_format == "TCSKNM03" and "sentence-fivegram-mobile.bin"
+        or "sentence-ngram-mobile.bin"
+    assert(copy_file(opts.model, work .. "/models/" .. name), "model copy failed")
 end
 if opts.lexical then
     assert(copy_file(opts.lexical, work .. "/tiger_sentence.lexical.bin"), "lexical copy failed")
@@ -79,10 +99,20 @@ rime_api = { get_user_data_dir = function() return work end }
 local sentence = require("tiger_sentence")
 sentence.set_model_enabled(opts.model ~= nil)
 sentence.ensure_lexicon(nil)
+if model_format then
+    -- 装载失败/格式未派发都必须显式失败：否则会静默产出「无模型」金样。
+    local status = sentence.model_status and sentence.model_status()
+    assert(status and status.loaded, "model not loaded: " .. tostring(status and status.error))
+    if model_format == "TCSKNM03" then
+        assert(status.format == "TCSKNM03",
+            "fivegram model not dispatched: " .. tostring(status.format))
+    end
+end
 local duplicate = opts.duplicate ~= "0"
 local early = opts["early-commit"] == "1"
 local required_mode = opts.required == "1"
 local learning_flag = opts.learning == "1"
+local lock_mode = opts.lock == "1"
 if not duplicate then
     -- 参照测试同款：以假 context 关闭“单字重码组句”。
     sentence.set_allow_duplicate_single({ get_option = function() return false end })
@@ -172,14 +202,21 @@ local function hex(text)
     if text == "" then return "-" end
     return (text:gsub(".", function(c) return string.format("%02x", c:byte()) end))
 end
+-- 参照 normalize：去掉 Lua `%s` 空白并转 ASCII 小写（与 Rust 侧同一口径）。
+local function normalized(text)
+    return (text:gsub("%s+", ""):lower())
+end
 local function bits(value)
     local lo, hi = string.unpack("<I4I4", string.pack("<d", value))
     return string.format("0x%08x%08x", hi, lo)
 end
 
-local function emit_decode_pass(input, required)
+local function emit_decode_pass(input, required, lock)
     sentence.reset_decode_cache()
-    local results = sentence.decode(input, early, required ~= "" and required or nil)
+    if lock then
+        emit("locked", hex(lock.raw), hex(lock.text), lock.boundaries)
+    end
+    local results = sentence.decode(input, early, required ~= "" and required or nil, lock)
     emit("decode", hex(input), "count=" .. #results,
         "learning=" .. (results.learning_affected and 1 or 0),
         "truncated=" .. (results._completed_truncated and 1 or 0),
@@ -252,11 +289,14 @@ local function emit_decode_pass(input, required)
             end
         end
     end
+    return results
 end
 
 emit("# decode transcript; model=" .. (opts.model and "fixture" or "off") ..
     " duplicate=" .. (duplicate and 1 or 0) .. " early=" .. (early and 1 or 0) ..
-    " required=" .. (required_mode and 1 or 0) .. " learning=" .. (learning_flag and 1 or 0))
+    " required=" .. (required_mode and 1 or 0) .. " learning=" .. (learning_flag and 1 or 0) ..
+    (model_format == "TCSKNM03" and " format=TCSKNM03" or "") ..
+    (lock_mode and " lock=1" or ""))
 if learning_flag then
     emit("learningsetup", tostring(learning_now), hex("t"), tostring(#learning_events))
     for _, e in ipairs(learning_events) do
@@ -264,7 +304,7 @@ if learning_flag then
     end
 end
 for index, input in ipairs(selected) do
-    emit_decode_pass(input, "")
+    local results = emit_decode_pass(input, "")
     -- 必需前缀遍：取该输入首候选的首字符（每 3 个输入一次，覆盖过滤路径）。
     if early and required_mode and input ~= "" and index % 3 == 1 then
         sentence.reset_decode_cache()
@@ -274,9 +314,33 @@ for index, input in ipairs(selected) do
             emit_decode_pass(input, prefix)
         end
     end
+    -- 锁定重放遍：整段锁（首候选路径的整段边界）+ 前缀锁（首个「多于一条边」的候选
+    -- 路径的前一段，用于覆盖种子之后仍要扩展的槽位传递）；只对 normalize 不变的输入发
+    -- （否则锁前缀会被参照按规范化后的串拒绝，用例退化）。
+    if lock_mode and normalized(input) == input then
+        local function lock_for(item, link)
+            if not link or not link.raw_length or link.raw_length <= 0 or not link.text_length then
+                return nil
+            end
+            return { raw = input:sub(1, link.raw_length),
+                text = item.text:sub(1, link.text_length),
+                boundaries = tostring(link.raw_length) .. "," .. tostring(link.text_length) .. ";" }
+        end
+        local top = results[1]
+        local full = top and lock_for(top, top.path)
+        if full then emit_decode_pass(input, "", full) end
+        for _, item in ipairs(results) do
+            local partial = item.path and item.path.previous
+                and lock_for(item, item.path.previous)
+            if partial then
+                emit_decode_pass(input, "", partial)
+                break
+            end
+        end
+    end
 end
 out:close()
 os.execute("rm -rf '" .. work .. "'")
-print(string.format('{"lua":"%s","inputs":%d,"emitted":%d,"model":%s,"duplicate":%s,"early":%s}',
+print(string.format('{"lua":"%s","inputs":%d,"emitted":%d,"model":%s,"duplicate":%s,"early":%s,"format":"%s","lock":%s}',
     _VERSION, #selected, emitted, opts.model and "true" or "false", duplicate and "true" or "false",
-    early and "true" or "false"))
+    early and "true" or "false", model_format or "-", lock_mode and "true" or "false"))

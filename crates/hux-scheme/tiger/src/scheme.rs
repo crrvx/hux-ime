@@ -21,7 +21,7 @@ use hux_core::scheme::{
 use hux_core::session::Context;
 
 use crate::char_to_sound_shape;
-use crate::decode::Decoder;
+use crate::decode::{Decoder, SentenceModel};
 use crate::interaction::{
     CompositionBuilder, HostCommitObserver, K_CHAR_TO_SOUND_SHAPE_KEY, K_SOUND_TO_CHAR_SHAPE_KEY,
     LiveLearning, OPTION_ALLOW_DUPLICATE_SINGLE, OPTION_DIGIT_SELECT, OPTION_EARLY_COMMIT,
@@ -30,7 +30,6 @@ use crate::interaction::{
 };
 use crate::lexical;
 use crate::lexicon::{LEXICAL_FILE, Lexicon, MODEL_PATH, Supplement};
-use crate::ngram::MobileModel;
 
 /// 方案标识（与上游数据互通；学习库命名沿用）。
 pub const SCHEME_ID: &str = "tiger_sentence";
@@ -314,14 +313,16 @@ impl TigerScheme {
         notes.push(format!("lexicon: {}", lexicon.data_status().canonical()));
         let learning_rules = lexicon.learning_rules.clone();
         let supplement = Supplement::load_default(supplement_dir(dirs).as_deref());
-        let model = model_path.and_then(|path| match MobileModel::load(&path, None) {
+        // 模型按文件头 magic 派发（TCSKNM03 五阶 / TCSKNM02 三阶）：候选文件名只决定
+        // 查找顺序，不声明格式。
+        let model = model_path.and_then(|path| match SentenceModel::load(&path) {
             Ok(model) => Some(model),
             Err(error) => {
                 notes.push(format!("model: {error}"));
                 None
             }
         });
-        let mut decoder = Decoder::new(lexicon, supplement, model);
+        let mut decoder = Decoder::with_model(lexicon, supplement, model);
         let (lexical_model, lexical_error) = lexical::load_first(&asset_paths(dirs, LEXICAL_FILE));
         decoder.set_lexical_model(lexical_model);
         if let Some(error) = lexical_error {
@@ -726,6 +727,28 @@ mod tests {
             (role::LEARNING_ON_TAB, Value::Bool(true)),
         ]);
         TigerScheme::load(&fixture_dirs(), None, &config).0
+    }
+
+    /// 模型装配按文件头 magic 派发：文件名只决定候选顺序，不声明格式。
+    /// 五阶夹具放在任意路径也必须装成五阶模型（`notes` 里没有 `model:` 报错即装配成功）。
+    #[test]
+    fn scheme_assembles_fivegram_model_by_magic() {
+        let config = bag(&[
+            (role::HIGH_FREQ_LIMIT, Value::Count(0)),
+            (role::PAGE_SIZE, Value::Count(5)),
+            (role::LEARNING_ON_TAB, Value::Bool(true)),
+        ]);
+        let path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../goldens/fivegram_fixture.bin");
+        let (scheme, notes) = TigerScheme::load(&fixture_dirs(), Some(path), &config);
+        assert!(
+            !notes.iter().any(|note| note.starts_with("model: ")),
+            "{notes:?}"
+        );
+        assert!(matches!(
+            scheme.decoder.model(),
+            Some(crate::decode::SentenceModel::Fivegram(_))
+        ));
     }
 
     #[test]

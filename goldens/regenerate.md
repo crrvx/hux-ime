@@ -96,6 +96,14 @@ gzip -9 -n -c /tmp/decode_rank_first.tsv > goldens/decode_rank_first.tsv.gz
 gzip -9 -n -c /tmp/decode_evidence.tsv > goldens/decode_evidence.tsv.gz
 gzip -9 -n -c /tmp/decode_evidence_model.tsv > goldens/decode_evidence_model.tsv.gz
 
+# decode + 五阶模型（入库；TCSKNM03 fixture——生成器按文件头 magic 落候选名，
+# 故它走的是 models/sentence-fivegram-mobile.bin；`--lock 1` 追加整段/前缀锁定重放遍）
+lua tools/generators/gen_decode_golden.lua --reference "$REF" \
+  --data "goldens/lexicon" --model "goldens/fivegram_fixture.bin" \
+  --lexical "data/tiger_sentence.lexical.bin" \
+  --out /tmp/decode_fivegram.tsv --every 7 --lock 1
+gzip -9 -n -c /tmp/decode_fivegram.tsv > goldens/decode_fivegram.tsv.gz
+
 # decode + 学习（入库；`--learning 1` 的学习索引由真实候选纠错事件 + 一条成对融合偏好构成）
 lua tools/generators/gen_decode_golden.lua --reference "$REF" \
   --data "goldens/lexicon" --out /tmp/decode_learning.tsv --learning 1
@@ -235,6 +243,7 @@ python3 tools/checks/verify_golden_shas.py --reference _external/tiger-sentense-
 | `decode_learning.tsv.gz` | `1e46d3fbb4788e36b92d92ac931b343ad2d7f394e9611e1a04f36bf034f90cdd` |
 | `decode_learning_model.tsv.gz` | `13797b96097bcc133f862528350f4765d2c021f88c9f8e7ad56d5e6e02de881c` |
 | `decode_learning_evidence.tsv.gz` | `86dec38d94f05e57de281e254262a40aef86176965d739afee6eb6b644464398` |
+| `decode_fivegram.tsv.gz` | `4a20c420162c99d400e145d7cb6047582b991c3d1f0d5c0f40e57d01f48c6353` |
 | `key.tsv.gz` | `7fae4983ab69e36ebd2e5cac267df81e9bc325731deaefcaa22873aeca8660c0` |
 | `key_sequence.tsv.gz` | `68994c55aeee8a8a0a74c3e1683b6a605b1dfed6d34fc05adde39e3da1a05b24` |
 | `key_sequence_tab.tsv.gz` | `dd2dcd5549ff6f1ef5f532bd0fffe4f109359a8a7fdb5ce098d6c800232ae7b1` |
