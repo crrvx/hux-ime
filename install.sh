@@ -61,6 +61,10 @@ run cmake --build build/addon -j "$(nproc)"
 
 echo "[2/4] 安装插件到 /usr/lib/fcitx5（需要 sudo）……"
 run sudo cmake --install build/addon
+# 图标缓存：hicolor 未刷新时部分桌面要重新登录才看到新图标（缺工具时跳过，不算失败）。
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    run sudo gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
+fi
 
 echo "[3/4] 校验随包数据（data/MANIFEST → /usr/share/fcitx5/hux/）……"
 # 数据文件由 `cmake --install` 按 data/MANIFEST 安装（同一份清单也被 uninstall.sh 读取）；

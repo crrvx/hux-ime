@@ -5,11 +5,12 @@
 //!
 //! 合并顺序照参照 schema 语义：**`tiger_sentence.options.yaml`（user 覆盖） > 本设置 > 内建缺省**；
 //! 可持久化开关（提前上屏、提前上屏至预编辑、单字重码组句、全角标点、数字直选 5 项）
-//! 以本设置为存储层缺省（配置 / 状态菜单变更后
-//! 经 `apply_settings` 重放存储，`options.yaml` 仍优先）；`ascii_punct` 等作会话初始选项；
+//! 以本设置为存储层缺省；**配置页推送时**本设置的值写回该文件（
+//! [`crate::OptionsStore::set_values`]）——两侧是同一批项，故不再出现「`options.yaml` 的旧值
+//! 压制配置页」；`ascii_punct` 等作会话初始选项；
 //! `learning_on_tab` 门控学习 mode（`false` → 空串 = 不学习，对照参照 `prepare_learning` 的 `enabled`；
 //! 线上键 = 上游方案选项 `tiger_sentence/tab_learning`），
-//! `high_freq_limit` 在创建词库时生效（修改需重启）。
+//! `high_freq_limit` 变更即时重建词库（见方案的 `apply_config`）。
 //!
 //! 本层拥有设置词汇（涉及方案与宿主的字段名即角色名，见 [`crate::roles`]）；**选项键由方案声明**
 //! （`hux_core::scheme::OptionDecl`），故各入口接收已解析的 [`OptionKeys`] 而不是硬编码键名。
@@ -22,7 +23,7 @@ use hux_core::collections::Map;
 use hux_core::host::{DEFAULT_PAGE_SIZE, HostOptions, MAX_PAGE_SIZE};
 use hux_core::key::KeyEvent;
 
-/// 高频字过滤上限的缺省值（词库创建时生效；`0` = 不限）。
+/// 高频字过滤上限的缺省值（`0` = 不限；变更即时生效）。
 pub const DEFAULT_HIGH_FREQ_LIMIT: usize = 1500;
 
 /// 候选排列（参照 `style` 语义）。
@@ -65,7 +66,7 @@ pub struct Settings {
     pub ascii_punct: bool,
     /// Tab 确认即写入学习库（线上键 = 上游选项 `tiger_sentence/tab_learning`）。
     pub learning_on_tab: bool,
-    /// 高频字过滤上限（参照 `tiger_sentence/high_freq_limit`；创建词库时生效）。
+    /// 高频字过滤上限（参照 `tiger_sentence/high_freq_limit`；变更即时重建词库）。
     pub high_freq_limit: usize,
     /// 反查触发键（rime 键名，可多项）：按**读音**入口（输入读音列出对应字词）与
     /// 按**字符**入口（取光标处字符列出其读音与编码）。

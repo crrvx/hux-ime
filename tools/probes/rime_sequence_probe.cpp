@@ -62,7 +62,7 @@ std::set<std::string> load_declared_switches(const std::string& schema_id) {
 // 亦然），故「设完回读」是恒真检查，发现不了「方案改键名」。
 // 方案选项（`tiger_sentence_` 前缀：探针内置的两个 + 用例第二列声明的赋值）改为断言
 // 「已部署方案的 `switches` 里声明过该名字」——改键名即在此显式失败，而不是静默退回
-// 默认选项、让金样与重放侧「一致地错」（M6）。
+// 默认选项、让金样与重放侧「一致地错」。
 // 宿主/rime 标准选项（ascii_mode、full_shape、ascii_punct）不属本探针契约，不做断言。
 void set_option_checked(const std::string& name, Bool value) {
     if (name.rfind("tiger_sentence_", 0) == 0) {
@@ -241,7 +241,7 @@ int main(int argc, char** argv) {
         traits.modules = modules;
         api->setup(&traits);
         api->initialize(&traits);
-        // 维护失败必须显式报错（M11①）；先 join 再 check：失败路径也不留后台线程。
+        // 维护失败必须显式报错；先 join 再 check：失败路径也不留后台线程。
         const Bool maintenance_started = api->start_maintenance(True);
         api->join_maintenance_thread();
         check(maintenance_started, "Cannot start maintenance");
@@ -267,7 +267,7 @@ int main(int argc, char** argv) {
                       static_cast<bool>(std::getline(fields, options, '\t')) &&
                       static_cast<bool>(std::getline(fields, keys)),
                   "bad case line: " + line);
-            // 重名用例会让金样出现重复 `case`，重放侧可能只取其一（M11②）。
+            // 重名用例会让金样出现重复 `case`，重放侧可能只取其一。
             const auto inserted = seen_lines.emplace(name, line_no);
             check(inserted.second,
                   "duplicate case name: " + name + " (line " + std::to_string(line_no) +

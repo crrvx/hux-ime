@@ -91,10 +91,12 @@ D 16:41:47.539737 hux.cpp:404] hux: ~HuxEngine
 
 ## 安装（`cmake --install` 与 `install.sh` 等价）
 
-`cmake --install`（前缀 `/usr`）装 **3 个插件文件 + `data/MANIFEST` 列出的全部随包数据**：
+`cmake --install`（前缀 `/usr`）装 **3 个插件文件 + 3 个图标 + `data/MANIFEST` 列出的全部随包数据**：
 
 - `lib/<libdir>/fcitx5/libhux.so`（`FCITX_INSTALL_ADDONDIR` 优先，Fedora 等为 `lib64`）；
 - `share/fcitx5/addon/hux.conf`、`share/fcitx5/inputmethod/hux.conf`；
+- `share/icons/hicolor/{scalable,48x48,22x22}/apps/hux.{svg,png}`（输入法条目与状态区图标，
+  `Icon=hux` 按主题名解析；图形源在多平台共享目录 `assets/branding/hux.svg`，位图由它生成）；
 - `share/fcitx5/hux/`：码表四件套 + 词先验 + 拼音索引 + 标点表（`data/MANIFEST` 单一来源，
   `install.sh` 装后逐条核对、`uninstall.sh` 按同一清单删除）。
 
@@ -134,8 +136,12 @@ D 16:41:47.539737 hux.cpp:404] hux: ~HuxEngine
   不要缓存；本层只在构造与应用设置后立即读取并落日志。
 - **宿主项与模型摘要**：状态菜单里除引擎角色开关（`HUX_OPTION_*`）外还有宿主项——
   「候选窗口显示预编辑」（写 `conf/hux.conf`，切换即按会话里的最近一次 UI 快照重放）、
-  「重新部署」与「模型」信息行。重新部署走 `hux_engine_redeploy`：重装数据与模型、重置全部
-  会话状态（**会话 id 不变**，输入上下文不需要重建），随后本层清空各面板与会话快照并刷新菜单。
+  「重新部署」与「模型」信息行。角色开关的另一半在配置页（同一批项）：`apply_settings` 会把设置值
+  写回 `options.yaml`，本层在状态菜单翻转后把新值镜像进 `conf/hux.conf` 并落盘——两侧互不压制；
+  启动时配置文件**没写过**的共享键沿用引擎（`options.yaml`）的现存值（`adoptStoredRuntimeOptions`）。
+  重新部署走 `hux_engine_redeploy`：引擎重走构造期读取（目录、模型、方案数据、选项存储、学习库）
+  并重置全部会话状态（**会话 id 不变**，输入上下文不需要重建），随后本层按同一规则对齐共享开关、
+  重推设置、清空各面板与会话快照并刷新菜单。
   模型行取 `hux_engine_model_info`（一行摘要：文件名 + 装载状态，由方案侧结构化产出，本层**不解析**）；
   该指针在**下一次重新部署前**有效（同状态串的用法：每次需要时重新调用）。
 - **诊断前缀**：状态串除构造期的加载说明（`dirs:` / `lexicon:` / `model:` / `punct:` / `learning:`）

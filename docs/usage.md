@@ -56,6 +56,7 @@ fcitx5 -r -d  # 或以所在发行版的方式重启
 
 - `/usr/lib/fcitx5/libhux.so`（或发行版 libdir，如 Fedora 的 `/usr/lib64/fcitx5/libhux.so`）
 - `/usr/share/fcitx5/{addon,inputmethod}/hux.conf`
+- `/usr/share/icons/hicolor/{scalable,48x48,22x22}/apps/hux.{svg,png}`（输入法条目 / 托盘图标）
 - `/usr/share/fcitx5/hux/`：**随包数据**（`data/MANIFEST` 列出的码表四件套、词先验位图、
   音反查索引、标点表）——由 `cmake --install` 一并安装，
   与 `install.sh` 装出的布局一致；此前只有 `install.sh` 装数据，只走 CMake 会得到**无词库引擎**。
@@ -98,9 +99,10 @@ cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
 
 状态菜单「**虎虚**」子菜单可随时切换： \
 提前上屏、提前上屏至预编辑、单字重码组句、全角标点、数字直选 \
-（写入 `tiger_sentence.options.yaml`，重启后保持）；此外还有「候选窗口显示预编辑」\
-（写入 `conf/hux.conf`，切换即时生效）、「重新部署」（重读配置、重装数据与模型、重置全部会话）\
-与一行模型信息（`模型：<文件名> — <状态>`）。
+（与配置页「行为」分区是同一批项：改动即时生效，并双向同步\
+`tiger_sentence.options.yaml` 与 `conf/hux.conf`，重启后保持）；此外还有「候选窗口显示预编辑」\
+（写入 `conf/hux.conf`，切换即时生效）、「重新部署」（重读配置与选项存储、重装数据与模型、\
+重置全部会话）与一行模型信息（`模型：<文件名> — <状态>`）。
 
 ![虍](images/虍.png)
 
@@ -143,6 +145,7 @@ cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
 sudo rm -rf /usr/lib/fcitx5/libhux.so \
             /usr/share/fcitx5/addon/hux.conf \
             /usr/share/fcitx5/inputmethod/hux.conf \
+            /usr/share/icons/hicolor/{scalable,48x48,22x22}/apps/hux.{svg,png} \
             /usr/share/fcitx5/hux
 
 # 用户级

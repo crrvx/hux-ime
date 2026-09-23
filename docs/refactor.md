@@ -42,7 +42,8 @@ crates/                       # 平台无关的 Rust 库
   hux-core/                   # 引擎内核：key/session/composition/处理器管线/宿主链/学习机制
                               #   + 方案契约（hux_core::scheme）
   hux-cfg/                    # hux 自身可配置项：设置项定义与默认值、选项存储与合并顺序
-                              #   （options.yaml > 设置 > 内建）、状态菜单开关白名单、持久化接口
+                              #   （options.yaml > 设置 > 内建；配置页推送时设置值写回存储）、
+                              #   状态菜单开关白名单、持久化接口
   hux-ffi/                    # C ABI：C 布局类型 + 导出函数（桌面 / Android 共用）
   hux-scheme/
     tiger/                    # 虎码（字/词/句）——当前唯一全量实现
@@ -70,7 +71,8 @@ platform/                     # 平台适配
 - `platform/fcitx5`：C++ 薄壳（`shell/hux.cpp`）+ Rust 组装（`engine` / `session` / `ui` / `paths` /
   `learning_store` / `abi`，导出 C ABI）。
 
-其余目录：`data/`（随包数据源）、`goldens/`（差分金样与夹具）、
+其余目录：`data/`（随包数据源）、`assets/branding/`（多平台共享品牌图形，唯一源是 SVG）、
+`goldens/`（差分金样与夹具）、
 `tools/`（金样生成器 `generators/`、探针与基准 `probes/`、探针用例 `cases/`）、
 `docs/`（设计 / 重构 / 使用 / 配置 / 性能 / Android 等，索引见根 `README.md`「文档」表）；
 `platform/android` 的插件接线**待启动**，见 [`android.md`](android.md)；`platform/linux` 的打包待做。

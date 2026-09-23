@@ -36,7 +36,7 @@ upper-after-prefix		` Z
 # `=`/`-` 在反查段内同样被 abad411 的标点分支遮蔽：不再翻页，改为先上屏再落标点；
 # 显式 Page_Down/Page_Up（`nav-page-keys`）仍是翻页路径。
 # 本仓判定其为上游缺陷并有意偏离：`nav-page-equal`/`nav-page-minus`/`nav-page-zho` 在差分测试里
-# 按 DEVIATED_CASES 登记跳过（金样仍记录上游行为、字节不动）；见 docs/upstream-deviations.md ①。
+# 按 DEVIATED_CASES 登记跳过（金样仍记录上游行为、字节不动）。
 nav-page-equal		` z = =
 nav-page-minus		` z = = -
 nav-page-keys		` z Page_Down Page_Down Page_Up

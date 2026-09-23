@@ -426,6 +426,14 @@ impl Decoder {
         &self.lexicon
     }
 
+    /// 应用高频字过滤上限：重建词库索引（参照 `M.apply_high_freq_limit`）。
+    ///
+    /// 解码器不缓存词库派生的查询表（`rank_of` 只依赖字频文件，与上限无关），
+    /// 故重建后无需其他失效动作。
+    pub fn apply_high_freq_limit(&mut self, limit: usize) {
+        self.lexicon.apply_high_freq_limit(limit);
+    }
+
     pub fn model(&self) -> Option<&MobileModel> {
         self.model.as_ref()
     }

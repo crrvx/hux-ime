@@ -139,12 +139,12 @@ pub unsafe extern "C" fn hux_engine_model_info(engine: *const Engine) -> *const 
     }
 }
 
-/// 重新部署：重新装配方案数据与模型，并重置全部会话（会话 id 继续有效）。
-/// 返回 1 = 成功；0 = 引擎为空指针。
+/// 重新部署：重走构造期读取（目录 / 模型 / 方案数据 / 选项存储 / 学习库），并重置全部会话
+/// （会话 id 继续有效）。返回 1 = 成功；0 = 引擎为空指针。
 ///
-/// 宿主侧的分工：调用**前**重新读取配置并 [`hux_engine_apply_settings`]，调用**后**
-/// 清空面板/客户端预编辑（会话状态已作废），再重新读取 [`hux_engine_model_info`] 与
-/// `hux_engine_status` 刷新展示。
+/// 宿主侧的分工：调用**前**重新读取自己的配置文件（`conf/hux.conf`）；调用**后**重新推送设置
+/// （[`hux_engine_apply_settings`]，设置值仍是权威并写回持久化选项）、清空面板/客户端预编辑
+/// （会话状态已作废），再重新读取 [`hux_engine_model_info`] 与 `hux_engine_status` 刷新展示。
 ///
 /// # Safety
 /// `engine` 须为 [`hux_engine_new`] 的返回值且尚未释放（可为空指针）。

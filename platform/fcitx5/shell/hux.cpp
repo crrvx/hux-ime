@@ -182,7 +182,7 @@ FCITX_CONFIGURATION(
             .description{"高频字过滤上限"},
             .defaultValue = 1500,
             .constrain = fcitx::IntConstrain(0, 20000),
-            .annotation{"仅使用最优码组句的高频字数量上限；0 = 不限制。修改后需重启生效。"}}};
+            .annotation{"仅使用最优码组句的高频字数量上限；0 = 不限制。保存后即时生效。"}}};
     fcitx::Option<int, fcitx::IntConstrain, fcitx::DefaultMarshaller<int>,
                   fcitx::ToolTipAnnotation>
         pageSize{{
@@ -221,6 +221,17 @@ FCITX_CONFIGURATION(
             .constrain = fcitx::IntConstrain(0, 20),
             .annotation{"提前上屏与空码上屏共用的最短保留编码数；0 = 不额外限制"
                         "（概率型早提交仍不少于 3）。"}}};);
+
+/// 「行为」分区里同时出现在状态菜单（引擎运行时选项）与配置页的开关：角色 + schema 字段。
+///
+/// 成员指针让字段名由编译器检查；`path()`（`HuxBehaviorConfig` 的 `Behavior` + 本字段的路径）
+/// 供宿主判断「配置文件里显式写过这一项吗」，故字段改名不会让该判断失配。
+struct SharedBehaviorOption {
+    using Option = fcitx::OptionWithAnnotation<bool, fcitx::ToolTipAnnotation>;
+    using Member = Option HuxBehaviorConfig::*;
+    int32_t role;
+    Member field;
+};
 
 /// 快捷键设置（配置页「快捷键」分区；`KeyList` 可多项，与全局设置同款）。
 ///
@@ -283,10 +294,19 @@ FCITX_CONFIGURATION(
     fcitx::Option<HuxHotkeyConfig> hotkeys{this, "Hotkey", "快捷键"};);
 
 /// 「虎虚」状态菜单开关：勾选态取自引擎运行时选项（`options.yaml`），激活即翻转并落盘。
+///
+/// 这些开关与配置页的「行为」分区是**同一批项**（`HUX_OPTION_*` 角色 ↔ schema 字段）。
+/// 翻转后经 `onChanged` 让宿主把新值写回自己的 schema 并落盘：配置页读的就是该 schema，
+/// 于是「配置页改了」与「状态菜单改了」互相立刻可见（反向由 Rust 侧
+/// `Engine::apply_settings` 把设置值写回 `options.yaml`，见该函数契约）。
 class HuxToggleAction : public fcitx::Action {
 public:
-    HuxToggleAction(hux_engine *engine, const char *option, const char *label)
-        : engine_(engine), option_(option), label_(label) {
+    HuxToggleAction(hux_engine *engine, const char *option, const char *label,
+                    std::function<void(bool)> onChanged)
+        : engine_(engine),
+          option_(option),
+          label_(label),
+          onChanged_(std::move(onChanged)) {
         setCheckable(true);
     }
 
@@ -304,8 +324,15 @@ public:
 
     void activate(fcitx::InputContext * /*unused*/) override {
         const int32_t value = hux_engine_option_value(engine_, option_.c_str());
-        if (value >= 0) {
-            hux_engine_set_option(engine_, option_.c_str(), value == 0 ? 1 : 0);
+        if (value < 0) {
+            return;
+        }
+        const bool next = value == 0;
+        hux_engine_set_option(engine_, option_.c_str(), next ? 1 : 0);
+        // 引擎侧可能保存失败（options.yaml 只读/磁盘满），但会话值已经翻转；schema 仍按
+        // 引擎**实际**生效值镜像，避免两侧显示不一致。
+        if (onChanged_) {
+            onChanged_(hux_engine_option_value(engine_, option_.c_str()) == 1);
         }
     }
 
@@ -313,6 +340,7 @@ private:
     hux_engine *engine_;
     std::string option_;
     std::string label_;
+    std::function<void(bool)> onChanged_;
 };
 
 class HuxEngine;
@@ -473,6 +501,7 @@ public:
                                                                &sessionFactory_)) {
             FCITX_WARN() << "hux: 会话属性注册失败（huxSession 名字冲突？）";
         }
+        adoptStoredRuntimeOptions();
         applyConfig();
         setupStatusMenu();
     }
@@ -617,14 +646,18 @@ private:
         static_assert(std::size(kLabels) == HUX_OPTION_COUNT,
                       "状态菜单文案表长度必须等于 HUX_OPTION_COUNT（ABI 角色数）");
         menuAction_.setShortText("虎虚");
+        // 状态区图标用本包自带的主题名（与 `conf/hux.inputmethod.conf` 的 `Icon` 一致）；
+        // 不设时 fcitx5 回退到输入法条目图标——那个在缺 fcitx5-chinese-addons 的机器上是缺图占位。
+        menuAction_.setIcon("hux");
         const int32_t roles = hux_engine_option_role_count();
         for (int32_t role = 0; role < roles; ++role) {
             const char *option = hux_engine_option_key(engine_, role);
             if (option == nullptr) {
                 continue;
             }
-            auto action = std::make_unique<HuxToggleAction>(engine_, option,
-                                                            kLabels[role]);
+            auto action = std::make_unique<HuxToggleAction>(
+                engine_, option, kLabels[role],
+                [this, role](bool value) { mirrorRuntimeRole(role, value); });
             instance_->userInterfaceManager().registerAction(
                 std::string("hux-") + option, action.get());
             menu_.addAction(action.get());
@@ -874,24 +907,32 @@ private:
         return std::string("模型：") + (info != nullptr ? info : "不可用");
     }
 
-    /// 重新部署：重读配置 → 重装方案数据与模型 → 清面板 → 刷新状态菜单与日志。
+    /// 重新部署：重读配置 → 引擎重走构造期读取 → 对齐共享开关 → 清面板 → 刷新状态菜单与日志。
     ///
-    /// 会话 id 不变（宿主侧的输入上下文不需要重建），但组合与候选全部作废，故第 3 步
-    /// 必须清面板——否则面板上留着已失效的旧候选。
+    /// 会话 id 不变（宿主侧的输入上下文不需要重建），但组合与候选全部作废，故必须清面板
+    /// ——否则面板上留着已失效的旧候选。
+    ///
+    /// 顺序说明：引擎的重新部署自己会重读 `options.yaml` 与学习库（见 `hux_engine_redeploy`
+    /// 契约），故本层先让它重读、再 `adoptStoredRuntimeOptions()` 对齐没写进本配置文件的共享
+    /// 开关，最后 `applyConfig()` 推设置——这样「手改 `options.yaml` 后重新部署」与「重启
+    /// fcitx5」得到同一结果（配置文件显式写过的键仍以文件为准）。
     void redeploy(fcitx::InputContext *inputContext) {
-        // 1) 重新读取本 addon 的配置文件（与构造同一入口）并推给引擎（含快捷键绑定）。
+        // 1) 重新读取本 addon 的配置文件（与构造同一入口）。
         fcitx::readAsIni(config_, kConfigPath);
-        applyConfig();
-        // 2) 引擎侧：重装数据与模型 + 重置全部会话状态（旧候选/预编辑随之作废）。
+        // 2) 引擎侧：重走构造期读取（目录 / 选项存储 / 学习库 / 方案数据与模型）+ 重置全部会话。
         if (hux_engine_redeploy(engine_) == 0) {
             FCITX_WARN() << "hux: 重新部署失败（引擎不可用）";
             return;
         }
-        // 3) 清空各输入上下文的面板与会话里的 UI 快照。
+        // 3) 与构造同一规则：配置文件没写过的共享键沿用引擎（重读后）的值；随后推设置
+        //    （含快捷键绑定），设置值仍是权威并写回存储。
+        adoptStoredRuntimeOptions();
+        applyConfig();
+        // 4) 清空各输入上下文的面板与会话里的 UI 快照。
         clearPanels();
-        // 4) 「模型」行与状态菜单刷新（文案现算，这里只通知 UI 重取）。
+        // 5) 「模型」行与状态菜单刷新（文案现算，这里只通知 UI 重取）。
         refreshHostActions(inputContext);
-        // 5) 新状态串落日志：排查「重新部署后还是老样子」时先看这里。
+        // 6) 新状态串落日志：排查「重新部署后还是老样子」时先看这里。
         if (const char *status = hux_engine_status(engine_)) {
             FCITX_INFO() << "hux: " << status;
         }
@@ -990,6 +1031,85 @@ private:
         // （`hux_engine_status` 在下一次状态刷新后失效，见 `hux_abi.h`）。
         if (const char *status = hux_engine_status(engine_)) {
             FCITX_INFO() << "hux: " << status;
+        }
+    }
+
+    /// 共享开关：状态菜单的 ABI 角色 ↔ 宿主 schema 字段（配置页读的就是它）。
+    ///
+    /// 单张表同时供「写回值」与「取配置文件路径」用，字段名由编译器检查；角色下标即
+    /// `HUX_OPTION_*`（顺序由 Rust 侧钉住）。表外的角色不镜像（引擎新增了 schema 还没有的
+    /// 角色时配置页看不到它，无需镜像；配置页仍能改，反向由 Rust 侧 `apply_settings` 写回存储）。
+    static constexpr SharedBehaviorOption kSharedOptions[] = {
+        {HUX_OPTION_EARLY_COMMIT, &HuxBehaviorConfig::earlyCommit},
+        {HUX_OPTION_EARLY_COMMIT_TO_PREEDIT,
+         &HuxBehaviorConfig::earlyCommitToPreedit},
+        {HUX_OPTION_ALLOW_DUPLICATE_SINGLE,
+         &HuxBehaviorConfig::allowDuplicateSingle},
+        {HUX_OPTION_FULL_SHAPE, &HuxBehaviorConfig::fullShape},
+        {HUX_OPTION_DIGIT_SELECT, &HuxBehaviorConfig::digitSelect},
+    };
+
+    /// 角色对应的 schema 字段（表外角色返回空）。
+    SharedBehaviorOption::Option *sharedOption(int32_t role) {
+        HuxBehaviorConfig *behavior = config_.behavior.mutableValue();
+        for (const auto &entry : kSharedOptions) {
+            if (entry.role == role) {
+                return &(behavior->*(entry.field));
+            }
+        }
+        return nullptr;
+    }
+
+    /// 该字段在本配置文件里的路径（`Behavior/<键>`）。
+    ///
+    /// 由 schema 自身的 `path()` 拼出、不写字面量：schema 改名时「文件里显式写过吗」的判断
+    /// 不会失配（否则启动对齐会悄悄退回缺省值）。
+    std::string sharedOptionPath(const SharedBehaviorOption::Option &option) const {
+        return config_.behavior.path() + "/" + option.path();
+    }
+
+    /// 状态菜单翻转后的镜像：把新值写回本 schema（配置页读的就是它），可选落盘。
+    ///
+    /// 不落盘只用于启动时的对齐（[`HuxEngine::adoptStoredRuntimeOptions`]）：那次写入的值
+    /// 马上会由 `applyConfig()` 推回引擎，磁盘上的旧文件无需改写。
+    void mirrorRuntimeRole(int32_t role, bool value, bool persist = true) {
+        auto *option = sharedOption(role);
+        if (option == nullptr) {
+            return;
+        }
+        option->setValue(value);
+        if (!persist) {
+            return;
+        }
+        // 与构造时的 `readAsIni`、宿主开关的写法对称：同路径、同 API 家族。
+        if (!fcitx::safeSaveAsIni(config_, kConfigPath)) {
+            FCITX_WARN() << "hux: 写入 " << kConfigPath << " 失败（运行时开关镜像）";
+        }
+    }
+
+    /// 启动对齐：配置文件里**没写过**的共享键沿用引擎（`options.yaml`）的现存值。
+    ///
+    /// 那 5 个开关的持久化值由引擎持有（`options.yaml`）；用户在状态菜单里的改动若从未落进
+    /// 本 schema（文件缺失 / 只保存过配置页的其它项），直接 `applyConfig()` 会把 schema 缺省
+    /// 推给引擎，从而在启动时把用户设置重置。故先按**文件里出现过的键**为界补齐：文件显式写过
+    /// 的键以文件为准（配置页权威），没写过的键沿用引擎值（此后也会随 `apply_settings` 写回存储）。
+    void adoptStoredRuntimeOptions() {
+        fcitx::RawConfig raw;
+        fcitx::readAsIni(raw, kConfigPath);
+        for (const auto &entry : kSharedOptions) {
+            auto *option = sharedOption(entry.role);
+            if (option == nullptr ||
+                raw.valueByPath(sharedOptionPath(*option)) != nullptr) {
+                continue; // 文件显式给出 ⇒ 以文件为准
+            }
+            const char *key = hux_engine_option_key(engine_, entry.role);
+            if (key == nullptr) {
+                continue;
+            }
+            const int32_t value = hux_engine_option_value(engine_, key);
+            if (value >= 0) {
+                option->setValue(value == 1);
+            }
         }
     }
 

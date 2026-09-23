@@ -1,0 +1,14 @@
+<!-- SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com> -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- 虎虚（hux）图标：深底圆角方块 + 三道虎纹。
+     纯几何形状、不含文字（无字体依赖），16–48 px 下均可辨识。 -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <rect x="3" y="3" width="58" height="58" rx="13" fill="#22252b"/>
+  <g fill="#f0a03c">
+    <path d="M17 47 C22 36 26 27 29 17 L36 17 C33 27 29 37 25 47 Z"/>
+    <path d="M32 47 C37 36 41 27 44 17 L51 17 C48 27 44 37 40 47 Z"/>
+  </g>
+  <g fill="#b8762c">
+    <path d="M45 47 C47 41 49 35 50 29 L55 29 C54 35 52 41 50 47 Z"/>
+  </g>
+</svg>

@@ -143,6 +143,9 @@ jobs:
           3c89618d0fb067bb0ce5562646a62924576c0610226aed3fa70689b6549da9bc  goldens/key_sequence_tab.tsv.gz
           e9d48698bf73807a37933b7c2324afbc27fffe7b0492f0dd2787116ec06a7545  goldens/sound_to_char_shape.tsv.gz
           SUMS
+      - name: Verify branding assets (shared graphics)
+        # 位图尺寸须与文件名声明一致、矢量源可渲染（见 assets/branding/README.md）。
+        run: python3 tools/checks/check_branding_assets.py
       - name: Verify data manifest (install / uninstall / cmake)
         # 装、卸、CMake 三处必须读同一份 data/MANIFEST，
         # 且清单与 data/ 实况一致（防「装得上、卸不掉」）。

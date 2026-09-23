@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-# Tab 锁路径用例矩阵（复核整改第 5 批，遗留③）。
+# Tab 锁路径用例矩阵。
 #
 # 与 `key_sequence_cases.txt` 的区别**只在夹具**：本金样使用
 # `goldens/key_sequence_tab/tiger_sentence.custom.yaml`（`tiger_sentence/tab_learning: true`）

@@ -748,20 +748,66 @@ fn runtime_option_persists_to_store() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// 合并顺序：`options.yaml`（状态菜单开关）优先于配置界面设置。
+/// 配置页与状态菜单的开关是**单一事实来源**：配置页推送覆盖 `options.yaml` 的同名旧值
+/// （此前该旧值会压制设置值，「配置页改了不生效」），并被写回存储供状态菜单读取。
+///
+/// 判据用宿主可见的输出（标点全/半角）而非上下文选项本身：`/` 在夹具标点表里
+/// 半角 = `、`、全角 = `／`。
 #[test]
-fn apply_settings_respects_store_values() {
+fn apply_settings_overrides_store_values_and_immediately_applies() {
     let _guard = serial();
+    COMMITS.lock().unwrap().clear();
     let dir = temp_user_dir("settings-order");
-    std::fs::write(dir.join(OPTIONS_FILE), "options:\n  full_shape: true\n").expect("write");
+    // 状态菜单此前把「全角标点」关掉了（`options.yaml` 里是 false）。
+    std::fs::write(dir.join(OPTIONS_FILE), "options:\n  full_shape: false\n").expect("write");
     let mut engine = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
+    assert!(!engine.session().context.get_option("full_shape"));
+    assert!(engine.key(0x2f, 0, false), "slash 应被消费");
+    assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "、");
+
+    // 配置页打开全角标点：必须立即生效（不再被 options.yaml 压制）。
     engine.apply_settings(Settings {
-        full_shape: false,
+        full_shape: true,
         ..Default::default()
     });
     assert!(
         engine.session().context.get_option("full_shape"),
-        "options.yaml 应优先于设置"
+        "配置页推送应即时生效"
+    );
+    assert!(engine.key(0x2f, 0, false));
+    assert_eq!(
+        COMMITS.lock().unwrap().last().unwrap(),
+        "／",
+        "行为应随配置页推送立即变化"
+    );
+    // 状态菜单读同一份值；`options.yaml` 也被写回（另一侧立刻反映）。
+    assert_eq!(engine.option_value("full_shape"), Some(true));
+    let text = std::fs::read_to_string(dir.join(OPTIONS_FILE)).expect("options.yaml");
+    assert!(text.contains("full_shape: true"), "{text}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// 状态菜单改动 → 配置读取侧反映：同一个引擎里 `option_value`（配置页读的运行时值）
+/// 与 `options.yaml`（持久化值）都立即是新值，重新构造（模拟配置页重开/重启）也一致。
+#[test]
+fn store_toggle_is_reflected_by_the_config_read_path() {
+    let _guard = serial();
+    let dir = temp_user_dir("settings-mirror");
+    let mut engine = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
+    assert!(engine.set_option_value("tiger_sentence_early_commit", false));
+    assert_eq!(
+        engine.option_value("tiger_sentence_early_commit"),
+        Some(false),
+        "状态菜单改动应立即可读"
+    );
+    // 配置页读到的等价路径：存储值（宿主 schema 缺省时由引擎补齐，见 `hux.cpp`）。
+    let store = engine.options.as_ref().expect("存储");
+    assert_eq!(store.value("tiger_sentence_early_commit"), Some(false));
+    let reopened = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
+    assert_eq!(
+        reopened.option_value("tiger_sentence_early_commit"),
+        Some(false),
+        "配置读取（重新打开）应反映同一值"
     );
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -1039,6 +1085,49 @@ fn apply_settings_disables_learning_mode() {
         engine.engine.scheme.learning_mode().is_empty(),
         "关闭 Tab 学习 → 学习 mode 为空"
     );
+}
+
+/// 高频字上限经**配置页入口**下发即重建词库：引擎先按内建缺省（1500）装配方案，
+/// 宿主随后才 `apply_settings`；只在 `load` 时生效等于「设置永不生效」。
+///
+/// 判据用宿主可见的候选列表（不是词库内部状态）：夹具码表里 `jvn` = 主码 `华` +
+/// 高频字 `仍` 的非主码，上限放开后 `仍` 才能参与组句。
+#[test]
+fn apply_settings_rebuilds_the_lexicon_for_a_new_high_freq_limit() {
+    let _guard = serial();
+    UPDATES.lock().unwrap().clear();
+    // 夹具词库（`goldens/lexicon`：码表 + 字频 + 白名单），自带字频文件才谈得上过滤。
+    let dirs = vec![PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon")];
+    let mut engine = TestEngine::new(host(), dirs, None, Some(temp_user_dir("high-freq")));
+    let type_code = |engine: &mut TestEngine, code: &[u8]| {
+        for key in code {
+            engine.key(u32::from(*key), 0, false);
+        }
+        let candidates = last_update().2;
+        engine.reset();
+        candidates
+    };
+    assert_eq!(
+        type_code(&mut engine, b"jvn"),
+        vec!["华".to_string()],
+        "缺省上限 1500 下 `仍` 的非主码被过滤"
+    );
+    // 配置页把上限调成 0（不限制）→ 词库必须重建，解码结果随之变化。
+    engine.apply_settings(Settings {
+        high_freq_limit: 0,
+        ..Default::default()
+    });
+    assert_eq!(
+        type_code(&mut engine, b"jvn"),
+        vec!["华".to_string(), "仍".to_string()],
+        "放开上限后 `仍` 应参与组句"
+    );
+    // 再收紧回 1500 → 同样重建（不是「只放开一次」）。
+    engine.apply_settings(Settings {
+        high_freq_limit: 1500,
+        ..Default::default()
+    });
+    assert_eq!(type_code(&mut engine, b"jvn"), vec!["华".to_string()]);
 }
 
 fn key_list(keys: &[(i32, i32)]) -> HuxKeyList {
@@ -1555,12 +1644,16 @@ fn setting_defaults_are_not_persisted_as_user_options() {
         engine.session().context.get_option("full_shape"),
         "配置页改动应生效"
     );
-    // 状态菜单改动仍须落盘（这是 options.yaml 的唯一来源）。
+    // 状态菜单改动仍须落盘（其后配置页推送也写同一份文件，两处不互相压制）。
     assert!(engine.set_option_value("tiger_sentence_early_commit", false));
     let text = std::fs::read_to_string(&path).expect("options.yaml");
     assert!(
         text.contains("tiger_sentence_early_commit: false"),
         "{text}"
+    );
+    assert!(
+        text.contains("full_shape: true"),
+        "配置页推送应写回同一份存储：{text}"
     );
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -2624,4 +2717,119 @@ fn redeploy_refreshes_model_info_and_resets_sessions() {
 
     // 空指针：返回 0（宿主据此报错，而不是假装成功）。
     assert_eq!(unsafe { hux_engine_redeploy(std::ptr::null_mut()) }, 0);
+}
+
+/// 重新部署 = **重走一遍构造期的读取**：手改 `options.yaml` 后（进程仍在跑）重新部署即生效。
+/// 会话 id 不变、旧句柄继续可用（宿主的输入上下文不需要重建）。
+#[test]
+fn redeploy_rereads_the_option_store() {
+    let _guard = serial();
+    let dir = temp_user_dir("redeploy-options");
+    std::fs::write(dir.join(OPTIONS_FILE), "options:\n  full_shape: false\n").expect("write");
+    let mut engine = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
+    assert!(!engine.session().context.get_option("full_shape"));
+    // 手改存储：重新部署前引擎看不到（只有重启才会重读）。
+    std::fs::write(dir.join(OPTIONS_FILE), "options:\n  full_shape: true\n").expect("write");
+    assert!(
+        !engine.session().context.get_option("full_shape"),
+        "重读前不变"
+    );
+    assert!(engine.redeploy());
+    let session = engine.session;
+    assert!(
+        engine.engine.sessions.contains_key(&session),
+        "重新部署后会话 id 应继续有效"
+    );
+    assert!(
+        engine.session().context.get_option("full_shape"),
+        "重读后的存储值应生效"
+    );
+    assert_eq!(engine.option_value("full_shape"), Some(true));
+    // 旧句柄仍可用：还能开始组合。
+    assert!(engine.key(u32::from(b'a'), 0, false));
+    assert_eq!(engine.session().context.input(), b"a");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// 重新部署重开**学习库**：库目录被外部改动（此处整库删除）后，重新部署读到的是新状态，
+/// 而不是构造期那个仍被持有的旧句柄。
+#[test]
+fn redeploy_reopens_the_learning_store() {
+    let _guard = serial();
+    let dir = temp_user_dir("redeploy-learning");
+    let name = learning_store::store_name(hux_scheme_tiger::scheme::SCHEME_ID);
+    // 先播一条事件（构造前，故引擎读到的是这条）。
+    {
+        let mut seed = crate::learning_store::LearningStore::open(&dir, &name, 0.0);
+        assert!(seed.confirm(&[hux_core::learning::Event {
+            time: 1.0,
+            mode: "m".to_string(),
+            code: "ab".to_string(),
+            text: "甲".to_string(),
+            context: String::new(),
+        }]));
+    }
+    let mut engine = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
+    assert_eq!(engine.engine.learning.count, 1, "构造期读到外部事件");
+    // 外部改动：整库删除（引擎仍持有旧句柄）。
+    std::fs::remove_dir_all(dir.join(format!("{name}.userdb"))).expect("remove library");
+    assert!(engine.redeploy());
+    assert!(engine.engine.learning.store_ready(), "重新部署应重开学习库");
+    assert_eq!(
+        engine.engine.learning.count, 0,
+        "重新部署应重读学习库（旧句柄看不到删除后的状态）"
+    );
+    assert_eq!(engine.engine.learning.name, name);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// 重新部署重读**数据文件**：同一目录里替换码表（新增/覆盖数据文件）后新码表立即生效。
+///
+/// 判据用宿主可见的候选列表（码表内容 → 候选文本），并复用同一会话 id 复核旧句柄可用。
+#[test]
+fn redeploy_rereads_data_files() {
+    let _guard = serial();
+    UPDATES.lock().unwrap().clear();
+    let data = hux_test_support::temp_dir("redeploy-data");
+    let user = temp_user_dir("redeploy-data-user");
+    let codes = data.join("tiger_sentence.codes.txt");
+    std::fs::copy(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../goldens/key_sequence/tiger_sentence.codes.txt"),
+        &codes,
+    )
+    .expect("copy fixture");
+    let mut engine = TestEngine::new(host(), vec![data.clone()], None, Some(user.clone()));
+    let type_code = |engine: &mut TestEngine, code: &[u8]| {
+        for key in code {
+            engine.key(u32::from(*key), 0, false);
+        }
+        let candidates = last_update().2;
+        engine.reset();
+        candidates
+    };
+    assert_eq!(
+        type_code(&mut engine, b"ab"),
+        vec!["甲".to_string(), "乙".to_string()]
+    );
+    // 替换码表内容（同一路径）：重新部署后应读到新码表。
+    std::fs::write(&codes, "丙\tab\n丁\tab\n").expect("write");
+    assert_eq!(
+        type_code(&mut engine, b"ab"),
+        vec!["甲".to_string(), "乙".to_string()],
+        "重新部署前仍用旧码表"
+    );
+    assert!(engine.redeploy());
+    let session = engine.session;
+    assert!(engine.engine.sessions.contains_key(&session));
+    assert_eq!(
+        type_code(&mut engine, b"ab"),
+        vec!["丙".to_string(), "丁".to_string()],
+        "重新部署应重读数据文件"
+    );
+    // 旧句柄可用且组合已重置。
+    assert!(engine.key(u32::from(b'a'), 0, false));
+    assert_eq!(engine.session().context.input(), b"a");
+    std::fs::remove_dir_all(&data).ok();
+    std::fs::remove_dir_all(&user).ok();
 }
