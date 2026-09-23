@@ -98,10 +98,12 @@ crate / 模块级结构与「结构正义」硬规则见 [`refactor.md`](refacto
   `hux-cfg::roles`（宿主标准项 `full_shape`/`ascii_punct` 由配置层自持）；平台装配处解析成角色表，
   **缺角色即报错**（状态串可见）——宿主与配置层都不硬编码方案选项名。
 - **选项与配置**：`tiger_sentence.options.yaml`（主）+ legacy `user.yaml` 的 `var/option/*`（只读回退，
-  保存失败写属性 `tiger_sentence_options_error`）；合并顺序 **options.yaml > 设置 > 内建缺省**；图形配置由
+  保存失败写属性 `tiger_sentence_options_error`）；合并顺序 **options.yaml > 设置 > 内建缺省**，
+  但配置页推送时设置值**写回** `options.yaml`（两侧是同一批项，故互不压制）；图形配置由
   C++ `HuxConfig` schema 生成（「行为」「快捷键」两区，子配置 + `ToolTipAnnotation`；快捷键为 `KeyList`），
   经 `hux_engine_apply_settings` 应用；状态菜单（「虎虚」子菜单，5 项核心开关：提前上屏、提前上屏至预编辑、
-  单字重码组句、全角标点、数字直选）经 `hux_engine_set_option` 切换并写入 `options.yaml`。
+  单字重码组句、全角标点、数字直选）经 `hux_engine_set_option` 切换并写入 `options.yaml`，
+  宿主同时镜像进 `conf/hux.conf`——任一侧改动即时生效且另一侧读到同一值。
 
 ## 5. 测试
 

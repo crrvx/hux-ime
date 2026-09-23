@@ -5,8 +5,9 @@
 //!
 //! 合并顺序照参照 schema 语义：**`tiger_sentence.options.yaml`（user 覆盖） > 本设置 > 内建缺省**；
 //! 可持久化开关（提前上屏、提前上屏至预编辑、单字重码组句、全角标点、数字直选 5 项）
-//! 以本设置为存储层缺省（配置 / 状态菜单变更后
-//! 经 `apply_settings` 重放存储，`options.yaml` 仍优先）；`ascii_punct` 等作会话初始选项；
+//! 以本设置为存储层缺省；**配置页推送时**本设置的值写回该文件（
+//! [`crate::OptionsStore::set_values`]）——两侧是同一批项，故不再出现「`options.yaml` 的旧值
+//! 压制配置页」；`ascii_punct` 等作会话初始选项；
 //! `learning_on_tab` 门控学习 mode（`false` → 空串 = 不学习，对照参照 `prepare_learning` 的 `enabled`；
 //! 线上键 = 上游方案选项 `tiger_sentence/tab_learning`），
 //! `high_freq_limit` 变更即时重建词库（见方案的 `apply_config`）。

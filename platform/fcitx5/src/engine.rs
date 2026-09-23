@@ -22,7 +22,7 @@ use hux_cfg::{CandidateLayout, OptionsStore, Settings};
 
 use hux_core::key::KeyEvent;
 use hux_core::scheme::{KeyOutcome, OptionDecl, Scheme, SchemeConfig, Value};
-use hux_core::session::{Context, Event};
+use hux_core::session::{Context, Event, set_property_if_changed};
 use hux_scheme_tiger::scheme::{ASSETS, TigerScheme};
 
 pub(crate) fn wall_clock() -> f64 {
@@ -665,6 +665,14 @@ impl Engine {
             .get_property(hux_cfg::OPTIONS_ERROR_PROPERTY)
             .filter(|value| !value.is_empty())
             .map(str::to_string);
+        self.set_option_error(error);
+    }
+
+    /// 选项保存失败诊断 → 状态串（`None` = 清除）。
+    ///
+    /// 属性是唯一来源（[`Engine::observe_option`] 从上下文属性读，[`Engine::apply_settings`]
+    /// 的批量写回直接把结果交到这里），故两处共用本入口。
+    pub(crate) fn set_option_error(&mut self, error: Option<String>) {
         if error != self.option_error {
             self.option_error = error;
             self.refresh_status();
@@ -752,7 +760,13 @@ impl Engine {
     }
 
     /// 应用外部配置（fcitx5 配置界面 / 测试）：全部项即时生效（含高频字上限——方案据此重建词库）。
-    /// 顺序：设置写入缺省 → `options.yaml` 持久化值覆盖（含状态菜单开关）→ 触发键/学习模式刷新。
+    ///
+    /// 配置页与状态菜单**共用同一批开关**（[`Settings::store_defaults`] 的角色），语义为单一事实来源：
+    /// - 本入口先把设置值写成持久化值并落盘——否则 `options.yaml` 里的旧值会在随后的 `sync` 中
+    ///   压制设置值（「配置页改了不生效」的根因）；
+    /// - 状态菜单读同一份值（[`Engine::option_value`]）并写同一份存储，故两侧改动都立即生效、
+    ///   另一侧立刻反映。
+    ///
     /// 作用于全部会话（选项为引擎级）。
     pub fn apply_settings(&mut self, settings: Settings) {
         self.settings = settings;
@@ -763,15 +777,32 @@ impl Engine {
             self.hotkey_notes = hotkey_notes;
             self.refresh_status();
         }
-        let defaults = self.settings.option_defaults(&self.option_roles);
-        if let Some(store) = self.options.as_mut() {
-            store.set_defaults(self.settings.store_defaults(&self.option_roles));
-        }
+        let option_defaults = self.settings.option_defaults(&self.option_roles);
+        let store_defaults = self.settings.store_defaults(&self.option_roles);
+        // 先登记缺省（决定哪些角色由存储管理），再把设置值写成持久化值（一次落盘）。
+        let saved = match self.options.as_mut() {
+            Some(store) => {
+                store.set_defaults(store_defaults.clone());
+                store.set_values(&store_defaults)
+            }
+            None => true,
+        };
+        let save_error = if saved {
+            ""
+        } else {
+            hux_cfg::OPTIONS_ERROR_MESSAGE
+        };
         let ids: Vec<u64> = self.sessions.keys().copied().collect();
         for id in ids {
             self.with_session(id, |engine, session| {
+                // 保存失败与 `observe_option` 走同一通道（上下文属性 + 状态串）。
+                set_property_if_changed(
+                    &mut session.context,
+                    hux_cfg::OPTIONS_ERROR_PROPERTY,
+                    save_error,
+                );
                 // 同 `session_new`：可持久化项交由 `store.sync`（带抑制），其余直接写。
-                for (name, value) in &defaults {
+                for (name, value) in &option_defaults {
                     if engine
                         .options
                         .as_ref()
@@ -789,6 +820,7 @@ impl Engine {
                 engine.apply_layout_options(session);
             });
         }
+        self.set_option_error((!saved).then(|| hux_cfg::OPTIONS_ERROR_MESSAGE.to_string()));
         // 设置 + 运行时选项一起下发（含学习 mode 自算），见 [`Engine::push_scheme_config`]。
         self.push_scheme_config();
     }

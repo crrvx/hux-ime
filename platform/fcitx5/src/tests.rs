@@ -748,20 +748,66 @@ fn runtime_option_persists_to_store() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// 合并顺序：`options.yaml`（状态菜单开关）优先于配置界面设置。
+/// 配置页与状态菜单的开关是**单一事实来源**：配置页推送覆盖 `options.yaml` 的同名旧值
+/// （此前该旧值会压制设置值，「配置页改了不生效」），并被写回存储供状态菜单读取。
+///
+/// 判据用宿主可见的输出（标点全/半角）而非上下文选项本身：`/` 在夹具标点表里
+/// 半角 = `、`、全角 = `／`。
 #[test]
-fn apply_settings_respects_store_values() {
+fn apply_settings_overrides_store_values_and_immediately_applies() {
     let _guard = serial();
+    COMMITS.lock().unwrap().clear();
     let dir = temp_user_dir("settings-order");
-    std::fs::write(dir.join(OPTIONS_FILE), "options:\n  full_shape: true\n").expect("write");
+    // 状态菜单此前把「全角标点」关掉了（`options.yaml` 里是 false）。
+    std::fs::write(dir.join(OPTIONS_FILE), "options:\n  full_shape: false\n").expect("write");
     let mut engine = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
+    assert!(!engine.session().context.get_option("full_shape"));
+    assert!(engine.key(0x2f, 0, false), "slash 应被消费");
+    assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "、");
+
+    // 配置页打开全角标点：必须立即生效（不再被 options.yaml 压制）。
     engine.apply_settings(Settings {
-        full_shape: false,
+        full_shape: true,
         ..Default::default()
     });
     assert!(
         engine.session().context.get_option("full_shape"),
-        "options.yaml 应优先于设置"
+        "配置页推送应即时生效"
+    );
+    assert!(engine.key(0x2f, 0, false));
+    assert_eq!(
+        COMMITS.lock().unwrap().last().unwrap(),
+        "／",
+        "行为应随配置页推送立即变化"
+    );
+    // 状态菜单读同一份值；`options.yaml` 也被写回（另一侧立刻反映）。
+    assert_eq!(engine.option_value("full_shape"), Some(true));
+    let text = std::fs::read_to_string(dir.join(OPTIONS_FILE)).expect("options.yaml");
+    assert!(text.contains("full_shape: true"), "{text}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// 状态菜单改动 → 配置读取侧反映：同一个引擎里 `option_value`（配置页读的运行时值）
+/// 与 `options.yaml`（持久化值）都立即是新值，重新构造（模拟配置页重开/重启）也一致。
+#[test]
+fn store_toggle_is_reflected_by_the_config_read_path() {
+    let _guard = serial();
+    let dir = temp_user_dir("settings-mirror");
+    let mut engine = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
+    assert!(engine.set_option_value("tiger_sentence_early_commit", false));
+    assert_eq!(
+        engine.option_value("tiger_sentence_early_commit"),
+        Some(false),
+        "状态菜单改动应立即可读"
+    );
+    // 配置页读到的等价路径：存储值（宿主 schema 缺省时由引擎补齐，见 `hux.cpp`）。
+    let store = engine.options.as_ref().expect("存储");
+    assert_eq!(store.value("tiger_sentence_early_commit"), Some(false));
+    let reopened = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
+    assert_eq!(
+        reopened.option_value("tiger_sentence_early_commit"),
+        Some(false),
+        "配置读取（重新打开）应反映同一值"
     );
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -1598,12 +1644,16 @@ fn setting_defaults_are_not_persisted_as_user_options() {
         engine.session().context.get_option("full_shape"),
         "配置页改动应生效"
     );
-    // 状态菜单改动仍须落盘（这是 options.yaml 的唯一来源）。
+    // 状态菜单改动仍须落盘（其后配置页推送也写同一份文件，两处不互相压制）。
     assert!(engine.set_option_value("tiger_sentence_early_commit", false));
     let text = std::fs::read_to_string(&path).expect("options.yaml");
     assert!(
         text.contains("tiger_sentence_early_commit: false"),
         "{text}"
+    );
+    assert!(
+        text.contains("full_shape: true"),
+        "配置页推送应写回同一份存储：{text}"
     );
     std::fs::remove_dir_all(&dir).ok();
 }
