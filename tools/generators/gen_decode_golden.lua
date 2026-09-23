@@ -10,7 +10,7 @@
 -- --learning 1：用数据中的真实候选构造纠错事件，经 set_learning_for_test 接入解码，
 -- 并在 transcript 头部输出 learningsetup + levent 使 Rust 侧可重建同一索引。
 -- 两个开关**可并用**：`--early-commit 1 --required 1 --learning 1` 即
--- `goldens/decode_learning_evidence.tsv.gz`（遗留②，覆盖「学习 × 证据抑制」的交互：
+-- `goldens/decode_learning_evidence.tsv.gz`（覆盖「学习 × 证据抑制」的交互：
 -- 学习生效且截断的记录、`share`/`base_share` 双权重）。
 --
 -- 数据目录需含四个数据文件；--model 时把模型拷贝为临时用户目录的

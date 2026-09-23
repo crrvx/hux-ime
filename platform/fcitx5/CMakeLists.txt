@@ -69,7 +69,7 @@ install(FILES icons/hux-22.png
 # 随包数据（码表四件套 + 词先验 + 拼音索引 + 标点表）：清单 `data/MANIFEST` 是**单一来源**——
 # `install.sh` 按它核对落盘、`uninstall.sh` 按它删除（`tools/checks/check_data_manifest.sh` 守护三者一致）。
 #
-# 复核整改第 4 批 F5：此前 CMake 只装 `libhux.so` 与两个 conf，只走 `cmake --install`
+# 此前 CMake 只装 `libhux.so` 与两个 conf，只走 `cmake --install`
 # （发行版打包、`DESTDIR` 流程、手工安装）会得到「无词库」引擎——`Lexicon` / `PunctTable`
 # 静默降级，打字无输出/无标点。这里按清单安装；**n-gram 模型仍不随包**（用户自取）。
 # `ENCODING UTF-8` 显式给出：CMake 默认编码会破坏非 ASCII 字节（把中文注释行拆成假文件名）；
