@@ -1041,6 +1041,49 @@ fn apply_settings_disables_learning_mode() {
     );
 }
 
+/// 高频字上限经**配置页入口**下发即重建词库：引擎先按内建缺省（1500）装配方案，
+/// 宿主随后才 `apply_settings`；只在 `load` 时生效等于「设置永不生效」。
+///
+/// 判据用宿主可见的候选列表（不是词库内部状态）：夹具码表里 `jvn` = 主码 `华` +
+/// 高频字 `仍` 的非主码，上限放开后 `仍` 才能参与组句。
+#[test]
+fn apply_settings_rebuilds_the_lexicon_for_a_new_high_freq_limit() {
+    let _guard = serial();
+    UPDATES.lock().unwrap().clear();
+    // 夹具词库（`goldens/lexicon`：码表 + 字频 + 白名单），自带字频文件才谈得上过滤。
+    let dirs = vec![PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon")];
+    let mut engine = TestEngine::new(host(), dirs, None, Some(temp_user_dir("high-freq")));
+    let type_code = |engine: &mut TestEngine, code: &[u8]| {
+        for key in code {
+            engine.key(u32::from(*key), 0, false);
+        }
+        let candidates = last_update().2;
+        engine.reset();
+        candidates
+    };
+    assert_eq!(
+        type_code(&mut engine, b"jvn"),
+        vec!["华".to_string()],
+        "缺省上限 1500 下 `仍` 的非主码被过滤"
+    );
+    // 配置页把上限调成 0（不限制）→ 词库必须重建，解码结果随之变化。
+    engine.apply_settings(Settings {
+        high_freq_limit: 0,
+        ..Default::default()
+    });
+    assert_eq!(
+        type_code(&mut engine, b"jvn"),
+        vec!["华".to_string(), "仍".to_string()],
+        "放开上限后 `仍` 应参与组句"
+    );
+    // 再收紧回 1500 → 同样重建（不是「只放开一次」）。
+    engine.apply_settings(Settings {
+        high_freq_limit: 1500,
+        ..Default::default()
+    });
+    assert_eq!(type_code(&mut engine, b"jvn"), vec!["华".to_string()]);
+}
+
 fn key_list(keys: &[(i32, i32)]) -> HuxKeyList {
     let mut list = HuxKeyList::default();
     for (index, (sym, states)) in keys.iter().enumerate().take(HUX_MAX_KEYS) {

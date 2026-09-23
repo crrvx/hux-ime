@@ -182,7 +182,7 @@ FCITX_CONFIGURATION(
             .description{"高频字过滤上限"},
             .defaultValue = 1500,
             .constrain = fcitx::IntConstrain(0, 20000),
-            .annotation{"仅使用最优码组句的高频字数量上限；0 = 不限制。修改后需重启生效。"}}};
+            .annotation{"仅使用最优码组句的高频字数量上限；0 = 不限制。保存后即时生效。"}}};
     fcitx::Option<int, fcitx::IntConstrain, fcitx::DefaultMarshaller<int>,
                   fcitx::ToolTipAnnotation>
         pageSize{{

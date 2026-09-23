@@ -751,7 +751,7 @@ impl Engine {
         true
     }
 
-    /// 应用外部配置（fcitx5 配置界面 / 测试）：选项类即时生效；`high_freq_limit` 需重启。
+    /// 应用外部配置（fcitx5 配置界面 / 测试）：全部项即时生效（含高频字上限——方案据此重建词库）。
     /// 顺序：设置写入缺省 → `options.yaml` 持久化值覆盖（含状态菜单开关）→ 触发键/学习模式刷新。
     /// 作用于全部会话（选项为引擎级）。
     pub fn apply_settings(&mut self, settings: Settings) {

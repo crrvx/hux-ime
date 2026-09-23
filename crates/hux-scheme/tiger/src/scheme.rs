@@ -463,6 +463,13 @@ impl Scheme for TigerScheme {
         let (parsed, errors) = Config::parse(config);
         self.config = parsed;
         self.host_options = host_options_from(&self.config);
+        // 高频字上限改变 ⇒ 重建词库索引（参照 `M.apply_high_freq_limit`）。
+        // 平台在装配方案**之后**才下发配置页设置，故这里必须能重建；只在真的变化时重建
+        // （每次按键路径都会经 `push_scheme_config` 走到本函数）。
+        if self.decoder.lexicon().high_freq_limit != self.config.high_freq_limit {
+            self.decoder
+                .apply_high_freq_limit(self.config.high_freq_limit);
+        }
         // 学习 mode 的输入都在配置袋里（Tab 学习 / 高频上限 / 单字重码选项值），
         // 由方案自算：变化时同步全部会话并重置解码器的学习索引（旧 mode 的记录不再命中）。
         let mode = self.mode_from_config();
@@ -1020,6 +1027,49 @@ mod tests {
         ]))
         .expect("全角色袋");
         assert_eq!(off.learning_mode(), "", "关闭 Tab 学习 → 空串 = 不记录");
+    }
+
+    #[test]
+    fn apply_config_rebuilds_the_lexicon_for_a_new_high_freq_limit() {
+        // 平台在装配方案**之后**才把配置页设置下发（`hux_engine_new` → 宿主 `applyConfig`），
+        // 故上限只在 `load` 时生效等于「设置永不生效」；本用例钉住重新下发即重建。
+        // `jvn`：`华` 是主码、`仍`（rank 564）的非主码，上限 > 0 时被过滤。
+        let texts = |scheme: &TigerScheme, code: &str| -> Vec<String> {
+            scheme
+                .decoder
+                .lexicon()
+                .probe(code)
+                .expect("码存在")
+                .iter()
+                .map(|entry| entry.text.clone())
+                .collect()
+        };
+        let mut scheme = fixture_scheme(); // 夹具按上限 0（不过滤）装载
+        assert_eq!(
+            texts(&scheme, "jvn"),
+            vec!["华".to_string(), "仍".to_string()]
+        );
+        scheme
+            .apply_config(&full_bag(&[(role::HIGH_FREQ_LIMIT, Value::Count(1500))]))
+            .expect("全角色袋");
+        assert_eq!(texts(&scheme, "jvn"), vec!["华".to_string()]);
+        assert_eq!(scheme.decoder.lexicon().data_status().high_freq_limit, 1500);
+        // 放开上限同样重建（不是「只收紧一次」）。
+        scheme
+            .apply_config(&full_bag(&[(role::HIGH_FREQ_LIMIT, Value::Count(0))]))
+            .expect("全角色袋");
+        assert_eq!(
+            texts(&scheme, "jvn"),
+            vec!["华".to_string(), "仍".to_string()]
+        );
+        assert_eq!(scheme.decoder.lexicon().data_status().high_freq_limit, 0);
+        assert_eq!(
+            scheme.learning_mode(),
+            format!(
+                "sentence-v2|rules={}|optimal=0|dup=1",
+                scheme.learning_rules
+            )
+        );
     }
 
     #[test]
