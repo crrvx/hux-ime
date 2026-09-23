@@ -53,16 +53,17 @@ install(FILES conf/hux.inputmethod.conf
         DESTINATION share/fcitx5/inputmethod
         RENAME hux.conf)
 
-# 输入法条目 / 托盘图标：装进 freedesktop 图标主题目录，`Icon=hux` 按主题名解析。
-# 此前指向 `fcitx-tiger`（由 fcitx5-chinese-addons 提供）：未装该包时托盘与输入法列表显示缺图占位。
-# `hux.svg` 供支持 SVG 的主题；22/48 px 的 PNG 是位图主题（或缩放器不可用）时的回退。
-# 三者同源：PNG 由 `rsvg-convert -w N -h N icons/hux.svg` 生成。
-install(FILES icons/hux.svg
+# 输入法条目 / 状态区图标：装进 freedesktop 图标主题目录，`Icon=hux` 按主题名解析。
+# 图形是**多平台共享**资源，源在 `${HUX_WORKSPACE}/assets/branding/`；此前指向 `fcitx-tiger`
+# （由 fcitx5-chinese-addons 提供）——未装该包时托盘与输入法列表显示缺图占位。
+# `hux.svg` 供支持 SVG 的主题；22/48 px 的 PNG 是位图主题（或缩放器不可用）时的回退，
+# 由同目录 `hux.svg` 生成（生成命令与校验见 `assets/branding/README.md`、`tools/checks/`）。
+install(FILES "${HUX_WORKSPACE}/assets/branding/hux.svg"
         DESTINATION share/icons/hicolor/scalable/apps)
-install(FILES icons/hux-48.png
+install(FILES "${HUX_WORKSPACE}/assets/branding/hux-48.png"
         DESTINATION share/icons/hicolor/48x48/apps
         RENAME hux.png)
-install(FILES icons/hux-22.png
+install(FILES "${HUX_WORKSPACE}/assets/branding/hux-22.png"
         DESTINATION share/icons/hicolor/22x22/apps
         RENAME hux.png)
 

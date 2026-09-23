@@ -96,7 +96,7 @@ D 16:41:47.539737 hux.cpp:404] hux: ~HuxEngine
 - `lib/<libdir>/fcitx5/libhux.so`（`FCITX_INSTALL_ADDONDIR` 优先，Fedora 等为 `lib64`）；
 - `share/fcitx5/addon/hux.conf`、`share/fcitx5/inputmethod/hux.conf`；
 - `share/icons/hicolor/{scalable,48x48,22x22}/apps/hux.{svg,png}`（输入法条目与状态区图标，
-  `Icon=hux` 按主题名解析；PNG 由 `rsvg-convert` 从同目录 `hux.svg` 生成）；
+  `Icon=hux` 按主题名解析；图形源在多平台共享目录 `assets/branding/hux.svg`，位图由它生成）；
 - `share/fcitx5/hux/`：码表四件套 + 词先验 + 拼音索引 + 标点表（`data/MANIFEST` 单一来源，
   `install.sh` 装后逐条核对、`uninstall.sh` 按同一清单删除）。
 
