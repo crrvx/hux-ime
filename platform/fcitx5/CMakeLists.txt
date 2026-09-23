@@ -53,6 +53,19 @@ install(FILES conf/hux.inputmethod.conf
         DESTINATION share/fcitx5/inputmethod
         RENAME hux.conf)
 
+# 输入法条目 / 托盘图标：装进 freedesktop 图标主题目录，`Icon=hux` 按主题名解析。
+# 此前指向 `fcitx-tiger`（由 fcitx5-chinese-addons 提供）：未装该包时托盘与输入法列表显示缺图占位。
+# `hux.svg` 供支持 SVG 的主题；22/48 px 的 PNG 是位图主题（或缩放器不可用）时的回退。
+# 三者同源：PNG 由 `rsvg-convert -w N -h N icons/hux.svg` 生成。
+install(FILES icons/hux.svg
+        DESTINATION share/icons/hicolor/scalable/apps)
+install(FILES icons/hux-48.png
+        DESTINATION share/icons/hicolor/48x48/apps
+        RENAME hux.png)
+install(FILES icons/hux-22.png
+        DESTINATION share/icons/hicolor/22x22/apps
+        RENAME hux.png)
+
 # 随包数据（码表四件套 + 词先验 + 拼音索引 + 标点表）：清单 `data/MANIFEST` 是**单一来源**——
 # `install.sh` 按它核对落盘、`uninstall.sh` 按它删除（`tools/checks/check_data_manifest.sh` 守护三者一致）。
 #

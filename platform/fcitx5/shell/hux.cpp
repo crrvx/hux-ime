@@ -646,6 +646,9 @@ private:
         static_assert(std::size(kLabels) == HUX_OPTION_COUNT,
                       "状态菜单文案表长度必须等于 HUX_OPTION_COUNT（ABI 角色数）");
         menuAction_.setShortText("虎虚");
+        // 状态区图标用本包自带的主题名（与 `conf/hux.inputmethod.conf` 的 `Icon` 一致）；
+        // 不设时 fcitx5 回退到输入法条目图标——那个在缺 fcitx5-chinese-addons 的机器上是缺图占位。
+        menuAction_.setIcon("hux");
         const int32_t roles = hux_engine_option_role_count();
         for (int32_t role = 0; role < roles; ++role) {
             const char *option = hux_engine_option_key(engine_, role);

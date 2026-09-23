@@ -59,7 +59,10 @@ for libdir in /usr/lib/fcitx5 /usr/lib64/fcitx5; do
 done
 run sudo rm -f \
     /usr/share/fcitx5/addon/hux.conf \
-    /usr/share/fcitx5/inputmethod/hux.conf
+    /usr/share/fcitx5/inputmethod/hux.conf \
+    /usr/share/icons/hicolor/scalable/apps/hux.svg \
+    /usr/share/icons/hicolor/48x48/apps/hux.png \
+    /usr/share/icons/hicolor/22x22/apps/hux.png
 if [ "$purge" -eq 1 ]; then
     # 连同系统级数据目录（含用户自取的 models/）一并删除。
     if [ -d /usr/share/fcitx5/hux/models ]; then
