@@ -2718,3 +2718,118 @@ fn redeploy_refreshes_model_info_and_resets_sessions() {
     // 空指针：返回 0（宿主据此报错，而不是假装成功）。
     assert_eq!(unsafe { hux_engine_redeploy(std::ptr::null_mut()) }, 0);
 }
+
+/// 重新部署 = **重走一遍构造期的读取**：手改 `options.yaml` 后（进程仍在跑）重新部署即生效。
+/// 会话 id 不变、旧句柄继续可用（宿主的输入上下文不需要重建）。
+#[test]
+fn redeploy_rereads_the_option_store() {
+    let _guard = serial();
+    let dir = temp_user_dir("redeploy-options");
+    std::fs::write(dir.join(OPTIONS_FILE), "options:\n  full_shape: false\n").expect("write");
+    let mut engine = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
+    assert!(!engine.session().context.get_option("full_shape"));
+    // 手改存储：重新部署前引擎看不到（只有重启才会重读）。
+    std::fs::write(dir.join(OPTIONS_FILE), "options:\n  full_shape: true\n").expect("write");
+    assert!(
+        !engine.session().context.get_option("full_shape"),
+        "重读前不变"
+    );
+    assert!(engine.redeploy());
+    let session = engine.session;
+    assert!(
+        engine.engine.sessions.contains_key(&session),
+        "重新部署后会话 id 应继续有效"
+    );
+    assert!(
+        engine.session().context.get_option("full_shape"),
+        "重读后的存储值应生效"
+    );
+    assert_eq!(engine.option_value("full_shape"), Some(true));
+    // 旧句柄仍可用：还能开始组合。
+    assert!(engine.key(u32::from(b'a'), 0, false));
+    assert_eq!(engine.session().context.input(), b"a");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// 重新部署重开**学习库**：库目录被外部改动（此处整库删除）后，重新部署读到的是新状态，
+/// 而不是构造期那个仍被持有的旧句柄。
+#[test]
+fn redeploy_reopens_the_learning_store() {
+    let _guard = serial();
+    let dir = temp_user_dir("redeploy-learning");
+    let name = learning_store::store_name(hux_scheme_tiger::scheme::SCHEME_ID);
+    // 先播一条事件（构造前，故引擎读到的是这条）。
+    {
+        let mut seed = crate::learning_store::LearningStore::open(&dir, &name, 0.0);
+        assert!(seed.confirm(&[hux_core::learning::Event {
+            time: 1.0,
+            mode: "m".to_string(),
+            code: "ab".to_string(),
+            text: "甲".to_string(),
+            context: String::new(),
+        }]));
+    }
+    let mut engine = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
+    assert_eq!(engine.engine.learning.count, 1, "构造期读到外部事件");
+    // 外部改动：整库删除（引擎仍持有旧句柄）。
+    std::fs::remove_dir_all(dir.join(format!("{name}.userdb"))).expect("remove library");
+    assert!(engine.redeploy());
+    assert!(engine.engine.learning.store_ready(), "重新部署应重开学习库");
+    assert_eq!(
+        engine.engine.learning.count, 0,
+        "重新部署应重读学习库（旧句柄看不到删除后的状态）"
+    );
+    assert_eq!(engine.engine.learning.name, name);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// 重新部署重读**数据文件**：同一目录里替换码表（新增/覆盖数据文件）后新码表立即生效。
+///
+/// 判据用宿主可见的候选列表（码表内容 → 候选文本），并复用同一会话 id 复核旧句柄可用。
+#[test]
+fn redeploy_rereads_data_files() {
+    let _guard = serial();
+    UPDATES.lock().unwrap().clear();
+    let data = hux_test_support::temp_dir("redeploy-data");
+    let user = temp_user_dir("redeploy-data-user");
+    let codes = data.join("tiger_sentence.codes.txt");
+    std::fs::copy(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../goldens/key_sequence/tiger_sentence.codes.txt"),
+        &codes,
+    )
+    .expect("copy fixture");
+    let mut engine = TestEngine::new(host(), vec![data.clone()], None, Some(user.clone()));
+    let type_code = |engine: &mut TestEngine, code: &[u8]| {
+        for key in code {
+            engine.key(u32::from(*key), 0, false);
+        }
+        let candidates = last_update().2;
+        engine.reset();
+        candidates
+    };
+    assert_eq!(
+        type_code(&mut engine, b"ab"),
+        vec!["甲".to_string(), "乙".to_string()]
+    );
+    // 替换码表内容（同一路径）：重新部署后应读到新码表。
+    std::fs::write(&codes, "丙\tab\n丁\tab\n").expect("write");
+    assert_eq!(
+        type_code(&mut engine, b"ab"),
+        vec!["甲".to_string(), "乙".to_string()],
+        "重新部署前仍用旧码表"
+    );
+    assert!(engine.redeploy());
+    let session = engine.session;
+    assert!(engine.engine.sessions.contains_key(&session));
+    assert_eq!(
+        type_code(&mut engine, b"ab"),
+        vec!["丙".to_string(), "丁".to_string()],
+        "重新部署应重读数据文件"
+    );
+    // 旧句柄可用且组合已重置。
+    assert!(engine.key(u32::from(b'a'), 0, false));
+    assert_eq!(engine.session().context.input(), b"a");
+    std::fs::remove_dir_all(&data).ok();
+    std::fs::remove_dir_all(&user).ok();
+}

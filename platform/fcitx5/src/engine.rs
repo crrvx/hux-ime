@@ -250,17 +250,27 @@ pub struct Engine {
     pub(crate) status_base: String,
     /// 选项保存失败的最近一条诊断（来自 [`hux_cfg::OPTIONS_ERROR_PROPERTY`]）。
     pub(crate) option_error: Option<String>,
-    /// 学习库的**当前**诊断（构造期读一次，运行期落库失败由 [`Engine::observe_learning_error`] 跟进）。
+    /// 学习库的**当前**诊断（构造 / 重新部署时读一次，运行期落库失败由
+    /// [`Engine::observe_learning_error`] 跟进）。
     pub(crate) learning_error: Option<String>,
-    /// 构造期已并入 `status_base` 的那条学习诊断（避免与运行期条目重复拼接）。
+    /// 构造 / 重新部署时已并入 `status_base` 的那条学习诊断（避免与运行期条目重复拼接）。
     pub(crate) learning_error_baseline: Option<String>,
     /// 配置页热键绑定里无法解析的项（`角色=键名`，见 [`unparsable_key_bindings`]）。
     pub(crate) hotkey_notes: Vec<String>,
     /// 最近一次配置下发的逐角色诊断（角色缺失 / 类型不符，`config:` 前缀）。
     /// 方案已按缺省值回退，此串只是把「设置没生效」的原因暴露到状态里。
     pub(crate) config_notes: Vec<String>,
-    /// 只读数据目录（构造时解析；「重新部署」据此重新查找模型资产）。
+    /// 「重新部署」是否按进程环境重算目录（生产 `true`；测试注入固定目录时为 `false`）。
+    ///
+    /// 生产路径按 [`data_dirs`] / [`user_data_dir`] 解析（`HUX_DATA_DIRS` 覆盖、否则 XDG 规则）；
+    /// 这些环境变量都是进程级的、在同一进程内不会变，故重新部署重算得到的仍是同一组路径——
+    /// 重算的意义是**重新走一遍构造期的读取**，而不是换一组值。测试注入的目录固定不变，
+    /// 但其**内容**同样会重读（「替换数据文件后重新部署」据此可测）。
+    dirs_from_env: bool,
+    /// 当前只读数据目录（构造解析；注入来源时保持不变）。
     dirs: Vec<PathBuf>,
+    /// 当前选项目录（同上；`None` = 无用户目录：仅用内建缺省、学习库禁用）。
+    options_dir: Option<PathBuf>,
     /// 模型路径来源（见 [`ModelSource`]）。
     model_source: ModelSource,
     /// 模型摘要（`hux_engine_model_info` 的指针来源）：**重新部署后替换**，
@@ -269,19 +279,16 @@ pub struct Engine {
 }
 impl Engine {
     pub(crate) fn new(host: Option<HostCallback>) -> Self {
-        let dirs = data_dirs();
-        // 选项存于标准用户目录（与数据目录的开发覆盖解耦）。
-        let options_dir = user_data_dir();
         // `HUX_MODEL` 显式覆盖（此时路径固定）；未设置则按数据目录查找
         // （`Auto` ⇒「重新部署」会重新查找，新装入的模型随之生效）。
         let model_source = match std::env::var_os("HUX_MODEL") {
             Some(path) => ModelSource::Fixed(PathBuf::from(path)),
             None => ModelSource::Auto,
         };
-        Self::with_model_source(host, dirs, model_source, options_dir)
+        Self::with_sources(host, true, data_dirs(), user_data_dir(), model_source)
     }
 
-    /// 测试用构造：目录 / 模型 / 选项目录全部显式注入。
+    /// 测试用构造：目录 / 模型 / 选项目录全部显式注入（来源记为注入，故「重新部署」沿用它们）。
     ///
     /// 模型传 `None` 即「未指定」⇒ 走默认查找（各数据目录里的方案模型资产）；夹具目录
     /// 里都没有模型文件，故与「不装模型」同效，而重新部署时按同一来源重新查找。
@@ -296,14 +303,16 @@ impl Engine {
             Some(path) => ModelSource::Fixed(path),
             None => ModelSource::Auto,
         };
-        Self::with_model_source(host, dirs, model_source, options_dir)
+        Self::with_sources(host, false, dirs, options_dir, model_source)
     }
 
-    fn with_model_source(
+    /// 构造本体：目录 / 模型都在此解析一次（「重新部署」按同一规则重放，见 [`Engine::redeploy`]）。
+    fn with_sources(
         host: Option<HostCallback>,
+        dirs_from_env: bool,
         dirs: Vec<PathBuf>,
-        model_source: ModelSource,
         options_dir: Option<PathBuf>,
+        model_source: ModelSource,
     ) -> Self {
         let settings = Settings::default();
         // 构造方案前先按设置装配配置袋；单字重码的初始值取设置缺省（尚无会话与存储）。
@@ -360,7 +369,9 @@ impl Engine {
             learning_error,
             hotkey_notes: Vec::new(),
             config_notes: Vec::new(),
+            dirs_from_env,
             dirs,
+            options_dir,
             model_source,
             model_info,
         }
@@ -834,29 +845,57 @@ impl Engine {
         }
     }
 
-    /// 重新部署：按当前设置重新装配方案（数据 + 模型），并**重置全部现有会话状态**。
+    /// 重新部署：**重走一遍构造期的读取**并重置全部现有会话状态。
+    ///
+    /// 重做的读取（与 [`Engine::with_sources`] 同源、同顺序）：
+    /// 目录（数据目录 / 选项目录）→ 模型路径 → 方案数据（词库 / 词先验 / 标点 / 模型）
+    /// → 选项存储（重读 `options.yaml`，重放到全部会话）→ 学习库（重开，重读 `e/` 事件）。
+    /// 进程级环境变量（`HUX_DATA_DIRS` / `HUX_MODEL`）在同一进程内无法改变：目录按同一规则重算
+    /// （结果与构造时相同），模型仍由 [`ModelSource`] 定源（显式路径沿用、默认查找重查）。
     ///
     /// 平台侧会话 id 不变（宿主的输入上下文与 id 的对应关系保持，IC 不需要重建），
     /// 方案侧会话全部重建 ⇒ 组合、候选、学习暂存、反查态一并作废（宿主负责清面板）。
-    /// 模型路径按**同一来源**重新解析：默认查找会拿到新装入的模型，显式指定（`HUX_MODEL`）
-    /// 则沿用原路径。返回 `true` = 已重新装配。
+    /// 返回 `true` = 已重新装配。
     pub fn redeploy(&mut self) -> bool {
-        // 模型路径：与构造同一来源（见 [`ModelSource`]）。
-        let model = self.model_source.resolve(&self.dirs);
+        // 目录与模型：与构造同一规则（见 [`Engine::dirs_from_env`] / [`ModelSource`]）。
+        if self.dirs_from_env {
+            self.dirs = data_dirs();
+            self.options_dir = user_data_dir();
+        }
+        let dirs = self.dirs.clone();
+        let options_dir = self.options_dir.clone();
+        let model = self.model_source.resolve(&dirs);
         // 配置袋与构造同源：设置派生的角色 + 运行时选项的生效值（单字重码）。
         let config = scheme_config(&self.settings).with(
             ROLE_ALLOW_DUPLICATE_SINGLE,
             Value::Bool(self.effective_duplicate()),
         );
-        let (mut scheme, option_roles, mut notes) = assemble_scheme(&self.dirs, model, &config);
-        // 学习库沿用（不重开）：就绪状态与诊断按构造期同一口径并入基线，
-        // 使新方案拿到 store_ready，状态串也不因重新部署而丢掉这条诊断。
-        if let Some(error) = &self.learning.error {
+        let (mut scheme, option_roles, mut notes) = assemble_scheme(&dirs, model, &config);
+        // 学习库：重开（重读库文件）。必须先释放旧句柄——同一路径二次打开会撞上 LevelDB 的
+        // 独占锁（rusty-leveldb 的 `LOCK`）；库名依赖方案 id，故按**新**方案的 id 打开。
+        let learning = match options_dir.as_deref() {
+            Some(dir) => {
+                self.learning = LearningStore::disabled("reloading");
+                LearningStore::open(dir, &learning_store::store_name(scheme.id()), wall_clock())
+            }
+            None => LearningStore::disabled("user data directory unavailable"),
+        };
+        // 与构造同口径：诊断进状态串基线，并留一份基线快照（避免运行期条目重复拼接）。
+        let learning_error = learning.error.clone();
+        if let Some(error) = &learning_error {
             notes.push(format!("learning: {error}"));
         } else {
-            notes.push(format!("learning: {}", self.learning.name));
+            notes.push(format!("learning: {}", learning.name));
         }
-        scheme.set_store_ready(self.learning.store_ready());
+        scheme.set_store_ready(learning.store_ready());
+        self.learning_error = learning_error.clone();
+        self.learning_error_baseline = learning_error;
+        self.learning = learning;
+        // 选项存储：重开（重读 `options.yaml`）；缺省仍取当前设置（与构造同一口径）。
+        // 会话上下文在下面的逐会话重置里由 `sync` 重放。
+        self.options = options_dir.as_deref().map(|dir| {
+            OptionsStore::load_with_defaults(dir, self.settings.store_defaults(&option_roles))
+        });
         // 释放旧方案的会话（平台侧 id 与宿主输入上下文不受影响），再换上重新装配的方案。
         let old_sessions: Vec<_> = self
             .sessions
@@ -877,7 +916,8 @@ impl Engine {
         // 逐角色诊断由随后的配置下发重新产出，先清掉旧方案的（避免拼出过期诊断）。
         self.config_notes.clear();
         self.refresh_status();
-        // 逐会话重置：平台 id 保留，方案侧会话重建（触发键 / 最小保留量随新方案刷新）。
+        // 逐会话重置：平台 id 保留，方案侧会话重建（触发键 / 最小保留量随新方案刷新，
+        // 选项按重读后的存储重放）。
         let ids: Vec<u64> = self.sessions.keys().copied().collect();
         for id in ids {
             self.with_session(id, |engine, session| engine.redeploy_session(session));

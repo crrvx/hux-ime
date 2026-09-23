@@ -904,24 +904,32 @@ private:
         return std::string("模型：") + (info != nullptr ? info : "不可用");
     }
 
-    /// 重新部署：重读配置 → 重装方案数据与模型 → 清面板 → 刷新状态菜单与日志。
+    /// 重新部署：重读配置 → 引擎重走构造期读取 → 对齐共享开关 → 清面板 → 刷新状态菜单与日志。
     ///
-    /// 会话 id 不变（宿主侧的输入上下文不需要重建），但组合与候选全部作废，故第 3 步
-    /// 必须清面板——否则面板上留着已失效的旧候选。
+    /// 会话 id 不变（宿主侧的输入上下文不需要重建），但组合与候选全部作废，故必须清面板
+    /// ——否则面板上留着已失效的旧候选。
+    ///
+    /// 顺序说明：引擎的重新部署自己会重读 `options.yaml` 与学习库（见 `hux_engine_redeploy`
+    /// 契约），故本层先让它重读、再 `adoptStoredRuntimeOptions()` 对齐没写进本配置文件的共享
+    /// 开关，最后 `applyConfig()` 推设置——这样「手改 `options.yaml` 后重新部署」与「重启
+    /// fcitx5」得到同一结果（配置文件显式写过的键仍以文件为准）。
     void redeploy(fcitx::InputContext *inputContext) {
-        // 1) 重新读取本 addon 的配置文件（与构造同一入口）并推给引擎（含快捷键绑定）。
+        // 1) 重新读取本 addon 的配置文件（与构造同一入口）。
         fcitx::readAsIni(config_, kConfigPath);
-        applyConfig();
-        // 2) 引擎侧：重装数据与模型 + 重置全部会话状态（旧候选/预编辑随之作废）。
+        // 2) 引擎侧：重走构造期读取（目录 / 选项存储 / 学习库 / 方案数据与模型）+ 重置全部会话。
         if (hux_engine_redeploy(engine_) == 0) {
             FCITX_WARN() << "hux: 重新部署失败（引擎不可用）";
             return;
         }
-        // 3) 清空各输入上下文的面板与会话里的 UI 快照。
+        // 3) 与构造同一规则：配置文件没写过的共享键沿用引擎（重读后）的值；随后推设置
+        //    （含快捷键绑定），设置值仍是权威并写回存储。
+        adoptStoredRuntimeOptions();
+        applyConfig();
+        // 4) 清空各输入上下文的面板与会话里的 UI 快照。
         clearPanels();
-        // 4) 「模型」行与状态菜单刷新（文案现算，这里只通知 UI 重取）。
+        // 5) 「模型」行与状态菜单刷新（文案现算，这里只通知 UI 重取）。
         refreshHostActions(inputContext);
-        // 5) 新状态串落日志：排查「重新部署后还是老样子」时先看这里。
+        // 6) 新状态串落日志：排查「重新部署后还是老样子」时先看这里。
         if (const char *status = hux_engine_status(engine_)) {
             FCITX_INFO() << "hux: " << status;
         }

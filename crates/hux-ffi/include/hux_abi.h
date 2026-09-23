@@ -76,10 +76,13 @@ const char *hux_engine_status(const hux_engine *engine);
 const char *hux_engine_model_info(const hux_engine *engine);
 
 /*
- * 重新部署：重新装配方案数据与模型，并重置全部会话状态。
+ * 重新部署：重走一遍构造期的读取（数据/选项目录、模型、方案数据、选项存储、学习库），
+ * 并重置全部会话状态。
  *
  * 会话 id 继续有效（宿主侧的输入上下文不需要重建），但旧组合与旧候选作废：宿主应在调用后
+ * 重新推送设置（hux_engine_apply_settings；设置值仍是权威并写回持久化选项）、
  * 清空面板/客户端预编辑，并重新读取 hux_engine_model_info 与 hux_engine_status 刷新展示。
+ * 进程级环境变量（HUX_DATA_DIRS / HUX_MODEL）在同一进程内无法改变，重算得到的是同一组目录。
  * 返回 1 = 成功；0 = 引擎不可用。
  */
 int32_t hux_engine_redeploy(hux_engine *engine);
