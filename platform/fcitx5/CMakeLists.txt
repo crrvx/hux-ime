@@ -39,7 +39,14 @@ set_target_properties(hux PROPERTIES OUTPUT_NAME "hux")
 
 # 插件安装目录：优先跟随 fcitx5 自身的 addon 目录（Fcitx5Utils 提供；Fedora 为 lib64/fcitx5），
 # 未提供时退回 GNUInstallDirs 的 libdir。
-if(DEFINED FCITX_INSTALL_ADDONDIR AND NOT FCITX_INSTALL_ADDONDIR STREQUAL "")
+#
+# `HUX_RELATIVE_ADDON_DIR=ON` 把它改成**相对**路径 `lib/fcitx5`：`FCITX_INSTALL_ADDONDIR` 是
+# 绝对路径，`cmake --install --prefix <用户前缀>` 无法把它重定位到 `~/.local/lib/fcitx5`；
+# 相对目标按 `CMAKE_INSTALL_PREFIX` 解析，供用户级安装（`install.sh -u`）使用。缺省仍为绝对路径。
+option(HUX_RELATIVE_ADDON_DIR "插件安装目录用相对路径 lib/fcitx5（供用户级前缀重定位）" OFF)
+if(HUX_RELATIVE_ADDON_DIR)
+    set(HUX_ADDON_DIR "lib/fcitx5")
+elseif(DEFINED FCITX_INSTALL_ADDONDIR AND NOT FCITX_INSTALL_ADDONDIR STREQUAL "")
     set(HUX_ADDON_DIR "${FCITX_INSTALL_ADDONDIR}")
 else()
     include(GNUInstallDirs)

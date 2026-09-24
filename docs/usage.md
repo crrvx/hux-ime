@@ -35,8 +35,59 @@ fcitx5 -r -d
 
 ## 安装
 
-一键安装（构建 → 装插件与随包数据 → 重启 fcitx5；`--dry-run` 预览）见根 [`README.md`](../README.md)
-「快速指南」——命令只留那处。脚本结尾会提示自行获取 n-gram 模型（见下）。
+一键安装（①依赖检查 ②构建 ③安装 ④校验落盘 ⑤提示；`--dry-run` 预览）见根
+[`README.md`](../README.md)「快速指南」——命令只留那处。脚本按落点分两种模式，**互斥**：
+
+| 模式 | 落点前缀 | 权限 | 生效范围 |
+| ---- | -------- | ---- | -------- |
+| `-s` / `--system`（缺省） | `/usr` | 需要 sudo | 全机 |
+| `-u` / `--user` | `$HOME/.local` | 无需 sudo | 当前用户 |
+
+装完脚本**不自动重启** fcitx5：按结尾提示自行重启（`nohup fcitx5 -r -d >/dev/null 2>&1 &`），
+再在配置工具里添加「虎虚（hux）」。
+
+### 用户级（`-u`）的环境变量
+
+fcitx5 的 addon 目录**没有用户级缺省值**：用户级安装靠环境变量 `FCITX_ADDON_DIRS` 指定，
+且该变量**取代**缺省搜索集，故必须显式带上系统目录。`-u` 会写（已存在且内容相同则不改写）：
+
+`~/.config/environment.d/90-hux.conf`
+
+```sh
+FCITX_ADDON_DIRS=$HOME/.local/lib/fcitx5:/usr/lib/fcitx5
+```
+
+生效条件是 systemd 用户实例在**登录时**读入 `environment.d`（值里的 `$HOME` 由 systemd 展开）：
+
+- 脚本装完检测当前会话是否已继承（`systemctl --user show-environment` 里有 `FCITX_ADDON_DIRS`）。
+- 已继承 ⇒ 重启 fcitx5 即可加载插件。
+- **未继承（或没有 systemd 用户实例）⇒ 当前会话不会继承该变量**：需在启动 fcitx5 前
+  `export FCITX_ADDON_DIRS=$HOME/.local/lib/fcitx5:/usr/lib/fcitx5`，或改用 `-s`——脚本会明确提示，
+  不会假装成功。
+- 重新登录后的新会话自然带上它。没带该变量时 fcitx5 找不到 `libhux.so`，输入法列表里没有「虎虚」。
+
+### 产物清单
+
+`<prefix>` = `/usr`（`-s`）或 `$HOME/.local`（`-u`）：
+
+- `<prefix>/lib/fcitx5/libhux.so`：插件库。系统级跟随 fcitx5 自身的 addon 目录（Fedora 为
+  `lib64/fcitx5`，Debian/Ubuntu 为 multiarch 的 `lib/<triplet>/fcitx5`）；用户级固定
+  `lib/fcitx5`——CMake 开关 `HUX_RELATIVE_ADDON_DIR=ON` 把安装目标写成相对路径，
+  否则 `FCITX_INSTALL_ADDONDIR` 的绝对路径无法随 `--prefix` 重定位。
+- `<prefix>/share/fcitx5/{addon,inputmethod}/hux.conf`：插件与输入法条目。
+- `<prefix>/share/icons/hicolor/{scalable,48x48,22x22}/apps/hux.{svg,png}`：输入法条目 / 托盘图标。
+- `<prefix>/share/fcitx5/themes/hufu-*/`：**共享主题** 9 套（fcitx5 主题形态，取自虎符官方皮肤；
+  清单 `assets/themes/MANIFEST`，说明见 [`../assets/themes/README.md`](../assets/themes/README.md)）。
+  选用：`fcitx5-configtool` →「附加组件」→「经典界面」→ 主题，或改
+  `~/.config/fcitx5/conf/classicui.conf` 的 `Theme=`（fcitx5 会合并系统级与用户级主题目录）。
+- `<prefix>/share/fcitx5/hux/`：**随包数据**（`data/MANIFEST` 列出的码表四件套、词先验位图、
+  音反查索引、标点表）——由 `cmake --install` 按同一清单一并安装；缺了它，引擎的 `Lexicon` /
+  `PunctTable` 静默降级（打字无输出 / 无标点）。
+- 仅用户级：`~/.config/environment.d/90-hux.conf`（见上）。
+
+两份清单（`data/MANIFEST`、`assets/themes/MANIFEST`）是安装 / 卸载 / CMake 的**单一来源**：
+`install.sh` 装后逐条核对落盘（缺任一即失败），`uninstall.sh` 按同一清单删除，
+`tools/checks/check_data_manifest.sh` 与 CI 的 `DESTDIR` 步骤守护三处一致。
 
 手工安装（自定义前缀或打包时参考）：
 
@@ -54,26 +105,31 @@ fcitx5 -r -d  # 或以所在发行版的方式重启
 
 安装产物：
 
-- `/usr/lib/fcitx5/libhux.so`（或发行版 libdir，如 Fedora 的 `/usr/lib64/fcitx5/libhux.so`）
+- `/usr/lib/fcitx5/libhux.so`（系统级跟随 fcitx5 的 addon 目录：Fedora 为 `lib64/fcitx5`，
+  Debian/Ubuntu 为 multiarch 的 `lib/<triplet>/fcitx5`）
 - `/usr/share/fcitx5/{addon,inputmethod}/hux.conf`
 - `/usr/share/icons/hicolor/{scalable,48x48,22x22}/apps/hux.{svg,png}`（输入法条目 / 托盘图标）
-- `/usr/share/fcitx5/themes/hufu-*/`：**共享主题** 9 套（fcitx5 主题形态，取自虎符官方皮肤；
-  清单 `assets/themes/MANIFEST`，说明见 [`../assets/themes/README.md`](../assets/themes/README.md)）。
-  选用：`fcitx5-configtool` →「附加组件」→「经典界面」→ 主题，或改
-  `~/.config/fcitx5/conf/classicui.conf` 的 `Theme=`（fcitx5 会合并系统级与用户级主题目录）。
-- `/usr/share/fcitx5/hux/`：**随包数据**（`data/MANIFEST` 列出的码表四件套、词先验位图、
-  音反查索引、标点表）——由 `cmake --install` 一并安装，
-  与 `install.sh` 装出的布局一致；此前只有 `install.sh` 装数据，只走 CMake 会得到**无词库引擎**。
+- `/usr/share/fcitx5/themes/hufu-*/`：共享主题 9 套（清单 `assets/themes/MANIFEST`）
+- `/usr/share/fcitx5/hux/`：随包数据（`data/MANIFEST`）
 
-数据也可放到用户级目录（引擎按「用户目录 → 系统目录」查找）：
+用户级前缀同理：前缀换成 `$HOME/.local`，并加 `-DHUX_RELATIVE_ADDON_DIR=ON`——缺省取 fcitx5 的
+**绝对** addon 目录，`--prefix` 无法把它重定位到 `lib/fcitx5`：
+
+```sh
+cmake -S platform/fcitx5 -B build/addon \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX="$HOME/.local" \
+    -DHUX_RELATIVE_ADDON_DIR=ON
+cmake --build build/addon -j
+cmake --install build/addon   # 无需 sudo
+```
+
+数据也可单独放到用户级目录（引擎按「用户目录 → 系统目录」查找）：
 
 ```sh
 mkdir -p ~/.local/share/fcitx5/hux/models
 cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
 ```
-
-同样可装到系统级 `/usr/share/fcitx5/hux/`（`install.sh` 的做法：`data/MANIFEST` 里的文件
-逐条核对）。
 
 [n-gram 模型](https://github.com/lvyww/tiger-sentense-rime/releases/tag/model) 不随包。
 放入用户级或系统级目录即可。
@@ -140,7 +196,28 @@ cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
 
 ## 卸载（无残留）
 
-一键卸载（`--purge` 连用户数据一起清除）见根 [`README.md`](../README.md)「快速指南」——命令只留那处。
+一键卸载见根 [`README.md`](../README.md)「快速指南」——命令只留那处。`./uninstall.sh` 是**交互式**的：
+先探测系统级与用户级两处安装，只对存在的项提问与操作，开始前依次问三件事：
+
+1. 是否卸载共享主题？`[Y/n]`——`<prefix>/share/fcitx5/themes/hufu-*`（`assets/themes/MANIFEST`）。
+2. 是否卸载模型？`[y/N]`——`<prefix>/share/fcitx5/hux/models/*.bin`，**缺省保留**（体积大、可复用）。
+3. 是否删除用户数据？`[y/N]`——选项 / 学习库 / `conf/hux.conf`，**缺省保留**。
+
+其余（插件库、`{addon,inputmethod}/hux.conf`、图标、随包数据、`-u` 写的
+`~/.config/environment.d/90-hux.conf`）缺省都卸；要连模型与用户数据一起清除，就在第 2、3 问回答
+`y`。开关只有两个（`--help` 里同样写明）：
+
+| 开关 | 作用 |
+| ---- | ---- |
+| `--dry-run` | 只打印将执行的命令与「计划删除清单」：不提问、不上色、不删除 |
+| `-h` / `--help` | 显示帮助 |
+
+`--dry-run` 的「计划删除清单」是机器可解析的（守卫 `tools/checks/check_uninstall_clean.py` 按它取
+可卸载集合）：每行 `<标记> <绝对路径>`，`-` = 按缺省会删、`?` = 回答 `y` 才删（模型 / 用户数据）；
+绝对路径一行一条，整个目录以 `/` 结尾，通配用 `*`（如 multiarch 的 addon 目录）。清单按固定落点
+静态给出，不随探测结果变化。卸载结束打印清单：已卸载的逐项路径 / 套数，以及**未卸载**的
+逐项与原因（模型保留、用户数据保留、目录里还有清单之外的文件等）。脚本不自动重启 fcitx5，
+结尾给重启命令。
 
 手工步骤：
 
@@ -153,17 +230,22 @@ sudo rm -rf /usr/lib/fcitx5/libhux.so \
             /usr/share/fcitx5/themes/hufu-* \
             /usr/share/fcitx5/hux
 
-# 用户级
-rm -rf ~/.local/share/fcitx5/hux \
+# 用户级（-u 装的那套）
+rm -rf ~/.local/lib/fcitx5/libhux.so \
+       ~/.local/share/fcitx5/{addon,inputmethod}/hux.conf \
+       ~/.local/share/icons/hicolor/{scalable,48x48,22x22}/apps/hux.{svg,png} \
+       ~/.local/share/fcitx5/themes/hufu-* \
+       ~/.local/share/fcitx5/hux \
+       ~/.config/environment.d/90-hux.conf \
        ~/.config/fcitx5/conf/hux.conf
 
 # 重启
 fcitx5 -r -d  # 或以发行版所支持的方式
 ```
 
-> 上面的 `rm -rf /usr/share/fcitx5/hux` 会连**用户自取**的 n-gram 模型一起删掉，而
-> `./uninstall.sh`（不带 `--purge`）只删随包数据、保留 `models/`。若要手工卸载又保留模型，
-> 只删 `data/MANIFEST` 列出的文件（`tiger_sentence.*` 与 `symbols.yaml`）：
+> 上面的 `rm -rf /usr/share/fcitx5/hux` 会连**用户自取**的 n-gram 模型一起删掉；`./uninstall.sh`
+> 缺省只删随包数据与插件本身，模型与用户数据都保留（第 2、3 问都回答 `y` 才连它们一起删）。
+> 若要手工卸载又保留模型，只删 `data/MANIFEST` 列出的文件（`tiger_sentence.*` 与 `symbols.yaml`）：
 >
 > ```sh
 > while IFS= read -r entry; do
@@ -172,4 +254,5 @@ fcitx5 -r -d  # 或以发行版所支持的方式
 > done < data/MANIFEST
 > ```
 >
-> 插件库目录同理兼容 `lib64`：`/usr/lib64/fcitx5/libhux.so`（Fedora 等）。
+> 插件库目录兼容 `lib64` 与 multiarch：`/usr/lib64/fcitx5/libhux.so`（Fedora 等）、
+> `/usr/lib/<triplet>/fcitx5/libhux.so`（Debian/Ubuntu）。

@@ -68,8 +68,8 @@ sha256 `c0063898fdff27c1fb00c1c72fa28a6c1b375fade1ec2045d731b9db958bdecc`；文�
 **一键卸载**
 
 ```sh
-./uninstall.sh          # 保留用户数据（选项 / 学习库 / 模型）
-./uninstall.sh --purge  # 连用户数据一起清除
+./uninstall.sh           # 交互式三问：主题 / 模型 / 用户数据（缺省只卸主题）
+./uninstall.sh --dry-run # 预演：不提问、不删除，并打印计划删除清单
 ```
 
 更多细节见 [`docs/usage.md`](docs/usage.md)，配置项见 [`docs/config.md`](docs/config.md)。
