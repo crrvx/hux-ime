@@ -8,8 +8,8 @@
 # Keep this file ASCII-only: CMake's `file(STRINGS)` without an explicit ENCODING mangles
 # non-ASCII bytes and would turn a comment line into a bogus "missing file" entry.
 #
-# Not listed here: the n-gram model (fetched by the user; removed only by `uninstall.sh --purge`)
-# and data/README.md.
+# Not listed here: the n-gram model (fetched by the user; removed by the interactive
+# uninstall -- answer yes to its model question) and data/README.md.
 data/tiger_sentence.codes.txt
 data/tiger_sentence.char_ranks.txt
 data/tiger_sentence.full_code_whitelist.txt

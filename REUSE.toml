@@ -37,6 +37,12 @@ path = [".gitignore", "Cargo.lock"]
 SPDX-FileCopyrightText = "2026 明雅流风 <crrvx@outlook.com>"
 SPDX-License-Identifier = "GPL-3.0-or-later"
 
+# 共享主题（取自虎符官方皮肤的 fcitx5 主题产物，第三方文件无 SPDX 头，按目录标注）
+[[annotations]]
+path = "assets/themes/**"
+SPDX-FileCopyrightText = ["HuFu（hufu-ime-rust）作者与贡献者", "2026 明雅流风 <crrvx@outlook.com>"]
+SPDX-License-Identifier = "GPL-3.0-only"
+
 # 品牌图形位图（由同目录 hux.svg 生成，二进制无 SPDX 头，按目录标注）
 [[annotations]]
 path = ["assets/branding/*.png"]

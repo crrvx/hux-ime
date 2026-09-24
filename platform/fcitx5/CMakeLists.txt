@@ -39,7 +39,14 @@ set_target_properties(hux PROPERTIES OUTPUT_NAME "hux")
 
 # 插件安装目录：优先跟随 fcitx5 自身的 addon 目录（Fcitx5Utils 提供；Fedora 为 lib64/fcitx5），
 # 未提供时退回 GNUInstallDirs 的 libdir。
-if(DEFINED FCITX_INSTALL_ADDONDIR AND NOT FCITX_INSTALL_ADDONDIR STREQUAL "")
+#
+# `HUX_RELATIVE_ADDON_DIR=ON` 把它改成**相对**路径 `lib/fcitx5`：`FCITX_INSTALL_ADDONDIR` 是
+# 绝对路径，`cmake --install --prefix <用户前缀>` 无法把它重定位到 `~/.local/lib/fcitx5`；
+# 相对目标按 `CMAKE_INSTALL_PREFIX` 解析，供用户级安装（`install.sh -u`）使用。缺省仍为绝对路径。
+option(HUX_RELATIVE_ADDON_DIR "插件安装目录用相对路径 lib/fcitx5（供用户级前缀重定位）" OFF)
+if(HUX_RELATIVE_ADDON_DIR)
+    set(HUX_ADDON_DIR "lib/fcitx5")
+elseif(DEFINED FCITX_INSTALL_ADDONDIR AND NOT FCITX_INSTALL_ADDONDIR STREQUAL "")
     set(HUX_ADDON_DIR "${FCITX_INSTALL_ADDONDIR}")
 else()
     include(GNUInstallDirs)
@@ -91,3 +98,23 @@ if(NOT HUX_DATA_FILES)
     message(FATAL_ERROR "data/MANIFEST 没有有效行（随包数据清单缺失或为空）")
 endif()
 install(FILES ${HUX_DATA_FILES} DESTINATION share/fcitx5/hux)
+
+# 共享主题（fcitx5 主题形态）：清单 `assets/themes/MANIFEST` 是**单一来源**——
+# `install.sh` 按它核对落盘、`uninstall.sh` 按它删除、`tools/checks/check_themes.py` 守护四者一致。
+# 主题是跨平台共享资源（配色与图形），这里是它在 Linux 上的安装形态。
+file(STRINGS "${HUX_WORKSPACE}/assets/themes/MANIFEST" HUX_THEME_ENTRIES ENCODING UTF-8)
+set(HUX_THEME_DIRS "")
+foreach(HUX_THEME_ENTRY IN LISTS HUX_THEME_ENTRIES)
+    string(STRIP "${HUX_THEME_ENTRY}" HUX_THEME_ENTRY)
+    if(HUX_THEME_ENTRY STREQUAL "" OR HUX_THEME_ENTRY MATCHES "^#")
+        continue()
+    endif()
+    if(NOT IS_DIRECTORY "${HUX_WORKSPACE}/assets/themes/${HUX_THEME_ENTRY}")
+        message(FATAL_ERROR "assets/themes/MANIFEST 列出的主题目录不存在：${HUX_THEME_ENTRY}")
+    endif()
+    list(APPEND HUX_THEME_DIRS "${HUX_WORKSPACE}/assets/themes/${HUX_THEME_ENTRY}")
+endforeach()
+if(NOT HUX_THEME_DIRS)
+    message(FATAL_ERROR "assets/themes/MANIFEST 没有有效行（主题清单缺失或为空）")
+endif()
+install(DIRECTORY ${HUX_THEME_DIRS} DESTINATION share/fcitx5/themes)

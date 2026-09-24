@@ -91,20 +91,28 @@ D 16:41:47.539737 hux.cpp:404] hux: ~HuxEngine
 
 ## 安装（`cmake --install` 与 `install.sh` 等价）
 
-`cmake --install`（前缀 `/usr`）装 **3 个插件文件 + 3 个图标 + `data/MANIFEST` 列出的全部随包数据**：
+`cmake --install`（前缀 `/usr`）装 **3 个插件文件 + 3 个图标 + `data/MANIFEST` 列出的全部随包数据**；
+落点随安装级别分两套，`<prefix>` = `/usr`（`install.sh -s`，需要 sudo）或 `$HOME/.local`
+（`install.sh -u`，无需 sudo）：
 
-- `lib/<libdir>/fcitx5/libhux.so`（`FCITX_INSTALL_ADDONDIR` 优先，Fedora 等为 `lib64`）；
-- `share/fcitx5/addon/hux.conf`、`share/fcitx5/inputmethod/hux.conf`；
-- `share/icons/hicolor/{scalable,48x48,22x22}/apps/hux.{svg,png}`（输入法条目与状态区图标，
+- `<libdir>/fcitx5/libhux.so`：系统级跟随 `FCITX_INSTALL_ADDONDIR`（Fedora 等为 `lib64`，
+  Debian/Ubuntu 为 multiarch 的 `lib/<triplet>`）；用户级加 `-DHUX_RELATIVE_ADDON_DIR=ON`，
+  把安装目标记为**相对**路径 `lib/fcitx5`（该变量本身是绝对路径，`--prefix` 无法重定位）
+  ⇒ `<prefix>/lib/fcitx5/libhux.so`。插件目录**没有用户级缺省值**，用户级安装需
+  `FCITX_ADDON_DIRS`（`install.sh -u` 写 `~/.config/environment.d/90-hux.conf`）。
+- `<prefix>/share/fcitx5/addon/hux.conf`、`<prefix>/share/fcitx5/inputmethod/hux.conf`；
+- `<prefix>/share/fcitx5/themes/hufu-*/`：19 套共享主题（fcitx5 主题形态；清单 `assets/themes/MANIFEST`
+  与 `install.sh` / `uninstall.sh` / CI 守卫同源）；
+- `<prefix>/share/icons/hicolor/{scalable,48x48,22x22}/apps/hux.{svg,png}`（输入法条目与状态区图标，
   `Icon=hux` 按主题名解析；图形源在多平台共享目录 `assets/branding/hux.svg`，位图由它生成）；
-- `share/fcitx5/hux/`：码表四件套 + 词先验 + 拼音索引 + 标点表（`data/MANIFEST` 单一来源，
+- `<prefix>/share/fcitx5/hux/`：码表四件套 + 词先验 + 拼音索引 + 标点表（`data/MANIFEST` 单一来源，
   `install.sh` 装后逐条核对、`uninstall.sh` 按同一清单删除）。
 
-**随包数据随 `cmake --install` 一并安装**：只装 3 个插件文件时数据仅由 `install.sh` 安装 ⇒ 只走
-`cmake --install`（发行版打包 / `DESTDIR` 流程）会得到**无词库引擎**（`Lexicon`/`PunctTable`
-静默降级）。现由 CMake 按 `data/MANIFEST` 一并安装；`tools/checks/check_data_manifest.sh`
-与 CI 的 `DESTDIR` 步骤守护「装 / 卸 / CMake 三处清单一致」。**n-gram 模型仍不随包**（用户自取；
-`uninstall.sh --purge` 才删）。
+**随包数据随 `cmake --install` 一并安装**（CMake 按 `data/MANIFEST` 读出文件清单）：只装 3 个插件
+文件而不装数据时，引擎的 `Lexicon` / `PunctTable` 会静默降级（打字无输出 / 无标点），发行版打包与
+`DESTDIR` 流程同样如此；`tools/checks/check_data_manifest.sh` 与 CI 的 `DESTDIR` 步骤守护
+「装 / 卸 / CMake 三处清单一致」。**n-gram 模型仍不随包**（用户自取；`uninstall.sh` 缺省保留，
+「是否卸载模型」一问回答 y 才删）。
 
 ## 已知限制
 

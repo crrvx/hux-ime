@@ -146,14 +146,23 @@ jobs:
       - name: Verify branding assets (shared graphics)
         # 位图尺寸须与文件名声明一致、矢量源可渲染（见 assets/branding/README.md）。
         run: python3 tools/checks/check_branding_assets.py
+      - name: Verify shared themes (assets/themes)
+        # 清单 ↔ 目录、每套文件齐备、取用指纹一致（新增/更新主题时同步指纹常量）。
+        run: python3 tools/checks/check_themes.py
+      - name: Verify resource ledger (docs/resources.md ↔ 仓库资源)
+        # 无遗漏（每个仓库内资源都有登记）+ 可溯源（许可与 REUSE 标注一致）。
+        run: python3 tools/checks/check_resources.py
       - name: Verify data manifest (install / uninstall / cmake)
         # 装、卸、CMake 三处必须读同一份 data/MANIFEST，
         # 且清单与 data/ 实况一致（防「装得上、卸不掉」）。
         run: bash tools/checks/check_data_manifest.sh
       - name: Smoke-check install / uninstall entrypoints
         # 两个一键脚本是文档首推入口：语法 + `--dry-run` 冒烟（不写系统目录）。
+        # `bash -n a b c` 只检查第一个文件（其余当位置参数），故逐个文件检查。
         run: |
-          bash -n install.sh uninstall.sh tools/generators/*.sh tools/checks/*.sh
+          for script in install.sh uninstall.sh tools/generators/*.sh tools/checks/*.sh; do
+            bash -n "$script"
+          done
           ./install.sh --dry-run >/dev/null
           ./uninstall.sh --dry-run >/dev/null
           ./install.sh --help >/dev/null
@@ -249,6 +258,14 @@ jobs:
           done < data/MANIFEST
           test "$count" -gt 0 || { echo "::error::data/MANIFEST 没有有效行"; exit 1; }
           echo "安装布局：$so + 2 个 conf + $count 个随包数据文件"
+      - name: Verify uninstall covers the install set
+        # 「安装集合 ⊆（可卸载集合 ∪ 保留表）」：可卸载集合 = `uninstall.sh --dry-run` 计划清单的
+        # `-` 行（按缺省删）与 `?` 行（交互回答 y 才删）；保留表当前为空（模型与用户数据都在 `?` 行里）。
+        # `install_manifest.txt` 由上一步的 `cmake --install` 写出。
+        run: |
+          python3 tools/checks/check_uninstall_clean.py \
+            --manifest build/addon/install_manifest.txt \
+            --stage /tmp/stage
 
   # 一般金样校验：使用 runner 系统提供的 Lua（Ubuntu 当前可用的最新 lua 包）。
   golden:

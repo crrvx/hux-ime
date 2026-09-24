@@ -28,10 +28,12 @@ just for fun:
 git clone https://github.com/crrvx/hux-ime && cd hux-ime
 
 # 预演：./install.sh --dry-run
-./install.sh  # 构建 → 装插件与数据 → 重启 fcitx5
+./install.sh -s  # 系统级安装（缺省）：构建 → 装插件 / 数据 / 图标 / 主题
+./install.sh -u  # 用户级安装：全部装到 ~/.local（并写 environment.d 让 fcitx5 找到插件）
 ```
 
-随后在 fcitx5 配置工具「添加输入法」→ **虎虚（hux）**。
+装完按脚本结尾的提示重启 fcitx5（安装脚本不再自动重启）：
+`nohup fcitx5 -r -d >/dev/null 2>&1 &`；随后在 fcitx5 配置工具「添加输入法」→ **虎虚（hux）**。
 
 **模型（可选，自取）**
 
@@ -68,8 +70,8 @@ sha256 `c0063898fdff27c1fb00c1c72fa28a6c1b375fade1ec2045d731b9db958bdecc`；文�
 **一键卸载**
 
 ```sh
-./uninstall.sh          # 保留用户数据（选项 / 学习库 / 模型）
-./uninstall.sh --purge  # 连用户数据一起清除
+./uninstall.sh           # 交互式三问：主题 / 模型 / 用户数据（缺省只卸主题）
+./uninstall.sh --dry-run # 预演：不提问、不删除，并打印计划删除清单
 ```
 
 更多细节见 [`docs/usage.md`](docs/usage.md)，配置项见 [`docs/config.md`](docs/config.md)。
@@ -86,6 +88,7 @@ sha256 `c0063898fdff27c1fb00c1c72fa28a6c1b375fade1ec2045d731b9db958bdecc`；文�
 | [`docs/upstream-deviations.md`](docs/upstream-deviations.md) | 政策：有意偏离上游（①②③④）的依据、可证伪期望值表与回归做法 |
 | [`docs/android.md`](docs/android.md)                       | 计划：fcitx5-android 插件适配                       |
 | [`docs/LEXICAL_PRIOR_ATTRIBUTION.md`](docs/LEXICAL_PRIOR_ATTRIBUTION.md) | 署名：词先验数据的来源与许可         |
+| [`docs/resources.md`](docs/resources.md)                   | 资源总账：来源 / 作用 / 去向 / 溯源与装卸保证                         |
 | [`docs/perf.md`](docs/perf.md)                             | 性能：基准用法、基线数据与优化决定                  |
 | [`platform/fcitx5/README.md`](platform/fcitx5/README.md) | addon 实现：分工、按键语义、反查机制、已知限制      |
 | [`goldens/README.md`](goldens/README.md)                   | 差分金样：清单、transcript 格式、校验入口与规则     |
@@ -95,9 +98,9 @@ sha256 `c0063898fdff27c1fb00c1c72fa28a6c1b375fade1ec2045d731b9db958bdecc`；文�
 | `crates/hux-scheme/*/README.md`、`platform/*/README.md`     | 各方案骨架与各平台目录的职责与现状（就地索引）      |
 
 > **文档分工（纪律见 `AGENTS.md`「背景与约定」）**：活文档只写**现状与做法**——`docs/refactor.md`
-> （结构与契约等活规则）、`docs/config.md`、`docs/usage.md`、`docs/design.md`、
-> `goldens/README.md` 与 `goldens/regenerate.md`；**历史与逐批记录**（迁移映射、批次、审计总账、
-> 未闭合项）进 `docs/review-ledger.md`；**有意偏离上游**进 `docs/upstream-deviations.md`。
+> （结构与契约等活规则）、`docs/config.md`、`docs/usage.md`、`docs/design.md`、`docs/resources.md`
+> （资源总账）、`goldens/README.md` 与 `goldens/regenerate.md`；**历史与逐批记录**（迁移映射、批次、
+> 审计总账、未闭合项）进 `docs/review-ledger.md`；**有意偏离上游**进 `docs/upstream-deviations.md`。
 
 ## 虎码信息汇总
 
@@ -130,3 +133,5 @@ sha256 `c0063898fdff27c1fb00c1c72fa28a6c1b375fade1ec2045d731b9db958bdecc`；文�
 （许可正文无法区分 only/or-later，见各文件 SPDX 头与 `Cargo.toml`） \
 各文件的版权与许可经 SPDX 头 / [`REUSE.toml`](REUSE.toml) 标注（REUSE 规范），
 许可正文见 [`LICENSES/`](LICENSES/)。
+
+如有任何改进建议，欢迎 [issue](https://github.com/crrvx/hux-ime/issues)。

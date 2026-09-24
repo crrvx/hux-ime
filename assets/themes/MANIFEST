@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# 共享主题资源清单（每行一个主题目录名；空行与 # 行为注释）。
+# 单一来源：platform/fcitx5/CMakeLists.txt（安装）、install.sh（装后核对）、uninstall.sh（删除）、
+# tools/checks/check_themes.py（守卫）都读本文件——新增/删除主题只改这里。
+# 保持 ASCII-only（CMake 的 file(STRINGS) 不显式指定编码时会弄坏非 ASCII 字节）。
+hufu-canghai
+hufu-chenwu
+hufu-default
+hufu-huguang
+hufu-hupo
+hufu-luoxia
+hufu-mocha
+hufu-moyan
+hufu-mushan
+hufu-ouhe
+hufu-qingci
+hufu-rongyan
+hufu-shiyou
+hufu-songyan
+hufu-sujian
+hufu-xingyu
+hufu-xuanmo
+hufu-yingxiong
+hufu-yuebai

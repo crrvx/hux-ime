@@ -13,14 +13,14 @@
   也能得到完整引擎**——此前 CMake 不装数据，只走 CMake 会得到「无词库」引擎；见
   [`../platform/fcitx5/README.md`](../platform/fcitx5/README.md) ）；
 - `install.sh` 装后逐条核对落盘（缺任一即失败并给出提示）；
-- `uninstall.sh` 无 `--purge` 时按同一清单删除（此前枚举 7 个文件名而安装侧用 glob，
-  `data/` 增删文件就会残留）。
+- `uninstall.sh` 按同一清单删除（三项交互问答只管主题 / 模型 / 用户数据，不影响随包数据；
+  此前枚举 7 个文件名而安装侧用 glob，`data/` 增删文件就会残留）。
 
 一致性自检：`bash tools/checks/check_data_manifest.sh`（CI 已接入；`data/` 里
 `tiger_sentence.*` 与 `symbols.yaml` 必须全部登记在清单里）。**清单保持纯 ASCII**：CMake 的
 `file(STRINGS)` 默认编码会破坏非 ASCII 字节，把中文注释行拆成假文件名（configure 期即报错）。
 
-不随包：n-gram 模型（用户自取；`uninstall.sh --purge` 才删）与本文件。
+不随包：n-gram 模型（用户自取；交互式卸载的「是否卸载模型」一问回答 y 才删）与本文件。
 
 ## 文件
 
