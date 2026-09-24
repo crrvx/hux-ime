@@ -91,3 +91,23 @@ if(NOT HUX_DATA_FILES)
     message(FATAL_ERROR "data/MANIFEST 没有有效行（随包数据清单缺失或为空）")
 endif()
 install(FILES ${HUX_DATA_FILES} DESTINATION share/fcitx5/hux)
+
+# 共享主题（fcitx5 主题形态）：清单 `assets/themes/MANIFEST` 是**单一来源**——
+# `install.sh` 按它核对落盘、`uninstall.sh` 按它删除、`tools/checks/check_themes.py` 守护四者一致。
+# 主题是跨平台共享资源（配色与图形），这里是它在 Linux 上的安装形态。
+file(STRINGS "${HUX_WORKSPACE}/assets/themes/MANIFEST" HUX_THEME_ENTRIES ENCODING UTF-8)
+set(HUX_THEME_DIRS "")
+foreach(HUX_THEME_ENTRY IN LISTS HUX_THEME_ENTRIES)
+    string(STRIP "${HUX_THEME_ENTRY}" HUX_THEME_ENTRY)
+    if(HUX_THEME_ENTRY STREQUAL "" OR HUX_THEME_ENTRY MATCHES "^#")
+        continue()
+    endif()
+    if(NOT IS_DIRECTORY "${HUX_WORKSPACE}/assets/themes/${HUX_THEME_ENTRY}")
+        message(FATAL_ERROR "assets/themes/MANIFEST 列出的主题目录不存在：${HUX_THEME_ENTRY}")
+    endif()
+    list(APPEND HUX_THEME_DIRS "${HUX_WORKSPACE}/assets/themes/${HUX_THEME_ENTRY}")
+endforeach()
+if(NOT HUX_THEME_DIRS)
+    message(FATAL_ERROR "assets/themes/MANIFEST 没有有效行（主题清单缺失或为空）")
+endif()
+install(DIRECTORY ${HUX_THEME_DIRS} DESTINATION share/fcitx5/themes)

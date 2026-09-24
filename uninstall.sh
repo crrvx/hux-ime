@@ -86,6 +86,23 @@ else
     echo "  （模型与其它自建文件保留在 /usr/share/fcitx5/hux/；彻底清除用 --purge）"
 fi
 
+# 共享主题（fcitx5 主题形态）：清单与 CMake / install.sh 同源。
+if [ -f assets/themes/MANIFEST ]; then
+    theme_dirs=()
+    while IFS= read -r entry; do
+        case "$entry" in ''|'#'*) continue ;; esac
+        theme_dirs+=("/usr/share/fcitx5/themes/$entry")
+    done < assets/themes/MANIFEST
+    if [ "${#theme_dirs[@]}" -gt 0 ]; then
+        run sudo rm -rf "${theme_dirs[@]}"
+        # 仅当目录已空时收掉它——非空说明还有别人装的主题，别动。
+        run sudo rmdir --ignore-fail-on-non-empty /usr/share/fcitx5/themes 2>/dev/null || true
+        echo "  已移除主题 ${#theme_dirs[@]} 套（/usr/share/fcitx5/themes/）"
+    fi
+else
+    echo "缺少 assets/themes/MANIFEST，跳过主题清理" >&2
+fi
+
 if [ "$purge" -eq 1 ]; then
     echo "[2/2] 清除用户数据（选项 / 学习库 / 模型）……"
     run rm -rf "$data_home/fcitx5/hux" "$config_home/fcitx5/conf/hux.conf"

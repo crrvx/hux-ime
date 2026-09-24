@@ -66,7 +66,7 @@ if command -v gtk-update-icon-cache >/dev/null 2>&1; then
     run sudo gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
 fi
 
-echo "[3/4] 校验随包数据（data/MANIFEST → /usr/share/fcitx5/hux/）……"
+echo "[3/4] 校验随包数据与主题（data/MANIFEST、assets/themes/MANIFEST）……"
 # 数据文件由 `cmake --install` 按 data/MANIFEST 安装（同一份清单也被 uninstall.sh 读取）；
 # 这里逐条核对落盘结果，缺任一即失败——只走 CMake 安装时「无词库引擎」的缺口在此暴露。
 if [ ! -f data/MANIFEST ]; then
@@ -89,6 +89,28 @@ while IFS= read -r entry; do
 done < data/MANIFEST
 if [ "$data_count" -eq 0 ]; then
     echo "data/MANIFEST 没有有效行" >&2
+    exit 1
+fi
+# 主题（fcitx5 主题形态）：同一套「清单 → 安装 → 核对」机制，落点是 themes/ 目录。
+if [ ! -f assets/themes/MANIFEST ]; then
+    echo "缺少 assets/themes/MANIFEST（共享主题清单）" >&2
+    exit 1
+fi
+theme_count=0
+while IFS= read -r entry; do
+    case "$entry" in ''|'#'*) continue ;; esac
+    dest="/usr/share/fcitx5/themes/$entry/theme.conf"
+    theme_count=$((theme_count + 1))
+    if [ "$dry_run" -eq 1 ]; then
+        echo "  （dry-run）应有 $dest"
+    elif [ ! -f "$dest" ]; then
+        echo "缺少主题 $dest" >&2
+        echo "（CMake 安装规则应与 assets/themes/MANIFEST 一致：platform/fcitx5/CMakeLists.txt）" >&2
+        exit 1
+    fi
+done < assets/themes/MANIFEST
+if [ "$theme_count" -eq 0 ]; then
+    echo "assets/themes/MANIFEST 没有有效行" >&2
     exit 1
 fi
 

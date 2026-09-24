@@ -57,6 +57,10 @@ fcitx5 -r -d  # 或以所在发行版的方式重启
 - `/usr/lib/fcitx5/libhux.so`（或发行版 libdir，如 Fedora 的 `/usr/lib64/fcitx5/libhux.so`）
 - `/usr/share/fcitx5/{addon,inputmethod}/hux.conf`
 - `/usr/share/icons/hicolor/{scalable,48x48,22x22}/apps/hux.{svg,png}`（输入法条目 / 托盘图标）
+- `/usr/share/fcitx5/themes/hufu-*/`：**共享主题** 9 套（fcitx5 主题形态，取自虎符官方皮肤；
+  清单 `assets/themes/MANIFEST`，说明见 [`../assets/themes/README.md`](../assets/themes/README.md)）。
+  选用：`fcitx5-configtool` →「附加组件」→「经典界面」→ 主题，或改
+  `~/.config/fcitx5/conf/classicui.conf` 的 `Theme=`（fcitx5 会合并系统级与用户级主题目录）。
 - `/usr/share/fcitx5/hux/`：**随包数据**（`data/MANIFEST` 列出的码表四件套、词先验位图、
   音反查索引、标点表）——由 `cmake --install` 一并安装，
   与 `install.sh` 装出的布局一致；此前只有 `install.sh` 装数据，只走 CMake 会得到**无词库引擎**。
@@ -146,6 +150,7 @@ sudo rm -rf /usr/lib/fcitx5/libhux.so \
             /usr/share/fcitx5/addon/hux.conf \
             /usr/share/fcitx5/inputmethod/hux.conf \
             /usr/share/icons/hicolor/{scalable,48x48,22x22}/apps/hux.{svg,png} \
+            /usr/share/fcitx5/themes/hufu-* \
             /usr/share/fcitx5/hux
 
 # 用户级

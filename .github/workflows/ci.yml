@@ -146,6 +146,9 @@ jobs:
       - name: Verify branding assets (shared graphics)
         # 位图尺寸须与文件名声明一致、矢量源可渲染（见 assets/branding/README.md）。
         run: python3 tools/checks/check_branding_assets.py
+      - name: Verify shared themes (assets/themes)
+        # 清单 ↔ 目录、每套文件齐备、取用指纹一致（新增/更新主题时同步指纹常量）。
+        run: python3 tools/checks/check_themes.py
       - name: Verify data manifest (install / uninstall / cmake)
         # 装、卸、CMake 三处必须读同一份 data/MANIFEST，
         # 且清单与 data/ 实况一致（防「装得上、卸不掉」）。
