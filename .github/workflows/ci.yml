@@ -158,8 +158,11 @@ jobs:
         run: bash tools/checks/check_data_manifest.sh
       - name: Smoke-check install / uninstall entrypoints
         # 两个一键脚本是文档首推入口：语法 + `--dry-run` 冒烟（不写系统目录）。
+        # `bash -n a b c` 只检查第一个文件（其余当位置参数），故逐个文件检查。
         run: |
-          bash -n install.sh uninstall.sh tools/generators/*.sh tools/checks/*.sh
+          for script in install.sh uninstall.sh tools/generators/*.sh tools/checks/*.sh; do
+            bash -n "$script"
+          done
           ./install.sh --dry-run >/dev/null
           ./uninstall.sh --dry-run >/dev/null
           ./install.sh --help >/dev/null
