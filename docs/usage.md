@@ -76,7 +76,7 @@ FCITX_ADDON_DIRS=$HOME/.local/lib/fcitx5:/usr/lib/fcitx5
   否则 `FCITX_INSTALL_ADDONDIR` 的绝对路径无法随 `--prefix` 重定位。
 - `<prefix>/share/fcitx5/{addon,inputmethod}/hux.conf`：插件与输入法条目。
 - `<prefix>/share/icons/hicolor/{scalable,48x48,22x22}/apps/hux.{svg,png}`：输入法条目 / 托盘图标。
-- `<prefix>/share/fcitx5/themes/hufu-*/`：**共享主题** 9 套（fcitx5 主题形态，取自虎符官方皮肤；
+- `<prefix>/share/fcitx5/themes/hufu-*/`：**共享主题** 19 套（fcitx5 主题形态，取自虎符官方皮肤；
   清单 `assets/themes/MANIFEST`，说明见 [`../assets/themes/README.md`](../assets/themes/README.md)）。
   选用：`fcitx5-configtool` →「附加组件」→「经典界面」→ 主题，或改
   `~/.config/fcitx5/conf/classicui.conf` 的 `Theme=`（fcitx5 会合并系统级与用户级主题目录）。
@@ -109,7 +109,7 @@ fcitx5 -r -d  # 或以所在发行版的方式重启
   Debian/Ubuntu 为 multiarch 的 `lib/<triplet>/fcitx5`）
 - `/usr/share/fcitx5/{addon,inputmethod}/hux.conf`
 - `/usr/share/icons/hicolor/{scalable,48x48,22x22}/apps/hux.{svg,png}`（输入法条目 / 托盘图标）
-- `/usr/share/fcitx5/themes/hufu-*/`：共享主题 9 套（清单 `assets/themes/MANIFEST`）
+- `/usr/share/fcitx5/themes/hufu-*/`：共享主题 19 套（清单 `assets/themes/MANIFEST`）
 - `/usr/share/fcitx5/hux/`：随包数据（`data/MANIFEST`）
 
 用户级前缀同理：前缀换成 `$HOME/.local`，并加 `-DHUX_RELATIVE_ADDON_DIR=ON`——缺省取 fcitx5 的

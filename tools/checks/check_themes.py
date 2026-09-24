@@ -18,7 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 DIR = ROOT / "assets" / "themes"
 MANIFEST = DIR / "MANIFEST"
-EXPECTED_DIGEST = "8da6a24135e4881e50d5b1ef8d8d85691cda35085f3e1f8679f48ce3ddd5039c"
+EXPECTED_DIGEST = "7ad673c4c6df5330db8fc84566a65b93ab39c6686de12428f7caa208208c7a9d"
 EXPECTED_FILES = (
     "theme.conf",
     "panel.png",

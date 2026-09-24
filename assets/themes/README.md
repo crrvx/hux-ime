@@ -3,14 +3,19 @@
 
 # assets/themes — 跨平台共享主题资源（fcitx5 主题形态）
 
-9 套主题，取自**虎符（hufu-ime-rust）官方皮肤**的 fcitx5 主题转换产物，**原样入库**：
+19 套主题，取自**虎符（hufu-ime-rust）官方皮肤**的 fcitx5 主题转换产物，**原样入库**：
 每套一个目录，含 `theme.conf` 与 `panel.png` / `highlight.png` / `prev.png` / `next.png` /
 `arrow.png` / `radio.png`。`theme.conf` 顶部的注释即其生成说明（由虎符仓库的皮肤 JSON 转换而来）——
 本仓不修改这些文件，改动一律回到生成侧。
 
+- **取用版本**：虎符仓库 `LeafHW/hufu-ime-rust` 的 `54c0339`（`platform/linux/themes/` 全量 19 套）。
+- **主题一览**（目录名 → `theme.conf` 的 `Name`）：`canghai` 沧海、`chenwu` 晨雾、`default` 迷雾、
+  `huguang` 湖光、`hupo` 琥珀、`luoxia` 落霞、`mocha` 抹茶、`moyan` 墨岩（极简黑）、`mushan` 暮山紫、
+  `ouhe` 藕荷、`qingci` 青瓷、`rongyan` 熔岩（炭黑焰橙）、`shiyou` 柿柚、`songyan` 松烟、`sujian` 素笺、
+  `xingyu` 杏雨、`xuanmo` 玄墨、`yingxiong` 樱色（暖粉）、`yuebai` 月白。
 - **许可**：随虎符仓库根 `LICENSE`（GPL-3.0）；版权与许可标注见仓库根 `REUSE.toml`。
-- **取用指纹**（63 个文件的聚合 sha256，`tools/checks/check_themes.py` 在 CI 里核对）：
-  `8da6a24135e4881e50d5b1ef8d8d85691cda35085f3e1f8679f48ce3ddd5039c`
+- **取用指纹**（133 个文件的聚合 sha256，`tools/checks/check_themes.py` 在 CI 里核对）：
+  `7ad673c4c6df5330db8fc84566a65b93ab39c6686de12428f7caa208208c7a9d`
 
   ```sh
   cd assets/themes && find hufu-* -type f | sort | xargs sha256sum | sha256sum

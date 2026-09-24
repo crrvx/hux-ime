@@ -6,11 +6,21 @@
 # tools/checks/check_themes.py（守卫）都读本文件——新增/删除主题只改这里。
 # 保持 ASCII-only（CMake 的 file(STRINGS) 不显式指定编码时会弄坏非 ASCII 字节）。
 hufu-canghai
+hufu-chenwu
 hufu-default
+hufu-huguang
+hufu-hupo
+hufu-luoxia
+hufu-mocha
 hufu-moyan
 hufu-mushan
+hufu-ouhe
 hufu-qingci
 hufu-rongyan
 hufu-shiyou
 hufu-songyan
+hufu-sujian
+hufu-xingyu
+hufu-xuanmo
 hufu-yingxiong
+hufu-yuebai

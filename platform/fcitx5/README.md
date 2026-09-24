@@ -101,7 +101,7 @@ D 16:41:47.539737 hux.cpp:404] hux: ~HuxEngine
   ⇒ `<prefix>/lib/fcitx5/libhux.so`。插件目录**没有用户级缺省值**，用户级安装需
   `FCITX_ADDON_DIRS`（`install.sh -u` 写 `~/.config/environment.d/90-hux.conf`）。
 - `<prefix>/share/fcitx5/addon/hux.conf`、`<prefix>/share/fcitx5/inputmethod/hux.conf`；
-- `<prefix>/share/fcitx5/themes/hufu-*/`：9 套共享主题（fcitx5 主题形态；清单 `assets/themes/MANIFEST`
+- `<prefix>/share/fcitx5/themes/hufu-*/`：19 套共享主题（fcitx5 主题形态；清单 `assets/themes/MANIFEST`
   与 `install.sh` / `uninstall.sh` / CI 守卫同源）；
 - `<prefix>/share/icons/hicolor/{scalable,48x48,22x22}/apps/hux.{svg,png}`（输入法条目与状态区图标，
   `Icon=hux` 按主题名解析；图形源在多平台共享目录 `assets/branding/hux.svg`，位图由它生成）；
