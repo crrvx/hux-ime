@@ -2677,14 +2677,15 @@ fn every_settings_field_is_declared_in_the_schema() {
     );
 }
 
-/// 三态下拉（「提前上屏」「标点」）↔ 引擎四个布尔开关的映射守卫（源码级）。
+/// 三态项（「提前上屏」「标点映射」）↔ 引擎四个布尔开关的映射守卫（源码级）。
 ///
-/// 三态**只存在于配置页与状态菜单之间**：引擎侧仍是 `hux_options` 的四个 `int32_t`
-/// （`HUX_OPTION_*` 角色与 ABI 一律不动）。折算规则写在 C++ 里、cargo 测试执行不到，故按源码
-/// 文本把三条链路钉住：schema（路径 / 行标签 / 三项显示名 / 默认态）、`applyConfig()`（枚举 →
-/// 四个布尔，即配置页推送方向）、三个翻转函数（引擎开关值 → 枚举，即状态菜单方向）。
-/// 回滚本次改动（恢复四个布尔项）本测试即失败；另经变异核对：改折算方向、改角色指向的字段
-/// 或调换表项角色序都会红。
+/// 三态**只存在于配置页与状态菜单的两个单选子菜单之间**：引擎侧仍是 `hux_options` 的四个
+/// `int32_t`（`HUX_OPTION_*` 角色与 ABI 一律不动）。折算规则写在 C++ 里、cargo 测试执行不到，
+/// 故按源码文本把三条链路钉住：schema（路径 / 行标签 / 三项显示名 / 默认态 / 声明位置）、
+/// `applyConfig()`（枚举 → 四个布尔，配置页与子菜单**共用的唯一推送口径**）、三个折算式
+/// （角色 → 枚举，只剩「启动对齐」与布尔项镜像在用）。
+/// 回滚本次改动（恢复四个布尔项）本测试即失败；另经变异核对：改折算方向、改角色指向的字段、
+/// 调换表项角色序、调换对齐的两个角色都会红。
 #[test]
 fn tri_state_options_fold_to_engine_booleans() {
     let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/shell/hux.cpp"))
@@ -2728,17 +2729,31 @@ fn tri_state_options_fold_to_engine_booleans() {
     };
 
     // 1) 两个三态项：行标签 + 三项显示名（两侧注解必须逐字相同，宏自带 static_assert）。
+    //    显示名同时是托盘子菜单的文案（经注解 `toString` 取），故这些串改一处即两处生效。
     for declaration in [
         ".description{\"提前上屏\"}",
-        ".description{\"标点\"}",
+        ".description{\"标点映射\"}",
         "FCITX_CONFIG_ENUM_NAME(HuxEarlyCommitMode, \"关闭\", \"至输出\", \"至预编辑串\");",
         "FCITX_CONFIG_ENUM_I18N_ANNOTATION(HuxEarlyCommitMode, \"关闭\", \"至输出\", \"至预编辑串\");",
-        "FCITX_CONFIG_ENUM_NAME(HuxPunctMode, \"ascii（all）\", \"全角（常用）\", \"全角（all）\");",
-        "FCITX_CONFIG_ENUM_I18N_ANNOTATION(HuxPunctMode, \"ascii（all）\", \"全角（常用）\", \"全角（all）\");",
+        "FCITX_CONFIG_ENUM_NAME(HuxPunctMode, \"关闭（半角）\", \"全角（常用）\", \"全角（all）\");",
+        "FCITX_CONFIG_ENUM_I18N_ANNOTATION(HuxPunctMode, \"关闭（半角）\", \"全角（常用）\", \"全角（all）\");",
     ] {
         assert!(
             flat.contains(declaration),
-            "三态下拉的 schema 声明缺失：{declaration}"
+            "三态项的 schema 声明缺失：{declaration}"
+        );
+    }
+    // 声明位置：两个三态项在「行为」分区**末尾**（布尔项 → 值选项 → 其余枚举 → 三态项）。
+    let preedit = flat
+        .find(".path{\"PreeditMode\"}")
+        .expect("schema 缺少 PreeditMode");
+    for path in [".path{\"EarlyCommitMode\"}", ".path{\"PunctMode\"}"] {
+        let at = flat
+            .find(path)
+            .unwrap_or_else(|| panic!("schema 缺少 {path}"));
+        assert!(
+            preedit < at,
+            "{path} 必须排在 PreeditMode 之后（三态项在分区末尾）：{at} <= {preedit}"
         );
     }
 
@@ -2763,8 +2778,8 @@ fn tri_state_options_fold_to_engine_booleans() {
         );
     }
 
-    // 4) 状态菜单翻转：引擎开关值 → 枚举。勾选态由引擎选项给出（即上面第 3 条的折算结果），
-    //    故「勾选态 = 关闭 / 至输出 / 至预编辑串」与「全角标点 = 全角（all）」在此一并钉住。
+    // 4) 角色级折算式（枚举 ↔ 引擎开关值）：只剩两条调用路径——启动对齐按角色补值、
+    //    布尔项托盘开关镜像；三态托盘子菜单不走它（直接写 schema，见下一个测试）。
     let early_commit = function("constexpr HuxEarlyCommitMode toggleEarlyCommit(");
     assert!(
         early_commit.contains("if (!on) { return HuxEarlyCommitMode::Off; }"),
@@ -2797,49 +2812,38 @@ fn tri_state_options_fold_to_engine_booleans() {
     let punct = function("constexpr HuxPunctMode togglePunct(");
     assert!(
         punct.contains("return on ? HuxPunctMode::FullShapeAll : HuxPunctMode::FullShapeCommon;"),
-        "「全角标点」开 ⇒ 「全角（all）」、关 ⇒ 「全角（常用）」：{punct}"
+        "标点折算式：开 ⇒ 「全角（all）」、关 ⇒ 「全角（常用）」：{punct}"
     );
     assert!(
         !punct.contains("Ascii"),
-        "「全角标点」关不得落回「ascii（all）」（该态不进托盘）：{punct}"
+        "标点折算式不得产出 Ascii（「关闭（半角）」由子菜单直接写 schema，不经角色级折算）：{punct}"
     );
 
-    // 5) 角色 → 字段 + 读/写方向：两个「提前上屏」角色共用同一个三态项、「全角标点」指向「标点」
-    //    三态项（其余两个布尔角色照旧直读直写）；顺序即 `HUX_OPTION_*` 角色序
-    //    （启动对齐按它逐个折算）。读方向即托盘勾选态，也是「一次切换把这一对的两个布尔都推给
-    //    引擎」时取值的方向（`reconcileRuntimePair`，见第 9 条），故与 `applyConfig()` 同一口径。
+    // 5) 角色 → 字段 + 写回：两个「提前上屏」角色共用同一个三态项、「标点映射」指向标点三态项
+    //    （其余两个角色照旧直写）；顺序即 `HUX_OPTION_*` 角色序（启动对齐按它逐个折算）。
     let table = block("kSharedBehaviorOptions[] = {");
     let mut cursor = 0usize;
     let mut entries: Vec<(&str, &str)> = Vec::new();
-    for (role, field, read, write) in [
+    for (role, field, write) in [
         (
             "HUX_OPTION_EARLY_COMMIT",
             "earlyCommitMode",
-            "!= HuxEarlyCommitMode::Off",
             "toggleEarlyCommit(",
         ),
         (
             "HUX_OPTION_EARLY_COMMIT_TO_PREEDIT",
             "earlyCommitMode",
-            "== HuxEarlyCommitMode::ToPreedit",
             "toggleEarlyCommitToPreedit(",
         ),
         (
             "HUX_OPTION_ALLOW_DUPLICATE_SINGLE",
             "allowDuplicateSingle",
-            "return config.allowDuplicateSingle.value();",
             "config.allowDuplicateSingle.setValue(on)",
         ),
-        (
-            "HUX_OPTION_FULL_SHAPE",
-            "punctMode",
-            "== HuxPunctMode::FullShapeAll",
-            "togglePunct(on)",
-        ),
+        ("HUX_OPTION_FULL_SHAPE", "punctMode", "togglePunct(on)"),
         (
             "HUX_OPTION_DIGIT_SELECT",
             "digitSelect",
-            "return config.digitSelect.value();",
             "config.digitSelect.setValue(on)",
         ),
     ] {
@@ -2860,10 +2864,6 @@ fn tri_state_options_fold_to_engine_booleans() {
             "角色 {role} 的配置路径未指向 schema 的 {field}：{entry}"
         );
         assert!(
-            entry.contains(read),
-            "角色 {role} 的读方向与勾选态契约不符（托盘勾选态与引擎下发都用它）：{entry}"
-        );
-        assert!(
             entry.contains(write),
             "角色 {role} 的写回未经过 {write}：{entry}"
         );
@@ -2877,41 +2877,24 @@ fn tri_state_options_fold_to_engine_booleans() {
             .1
     };
 
-    // 读方向与 `applyConfig()` 必须同一口径：读用哪一态算「开」，推送就得由同一态得出开
-    // （否则一次切换推给引擎的布尔与配置页推送的会互相打架）。
-    for (read, mode, fold) in [
-        (
-            "!= HuxEarlyCommitMode::Off",
-            "HuxEarlyCommitMode::Off",
-            "options.early_commit = earlyCommitMode == HuxEarlyCommitMode::Off ? 0 : 1;",
-        ),
-        (
-            "== HuxEarlyCommitMode::ToPreedit",
-            "HuxEarlyCommitMode::ToPreedit",
-            "options.early_commit_to_preedit = earlyCommitMode == HuxEarlyCommitMode::ToPreedit ? 1 : 0;",
-        ),
-        (
-            "== HuxPunctMode::FullShapeAll",
-            "HuxPunctMode::FullShapeAll",
-            "options.full_shape = punctMode == HuxPunctMode::FullShapeAll ? 1 : 0;",
-        ),
-    ] {
-        assert!(
-            flat.contains(read) && flat.contains(fold) && fold.contains(mode),
-            "读方向 {read} 与 applyConfig 的折算 {fold} 不同口径（枚举态应为 {mode}）"
-        );
-    }
-
-    // 6) 托盘（状态菜单）项不变：仍是独立勾选项，文案表按角色下标取。
+    // 6) 文案表按 ABI 角色下标取，长度仍是 `HUX_OPTION_COUNT`：三个已被三态子菜单取代的角色
+    //    文案**保留**（抽掉任一项都会让后续下标整体错位），此处一并钉住长度与内容。
     let labels = block("kLabels[] = {");
     for label in [
         "\"提前上屏\"",
         "\"提前上屏至预编辑\"",
+        "\"单字重码组句\"",
         "\"全角标点\"",
         "\"数字直选\"",
+        "\"启用全字集\"",
+        "\"过滤非汉字\"",
     ] {
         assert!(labels.contains(label), "状态菜单文案表缺少 {label}");
     }
+    assert!(
+        labels.matches('"').count() == 7 * 2,
+        "文案表应恰有 7 项（HUX_OPTION_COUNT）：{labels}"
+    );
 
     // 7) 旧布尔项不得残留：四个 schema 项已被两个三态项取代（回滚本次改动即在此失败）。
     for stale in [
@@ -2964,59 +2947,424 @@ fn tri_state_options_fold_to_engine_booleans() {
         "启动对齐必须是两趟（非总闸先、总闸最后）：{adopt_loop}"
     );
 
-    // 9) 托盘一次切换要把该三态对的**两个布尔**都下发（只改被点的那一个会「点了没反应」）：
-    //    同路径的角色（= 同一个三态项承载的角色）按 schema 的读方向逐个经 ABI 角色键推回；
-    //    推不到的那一半（`ascii_punct`：不是运行时角色）由 `applyConfig()` 收口，
-    //    并由它保证引擎与 schema 三态一致（同一映射，不另起一套）。
-    let reconcile = function("void reconcileRuntimePair(int32_t role)");
-    assert!(
-        reconcile.contains("shared.path != clicked.path"),
-        "一次切换必须覆盖同一三态项的全部角色：{reconcile}"
-    );
-    assert!(
-        reconcile.contains("hux_engine_set_option(engine_, key, shared.read() ? 1 : 0);"),
-        "三态对的每个角色都要按读方向经角色键推给引擎：{reconcile}"
-    );
-    assert!(
-        reconcile.contains("hux_engine_option_key(engine_, peer)"),
-        "角色键必须经 ABI 取自引擎：{reconcile}"
-    );
-    assert!(
-        entry("HUX_OPTION_FULL_SHAPE").contains("/*applyConfig=*/true"),
-        "「标点」对里 `ascii_punct` 没有运行时角色 ⇒ 必须标 `/*applyConfig=*/true` 由 applyConfig 收口"
-    );
-    assert!(
-        !entry("HUX_OPTION_EARLY_COMMIT").contains("/*applyConfig=*/true"),
-        "「提前上屏」对两个角色都在角色表里 ⇒ 不需要 applyConfig 收口"
-    );
-    assert!(
-        reconcile.contains("clicked.needsApplySettings") && reconcile.contains("applyConfig();"),
-        "推不到的那一半必须由 applyConfig() 收口：{reconcile}"
-    );
+    // 9) 镜像路径只剩布尔项：schema 写回 → 落盘 → 刷新（推送由 `HuxToggleAction` 自己做）。
     let mirror = function("void mirrorRuntimeRole(");
-    let pair = mirror
-        .find("reconcileRuntimePair(role);")
-        .unwrap_or_else(|| panic!("托盘镜像未做引擎对齐：{mirror}"));
+    let saved = mirror
+        .find("fcitx::safeSaveAsIni(config_, kConfigPath)")
+        .unwrap_or_else(|| panic!("布尔项镜像未落盘：{mirror}"));
     let refresh = mirror
-        .find("refreshToggleActions(inputContext);")
-        .unwrap_or_else(|| panic!("托盘镜像未刷新勾选态：{mirror}"));
+        .find("refreshStatusAreas(inputContext);")
+        .unwrap_or_else(|| panic!("布尔项镜像未刷新勾选态：{mirror}"));
     assert!(
-        pair < refresh,
-        "顺序应为：schema 镜像/落盘 → 引擎对齐 → 托盘刷新：{mirror}"
-    );
-    let refresh_body = function("void refreshToggleActions(");
-    assert!(
-        refresh_body.contains("action->update(inputContext);"),
-        "三态对的另一项勾选态要立刻刷新：{refresh_body}"
-    );
-    assert!(
-        flat.contains("mirrorRuntimeRole(role, value, true, inputContext);"),
-        "状态菜单回调要把当前输入上下文交给镜像（供刷新另一项勾选态）"
+        saved < refresh,
+        "顺序应为：写 schema → 落盘 → 刷新：{mirror}"
     );
 }
 
-/// 模型摘要（`hux_engine_model_info`）的三种状态 + 空指针：已装载（三阶夹具）/
-/// 未找到 / 装载失败（非模型文件）；摘要由方案侧结构化产出，平台只搬运。
+/// 托盘（状态菜单）结构守卫（源码级）：全部条目平铺为状态区同级条目 + 两个三态**单选子菜单**。
+///
+/// 覆盖用户确认的结构与五条语义（见 `docs/` 与提交信息）：
+///   ① 两个子菜单各三项、文案 = 配置页显示名（逐字一致）、单选（恒一勾）；
+///   ② 子菜单当前态取自 **schema**（不是引擎选项——「标点映射」尤其：引擎没有 `ascii_punct` 角色）；
+///   ③ 选中即「写 schema → 落盘 → 推送」，推送口径与配置页**同一个** `applyConfig()`；
+///   ④ 配置页保存 / 重新加载 / 重新部署都会刷新子菜单勾选态；
+///   ⑤ 托盘不再有「虎虚」菜单（平铺）、「虎虚」只是图标 + 标题、每个条目都注册进状态区。
+#[test]
+fn tray_flattens_entries_and_builds_tri_state_submenus() {
+    let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/shell/hux.cpp"))
+        .expect("read hux.cpp");
+    let flat = source.split_whitespace().collect::<Vec<_>>().join(" ");
+    let function = |signature: &str| -> String {
+        let start = flat
+            .find(signature)
+            .unwrap_or_else(|| panic!("hux.cpp 缺少 {signature}"));
+        let open = start
+            + flat[start..]
+                .find('{')
+                .unwrap_or_else(|| panic!("{signature} 没有函数体"));
+        let mut depth = 0i32;
+        for (offset, ch) in flat[open..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return flat[start..open + offset + 1].to_string();
+                    }
+                }
+                _ => {}
+            }
+        }
+        panic!("{signature} 的花括号不配平");
+    };
+
+    // ① + ②) 两个子菜单：父项标签、菜单来源（枚举注解 ⇒ 三项、文案逐字同配置页）、单选。
+    let builder = function("void addModeMenu(");
+    assert!(
+        builder.contains("for (size_t index = 0; index < Annotation::enumLength; ++index) {")
+            && builder.contains("const Enum mode = static_cast<Enum>(index);"),
+        "子菜单项必须按枚举声明序**逐项**生成（三项 = 枚举项数）：{builder}"
+    );
+    assert!(
+        builder.contains("Annotation::toString(mode)"),
+        "子菜单文案必须取枚举注解显示名（与配置页下拉逐字一致）：{builder}"
+    );
+    assert!(
+        builder.contains("[current, mode] { return current() == mode; }"),
+        "每项的勾选态 = 「当前态 == 本项」，值互异且覆盖整枚举 ⇒ 恒有且仅有一项打勾：{builder}"
+    );
+    assert!(
+        builder.contains("parentAction.setMenu(&menu);")
+            && builder.contains("menu.addAction(item.get());")
+            && builder.contains("items.push_back(std::move(item));"),
+        "子菜单必须挂到父项并逐项入菜单：{builder}"
+    );
+    let mode_action = function("class HuxModeAction");
+    assert!(
+        mode_action.contains("setCheckable(true);")
+            && mode_action.contains("bool isChecked(fcitx::InputContext * /*unused*/) const override { return selected_(); }"),
+        "单选项必须是可勾选项、勾选态现算：{mode_action}"
+    );
+    assert!(
+        !mode_action.contains("hux_engine_option_value"),
+        "③/② 单选项的勾选态不得读引擎选项（三态的事实来源是 schema）：{mode_action}"
+    );
+    for (enum_type, annotation, parent_label, prefix, field) in [
+        (
+            "HuxEarlyCommitMode",
+            "HuxEarlyCommitModeI18NAnnotation",
+            "\"提前上屏\"",
+            "\"hux-early-commit\"",
+            "earlyCommitMode",
+        ),
+        (
+            "HuxPunctMode",
+            "HuxPunctModeI18NAnnotation",
+            "\"标点映射\"",
+            "\"hux-punct\"",
+            "punctMode",
+        ),
+    ] {
+        let call = function(&format!("addModeMenu<{enum_type}, {annotation}>("));
+        assert!(
+            call.contains(&format!("config_.behavior->{field}.value()")),
+            "② {parent_label} 子菜单的当前态必须取自 schema 字段 {field}：{call}"
+        );
+        assert!(
+            !call.contains("hux_engine_option_value"),
+            "② {parent_label} 子菜单不得以引擎选项为当前态（标点映射尤其）：{call}"
+        );
+        assert!(
+            call.contains(parent_label) && call.contains(prefix),
+            "① 子菜单父项标签/注册名不符（应为 {parent_label} / {prefix}）：{call}"
+        );
+    }
+
+    // ③) 选中即「写 schema → 落盘 → 推送 → 刷新」，推送口径与配置页同一个 `applyConfig()`。
+    for (choose, field) in [
+        ("void chooseEarlyCommitMode(", "earlyCommitMode"),
+        ("void choosePunctMode(", "punctMode"),
+    ] {
+        let body = function(choose);
+        assert!(
+            body.contains(&format!(
+                "config_.behavior.mutableValue()->{field}.setValue(mode);"
+            )),
+            "③ 选中必须写 schema 字段 {field}：{body}"
+        );
+        assert!(
+            body.contains("commitModeChoice(inputContext);"),
+            "③ 选中必须走统一的落地入口：{body}"
+        );
+    }
+    let commit = function("void commitModeChoice(");
+    let saved = commit
+        .find("fcitx::safeSaveAsIni(config_, kConfigPath)")
+        .unwrap_or_else(|| panic!("③ 子菜单选中未落盘：{commit}"));
+    let pushed = commit
+        .find("applyConfig();")
+        .unwrap_or_else(|| panic!("③ 子菜单选中未推送给引擎：{commit}"));
+    let refreshed = commit
+        .find("refreshStatusAreas(inputContext);")
+        .unwrap_or_else(|| panic!("③ 子菜单选中未刷新勾选态：{commit}"));
+    assert!(
+        saved < pushed && pushed < refreshed,
+        "③ 顺序必须是：落盘 → 推送 → 刷新：{commit}"
+    );
+    for (entry, call) in [
+        ("void setConfig(", "applyConfig();"),
+        ("void reloadConfig() override", "applyConfig();"),
+    ] {
+        assert!(
+            function(entry).contains(call),
+            "③ 配置页保存/重载与子菜单必须同一推送口径（{call}）：{entry}"
+        );
+    }
+
+    // ④) 配置页保存 / 重新加载 / 重新部署都刷新状态区条目（子菜单勾选态取自 schema）。
+    for (entry, call) in [
+        ("void setConfig(", "refreshStatusAreas();"),
+        ("void reloadConfig() override", "refreshStatusAreas();"),
+        ("void redeploy(", "refreshStatusAreas(inputContext);"),
+    ] {
+        assert!(
+            function(entry).contains(call),
+            "④ {entry} 必须刷新状态区条目：{}",
+            function(entry)
+        );
+    }
+    let refresh_all = function("void refreshStatusAreas(");
+    assert!(
+        refresh_all.contains("refreshActions(inputContext);")
+            && refresh_all.contains("instance_->inputContextManager().foreach("),
+        "④ 没有单一输入上下文（配置页路径）时应对每个 IC 各刷一遍：{refresh_all}"
+    );
+    let refresh_one = function("void refreshActions(");
+    assert!(
+        refresh_one.contains("for (fcitx::Action *action : statusActions_) {")
+            && refresh_one.contains("action->update(inputContext);"),
+        "④ 刷新必须逐个通知状态区条目重取勾选态：{refresh_one}"
+    );
+
+    // ⑤) 平铺：没有「虎虚」菜单（`menu_`/`menuAction_.setMenu` 全无），`setMenu` 只用于两个子菜单。
+    assert!(
+        !flat.contains("fcitx::Menu menu_;") && !flat.contains("menuAction_.setMenu"),
+        "「虎虚」不再挂菜单（全部条目平铺为同级条目）"
+    );
+    assert_eq!(
+        flat.matches("setMenu(").count(),
+        1,
+        "setMenu 只应出现在子菜单构造器里（父项挂自己那份菜单）"
+    );
+    let update = function("void updateStatusArea(");
+    assert!(
+        update.contains("for (fcitx::Action *action : statusActions_) {")
+            && update.contains("statusArea.addAction(fcitx::StatusGroup::InputMethod, action);"),
+        "⑤ 每个条目都要作为状态区同级条目挂上（顺序 = `statusActions_`）：{update}"
+    );
+    let register = function("void registerStatusAction(");
+    assert!(
+        register.contains("instance_->userInterfaceManager().registerAction(name, &action);")
+            && register.contains("statusActions_.push_back(&action);"),
+        "⑤ 注册进 UserInterfaceManager 的同时记入显示顺序：{register}"
+    );
+    // 注册顺序 = 显示顺序：虎虚（图标锚点 + 模型状态）→ 四个布尔开关 → 宿主开关 → 两个子菜单 → 重新部署。
+    let setup = function("void setupStatusMenu()");
+    let mut cursor = 0usize;
+    for marker in [
+        "registerStatusAction(\"hux-menu\", *menuAction_);",
+        "registerStatusAction(std::string(\"hux-\") + option, *action);",
+        "registerStatusAction(\"hux-panel-preedit\", *panelPreeditAction_);",
+        "addModeMenu<HuxEarlyCommitMode",
+        "addModeMenu<HuxPunctMode",
+        "registerStatusAction(\"hux-redeploy\", *redeployAction_);",
+    ] {
+        assert_eq!(
+            setup.matches(marker).count(),
+            1,
+            "状态区条目应恰好注册一次（{marker}）：{setup}"
+        );
+        let at = setup[cursor..]
+            .find(marker)
+            .map(|index| index + cursor)
+            .unwrap_or_else(|| panic!("状态区条目注册顺序不符（缺 {marker}）：{setup}"));
+        cursor = at + marker.len();
+    }
+    // ⑥) 动态文案：模型信息并入首项「虎虚」，两个子菜单父项显示「名称：当前值」。
+    assert!(
+        setup.contains("updateDynamicLabels();"),
+        "⑤ 注册完成后要先算一次动态文案：{setup}"
+    );
+    assert!(
+        !setup.contains("hux-model") && !setup.contains("modelAction_"),
+        "⑥ 独立「模型」条目已并入首项，不应再有：{setup}"
+    );
+    let dynamic_labels = function("void updateDynamicLabels()");
+    assert!(
+        setup.contains("return std::string(\"虎虚：\") + modelText();"),
+        "⑥ 「虎虚」首项应带模型状态（首项是可点的 `HuxHostAction`，文案由 label 函数现算）：{setup}"
+    );
+    assert!(
+        dynamic_labels.contains("\"提前上屏：\" +") && dynamic_labels.contains("\"标点映射：\" +"),
+        "⑥ 两个子菜单父项应显示「名称：当前值」：{dynamic_labels}"
+    );
+    assert!(
+        dynamic_labels.contains("HuxEarlyCommitModeI18NAnnotation::toString(")
+            && dynamic_labels.contains("HuxPunctModeI18NAnnotation::toString("),
+        "⑥ 当前值必须取枚举注解的显示名（与配置页下拉项同源）：{dynamic_labels}"
+    );
+    let refresh_actions = function("void refreshActions(fcitx::InputContext *inputContext)");
+    assert!(
+        refresh_actions.contains("updateDynamicLabels();"),
+        "⑥ 每次刷新都要重算动态文案（模型与三态都会变）：{refresh_actions}"
+    );
+    // 三态角色跳过布尔开关（它们由子菜单承载）；文案表长度仍是 ABI 角色数。
+    assert!(
+        setup.contains("if (isTriStateRole(role)) {")
+            && setup.contains("continue;")
+            && setup.contains("static_assert(std::size(kLabels) == HUX_OPTION_COUNT,"),
+        "⑤ 三态角色不得再作为布尔开关进托盘：{setup}"
+    );
+    let tri_role = function("static constexpr bool isTriStateRole(");
+    for role in [
+        "HUX_OPTION_EARLY_COMMIT",
+        "HUX_OPTION_EARLY_COMMIT_TO_PREEDIT",
+        "HUX_OPTION_FULL_SHAPE",
+    ] {
+        assert!(
+            tri_role.contains(&format!("role == {role}")),
+            "⑤ 三态角色清单缺 {role}：{tri_role}"
+        );
+    }
+}
+
+/// 「虎虚」首项（模型入口）守卫（源码级）：
+///   ① 文案 = 引擎给的那段原文（**不自带**「模型：」，否则与首项前缀叠成「虎虚：模型：…」）；
+///   ② 首项**可点**：打开「所加载模型所在目录」，且仍带 `hux` 图标、仍登记在 `statusActions_`；
+///   ③ 打开目录 = `hux_engine_model_path` → `parent_path` → `create_directories` → 双 fork
+///      `execlp`（先 `xdg-open`、再 `gio open`），**不得**用 `std::system`（路径会经 shell 解释）；
+///   ④ ABI 入口在头文件里声明、在 `abi.rs` 里导出（CI 另有 `nm -D` ↔ 头文件的动态比对）。
+#[test]
+fn model_entry_opens_the_model_directory() {
+    let manifest = env!("CARGO_MANIFEST_DIR");
+    let source =
+        std::fs::read_to_string(format!("{manifest}/shell/hux.cpp")).expect("read hux.cpp");
+    let flat = source.split_whitespace().collect::<Vec<_>>().join(" ");
+    let function = |signature: &str| -> String {
+        let start = flat
+            .find(signature)
+            .unwrap_or_else(|| panic!("hux.cpp 缺少 {signature}"));
+        let open = start
+            + flat[start..]
+                .find('{')
+                .unwrap_or_else(|| panic!("{signature} 没有函数体"));
+        let mut depth = 0i32;
+        for (offset, ch) in flat[open..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return flat[start..open + offset + 1].to_string();
+                    }
+                }
+                _ => {}
+            }
+        }
+        panic!("{signature} 的花括号不配平");
+    };
+
+    // ① 文案：引擎原文 + 短兜底，不带任何前缀；「虎虚：」只在调用方加一次。
+    let text = function("std::string modelText() const");
+    assert!(
+        text.contains(r#"return info != nullptr ? std::string(info) : std::string("不可用");"#),
+        "modelText() 必须只回引擎原文（nullptr 时短兜底）：{text}"
+    );
+    assert!(
+        !text.contains("模型："),
+        "modelText() 不得自带前缀（会与首项前缀叠成「虎虚：模型：…」）：{text}"
+    );
+    assert_eq!(
+        flat.matches("+ modelText()").count(),
+        1,
+        "模型短名只应由首项文案消费（前缀各加一次）"
+    );
+    assert!(
+        flat.contains(r#"return std::string("虎虚：") + modelText();"#),
+        "首项文案 = 「虎虚：」+ 引擎原文（前缀只加一次）"
+    );
+
+    // ② 首项可点：HuxHostAction（带 activate）+ hux 图标 + 登记进状态区。
+    assert!(
+        flat.contains("menuAction_ = std::make_unique<HuxHostAction>(")
+            && flat.contains("openModelDirectory(inputContext);")
+            && flat.contains(r#"registerStatusAction("hux-menu", *menuAction_);"#),
+        "首项必须是可点动作（点击打开模型目录）且仍登记在 statusActions_ 里"
+    );
+    let host_action = function("class HuxHostAction");
+    assert!(
+        host_action.contains(
+            "std::string icon(fcitx::InputContext * /*unused*/) const override { return icon_; }"
+        ),
+        "首项必须保留 hux 图标（`icon_` 由构造参数给出）：{host_action}"
+    );
+    assert!(flat.contains(r#""hux");"#), "首项构造必须传入 hux 图标名");
+
+    // ③ 打开目录：路径 → 父目录 → 建目录 → 拉起文件管理器。
+    let open = function("void openModelDirectory(");
+    for fragment in [
+        "const char *path = hux_engine_model_path(engine_);",
+        "std::filesystem::path(path).parent_path()",
+        "std::filesystem::create_directories(directory, error)",
+        "launchFileManager(directory.string())",
+    ] {
+        assert!(
+            open.contains(fragment),
+            "打开模型目录缺少 {fragment}：{open}"
+        );
+    }
+    let launch = function("static bool launchFileManager(");
+    for fragment in [
+        "const pid_t child = fork();",
+        "const pid_t grandchild = fork();",
+        r#"execlp("xdg-open", "xdg-open", directory.c_str(),"#,
+        r#"execlp("gio", "gio", "open", directory.c_str(),"#,
+        "waitpid(child, &status, 0)",
+    ] {
+        assert!(
+            launch.contains(fragment),
+            "拉起文件管理器缺少 {fragment}：{launch}"
+        );
+    }
+    // 注释里会**提到** `std::system`（说明为何不用），故只按「调用形态」判定（带参数括号）。
+    for forbidden in [
+        "std::system(",
+        "system(",
+        "popen(",
+        "execl(",
+        "execlp(\"/bin/sh\"",
+    ] {
+        assert!(
+            !flat.contains(forbidden),
+            "不得用 {forbidden} 拉进程（路径经 shell 解释 = 注入面）"
+        );
+    }
+
+    // ④ ABI：头文件声明（含指针有效期语义）+ Rust 导出。
+    let header =
+        std::fs::read_to_string(format!("{manifest}/../../crates/hux-ffi/include/hux_abi.h"))
+            .expect("read hux_abi.h");
+    // 逐行比对（含缩进）：注释掉的声明不算数（`contains` 会匹配注释里的同一行）。
+    assert!(
+        header
+            .lines()
+            .any(|line| line.trim()
+                == "const char *hux_engine_model_path(const hux_engine *engine);"),
+        "hux_abi.h 缺少（未被注释的）hux_engine_model_path 声明"
+    );
+    assert!(
+        header
+            .contains("未找到模型 ⇒ 默认查找路径（其父目录即「模型该放的地方」，文件可以不存在）")
+            && header.contains("指针有效期同 hux_engine_model_info"),
+        "hux_engine_model_path 的语义（未找到时给「该放的位置」+ 指针有效期）必须写进头文件"
+    );
+    let abi = std::fs::read_to_string(format!("{manifest}/src/abi.rs")).expect("read abi.rs");
+    let abi_flat = abi.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        abi_flat.contains(
+            "#[unsafe(no_mangle)] pub unsafe extern \"C\" fn hux_engine_model_path(engine: *const Engine) -> *const c_char"
+        ),
+        "abi.rs 必须导出 hux_engine_model_path（否则 nm -D 与头文件不一致）"
+    );
+    assert!(
+        abi_flat.contains(".map_or(std::ptr::null(), |path| path.as_ptr())"),
+        "空路径必须回 NULL（宿主据此直接返回，不去开目录）"
+    );
+}
+
+/// 模型**菜单短名**（`hux_engine_model_info`）的三种状态 + 空指针：已装载（格式名）/
+/// 无模型 / `<格式名>（装载失败）`；短名由方案侧结构化产出，平台只搬运不解析，
+/// 文件名与失败原因走状态串的 `model:` 行（只落日志）。
 #[test]
 fn model_info_reports_file_format_and_state() {
     let _guard = serial();
@@ -3029,14 +3377,14 @@ fn model_info_reports_file_format_and_state() {
             .into_owned()
     };
 
-    // 已装载：三阶夹具（摘要只报格式标签，不报文件名）。
+    // 已装载：菜单显示**格式名**（按文件头 magic 检出，不是文件名；文件名在状态串里）。
     let engine = Box::into_raw(Box::new(Engine::new_with_dirs(
         host(),
         fixture_dirs(),
         Some(goldens.join("ngram_fixture.bin")),
         Some(temp_user_dir("model-info-loaded")),
     )));
-    assert_eq!(read(engine), "已加载（三阶 TCSKNM02）");
+    assert_eq!(read(engine), "三阶 TCSKNM02");
     unsafe { hux_engine_free(engine) };
 
     // 未找到：数据目录里没有模型资产。
@@ -3047,7 +3395,7 @@ fn model_info_reports_file_format_and_state() {
         None,
         Some(temp_user_dir("model-info-none")),
     )));
-    assert_eq!(read(engine), "未找到模型");
+    assert_eq!(read(engine), "无模型");
     unsafe { hux_engine_free(engine) };
     std::fs::remove_dir_all(&empty_dir).ok();
 
@@ -3059,15 +3407,80 @@ fn model_info_reports_file_format_and_state() {
         Some(temp_user_dir("model-info-failed")),
     )));
     let failed = read(engine);
-    assert!(failed.starts_with("装载失败："), "{failed}");
+    assert!(failed.ends_with("（装载失败）"), "{failed}");
+    // 失败原因（含期望格式）不进菜单，改走状态串的 `model:` 行。
+    let status = unsafe { hux_engine_status(engine) };
+    assert!(!status.is_null(), "引擎存活期内状态串指针不应为空");
+    let status = unsafe { std::ffi::CStr::from_ptr(status) }
+        .to_string_lossy()
+        .into_owned();
     assert!(
-        failed.contains("TCSKNM02"),
-        "失败原因应说明期望的模型格式：{failed}"
+        status.contains("model: tiger_sentence.codes.txt — 装载失败：")
+            && status.contains("TCSKNM02"),
+        "文件名与失败原因（含期望格式）应进状态串的 model: 行：{status}"
     );
     unsafe { hux_engine_free(engine) };
 
     // 空指针 ⇒ NULL（宿主据此早退）。
     assert!(unsafe { hux_engine_model_info(std::ptr::null()) }.is_null());
+}
+
+/// 模型文件路径（`hux_engine_model_path`，宿主首项「打开模型目录」入口）：
+/// 已装载 / 装载失败 ⇒ 该文件本身；未找到 ⇒ 默认查找路径（**文件可以不存在**，其父目录即
+/// 「模型该放的地方」）；重新部署后随新解析结果刷新；空引擎 ⇒ NULL。
+#[test]
+fn model_path_points_at_the_file_or_the_place_to_put_it() {
+    let _guard = serial();
+    let goldens = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens");
+    let read = |engine: *const Engine| -> Option<String> {
+        let path = unsafe { hux_engine_model_path(engine) };
+        if path.is_null() {
+            return None;
+        }
+        Some(
+            unsafe { std::ffi::CStr::from_ptr(path) }
+                .to_string_lossy()
+                .into_owned(),
+        )
+    };
+
+    // 已装载：路径就是装载的那个文件。
+    let loaded = goldens.join("ngram_fixture.bin");
+    let engine = Box::into_raw(Box::new(Engine::new_with_dirs(
+        host(),
+        fixture_dirs(),
+        Some(loaded.clone()),
+        Some(temp_user_dir("model-path-loaded")),
+    )));
+    assert_eq!(read(engine), Some(loaded.display().to_string()));
+    unsafe { hux_engine_free(engine) };
+
+    // 未找到：给「该放的位置」（首个数据目录下的方案资产路径），文件**不存在**也算数——
+    // 菜单据此把用户送到正确目录（其父目录）。
+    let first = hux_test_support::temp_dir("model-path-first");
+    let second = hux_test_support::temp_dir("model-path-second");
+    let intended = first.join("models/sentence-ngram-mobile.bin");
+    assert!(!intended.exists(), "夹具前提：该位置还没有模型文件");
+    let engine = Box::into_raw(Box::new(Engine::new_with_dirs(
+        host(),
+        vec![first.clone(), second.clone()],
+        None,
+        Some(temp_user_dir("model-path-none")),
+    )));
+    assert_eq!(read(engine), Some(intended.display().to_string()));
+
+    // 重新部署：模型装进**第二个**目录后按新解析结果刷新（不再是「该放的位置」）。
+    let found = second.join("models/sentence-ngram-mobile.bin");
+    std::fs::create_dir_all(found.parent().expect("parent")).expect("mkdir");
+    std::fs::copy(goldens.join("ngram_fixture.bin"), &found).expect("copy");
+    assert_eq!(unsafe { hux_engine_redeploy(engine) }, 1);
+    assert_eq!(read(engine), Some(found.display().to_string()));
+    unsafe { hux_engine_free(engine) };
+    std::fs::remove_dir_all(&first).ok();
+    std::fs::remove_dir_all(&second).ok();
+
+    // 空引擎 ⇒ NULL（宿主据此直接返回，不去开目录）。
+    assert_eq!(read(std::ptr::null()), None);
 }
 
 /// 模型路径来源：默认查找（`Auto`）按数据目录解析，「重新部署」据此拿到新装入的模型；
@@ -3120,7 +3533,7 @@ fn redeploy_refreshes_model_info_and_resets_sessions() {
             .into_owned()
     };
     let failed = read();
-    assert!(failed.starts_with("装载失败："), "{failed}");
+    assert!(failed.ends_with("（装载失败）"), "{failed}");
 
     // 建一个会话并留下组合状态：重新部署后 id 必须仍然有效、组合必须被清空。
     let session = unsafe { hux_engine_session_new(engine) };
@@ -3132,10 +3545,10 @@ fn redeploy_refreshes_model_info_and_resets_sessions() {
     );
     assert_eq!(unsafe { &*engine }.sessions[&session].context.input(), b"a");
 
-    // 「装好数据再重新部署」：模型文件就位 → 摘要刷新成已加载。
+    // 「装好数据再重新部署」：模型文件就位 → 菜单短名刷新成**格式名**（文件名只进状态串）。
     std::fs::copy(goldens.join("ngram_fixture.bin"), &model).expect("copy");
     assert_eq!(unsafe { hux_engine_redeploy(engine) }, 1);
-    assert_eq!(read(), "已加载（三阶 TCSKNM02）");
+    assert_eq!(read(), "三阶 TCSKNM02");
 
     // 会话 id 仍可用（重置而非释放）；未知 id 仍被忽略。
     let state = unsafe { &*engine };

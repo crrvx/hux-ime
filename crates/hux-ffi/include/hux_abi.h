@@ -63,16 +63,24 @@ void hux_engine_reset(hux_engine *engine, uint64_t session);
 const char *hux_engine_status(const hux_engine *engine);
 
 /*
- * 模型信息（宿主状态菜单「模型」项；一行 UTF-8 摘要：文件名 + 装载状态）。
+ * 模型信息（宿主托盘首项「虎虚：」后接的那段短名：按文件头 magic 认出的模型格式名，
+ * 如 `三阶 TCSKNM02` / `无模型` / `五阶 TCSKNM03（装载失败）`）。
  *
  * **指针有效期 = 下一次 hux_engine_redeploy 之前**：重新部署会替换内部摘要串，此前返回的
  * 指针随即失效（同 hux_engine_status 的风格，宿主每次需要时重新调用、不要缓存）。
  * 引擎为空指针时返回 NULL。
  *
- * 摘要由方案侧结构化产出（文件名 / 格式标签 / 装载状态 / 错误），宿主直接展示、
- * 不得解析。
+ * 短名由方案侧结构化产出，宿主直接展示、**不得解析**；文件名与失败原因等诊断在
+ * `hux_engine_status` 的 `model:` 行里（只落日志，不进菜单）。
  */
 const char *hux_engine_model_info(const hux_engine *engine);
+
+/*
+ * 引擎解析出的模型文件路径（UTF-8）。已装载 / 装载失败 ⇒ 该文件本身；
+ * 未找到模型 ⇒ 默认查找路径（其父目录即「模型该放的地方」，文件可以不存在）。
+ * 引擎为空指针时返回 NULL。指针有效期同 hux_engine_model_info（下一次重新部署前有效）。
+ */
+const char *hux_engine_model_path(const hux_engine *engine);
 
 /*
  * 重新部署：重走一遍构造期的读取（数据/选项目录、模型、方案数据、选项存储、学习库），

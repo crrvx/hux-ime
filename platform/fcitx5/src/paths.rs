@@ -43,6 +43,17 @@ pub(crate) fn default_model_path(dirs: &[PathBuf], assets: &[Asset]) -> Option<P
         .and_then(|asset| find_asset(dirs, asset.file))
 }
 
+/// 模型**该放的位置**（**不要求文件存在**）：首个数据目录（= 用户数据目录，见 [`data_dirs`]）
+/// 下接方案声明的模型资产路径。
+///
+/// 与 [`default_model_path`] 的分工：后者只在文件确实存在时给出路径（供装载）；
+/// 本函数供宿主的「打开模型目录」入口——没有模型时正是要告诉用户**放到哪儿**，
+/// 故路径可以不存在（其父目录即目标目录）。
+pub(crate) fn intended_model_path(dirs: &[PathBuf], assets: &[Asset]) -> Option<PathBuf> {
+    let asset = assets.iter().find(|asset| asset.kind == AssetKind::Model)?;
+    dirs.first().map(|dir| dir.join(asset.file))
+}
+
 // ---------------------------------------------------------------- 纯函数（可测）
 
 fn split_paths(value: &str) -> Vec<PathBuf> {
@@ -131,5 +142,29 @@ mod tests {
             vec![PathBuf::from("/a"), PathBuf::from("/b")]
         );
         assert!(split_paths("").is_empty());
+    }
+
+    /// 「该放的位置」**不要求文件存在**（对比 [`default_model_path`] 只在文件存在时给出路径）：
+    /// 没有模型时它给的是用户数据目录下的方案资产路径，父目录即「模型该放的地方」。
+    #[test]
+    fn intended_model_path_needs_no_existing_file() {
+        use hux_scheme_tiger::scheme::ASSETS;
+        let dir = hux_test_support::temp_dir("intended-model-path");
+        assert_eq!(
+            default_model_path(std::slice::from_ref(&dir), ASSETS),
+            None,
+            "空目录里没有模型资产"
+        );
+        assert_eq!(
+            intended_model_path(std::slice::from_ref(&dir), ASSETS),
+            Some(dir.join("models/sentence-ngram-mobile.bin")),
+            "该放的位置与文件是否存在无关"
+        );
+        assert_eq!(
+            intended_model_path(&[], ASSETS),
+            None,
+            "没有数据目录 ⇒ None"
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

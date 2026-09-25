@@ -332,8 +332,10 @@ pub struct TigerScheme {
     applied_learning: Option<u64>,
     sessions: HashMap<u64, TigerSession>,
     next_session: u64,
-    /// 模型装载状态的一行摘要（宿主状态菜单「模型」项；见 [`crate::model_status`]）。
+    /// 模型装载的**菜单短名**（宿主首项「虎虚：」后接的那段；见 [`crate::model_status`]）。
     model_info: String,
+    /// 模型装载的**详细摘要**（格式标签 / 失败原因；随状态串落日志，不进菜单）。
+    model_detail: String,
 }
 
 impl TigerScheme {
@@ -391,7 +393,8 @@ impl TigerScheme {
             applied_learning: None,
             sessions: HashMap::new(),
             next_session: 1,
-            model_info: model_status.summary(),
+            model_info: model_status.short_summary(),
+            model_detail: model_status.summary(),
         };
         // 构造即自算学习 mode（平台随后下发的配置袋与之一致，不会造成 mode 抖动）。
         scheme.learning_mode = scheme.mode_from_config();
@@ -503,6 +506,10 @@ impl Scheme for TigerScheme {
 
     fn model_info(&self) -> &str {
         &self.model_info
+    }
+
+    fn model_detail(&self) -> &str {
+        &self.model_detail
     }
 
     fn data_info(&self) -> String {

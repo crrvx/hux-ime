@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! 模型（n-gram）装载状态：文件名 / 格式标签 / 装载结果 / 错误 + 给宿主的一行摘要。
+//! 模型（n-gram）装载状态：文件名 / 格式标签 / 装载结果 / 错误 + 给宿主的两档摘要。
 //!
-//! 模型的装载点在本 crate 的模型读取器，故状态在方案侧**结构化**产出；
-//! 平台只把 [`ModelStatus::summary`] 搬到状态菜单，**不解析**诊断串。
+//! 模型的装载点在本 crate 的模型读取器，故状态在方案侧**结构化**产出；平台只搬运，**不解析**。
+//! 两档摘要分工固定：菜单短名答「引擎是哪个」（[`ModelStatus::short_summary`]，按文件头 magic
+//! 认出的**格式名**），状态串日志答「哪个文件、为什么失败」（[`ModelStatus::summary`]）。
 //!
 //! 格式标签按**文件头 magic** 判定、与装载器解耦：文件名只决定查找顺序，不声明格式；
 //! 认不出的（含空文件 / 非模型文件）一律「未知格式」。
@@ -85,19 +86,41 @@ impl ModelStatus {
         self.error.as_deref()
     }
 
-    /// 一行摘要（宿主状态菜单「模型」项直接显示）：
-    /// `已加载（<格式标签>）` / `未找到模型` / `装载失败：<原因>`。
+    /// **详细**摘要（进状态串日志的 `model:` 行，不进菜单）：
+    /// `<文件名> — 已加载（<格式标签>）` / `未找到模型` / `<文件名> — 装载失败：<原因>`。
     ///
-    /// 文件名不进摘要（模型文件名固定，菜单里不靠它辨认）；失败原因由装载器给出，
-    /// 原样照抄、不解析。
+    /// 文件名只在这里出现（菜单报的是格式名，见 [`ModelStatus::short_summary`]）；
+    /// 失败原因由装载器给出，原样照抄、不解析。
     pub fn summary(&self) -> String {
         match self.state {
-            ModelState::Loaded => format!("已加载（{}）", self.format),
-            ModelState::NotFound => "未找到模型".to_string(),
-            ModelState::Failed => {
-                format!("装载失败：{}", self.error.as_deref().unwrap_or("未知原因"))
+            ModelState::Loaded => {
+                format!("{} — 已加载（{}）", self.file_name(), self.format)
             }
+            ModelState::NotFound => "未找到模型".to_string(),
+            ModelState::Failed => format!(
+                "{} — 装载失败：{}",
+                self.file_name(),
+                self.error.as_deref().unwrap_or("未知原因")
+            ),
         }
+    }
+
+    /// **菜单短名**（宿主首项「虎虚：」后接的那段）：`<格式标签>` / `无模型` /
+    /// `<格式标签>（装载失败）`。
+    ///
+    /// 报的是**按文件头 magic 认出的格式名**（如 `三阶 TCSKNM02`），不是文件名：菜单回答
+    /// 「引擎是哪个（哪一代模型）」，文件名与失败原因留给 [`ModelStatus::summary`] 落日志。
+    pub fn short_summary(&self) -> String {
+        match self.state {
+            ModelState::NotFound => "无模型".to_string(),
+            ModelState::Loaded => self.format.to_string(),
+            ModelState::Failed => format!("{}（装载失败）", self.format),
+        }
+    }
+
+    /// 文件名（已装载/装载失败必有；缺失时给占位，摘要串不因此变成空段）。
+    fn file_name(&self) -> &str {
+        self.file.as_deref().unwrap_or("模型")
     }
 }
 
@@ -159,21 +182,30 @@ mod tests {
         assert_eq!(status.state(), ModelState::NotFound);
         assert_eq!(status.file(), None);
         assert_eq!(status.summary(), "未找到模型");
+        assert_eq!(status.short_summary(), "无模型");
 
-        // 三阶夹具：真实文件头 ⇒ 三阶标签（摘要只报格式标签，不报文件名）。
+        // 三阶夹具：真实文件头 ⇒ 三阶标签。菜单短名报**格式名**，文件名与格式进详细摘要。
         let three = fixture("ngram_fixture.bin");
         status.record_loaded(&three);
         assert_eq!(status.state(), ModelState::Loaded);
         assert_eq!(status.file(), Some("ngram_fixture.bin"));
         assert_eq!(status.format(), "三阶 TCSKNM02");
-        assert_eq!(status.summary(), "已加载（三阶 TCSKNM02）");
+        assert_eq!(
+            status.summary(),
+            "ngram_fixture.bin — 已加载（三阶 TCSKNM02）"
+        );
+        assert_eq!(status.short_summary(), "三阶 TCSKNM02");
 
-        // 装载失败：错误原文照抄（调用方不做任何解析）。
+        // 装载失败：菜单短名 = 格式名 + 「（装载失败）」；错误原文照抄进详细摘要（不做解析）。
         status.record_failed(&three, "not a mobile TCSKNM02 model");
         assert_eq!(status.state(), ModelState::Failed);
         assert_eq!(status.file(), Some("ngram_fixture.bin"));
         assert_eq!(status.error(), Some("not a mobile TCSKNM02 model"));
-        assert_eq!(status.summary(), "装载失败：not a mobile TCSKNM02 model");
+        assert_eq!(
+            status.summary(),
+            "ngram_fixture.bin — 装载失败：not a mobile TCSKNM02 model"
+        );
+        assert_eq!(status.short_summary(), "三阶 TCSKNM02（装载失败）");
     }
 
     /// 五阶标签不必等五阶夹具/读取器落地：标签按 magic 判定，用临时文件即可覆盖
@@ -188,11 +220,16 @@ mod tests {
         assert_eq!(status.state(), ModelState::Failed);
         assert_eq!(status.format(), "五阶 TCSKNM03");
         assert_eq!(status.file(), Some("sentence-fivegram-mobile.bin"));
-        assert_eq!(status.summary(), "装载失败：unsupported magic");
+        assert_eq!(
+            status.summary(),
+            "sentence-fivegram-mobile.bin — 装载失败：unsupported magic"
+        );
+        assert_eq!(status.short_summary(), "五阶 TCSKNM03（装载失败）");
         std::fs::remove_dir_all(&dir).ok();
     }
 
     /// 非模型文件（存在但文件头不是任何模型格式）：标签未知，状态仍由装载结果决定。
+    /// 菜单短名因此是「未知格式」——它答的是**格式**，不是文件名。
     #[test]
     fn unknown_magic_reports_unknown_format() {
         let path = fixture("lexicon/tiger_sentence.codes.txt");
@@ -200,6 +237,10 @@ mod tests {
         status.record_loaded(&path);
         assert_eq!(status.format(), "未知格式");
         assert_eq!(status.state(), ModelState::Loaded);
-        assert_eq!(status.summary(), "已加载（未知格式）");
+        assert_eq!(
+            status.summary(),
+            "tiger_sentence.codes.txt — 已加载（未知格式）"
+        );
+        assert_eq!(status.short_summary(), "未知格式");
     }
 }

@@ -255,6 +255,17 @@ impl ModelSource {
     }
 }
 
+/// 「打开模型目录」入口用的路径（UTF-8 串，`None` = 给不出任何路径 ⇒ ABI 返回 NULL）。
+///
+/// 解析到的模型文件优先（已装载 / 装载失败都是它）；没有模型时用
+/// [`paths::intended_model_path`] 给出**该放的位置**——文件可以不存在，其父目录正是
+/// 「模型该放的地方」，宿主的首项据此把用户带到正确目录。
+fn menu_model_path(model: Option<PathBuf>, dirs: &[PathBuf]) -> Option<CString> {
+    model
+        .or_else(|| crate::paths::intended_model_path(dirs, hux_scheme_tiger::scheme::ASSETS))
+        .map(|path| crate::ui::cstring_lossy(&path.to_string_lossy()))
+}
+
 /// 装配方案（数据 + 模型）并解析选项角色：构造与「重新部署」共用同一条路径
 /// （两处各拼一份时漏一项即成为「重新部署后配置没下发」这类哑失败）。
 ///
@@ -273,6 +284,9 @@ pub(crate) fn assemble_scheme(
     )];
     let (scheme, scheme_notes) = TigerScheme::load(dirs, model, config);
     notes.extend(scheme_notes);
+    // 模型装载诊断：菜单只显示短名（`hux_engine_model_info`），格式标签 / 失败原因在这里补全，
+    // 随状态串落日志（构造期与每次重新部署各一行）。
+    notes.push(format!("model: {}", scheme.model_detail()));
     // 选项键的唯一来源 = 方案的声明；**缺角色即报错**（状态串可见），缺的角色不参与
     // 选项接线（无键 → 宿主跳过该项），不静默落到别的键上。
     let (option_roles, roles_error) = resolve_option_roles(scheme.option_declarations());
@@ -337,6 +351,10 @@ pub struct Engine {
     /// 模型摘要（`hux_engine_model_info` 的指针来源）：**重新部署后替换**，
     /// 此前返回的指针随即失效（同 `status` 的契约）。
     pub(crate) model_info: CString,
+    /// 模型文件路径（`hux_engine_model_path` 的指针来源）：与 `model_info` 同一替换时机。
+    /// 解析到了就是该文件；没解析到（无模型）是**该放的位置**（文件可以不存在）；
+    /// 任何路径都给不出时为 `None`（ABI 返回 NULL）。
+    pub(crate) model_path: Option<CString>,
     /// 数据装载摘要（`hux_engine_data_info` 的指针来源）：**首次调用时算一次**并缓存；
     /// 配置下发 / 重新部署时置空（此前返回的指针随即失效，同 `status` 的契约）。
     pub(crate) data_info: OnceLock<CString>,
@@ -382,8 +400,10 @@ impl Engine {
         // 构造方案前先按设置装配配置袋；运行时开关的初始值取设置缺省（尚无会话与存储）。
         let applied_runtime = RuntimeOptions::from_settings(&settings);
         let initial = scheme_config_with_runtime(&settings, applied_runtime);
-        let (mut scheme, option_roles, mut notes) =
-            assemble_scheme(&dirs, model_source.resolve(&dirs), &initial);
+        // 模型解析一次、两处用：装配（决定装载哪个文件）与「打开模型目录」入口的路径。
+        let model = model_source.resolve(&dirs);
+        let menu_path = menu_model_path(model.clone(), &dirs);
+        let (mut scheme, option_roles, mut notes) = assemble_scheme(&dirs, model, &initial);
         // 选项：有存储则同步（参照 `M.options.sync`，同步写入由核心抑制观察）；
         // 无存储时直接用内建缺省。会话创建时逐个同步（见 `session_new`）。
         let options = options_dir.as_deref().map(|dir| {
@@ -422,6 +442,7 @@ impl Engine {
             learning,
             option_roles,
             option_keys,
+            model_path: menu_path,
             config_dirty: false,
             applied_runtime: Some(applied_runtime),
             forward_after_commit: false,
@@ -931,6 +952,7 @@ impl Engine {
         let model = self.model_source.resolve(&dirs);
         // 配置袋与构造同源：设置派生的角色 + 运行时开关的生效值（单字重码 / 字集开关）。
         let config = self.scheme_config_with_runtime();
+        let menu_path = menu_model_path(model.clone(), &dirs);
         let (mut scheme, option_roles, mut notes) = assemble_scheme(&dirs, model, &config);
         // 学习库：重开（重读库文件）。必须先释放旧句柄——同一路径二次打开会撞上 LevelDB 的
         // 独占锁（rusty-leveldb 的 `LOCK`）；库名依赖方案 id，故按**新**方案的 id 打开。
@@ -987,8 +1009,10 @@ impl Engine {
         self.config_dirty = true;
         self.applied_runtime = None;
         self.push_scheme_config();
-        // 模型摘要 / 数据装载摘要：指针在此替换（此前返回的指针随即失效，见 `hux_abi.h`）。
+        // 模型摘要 / 模型路径 / 数据装载摘要：指针在此替换（此前返回的指针随即失效，
+        // 见 `hux_abi.h`）。
         self.model_info = crate::ui::cstring_lossy(self.scheme.model_info());
+        self.model_path = menu_path;
         self.data_info = OnceLock::new();
         true
     }

@@ -139,6 +139,26 @@ pub unsafe extern "C" fn hux_engine_model_info(engine: *const Engine) -> *const 
     }
 }
 
+/// 模型文件路径（宿主托盘首项的「打开模型目录」入口用；引擎为空指针或给不出路径时返回 NULL）。
+///
+/// 已装载 / 装载失败 ⇒ 该文件本身；未找到模型 ⇒ 默认查找路径（其父目录即「模型该放的地方」，
+/// 文件可以不存在）。**指针有效期 = 下一次 [`hux_engine_redeploy`] 之前**：重新部署会替换内部
+/// 路径串，此前返回的指针随即失效（同 `hux_engine_model_info` 的风格）。宿主每次需要时重新
+/// 调用，不要缓存。
+///
+/// # Safety
+/// `engine` 须有效（可为空指针）。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hux_engine_model_path(engine: *const Engine) -> *const c_char {
+    match unsafe { engine.as_ref() } {
+        Some(engine) => engine
+            .model_path
+            .as_ref()
+            .map_or(std::ptr::null(), |path| path.as_ptr()),
+        None => std::ptr::null(),
+    }
+}
+
 /// 数据装载摘要（启动日志用）：装了哪几张码表 + 条目数 / 单字数 + 两个字集开关的生效值。
 ///
 /// **指针有效期 = 下一次 [`hux_engine_redeploy`] 或配置下发之前**：装载摘要按需算一次并缓存，
