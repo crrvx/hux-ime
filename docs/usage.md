@@ -194,6 +194,23 @@ cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
 
 ![字反查](images/字反查.png)
 
+### 图标与托盘显示
+
+图标名是 `hux`（输入法条目 `[InputMethod] Icon=hux`；状态区菜单动作也由引擎显式 `setIcon("hux")`），
+由桌面按图标主题解析到 `<prefix>/share/icons/hicolor/{scalable,48x48,22x22}/apps/hux.{svg,png}`
+——托盘、右键菜单与配置工具的输入法列表都用它。两处常见困惑：
+
+- **托盘显示「虍」而不是图标**：fcitx5 经典界面的「优先使用文字图标」（`~/.config/fcitx5/conf/classicui.conf`
+  的 `PreferTextIcon`）为开时，托盘渲染输入法条目的 `Label`（本包为 `虍`）而非图标。要图标就在
+  fcitx5-configtool →「附加组件」→「经典界面」里取消该勾选；想换文字则改 `conf/hux.inputmethod.conf`
+  的 `Label`（改完重装或直接改 `<prefix>` 下已装的那份）。
+- **重装后仍是旧图标**：Qt 系程序（面板、fcitx5）在启动时建立图标索引并缓存像素图，替换文件后不会
+  重读；KDE 下右键菜单由桌面面板绘制，所以除了重启 fcitx5，还要重启桌面面板（KDE：
+  `kquitapp6 plasmashell && kstart plasmashell`，或注销重登）。`install.sh` 已尽力刷新 hicolor 的
+  `icon-theme.cache`；GTK 侧必要时再 `sudo gtk-update-icon-cache -f -t /usr/share/icons/hicolor`。
+  核对落盘是否为当前图标：`sha256sum /usr/share/icons/hicolor/*/apps/hux.*` 与
+  `assets/branding/` 下同名文件比对。
+
 ## 卸载（无残留）
 
 一键卸载见根 [`README.md`](../README.md)「快速指南」——命令只留那处。`./uninstall.sh` 是**交互式**的：
