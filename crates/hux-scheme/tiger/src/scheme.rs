@@ -35,6 +35,8 @@ use crate::ngram::MobileModel;
 /// 方案标识（与上游数据互通；学习库命名沿用）。
 pub const SCHEME_ID: &str = "tiger_sentence";
 /// 码表 / 字频 / 白名单 / 补充 / 反查索引 / 标点表的文件名（平台记日志与打包用）。
+/// `CODES_FILE` 是**必需**的主表；同目录的 `tiger_sentence.codes.<name>.txt` 是可选追加表
+/// （内核按文件名字典序拼在主表之后，见 `data/README.md`），不进 `ASSETS`。
 const CODES_FILE: &str = "tiger_sentence.codes.txt";
 const RANKS_FILE: &str = "tiger_sentence.char_ranks.txt";
 const WHITELIST_FILE: &str = "tiger_sentence.full_code_whitelist.txt";

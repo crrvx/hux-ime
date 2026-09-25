@@ -7,6 +7,8 @@
 //!
 //! 语义要点（与参照一致）：
 //! - `codes.txt` 行序即 rank；同一 `(word, code)` 去重保首见；
+//! - 追加码表 `tiger_sentence.codes.<name>.txt`（与主表**同目录**）按文件名字典序拼在主表之后：
+//!   主表内所有 rank 逐位不变，追加表只能在既有码上垫后或引入新码（编排见 `data/README.md`）；
 //! - `char_ranks.txt` 每行首字符按行序获得稠密 rank；
 //! - 高频限制只过滤“常用字的非最优码”，白名单与多字词不受限；
 //! - `-` 字节序：纯 UTF-8，按字符切分；Lua `%s` 语义 = ASCII 空白。
@@ -19,6 +21,10 @@ use std::path::{Path, PathBuf};
 pub const UNKNOWN_CHARACTER_RANK_FALLBACK: usize = 20001;
 
 const CODES_FILE: &str = "tiger_sentence.codes.txt";
+/// 追加码表的前后缀：`tiger_sentence.codes.<name>.txt`（`<name>` 至少一个字符）。
+/// 主表与全部追加表按确定顺序拼接后一起解析（见 [`Lexicon::read_code_tables`]）。
+const CODES_EXTRA_PREFIX: &str = "tiger_sentence.codes.";
+const CODES_EXTRA_SUFFIX: &str = ".txt";
 const RANKS_FILE: &str = "tiger_sentence.char_ranks.txt";
 const WHITELIST_FILE: &str = "tiger_sentence.full_code_whitelist.txt";
 pub const SUPPLEMENT_FILE: &str = "tiger_sentence.supplement.txt";
@@ -102,6 +108,28 @@ fn is_single_character(text: &str) -> bool {
     text.chars().count() == 1
 }
 
+/// 追加码表文件名：`tiger_sentence.codes.<name>.txt`，`<name>` 至少一个字符
+/// （`tiger_sentence.codes.txt` 本身是主表，不算追加表）。
+fn is_extra_codes_file(name: &str) -> bool {
+    name.starts_with(CODES_EXTRA_PREFIX)
+        && name.ends_with(CODES_EXTRA_SUFFIX)
+        && name.len() > CODES_EXTRA_PREFIX.len() + CODES_EXTRA_SUFFIX.len()
+}
+
+/// 某数据目录里的追加码表文件名（字典序；目录不存在即空）。
+fn extra_codes_names(directory: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .flatten()
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| is_extra_codes_file(name))
+        .collect();
+    names.sort();
+    names
+}
+
 // ---------------------------------------------------------------- 数据结构
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -161,6 +189,8 @@ pub struct Lexicon {
 
     pub codes_entries: usize,
     pub codes_count: usize,
+    /// 实际装载的追加码表文件名（装载顺序；诊断用，见 [`Lexicon::extra_code_tables`]）。
+    extra_code_tables: Vec<String>,
 
     pub whitelist_count: usize,
     /// 参照 `lexicon_state.learning_rules`：数据文件内容的 `learning.hash`（NUL 分隔）。
@@ -186,6 +216,7 @@ impl Lexicon {
             isolation_enabled: false,
             codes_entries: 0,
             codes_count: 0,
+            extra_code_tables: Vec::new(),
             whitelist_count: 0,
             learning_rules: String::new(),
             errors: Vec::new(),
@@ -203,12 +234,12 @@ impl Lexicon {
     pub fn rebuild(&mut self, limit: usize) {
         let mut errors = Vec::new();
 
-        let codes_file = self.read_data_file(CODES_FILE);
-        let entries = match &codes_file {
-            Some((content, _)) => parse_codes_content(content),
+        let codes_file = self.read_code_tables();
+        let (entries, extra_tables) = match &codes_file {
+            Some((content, names)) => (parse_codes_content(content), names.clone()),
             None => {
                 errors.push(format!("missing {CODES_FILE}"));
-                Vec::new()
+                (Vec::new(), Vec::new())
             }
         };
 
@@ -252,7 +283,9 @@ impl Lexicon {
         self.codes_entries = entries.len();
         self.codes_count = self.codes.len();
         self.whitelist_count = whitelist_count;
+        self.extra_code_tables = extra_tables;
         // 参照 `build_lexicon_index` 末尾：以三份文件内容（缺失视为空串）计算规则指纹。
+        // 码表侧取的是**合并后**的内容（主表 + 追加表）：追加表变化即触发重新学习。
         let codes_content = codes_file
             .as_ref()
             .map(|(content, _)| content.as_str())
@@ -281,6 +314,40 @@ impl Lexicon {
             }
         }
         None
+    }
+
+    /// 码表内容：主表 + **同一数据目录**里的全部追加表（`tiger_sentence.codes.<name>.txt`）拼接，
+    /// 并返回实际装载的追加表文件名（按装载顺序；诊断用）。
+    ///
+    /// 主表照旧只取第一个命中的数据目录（用户覆盖共享）；追加表只从该目录取、按文件名字典序
+    /// 拼接——顺序确定，故 `parse_codes_content` 的行序语义给出：主表内所有 rank 逐位不变，
+    /// 追加表只能在既有码上垫后或引入新码。不跨目录收集：别的数据目录（例如只提供词先验的
+    /// `data/`）里的码表不混进这份方案数据。主表缺失即返回 `None`。
+    ///
+    /// 每张追加表各自剥一次 BOM：`normalize_text_content` 只剥得掉合并内容最前面那个，
+    /// 否则第二张表起首行的 BOM 会粘进候选文本。
+    fn read_code_tables(&self) -> Option<(String, Vec<String>)> {
+        for directory in &self.dirs {
+            let Ok(mut content) = std::fs::read_to_string(directory.join(CODES_FILE)) else {
+                continue;
+            };
+            let mut loaded = Vec::new();
+            for name in extra_codes_names(directory) {
+                if let Ok(extra) = std::fs::read_to_string(directory.join(&name)) {
+                    content.push('\n');
+                    content.push_str(extra.strip_prefix('\u{feff}').unwrap_or(&extra));
+                    loaded.push(name);
+                }
+            }
+            return Some((content, loaded));
+        }
+        None
+    }
+
+    /// 实际参与装载的追加码表文件名（按装载顺序）。诊断用；不进 [`DataStatus::canonical`]
+    /// （那是差分金样的比对文本，加字段会动到金样）。
+    pub fn extra_code_tables(&self) -> &[String] {
+        &self.extra_code_tables
     }
 
     pub fn data_status(&self) -> DataStatus {
@@ -764,5 +831,107 @@ mod tests {
         let (state, reward) = matcher.advance(state, '乙');
         assert!((reward - reward_for_weight(4000.0)).abs() < 1e-12);
         let _ = state;
+    }
+
+    /// 追加码表拼在主表之后：既有码上主表条目仍是 rank 1（简码归主表），重复对去重；
+    /// 追加表引入的新码可查。
+    #[test]
+    fn extra_code_table_appends_after_the_primary_table() {
+        let dir = hux_test_support::temp_dir("lexicon-extra-codes");
+        std::fs::write(dir.join(CODES_FILE), "来\ta\n").unwrap();
+        std::fs::write(
+            dir.join("tiger_sentence.codes.huma.txt"),
+            "# 追加表：注释与空行照旧忽略\n来\ta\n\n𠀀\tfgf\n",
+        )
+        .unwrap();
+        let lexicon = Lexicon::load(std::slice::from_ref(&dir), 0);
+        let entries = lexicon.probe("a").expect("码 a");
+        assert_eq!(entries.len(), 1, "与主表重复的 (字, 码) 应被去重保首见");
+        assert_eq!(entries[0].text, "来");
+        assert_eq!(entries[0].rank, 1);
+        assert_eq!(lexicon.probe("fgf").expect("追加表的新码")[0].text, "𠀀");
+        assert_eq!(lexicon.codes_entries, 2);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 文件名不合前后缀的（备份、空名、别的方案）都不算追加表；缺失追加表时主表照常。
+    #[test]
+    fn extra_code_table_requires_the_name_pattern() {
+        let dir = hux_test_support::temp_dir("lexicon-extra-codes-pattern");
+        std::fs::write(dir.join(CODES_FILE), "来\ta\n").unwrap();
+        std::fs::write(dir.join("tiger_sentence.codes.txt.bak"), "不该被读\tzz\n").unwrap();
+        std::fs::write(dir.join("tiger_sentence.codes..txt"), "不该被读\tzy\n").unwrap();
+        std::fs::write(dir.join("别的.codes.extra.txt"), "不该被读\tzx\n").unwrap();
+        let lexicon = Lexicon::load(std::slice::from_ref(&dir), 0);
+        assert!(lexicon.probe("zz").is_none());
+        assert!(lexicon.probe("zy").is_none());
+        assert!(lexicon.probe("zx").is_none());
+        assert_eq!(lexicon.codes_entries, 1);
+        assert_eq!(lexicon.probe("a").unwrap()[0].text, "来");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 追加表只从**主表所在的数据目录**取：别的数据目录里的追加表不混进来
+    /// （差分夹具目录提供主表、`data/` 只提供词先验，正是这种用法）；同目录的追加表
+    /// 按文件名字典序拼在主表之后。
+    #[test]
+    fn extra_code_tables_only_come_from_the_primary_directory() {
+        let fixture = hux_test_support::temp_dir("lexicon-extra-fixture");
+        let other = hux_test_support::temp_dir("lexicon-extra-other");
+        std::fs::write(fixture.join(CODES_FILE), "甲\tab\n").unwrap();
+        std::fs::write(other.join("tiger_sentence.codes.zzz.txt"), "乙\tab\n").unwrap();
+        let texts_of = |lexicon: &Lexicon| -> Vec<String> {
+            lexicon
+                .probe("ab")
+                .expect("码 ab")
+                .iter()
+                .map(|entry| entry.text.clone())
+                .collect()
+        };
+        let lexicon = Lexicon::load(&[fixture.clone(), other.clone()], 0);
+        assert_eq!(
+            texts_of(&lexicon),
+            vec!["甲"],
+            "别的目录里的追加表不该被读入"
+        );
+
+        std::fs::write(fixture.join("tiger_sentence.codes.bbb.txt"), "丙\tab\n").unwrap();
+        std::fs::write(fixture.join("tiger_sentence.codes.aaa.txt"), "丁\tab\n").unwrap();
+        let lexicon = Lexicon::load(&[fixture.clone(), other.clone()], 0);
+        assert_eq!(texts_of(&lexicon), vec!["甲", "丁", "丙"]);
+        assert_eq!(
+            lexicon
+                .extra_code_tables()
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec![
+                "tiger_sentence.codes.aaa.txt",
+                "tiger_sentence.codes.bbb.txt"
+            ],
+            "诊断口径应给出实际装载的追加表（按字典序）"
+        );
+        std::fs::remove_dir_all(&fixture).ok();
+        std::fs::remove_dir_all(&other).ok();
+    }
+
+    /// 每张追加表各自剥 BOM：`normalize_text_content` 只剥得掉合并内容最前面那个，
+    /// 否则第二张表起首行的 BOM 会粘进候选文本。
+    #[test]
+    fn extra_code_table_bom_is_stripped_per_table() {
+        let dir = hux_test_support::temp_dir("lexicon-extra-bom");
+        std::fs::write(dir.join(CODES_FILE), "\u{feff}甲\ta\n").unwrap();
+        std::fs::write(dir.join("tiger_sentence.codes.aaa.txt"), "\u{feff}乙\tab\n").unwrap();
+        std::fs::write(dir.join("tiger_sentence.codes.bbb.txt"), "\u{feff}丙\tab\n").unwrap();
+        let lexicon = Lexicon::load(std::slice::from_ref(&dir), 0);
+        assert_eq!(lexicon.probe("a").expect("码 a")[0].text, "甲");
+        let ab: Vec<&str> = lexicon
+            .probe("ab")
+            .expect("码 ab")
+            .iter()
+            .map(|entry| entry.text.as_str())
+            .collect();
+        assert_eq!(ab, vec!["乙", "丙"], "追加表的 BOM 未逐表剥掉");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
