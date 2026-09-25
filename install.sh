@@ -268,6 +268,9 @@ print_hints() {
         green "       mkdir -p ~/.local/share/fcitx5/hux/models/ && mv -i <模型下载后的当前位置> ~/.local/share/fcitx5/hux/models/"
     fi
     printf '\n'
+    note "  图标：托盘显示「虍」是经典界面开了「优先使用文字图标」（configtool 可关）；"
+    note "       重装后仍是旧图标时，重启 fcitx5 与桌面面板（KDE：kquitapp6 plasmashell && kstart plasmashell）。"
+    printf '\n'
     white_url "  建议：如有任何改进建议，欢迎在此留痕：" "https://github.com/crrvx/hux-ime/issues"
     white_license "  声明：虎虚（hux-ime）以 " "GPL-3.0-or-later" " 开源，© 2026 明雅流风。"
     white_url "  项目地址：" "https://github.com/crrvx/hux-ime"
