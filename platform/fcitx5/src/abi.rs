@@ -139,12 +139,29 @@ pub unsafe extern "C" fn hux_engine_model_info(engine: *const Engine) -> *const 
     }
 }
 
+/// 数据装载摘要（启动日志用）：装了哪几张码表 + 条目数 / 单字数 + 两个字集开关的生效值。
+///
+/// **指针有效期 = 下一次 [`hux_engine_redeploy`] 或配置下发之前**：装载摘要按需算一次并缓存，
+/// 配置下发（词库可能重建）/ 重新部署时失效重算（同 `hux_engine_status` 的风格）。
+/// 引擎为空指针返回 NULL。
+///
+/// # Safety
+/// `engine` 须有效（可为空指针）。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hux_engine_data_info(engine: *const Engine) -> *const c_char {
+    match unsafe { engine.as_ref() } {
+        Some(engine) => engine.data_info().as_ptr(),
+        None => std::ptr::null(),
+    }
+}
+
 /// 重新部署：重走构造期读取（目录 / 模型 / 方案数据 / 选项存储 / 学习库），并重置全部会话
 /// （会话 id 继续有效）。返回 1 = 成功；0 = 引擎为空指针。
 ///
 /// 宿主侧的分工：调用**前**重新读取自己的配置文件（`conf/hux.conf`）；调用**后**重新推送设置
 /// （[`hux_engine_apply_settings`]，设置值仍是权威并写回持久化选项）、清空面板/客户端预编辑
-/// （会话状态已作废），再重新读取 [`hux_engine_model_info`] 与 `hux_engine_status` 刷新展示。
+/// （会话状态已作废），再重新读取 [`hux_engine_model_info`]、[`hux_engine_data_info`]
+/// 与 `hux_engine_status` 刷新展示。
 ///
 /// # Safety
 /// `engine` 须为 [`hux_engine_new`] 的返回值且尚未释放（可为空指针）。
@@ -197,6 +214,8 @@ pub unsafe extern "C" fn hux_engine_apply_settings(
         page_up_keys: key_reprs(&options.page_up),
         page_down_keys: key_reprs(&options.page_down),
         digit_select: options.digit_select != 0,
+        full_charset: options.full_charset != 0,
+        filter_non_han: options.filter_non_han != 0,
         candidate_layout: match options.candidate_layout {
             1 => CandidateLayout::Horizontal,
             2 => CandidateLayout::Vertical,
@@ -313,7 +332,8 @@ pub unsafe extern "C" fn hux_engine_key(
 /// 引擎选项**角色**对应的选项键（NUL 结尾；角色越界或引擎为空返回 NULL）。
 ///
 /// 角色顺序与 `include/hux_abi.h` 的 `HUX_OPTION_*` 一致，即 `hux_cfg::roles::RUNTIME_OPTION_ROLES`：
-/// 0=提前上屏、1=提前上屏至预编辑、2=单字重码组句、3=全角标点（rime 标准名）、4=数字直选。
+/// 0=提前上屏、1=提前上屏至预编辑、2=单字重码组句、3=全角标点（rime 标准名）、4=数字直选、
+/// 5=启用全字集、6=过滤非汉字。
 /// 宿主据此构造状态菜单与面板序号，**不得**在宿主侧硬编码方案选项名。
 ///
 /// 方案未声明的角色返回 NULL（宿主跳过该项；装配缺陷已在状态串报错）。

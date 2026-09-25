@@ -25,11 +25,12 @@ use crate::decode::Decoder;
 use crate::interaction::{
     CompositionBuilder, HostCommitObserver, K_CHAR_TO_SOUND_SHAPE_KEY, K_SOUND_TO_CHAR_SHAPE_KEY,
     LiveLearning, OPTION_ALLOW_DUPLICATE_SINGLE, OPTION_DIGIT_SELECT, OPTION_EARLY_COMMIT,
-    OPTION_EARLY_COMMIT_TO_PREEDIT, ProcessorEnv, ProcessorResult, SentenceState, buffered_text,
-    processor, reset_early_evidence, select_candidate_at, set_property_if_changed, update_notifier,
+    OPTION_EARLY_COMMIT_TO_PREEDIT, OPTION_FILTER_NON_HAN, OPTION_FULL_CHARSET, ProcessorEnv,
+    ProcessorResult, SentenceState, buffered_text, processor, reset_early_evidence,
+    select_candidate_at, set_property_if_changed, update_notifier,
 };
 use crate::lexical;
-use crate::lexicon::{LEXICAL_FILE, Lexicon, MODEL_PATH, Supplement};
+use crate::lexicon::{LEXICAL_FILE, Lexicon, LexiconOptions, MODEL_PATH, Supplement};
 use crate::ngram::MobileModel;
 
 /// 方案标识（与上游数据互通；学习库命名沿用）。
@@ -89,6 +90,8 @@ mod role {
     pub const EARLY_COMMIT_TO_PREEDIT: &str = "early_commit_to_preedit";
     pub const ALLOW_DUPLICATE_SINGLE: &str = "allow_duplicate_single";
     pub const DIGIT_SELECT: &str = "digit_select";
+    pub const FULL_CHARSET: &str = "full_charset";
+    pub const FILTER_NON_HAN: &str = "filter_non_han";
     pub const HIGH_FREQ_LIMIT: &str = "high_freq_limit";
     pub const MIN_RETAINED_INPUT_LENGTH: &str = "min_retained_raw_length";
     pub const PAGE_SIZE: &str = "page_size";
@@ -118,6 +121,14 @@ const OPTION_DECLARATIONS: &[OptionDecl] = &[
         role: role::DIGIT_SELECT,
         key: OPTION_DIGIT_SELECT,
     },
+    OptionDecl {
+        role: role::FULL_CHARSET,
+        key: OPTION_FULL_CHARSET,
+    },
+    OptionDecl {
+        role: role::FILTER_NON_HAN,
+        key: OPTION_FILTER_NON_HAN,
+    },
 ];
 
 /// 本方案从配置袋读取的**引擎设置角色**（顺序即 [`Config`] 的字段序）。
@@ -138,7 +149,14 @@ pub const SCHEME_CONFIG_ROLES: &[&str] = &[
 ];
 
 /// 配置袋中本方案还会读取的**运行时选项角色**（平台在装配处追加；键由本方案声明）。
-const RUNTIME_CONFIG_ROLES: &[&str] = &[role::ALLOW_DUPLICATE_SINGLE];
+///
+/// 字集开关经配置袋下发（配置层角色 → 键在平台侧解析）：方案在 [`Config::parse`] 里
+/// 据此重建词库，故它们虽在上下文里也有选项值，读袋仍是唯一入口。
+const RUNTIME_CONFIG_ROLES: &[&str] = &[
+    role::ALLOW_DUPLICATE_SINGLE,
+    role::FULL_CHARSET,
+    role::FILTER_NON_HAN,
+];
 
 /// 配置袋**角色集合**层面的诊断：装配处（平台）按 `hux-cfg` 的角色名装袋，本方案按
 /// 自己的角色名读袋；装出了本方案不认识的名字（单侧改名）在此点名。
@@ -185,6 +203,10 @@ struct Config {
     reverse_lookup_character_keys: Vec<String>,
     learning_on_tab: bool,
     allow_duplicate_single: bool,
+    /// 启用全字集（追加码表）。
+    full_charset: bool,
+    /// 过滤追加码表里的非汉字。
+    filter_non_han: bool,
 }
 
 /// 取计数角色；失败时记诊断并按缺省 `0` 回退（迁移前 `unwrap_or(0)` 的同值回退）。
@@ -199,12 +221,22 @@ fn require_count(
     })
 }
 
-/// 取开关角色；失败时记诊断并按缺省 `false` 回退。
-fn require_bool(config: &SchemeConfig, role: &'static str, errors: &mut Vec<ConfigError>) -> bool {
+/// 取开关角色；失败时记诊断并按 `fallback` 回退。
+fn require_bool_or(
+    config: &SchemeConfig,
+    role: &'static str,
+    fallback: bool,
+    errors: &mut Vec<ConfigError>,
+) -> bool {
     config.require_bool(role).unwrap_or_else(|error| {
         errors.push(error);
-        false
+        fallback
     })
+}
+
+/// 取开关角色；失败时记诊断并按缺省 `false` 回退。
+fn require_bool(config: &SchemeConfig, role: &'static str, errors: &mut Vec<ConfigError>) -> bool {
+    require_bool_or(config, role, false, errors)
 }
 
 /// 取可选的文本列表角色：区分「角色缺失」与「显式空列表」（配置袋契约的基础）。
@@ -269,6 +301,10 @@ impl Config {
             ),
             learning_on_tab: require_bool(config, role::LEARNING_ON_TAB, &mut errors),
             allow_duplicate_single: require_bool(config, role::ALLOW_DUPLICATE_SINGLE, &mut errors),
+            // 字集开关的缺省是**开**（出厂口径：全字集 + 过滤）：缺角色（装配方漏装）时
+            // 按缺省回退，而不是静默退化成「只装主表 / 不过滤」；诊断照旧点名。
+            full_charset: require_bool_or(config, role::FULL_CHARSET, true, &mut errors),
+            filter_non_han: require_bool_or(config, role::FILTER_NON_HAN, true, &mut errors),
         };
         (parsed, errors)
     }
@@ -314,7 +350,7 @@ impl TigerScheme {
         let (parsed, config_errors) = Config::parse(config);
         let mut notes = config_diagnostics(config, &config_errors);
         let config = parsed;
-        let lexicon = Lexicon::load(dirs, config.high_freq_limit);
+        let lexicon = Lexicon::load_with(dirs, config.high_freq_limit, lexicon_options(&config));
         notes.push(format!("lexicon: {}", lexicon.data_status().canonical()));
         let learning_rules = lexicon.learning_rules.clone();
         let supplement = Supplement::load_default(supplement_dir(dirs).as_deref());
@@ -379,6 +415,14 @@ impl TigerScheme {
 
     fn session_mut(&mut self, session: SessionId) -> Option<&mut TigerSession> {
         self.sessions.get_mut(&session.0)
+    }
+}
+
+/// 词库的字集开关（角色 → [`LexiconOptions`]）：缺角色已在 [`Config::parse`] 回退为出厂口径。
+fn lexicon_options(config: &Config) -> LexiconOptions {
+    LexiconOptions {
+        extra_code_tables: config.full_charset,
+        filter_non_han: config.filter_non_han,
     }
 }
 
@@ -461,16 +505,22 @@ impl Scheme for TigerScheme {
         &self.model_info
     }
 
+    fn data_info(&self) -> String {
+        self.decoder.lexicon().data_info()
+    }
+
     fn apply_config(&mut self, config: &SchemeConfig) -> Result<(), Vec<ConfigError>> {
         let (parsed, errors) = Config::parse(config);
         self.config = parsed;
         self.host_options = host_options_from(&self.config);
-        // 高频字上限改变 ⇒ 重建词库索引（参照 `M.apply_high_freq_limit`）。
+        // 高频字上限 / 字集开关改变 ⇒ 重建词库索引（参照 `M.apply_high_freq_limit`）。
         // 平台在装配方案**之后**才下发配置页设置，故这里必须能重建；只在真的变化时重建
         // （每次按键路径都会经 `push_scheme_config` 走到本函数）。
-        if self.decoder.lexicon().high_freq_limit != self.config.high_freq_limit {
-            self.decoder
-                .apply_high_freq_limit(self.config.high_freq_limit);
+        let limit = self.config.high_freq_limit;
+        let options = lexicon_options(&self.config);
+        let lexicon = self.decoder.lexicon();
+        if lexicon.high_freq_limit != limit || lexicon.options() != options {
+            self.decoder.apply_lexicon_options(limit, options);
         }
         // 学习 mode 的输入都在配置袋里（Tab 学习 / 高频上限 / 单字重码选项值），
         // 由方案自算：变化时同步全部会话并重置解码器的学习索引（旧 mode 的记录不再命中）。
@@ -734,6 +784,8 @@ mod tests {
             ),
             (role::LEARNING_ON_TAB, Value::Bool(true)),
             (role::ALLOW_DUPLICATE_SINGLE, Value::Bool(true)),
+            (role::FULL_CHARSET, Value::Bool(true)),
+            (role::FILTER_NON_HAN, Value::Bool(true)),
         ]);
         for (name, value) in overrides {
             config.set(name, value.clone());
@@ -772,6 +824,8 @@ mod tests {
                     "tiger_sentence_allow_duplicate_single"
                 ),
                 ("digit_select", "tiger_sentence_digit_select"),
+                ("full_charset", "tiger_sentence_full_charset"),
+                ("filter_non_han", "tiger_sentence_filter_non_han"),
             ]
         );
     }
@@ -799,6 +853,8 @@ mod tests {
             ),
             (role::LEARNING_ON_TAB, Value::Bool(true)),
             (role::ALLOW_DUPLICATE_SINGLE, Value::Bool(true)),
+            (role::FULL_CHARSET, Value::Bool(true)),
+            (role::FILTER_NON_HAN, Value::Bool(true)),
         ]);
         let (config, errors) = Config::parse(&full);
         assert_eq!(errors, Vec::<ConfigError>::new(), "全角色袋无诊断");
@@ -818,11 +874,14 @@ mod tests {
         );
         assert!(config.learning_on_tab);
         assert!(config.allow_duplicate_single);
+        assert!(config.full_charset);
+        assert!(config.filter_non_han);
 
         // 空袋 → 与迁移前的 `SchemeConfig::default()` 逐字段同值（缺角色回退不变），
         // 但每个角色都产出「缺少角色」诊断（不再静默）。
         let (empty, empty_errors) = Config::parse(&SchemeConfig::default());
-        assert_eq!(empty_errors.len(), SCHEME_CONFIG_ROLES.len() + 1);
+        // 配置角色 + 三个运行时选项角色（单字重码 / 全字集 / 过滤非汉字）。
+        assert_eq!(empty_errors.len(), SCHEME_CONFIG_ROLES.len() + 3);
         assert!(
             empty_errors
                 .iter()
@@ -839,6 +898,9 @@ mod tests {
         assert!(empty.reverse_lookup_character_keys.is_empty());
         assert!(!empty.learning_on_tab);
         assert!(!empty.allow_duplicate_single);
+        // 字集开关缺角色时回退**出厂缺省（开）**，不退化成「只装主表 / 不过滤」。
+        assert!(empty.full_charset);
+        assert!(empty.filter_non_han);
 
         // 未知角色被忽略（契约是通用容器：将来新增角色不破坏本方案）。
         let future = bag(&[
@@ -882,6 +944,8 @@ mod tests {
                 ),
                 (role::LEARNING_ON_TAB, Value::Bool(true)),
                 (role::ALLOW_DUPLICATE_SINGLE, Value::Bool(true)),
+                (role::FULL_CHARSET, Value::Bool(true)),
+                (role::FILTER_NON_HAN, Value::Bool(true)),
             ] {
                 if keep(name) {
                     config.set(name, value);
@@ -1072,6 +1136,119 @@ mod tests {
                 scheme.learning_rules
             )
         );
+    }
+
+    /// 夹具码表 + **一张追加码表**（一个扩展 B 汉字与一个部首，各给一个新码）：
+    /// 字集开关的用例要有追加表才能看出效果（[`fixture_dirs`] 里没有）。
+    fn charset_dirs() -> PathBuf {
+        let dir = hux_test_support::temp_dir("scheme-charset");
+        let fixture = fixture_dirs().remove(0);
+        for name in [
+            "tiger_sentence.codes.txt",
+            "tiger_sentence.char_ranks.txt",
+            "tiger_sentence.full_code_whitelist.txt",
+        ] {
+            std::fs::copy(fixture.join(name), dir.join(name)).expect("复制夹具码表");
+        }
+        std::fs::write(
+            dir.join("tiger_sentence.codes.huma.txt"),
+            "𤕫\tzzzv\n⽧\tzzzw\n",
+        )
+        .expect("写追加码表");
+        dir
+    }
+
+    /// 两个字集开关都改词库内容 ⇒ 重新下发配置即重建（同高频上限的重建路径）。
+    ///
+    /// 语义：关掉全字集只装主表；过滤只作用于**追加表**（主表里的非汉字照旧）。
+    #[test]
+    fn apply_config_rebuilds_the_lexicon_for_the_charset_options() {
+        let dir = charset_dirs();
+        let scheme_of = |overrides: &[(&'static str, Value)]| -> TigerScheme {
+            TigerScheme::load(std::slice::from_ref(&dir), None, &full_bag(overrides)).0
+        };
+        let texts = |scheme: &TigerScheme, code: &str| -> Vec<String> {
+            scheme
+                .decoder
+                .lexicon()
+                .probe(code)
+                .unwrap_or_else(|| panic!("码 {code} 不存在"))
+                .iter()
+                .map(|entry| entry.text.clone())
+                .collect()
+        };
+
+        // 仅主表的条目数（关掉全字集装载；下面用它作基准口径）。
+        let primary_entries = scheme_of(&[(role::FULL_CHARSET, Value::Bool(false))])
+            .decoder
+            .lexicon()
+            .codes_entries;
+
+        // 出厂口径（全字集开 + 过滤开）：追加表的汉字在，部首被过滤。
+        let mut scheme = scheme_of(&[]);
+        assert_eq!(texts(&scheme, "zzzv"), vec!["𤕫".to_string()]);
+        assert!(
+            scheme.decoder.lexicon().probe("zzzw").is_none(),
+            "追加表里的部首应被过滤"
+        );
+        assert_eq!(scheme.decoder.lexicon().extra_code_tables().len(), 1);
+        let filtered_entries = scheme.decoder.lexicon().codes_entries;
+        assert_eq!(
+            filtered_entries,
+            primary_entries + 1,
+            "过滤开：追加表只剩那个汉字"
+        );
+        assert!(
+            scheme.data_info().starts_with(&format!(
+                "code_tables=[tiger_sentence.codes.txt,tiger_sentence.codes.huma.txt] \
+                 entries={filtered_entries}"
+            )),
+            "装载摘要应含实际装载的码表：{}",
+            scheme.data_info()
+        );
+        assert!(
+            scheme
+                .data_info()
+                .ends_with("full_charset=1 filter_non_han=1")
+        );
+
+        // 关掉全字集：追加表独有码消失、诊断口径为空（重新打开同样重建，不是「只关一次」）。
+        scheme
+            .apply_config(&full_bag(&[(role::FULL_CHARSET, Value::Bool(false))]))
+            .expect("全角色袋");
+        assert!(scheme.decoder.lexicon().probe("zzzv").is_none());
+        assert!(scheme.decoder.lexicon().extra_code_tables().is_empty());
+        assert_eq!(
+            scheme.data_info(),
+            format!(
+                "code_tables=[tiger_sentence.codes.txt] entries={primary_entries} \
+                 chars={} full_charset=0 filter_non_han=1",
+                scheme.decoder.lexicon().character_codes.len()
+            ),
+            "关掉全字集后摘要只剩主表"
+        );
+        scheme
+            .apply_config(&full_bag(&[(role::FULL_CHARSET, Value::Bool(true))]))
+            .expect("全角色袋");
+        assert_eq!(texts(&scheme, "zzzv"), vec!["𤕫".to_string()]);
+
+        // 关掉过滤：追加表的部首入词库（条目正好多一条），主表内容不动。
+        scheme
+            .apply_config(&full_bag(&[(role::FILTER_NON_HAN, Value::Bool(false))]))
+            .expect("全角色袋");
+        assert_eq!(texts(&scheme, "zzzw"), vec!["⽧".to_string()]);
+        assert_eq!(
+            scheme.decoder.lexicon().codes_entries,
+            primary_entries + 2,
+            "过滤关：追加表两行都入词库"
+        );
+        assert!(
+            scheme
+                .data_info()
+                .ends_with("full_charset=1 filter_non_han=0")
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

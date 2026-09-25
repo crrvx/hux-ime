@@ -11,7 +11,7 @@
 //! 路径下标生命周期绑定（改动语义边界），不符合「金样不变 + 按需」的前提。
 
 use crate::lexical::{self, LexicalModel};
-use crate::lexicon::{CodeEntry, Lexicon, Supplement};
+use crate::lexicon::{CodeEntry, Lexicon, LexiconOptions, Supplement};
 use crate::ngram::MobileModel;
 use anyhow::Result;
 use hashbrown::{HashMap, HashSet};
@@ -432,6 +432,12 @@ impl Decoder {
     /// 故重建后无需其他失效动作。
     pub fn apply_high_freq_limit(&mut self, limit: usize) {
         self.lexicon.apply_high_freq_limit(limit);
+    }
+
+    /// 应用高频上限与字集开关：重建词库索引（同 [`Decoder::apply_high_freq_limit`] 的路径，
+    /// 两者一起落位只重建一次）。
+    pub fn apply_lexicon_options(&mut self, limit: usize, options: LexiconOptions) {
+        self.lexicon.apply_lexicon_options(limit, options);
     }
 
     pub fn model(&self) -> Option<&MobileModel> {

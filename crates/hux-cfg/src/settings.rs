@@ -17,7 +17,8 @@
 
 use crate::roles::{
     OptionKeys, ROLE_ALLOW_DUPLICATE_SINGLE, ROLE_ASCII_PUNCT, ROLE_DIGIT_SELECT,
-    ROLE_EARLY_COMMIT, ROLE_EARLY_COMMIT_TO_PREEDIT, ROLE_FULL_SHAPE,
+    ROLE_EARLY_COMMIT, ROLE_EARLY_COMMIT_TO_PREEDIT, ROLE_FILTER_NON_HAN, ROLE_FULL_CHARSET,
+    ROLE_FULL_SHAPE,
 };
 use hux_core::collections::Map;
 use hux_core::host::{DEFAULT_PAGE_SIZE, HostOptions, MAX_PAGE_SIZE};
@@ -79,6 +80,12 @@ pub struct Settings {
     pub page_down_keys: Vec<String>,
     /// 数字直选（addon 扩展，默认开）：菜单可见时数字直接上屏当前页候选（1–9；0=10）。
     pub digit_select: bool,
+    /// 启用全字集（addon 扩展，默认开）：关掉只装主表码表，不装追加码表；
+    /// 变更即时重建词库（见方案的 `apply_config`）。
+    pub full_charset: bool,
+    /// 过滤非汉字（addon 扩展，默认开）：追加码表里的部首/笔画/注音/假名等不入词库
+    /// （主表行不受影响）；变更即时重建词库。
+    pub filter_non_han: bool,
     /// 候选排列（横排/竖排）。
     pub candidate_layout: CandidateLayout,
     /// 预编辑内容（候选分码/原始输入/不显示）。
@@ -107,6 +114,8 @@ impl Default for Settings {
             page_up_keys: vec!["minus".to_string(), "bracketleft".to_string()],
             page_down_keys: vec!["equal".to_string(), "bracketright".to_string()],
             digit_select: true,
+            full_charset: true,
+            filter_non_han: true,
             candidate_layout: CandidateLayout::FollowGlobal,
             preedit_mode: PreeditMode::CandidateCode,
             page_cycle: false,
@@ -121,7 +130,8 @@ impl Settings {
     /// 方案未声明的角色不参与接线。
     pub fn option_defaults(&self, keys: &OptionKeys) -> Vec<(&'static str, bool)> {
         let mut defaults = Vec::new();
-        // 顺序即写入顺序（保持既有顺序：三个方案开关 → 宿主标准项 → 数字直选）。
+        // 顺序即写入顺序（保持既有顺序：三个方案开关 → 宿主标准项 → 运行时开关
+        // 按 `RUNTIME_OPTION_ROLES` 的先后：数字直选 → 全字集 → 过滤非汉字）。
         for (role, value) in [
             (ROLE_EARLY_COMMIT, self.early_commit),
             (ROLE_EARLY_COMMIT_TO_PREEDIT, self.early_commit_to_preedit),
@@ -133,8 +143,14 @@ impl Settings {
         }
         defaults.push((ROLE_FULL_SHAPE, self.full_shape));
         defaults.push((ROLE_ASCII_PUNCT, self.ascii_punct));
-        if let Some(key) = keys.key(ROLE_DIGIT_SELECT) {
-            defaults.push((key, self.digit_select));
+        for (role, value) in [
+            (ROLE_DIGIT_SELECT, self.digit_select),
+            (ROLE_FULL_CHARSET, self.full_charset),
+            (ROLE_FILTER_NON_HAN, self.filter_non_han),
+        ] {
+            if let Some(key) = keys.key(role) {
+                defaults.push((key, value));
+            }
         }
         defaults
     }
@@ -155,6 +171,8 @@ impl Settings {
             (ROLE_EARLY_COMMIT_TO_PREEDIT, self.early_commit_to_preedit),
             (ROLE_ALLOW_DUPLICATE_SINGLE, self.allow_duplicate_single),
             (ROLE_DIGIT_SELECT, self.digit_select),
+            (ROLE_FULL_CHARSET, self.full_charset),
+            (ROLE_FILTER_NON_HAN, self.filter_non_han),
         ] {
             if let Some(key) = keys.key(role) {
                 defaults.insert(key.to_string(), value);
@@ -220,6 +238,8 @@ mod tests {
             vec!["asciitilde".to_string()]
         );
         assert!(settings.digit_select);
+        assert!(settings.full_charset);
+        assert!(settings.filter_non_han);
         assert_eq!(settings.candidate_layout, CandidateLayout::FollowGlobal);
         assert_eq!(settings.preedit_mode, PreeditMode::CandidateCode);
         assert!(!settings.page_cycle);
@@ -280,7 +300,7 @@ mod tests {
         let defaults = settings.option_defaults(&keys);
         assert!(defaults.contains(&("full_shape", true)));
         assert!(defaults.contains(&(keys.key(ROLE_EARLY_COMMIT).unwrap(), true)));
-        // 顺序保持既有写入顺序（方案开关 → 宿主标准项 → 数字直选）。
+        // 顺序保持既有写入顺序（方案开关 → 宿主标准项 → 运行时开关按角色序）。
         assert_eq!(
             defaults.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
             vec![
@@ -290,6 +310,8 @@ mod tests {
                 "full_shape",
                 "ascii_punct",
                 "tiger_sentence_digit_select",
+                "tiger_sentence_full_charset",
+                "tiger_sentence_filter_non_han",
             ]
         );
     }
@@ -305,7 +327,10 @@ mod tests {
         );
         assert_eq!(store_defaults.get("full_shape"), Some(&false));
         assert_eq!(store_defaults.get(key(ROLE_DIGIT_SELECT)), Some(&true));
-        assert_eq!(store_defaults.len(), 5);
+        // 字集开关同样经 `apply_settings` 写回 `options.yaml`（缺省开）。
+        assert_eq!(store_defaults.get(key(ROLE_FULL_CHARSET)), Some(&true));
+        assert_eq!(store_defaults.get(key(ROLE_FILTER_NON_HAN)), Some(&true));
+        assert_eq!(store_defaults.len(), 7);
     }
 
     #[test]

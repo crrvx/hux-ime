@@ -147,6 +147,10 @@ typedef struct hux_options {
   int32_t page_cycle;
   /* 提前上屏最短保留码数（0..=20；0 = 不额外限制）。 */
   int32_t min_retained_input_length;
+  /* 启用全字集（追加码表）：0 = 关（只装主表），1 = 开（默认）。 */
+  int32_t full_charset;
+  /* 过滤非汉字（追加码表里的部首/笔画/注音/假名等）：0 = 关，1 = 开（默认）。 */
+  int32_t filter_non_han;
 } hux_options;
 
 /*
@@ -164,8 +168,10 @@ enum {
   HUX_OPTION_ALLOW_DUPLICATE_SINGLE = 2,
   HUX_OPTION_FULL_SHAPE = 3,
   HUX_OPTION_DIGIT_SELECT = 4,
+  HUX_OPTION_FULL_CHARSET = 5,
+  HUX_OPTION_FILTER_NON_HAN = 6,
   /* 角色总数（哨兵；不是合法角色下标）。 */
-  HUX_OPTION_COUNT = 5,
+  HUX_OPTION_COUNT = 7,
 };
 
 /* 选项角色总数。 */
@@ -184,6 +190,15 @@ int32_t hux_engine_option_value(hux_engine *engine, const char *name);
 /* 设置运行时开关（状态菜单）：1 = 已应用；未知选项 0。 */
 int32_t hux_engine_set_option(hux_engine *engine, const char *name,
                               int32_t value);
+
+/*
+ * 数据装载摘要（启动日志用）：装载了哪几张码表（主表在前、追加表按装载顺序）、条目数、单字数，
+ * 以及两个字集开关的生效值，形如（出厂口径：全字集开、过滤非汉字开）
+ *   `code_tables=[tiger_sentence.codes.txt,tiger_sentence.codes.huma.txt] entries=116762 chars=102529 full_charset=1 filter_non_han=1`
+ * 指针有效期 = 下一次 hux_engine_redeploy / 设置变更之前（同 hux_engine_status 的风格：
+ * 每次需要时重新调用、不要缓存）；引擎为空返回 NULL。
+ */
+const char *hux_engine_data_info(const hux_engine *engine);
 
 #ifdef __cplusplus
 }
