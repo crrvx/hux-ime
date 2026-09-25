@@ -49,6 +49,10 @@ pub const OPTION_EARLY_COMMIT_TO_PREEDIT: &str = "tiger_sentence_early_commit_to
 pub const OPTION_EARLY_COMMIT: &str = "tiger_sentence_early_commit";
 /// 数字直选（addon 扩展）：菜单可见时数字直接上屏当前页候选（1–9；0=10）。
 pub const OPTION_DIGIT_SELECT: &str = "tiger_sentence_digit_select";
+/// 启用全字集（addon 扩展）：关掉只装主表码表，不装追加码表（`tiger_sentence.codes.<name>.txt`）。
+pub const OPTION_FULL_CHARSET: &str = "tiger_sentence_full_charset";
+/// 过滤非汉字（addon 扩展）：追加码表里的部首/笔画/注音/假名等不入词库（主表行不受影响）。
+pub const OPTION_FILTER_NON_HAN: &str = "tiger_sentence_filter_non_han";
 
 pub use early_commit::*;
 pub use keys::*;

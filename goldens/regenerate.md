@@ -207,6 +207,13 @@ python3 tools/checks/verify_golden_shas.py --reference _external/tiger-sentense-
 
 - `lexicon_variants/` 与 `lexicon_codes_only/` 为人工构造的解析边界数据（无上游来源）。
 
+- 随包**追加码表**（只在 `data/`，不在夹具目录；源不入库，由
+  `tools/generators/merge_huma_codes.py` 从虎码官方版单字表生成）：
+
+| 文件 | sha256 |
+|---|---|
+| `data/tiger_sentence.codes.huma.txt` | `896f1aa2a302e33b6ec9beb8c516994c46e6a83fe6bd10b8cf9179c8d4a065a7` |
+
 - 已入库金样 sha256：
 
 | 文件 | sha256 |

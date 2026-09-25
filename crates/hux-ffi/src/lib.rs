@@ -50,6 +50,10 @@ pub struct HuxOptions {
     pub page_cycle: i32,
     /// 提前上屏最短保留码数（0..=20；0 = 不额外限制）。
     pub min_retained_input_length: i32,
+    /// 启用全字集（追加码表）：0 = 关（只装主表），1 = 开（默认）。
+    pub full_charset: i32,
+    /// 过滤非汉字（追加码表里的部首/笔画/注音/假名等）：0 = 关，1 = 开（默认）。
+    pub filter_non_han: i32,
 }
 
 /// 宿主回调表（由 C++ 薄壳提供；函数指针可为空，便于测试）。
@@ -107,6 +111,8 @@ mod tests {
         "preedit_mode",
         "page_cycle",
         "min_retained_input_length",
+        "full_charset",
+        "filter_non_han",
     ];
 
     /// 头文件 `typedef struct hux_options { … } hux_options;` 的成员名（声明序，去注释）。
@@ -172,10 +178,10 @@ mod tests {
         assert_eq!(offset_of!(HuxKeyList, sym), 4);
         assert_eq!(offset_of!(HuxKeyList, states), 4 + HUX_MAX_KEYS * 4);
 
-        // `hux_options`：13 个标量 int32 + 4 个键位列表（顺序见头文件）。
+        // `hux_options`：15 个标量 int32 + 4 个键位列表（顺序见头文件）。
         let scalar = size_of::<i32>();
         let list = size_of::<HuxKeyList>();
-        assert_eq!(size_of::<HuxOptions>(), 13 * scalar + 4 * list);
+        assert_eq!(size_of::<HuxOptions>(), 15 * scalar + 4 * list);
         // **逐字段**（名字 + 偏移，按声明序）：任何改名都让 `offset_of!` 编译失败，
         // 任何同宽换序都让下一条偏移断言失败（此前只有 8 个抽查点）。
         let expected: &[(&str, usize)] = &[
@@ -196,6 +202,8 @@ mod tests {
             ("preedit_mode", 10 * scalar + 4 * list),
             ("page_cycle", 11 * scalar + 4 * list),
             ("min_retained_input_length", 12 * scalar + 4 * list),
+            ("full_charset", 13 * scalar + 4 * list),
+            ("filter_non_han", 14 * scalar + 4 * list),
         ];
         let offsets = [
             offset_of!(HuxOptions, early_commit),
@@ -215,6 +223,8 @@ mod tests {
             offset_of!(HuxOptions, preedit_mode),
             offset_of!(HuxOptions, page_cycle),
             offset_of!(HuxOptions, min_retained_input_length),
+            offset_of!(HuxOptions, full_charset),
+            offset_of!(HuxOptions, filter_non_han),
         ];
         assert_eq!(
             offsets.len(),

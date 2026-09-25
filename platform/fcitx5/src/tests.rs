@@ -1162,6 +1162,8 @@ fn ffi_options() -> HuxOptions {
         preedit_mode: 0,
         page_cycle: 0,
         min_retained_input_length: 0,
+        full_charset: 1,
+        filter_non_han: 1,
     }
 }
 
@@ -1232,6 +1234,79 @@ fn ffi_apply_settings_maps_new_options() {
         MAX_MIN_RETAINED_INPUT_LENGTH
     );
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// 数据装载摘要（`hux_engine_data_info`）：设置推送 / 状态菜单切换后按**新词库**重算，
+/// 引擎为空返回 NULL。
+///
+/// 夹具：主表来自 `goldens/key_sequence`（27 条 / 25 个单字 / 5 个码）+ 一张追加码表
+/// （扩展 B 汉字 `𤕫` 与部首 `⽧`，各占一个新码）——`fixture_dirs` 的主表在 golden 夹具里，
+/// 那里没有追加表，看不出字集开关的效果。
+#[test]
+fn data_info_tracks_settings_and_option_changes() {
+    let _guard = serial();
+    const EXTRA_TABLES: &str = "tiger_sentence.codes.txt,tiger_sentence.codes.huma.txt";
+    let data = temp_user_dir("data-info-data");
+    std::fs::copy(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../goldens/key_sequence/tiger_sentence.codes.txt"),
+        data.join("tiger_sentence.codes.txt"),
+    )
+    .expect("复制夹具主表");
+    std::fs::write(
+        data.join("tiger_sentence.codes.huma.txt"),
+        "𤕫\tzzzv\n⽧\tzzzw\n",
+    )
+    .expect("写追加码表");
+    let user = temp_user_dir("data-info-user");
+    let mut engine = Engine::new_with_dirs(host(), vec![data.clone()], None, Some(user.clone()));
+
+    let info = |engine: &Engine| -> String {
+        let pointer = unsafe { hux_engine_data_info(engine) };
+        assert!(!pointer.is_null(), "引擎有效时摘要非空");
+        unsafe { std::ffi::CStr::from_ptr(pointer) }
+            .to_string_lossy()
+            .into_owned()
+    };
+    let summary = |tables: &str, entries: usize, chars: usize, full: u8, filter: u8| {
+        format!(
+            "code_tables=[{tables}] entries={entries} chars={chars} full_charset={full} \
+             filter_non_han={filter}"
+        )
+    };
+    let main_only = "tiger_sentence.codes.txt";
+
+    // 出厂口径：两个开关都开，追加表在（非法汉字行已被过滤）。
+    assert_eq!(info(&engine), summary(EXTRA_TABLES, 28, 26, 1, 1));
+    // 缓存：连续两次调用返回同一指针（摘要按需算一次，宿主不必自己缓存）。
+    let first = unsafe { hux_engine_data_info(&engine) };
+    assert_eq!(unsafe { hux_engine_data_info(&engine) }, first);
+
+    // 配置页推送：关掉全字集 ⇒ 摘要与词库同时变，且设置值写回 `options.yaml`。
+    engine.apply_settings(Settings {
+        full_charset: false,
+        ..Default::default()
+    });
+    assert_eq!(info(&engine), summary(main_only, 27, 25, 0, 1));
+    let persisted = std::fs::read_to_string(user.join(OPTIONS_FILE)).expect("options.yaml");
+    assert!(
+        persisted.contains("tiger_sentence_full_charset: false"),
+        "设置推送应写回持久化选项：{persisted}"
+    );
+
+    // 状态菜单：打开全字集、关掉过滤 ⇒ 追加表两行都入词库。
+    assert!(engine.set_option_value("tiger_sentence_full_charset", true));
+    assert!(engine.set_option_value("tiger_sentence_filter_non_han", false));
+    assert_eq!(info(&engine), summary(EXTRA_TABLES, 29, 27, 1, 0));
+
+    // 重新部署：重读数据与持久化选项，摘要照新状态重算。
+    assert!(engine.redeploy());
+    assert_eq!(info(&engine), summary(EXTRA_TABLES, 29, 27, 1, 0));
+
+    // 空指针安全。
+    assert!(unsafe { hux_engine_data_info(std::ptr::null()) }.is_null());
+    std::fs::remove_dir_all(&data).ok();
+    std::fs::remove_dir_all(&user).ok();
 }
 
 /// 候选竖排：作用于已存在会话（host 读取 `_vertical`）。
@@ -1987,11 +2062,8 @@ fn scheme_config_diagnostics_reach_the_status_string() {
         "漏装角色必须可见：{status}"
     );
 
-    // 重新下发完整配置袋：诊断清空（状态串回到基线）。
-    let good = crate::engine::scheme_config(&engine.engine.settings).with(
-        hux_cfg::roles::ROLE_ALLOW_DUPLICATE_SINGLE,
-        hux_core::scheme::Value::Bool(true),
-    );
+    // 重新下发完整配置袋（设置派生的角色 + 运行时开关的生效值）：诊断清空（状态串回到基线）。
+    let good = engine.engine.scheme_config_with_runtime();
     engine.engine.apply_scheme_config(good);
     let status = engine.engine.status.to_str().unwrap_or("").to_string();
     assert!(
@@ -2207,10 +2279,12 @@ fn option_role_keys_follow_scheme_declarations() {
             Some("tiger_sentence_allow_duplicate_single"),
             Some("full_shape"),
             Some("tiger_sentence_digit_select"),
+            Some("tiger_sentence_full_charset"),
+            Some("tiger_sentence_filter_non_han"),
         ],
         "角色序（含宿主标准项 full_shape）↔ 方案声明的键"
     );
-    let keys: Vec<String> = (0..5)
+    let keys: Vec<String> = (0..hux_cfg::roles::RUNTIME_OPTION_ROLES.len() as i32)
         .map(|role| unsafe {
             let key = hux_engine_option_key(&engine.engine, role);
             assert!(!key.is_null(), "角色 {role} 应有选项键");
@@ -2225,12 +2299,22 @@ fn option_role_keys_follow_scheme_declarations() {
             "tiger_sentence_allow_duplicate_single",
             "full_shape",
             "tiger_sentence_digit_select",
+            "tiger_sentence_full_charset",
+            "tiger_sentence_filter_non_han",
         ]
     );
     // 角色序与状态菜单白名单同源（改方案时两者一起变）。
     assert_eq!(engine.engine.runtime_options().to_vec(), keys);
     // 越界与空指针安全。
-    assert!(unsafe { hux_engine_option_key(&engine.engine, 5) }.is_null());
+    assert!(
+        unsafe {
+            hux_engine_option_key(
+                &engine.engine,
+                hux_cfg::roles::RUNTIME_OPTION_ROLES.len() as i32,
+            )
+        }
+        .is_null()
+    );
     assert!(unsafe { hux_engine_option_key(&engine.engine, -1) }.is_null());
     assert!(unsafe { hux_engine_option_key(std::ptr::null(), 0) }.is_null());
 }
@@ -2462,6 +2546,16 @@ fn every_settings_field_is_declared_in_the_schema() {
             std::mem::offset_of!(Settings, digit_select),
         ),
         (
+            "full_charset",
+            "FullCharset",
+            std::mem::offset_of!(Settings, full_charset),
+        ),
+        (
+            "filter_non_han",
+            "FilterNonHan",
+            std::mem::offset_of!(Settings, filter_non_han),
+        ),
+        (
             "page_cycle",
             "PageCycle",
             std::mem::offset_of!(Settings, page_cycle),
@@ -2518,7 +2612,7 @@ fn every_settings_field_is_declared_in_the_schema() {
 
     assert_eq!(
         FIELDS.len(),
-        17,
+        19,
         "Settings 字段数变化：新增/删除字段必须同步本表与 shell/hux.cpp 的 schema（或将新增项登记为宿主显示项）"
     );
     // 字段顺序由 `repr(Rust)` 决定（编译器会重排），故**不假设**「声明序 == 偏移序」；

@@ -156,6 +156,9 @@ jobs:
         # 装、卸、CMake 三处必须读同一份 data/MANIFEST，
         # 且清单与 data/ 实况一致（防「装得上、卸不掉」）。
         run: bash tools/checks/check_data_manifest.sh
+      - name: Verify code tables (primary + extras)
+        # 行格式与跨表去重：追加码表只应放主表没有的 `(字, 码)`（见 data/README.md「追加码表」）。
+        run: python3 tools/checks/check_code_tables.py
       - name: Smoke-check install / uninstall entrypoints
         # 两个一键脚本是文档首推入口：语法 + `--dry-run` 冒烟（不写系统目录）。
         # `bash -n a b c` 只检查第一个文件（其余当位置参数），故逐个文件检查。

@@ -39,7 +39,9 @@ crate / 模块级结构与「结构正义」硬规则见 [`refactor.md`](refacto
   > `$XDG_DATA_DIRS/*/fcitx5/hux`（缺省 `/usr/local/share`、`/usr/share`）；
   可写数据（选项 / 学习库 / 模型）落用户目录；开发可用 `HUX_DATA_DIRS`（冒号分隔）
   与 `HUX_MODEL` 覆盖。
-- 运行数据：码表四件套（`tiger_sentence.{codes,char_ranks,full_code_whitelist,supplement}.txt`）、
+- 运行数据：码表四件套（`tiger_sentence.{codes,char_ranks,full_code_whitelist,supplement}.txt`）
+  与追加码表 `tiger_sentence.codes.<name>.txt`（拼在主表之后，主表 rank 不变；见
+  [`../data/README.md`](../data/README.md) 的「追加码表」）、
   `models/sentence-ngram-mobile.bin`（TCSKNM02）、`symbols.yaml`、词先验（TCSLEX01）、音反查索引（TCSRV01）、
   `tiger_sentence.options.yaml`、学习库 `tiger_sentence_learning_<hash>.userdb/`（LevelDB 同构）。
 - 仓库 `data/` 的清单、来源与署名见 [`../data/README.md`](../data/README.md) 与
@@ -100,10 +102,11 @@ crate / 模块级结构与「结构正义」硬规则见 [`refactor.md`](refacto
 - **选项与配置**：`tiger_sentence.options.yaml`（主）+ legacy `user.yaml` 的 `var/option/*`（只读回退，
   保存失败写属性 `tiger_sentence_options_error`）；合并顺序 **options.yaml > 设置 > 内建缺省**，
   但配置页推送时设置值**写回** `options.yaml`（两侧是同一批项，故互不压制）；图形配置由
-  C++ `HuxConfig` schema 生成（「行为」「快捷键」两区，子配置 + `ToolTipAnnotation`；快捷键为 `KeyList`），
-  经 `hux_engine_apply_settings` 应用；状态菜单（「虎虚」子菜单，5 项核心开关：提前上屏、提前上屏至预编辑、
-  单字重码组句、全角标点、数字直选）经 `hux_engine_set_option` 切换并写入 `options.yaml`，
-  宿主同时镜像进 `conf/hux.conf`——任一侧改动即时生效且另一侧读到同一值。
+  C++ `HuxConfig` schema 生成（「行为」「字集」「快捷键」三区，子配置 + `ToolTipAnnotation`；快捷键为 `KeyList`），
+  经 `hux_engine_apply_settings` 应用；状态菜单（「虎虚」子菜单，7 项开关：提前上屏、提前上屏至预编辑、
+  单字重码组句、全角标点、数字直选、启用全字集、过滤非汉字）经 `hux_engine_set_option` 切换并写入 `options.yaml`，
+  宿主同时镜像进 `conf/hux.conf`——任一侧改动即时生效且另一侧读到同一值；装载结果（哪几张码表、
+  条目/字数、两个字集开关的生效值）由 `hux_engine_data_info` 在启动与「重新部署」后写进日志。
 
 ## 5. 测试
 

@@ -3,11 +3,11 @@
 
 use hux_core::collections::Map;
 
-#[cfg(test)]
-use crate::roles::ROLE_DIGIT_SELECT;
 use crate::roles::{
     OptionKeys, ROLE_ALLOW_DUPLICATE_SINGLE, ROLE_EARLY_COMMIT, ROLE_EARLY_COMMIT_TO_PREEDIT,
 };
+#[cfg(test)]
+use crate::roles::{ROLE_DIGIT_SELECT, ROLE_FILTER_NON_HAN, ROLE_FULL_CHARSET};
 #[cfg(test)]
 use hux_core::scheme::OptionDecl;
 use hux_core::session::Context;
@@ -47,6 +47,14 @@ pub(crate) fn test_option_keys() -> OptionKeys {
         OptionDecl {
             role: ROLE_DIGIT_SELECT,
             key: "tiger_sentence_digit_select",
+        },
+        OptionDecl {
+            role: ROLE_FULL_CHARSET,
+            key: "tiger_sentence_full_charset",
+        },
+        OptionDecl {
+            role: ROLE_FILTER_NON_HAN,
+            key: "tiger_sentence_filter_non_han",
         },
     ])
     .expect("测试声明应覆盖全部方案角色")

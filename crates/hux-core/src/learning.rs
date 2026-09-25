@@ -285,20 +285,43 @@ pub fn unframe(value: &str) -> Option<Vec<String>> {
     Some(result)
 }
 
+/// 双累加器 FNV 变体的初值（`a` / `b`）。
+const HASH_SEED: (u64, u64) = (2166136261, 5381);
+
+/// 把一段字节累加进两累加器（[`hash_bytes`] / [`hash_parts`] 的唯一实现处）。
+fn hash_accumulate(state: &mut (u64, u64), text: &[u8]) {
+    for byte in text {
+        state.0 = (state.0 * 65599 + u64::from(*byte)) % 4294967296;
+        state.1 = (state.1 * 33 + u64::from(*byte)) % 4294967296;
+    }
+}
+
+/// 双累加器 FNV 变体的输出格式（`%08x%08x`）。
+fn hash_hex(state: (u64, u64)) -> String {
+    format!("{:08x}{:08x}", state.0, state.1)
+}
+
 /// 参照 `M.hash`：双累加器 FNV 变体，输出 `%08x%08x`（按字节，允许非 UTF-8 输入）。
 pub fn hash_bytes(text: &[u8]) -> String {
-    let mut a: u64 = 2166136261;
-    let mut b: u64 = 5381;
-    for byte in text {
-        a = (a * 65599 + *byte as u64) % 4294967296;
-        b = (b * 33 + *byte as u64) % 4294967296;
-    }
-    format!("{a:08x}{b:08x}")
+    let mut state = HASH_SEED;
+    hash_accumulate(&mut state, text);
+    hash_hex(state)
 }
 
 /// 参照 `M.hash`。
 pub fn hash(text: &str) -> String {
     hash_bytes(text.as_bytes())
+}
+
+/// 多段文本按序拼接后的哈希（`hash_parts(&["ab", "c"]) == hash("abc")`）。
+///
+/// 调用方按段持有内容时（例如码表逐表装载）不必为了求哈希先把各段拼成一个大串。
+pub fn hash_parts(parts: &[&str]) -> String {
+    let mut state = HASH_SEED;
+    for part in parts {
+        hash_accumulate(&mut state, part.as_bytes());
+    }
+    hash_hex(state)
 }
 
 /// 参照 `M.fusion_mode`：空模式串保持空（= 不学习），否则加 `fusion-v1|` 前缀。
@@ -929,6 +952,19 @@ mod tests {
         assert_eq!(hash("tiger_sentence"), "f2d1c028532c0d94");
         assert_eq!(hash("虎句"), "2b025b23302e3acd");
         assert_eq!(hash_bytes(b""), hash(""));
+    }
+
+    /// 分段累加与拼接后一次哈希同值（`hash_parts` 的契约；分段处也得对上）。
+    #[test]
+    fn hash_parts_matches_concatenation() {
+        assert_eq!(hash_parts(&[]), hash(""));
+        assert_eq!(hash_parts(&[""]), hash(""));
+        assert_eq!(hash_parts(&["ab", "c"]), hash("abc"));
+        assert_eq!(hash_parts(&["", "虎句"]), hash("虎句"));
+        assert_eq!(
+            hash_parts(&["\u{feff}甲\ta\n", "\0", "乙\n"]),
+            hash("\u{feff}甲\ta\n\0乙\n")
+        );
     }
 
     #[test]

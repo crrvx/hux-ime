@@ -222,13 +222,15 @@ FCITX_CONFIGURATION(
             .annotation{"提前上屏与空码上屏共用的最短保留编码数；0 = 不额外限制"
                         "（概率型早提交仍不少于 3）。"}}};);
 
-/// 「行为」分区里同时出现在状态菜单（引擎运行时选项）与配置页的开关：角色 + schema 字段。
+/// 与状态菜单（引擎运行时选项）共享的 schema 开关：角色 + 所在分区的字段。
 ///
-/// 成员指针让字段名由编译器检查；`path()`（`HuxBehaviorConfig` 的 `Behavior` + 本字段的路径）
-/// 供宿主判断「配置文件里显式写过这一项吗」，故字段改名不会让该判断失配。
-struct SharedBehaviorOption {
+/// 成员指针让字段名由编译器检查；`path()`（分区路径 + 字段路径）供宿主判断「配置文件里显式
+/// 写过这一项吗」，故字段改名不会让该判断失配。共享开关分布在两个分区（「行为」「字集」），
+/// 分区类型不同、字段类型相同，故按分区各实例化一张表。
+template <typename Partition>
+struct SharedRuntimeOption {
     using Option = fcitx::OptionWithAnnotation<bool, fcitx::ToolTipAnnotation>;
-    using Member = Option HuxBehaviorConfig::*;
+    using Member = Option Partition::*;
     int32_t role;
     Member field;
 };
@@ -286,11 +288,32 @@ FCITX_CONFIGURATION(
             fcitx::KeyListConstrain(fcitx::KeyConstrainFlag::AllowModifierLess),
         .annotation{"可多项。有候选时生效；Page_Down 键始终可用。"}}};);
 
+/// 字集设置（配置页「字集」分区）：决定装载哪几张码表。
+///
+/// 两项都只改**数据装载范围**，不动解码/排序语义；引擎在设置变更后重装码表，故保存即生效。
+FCITX_CONFIGURATION(
+    HuxCharsetConfig,
+    fcitx::OptionWithAnnotation<bool, fcitx::ToolTipAnnotation> fullCharset{{
+        .parent = this,
+        .path{"FullCharset"},
+        .description{"启用全字集"},
+        .defaultValue = true,
+        .annotation{"关闭只装主表码表（9,794 字），开启并装载追加码表让生僻字可打；"
+                    "代价是启动多约 0.25 s、常驻多约 88 MB。保存后即时生效。"}}};
+    fcitx::OptionWithAnnotation<bool, fcitx::ToolTipAnnotation> filterNonHan{{
+        .parent = this,
+        .path{"FilterNonHan"},
+        .description{"过滤非汉字"},
+        .defaultValue = true,
+        .annotation{"过滤追加码表里的部首/笔画/注音/假名等非汉字符号（现数据 931 条）；"
+                    "主表自带的标点/假名不受影响。保存后即时生效。"}}};);
+
 /// 配置 schema：fcitx5-configtool 依据它自动生成设置页（fcitx://config/addon/hux）；
 /// 分区结构参照全局设置（`Option<SubConfig>` → 分组标题，选项带悬浮说明）。
 FCITX_CONFIGURATION(
     HuxConfig,
     fcitx::Option<HuxBehaviorConfig> behavior{this, "Behavior", "行为"};
+    fcitx::Option<HuxCharsetConfig> charset{this, "Charset", "字集"};
     fcitx::Option<HuxHotkeyConfig> hotkeys{this, "Hotkey", "快捷键"};);
 
 /// 「虎虚」状态菜单开关：勾选态取自引擎运行时选项（`options.yaml`），激活即翻转并落盘。
@@ -493,6 +516,10 @@ public:
         if (const char *status = hux_engine_status(engine_)) {
             FCITX_INFO() << "hux: " << status;
         }
+        // 码表装载摘要：装了几张码表、两个字集开关的生效值（引擎给出的一行文本，本层不解析）。
+        if (const char *info = hux_engine_data_info(engine_)) {
+            FCITX_INFO() << "hux: data " << info;
+        }
         // 每输入上下文一个会话（现存的与后续新建的都会经工厂创建）。
         // 注册成功是 `~HuxEngine` 里 `unregister()` 能**销毁全部会话**的前提
         // （名字冲突时 fcitx5 直接返回 false 且不创建任何会话）；失败必须显式可见，
@@ -642,6 +669,7 @@ private:
     void setupStatusMenu() {
         static constexpr const char *kLabels[] = {
             "提前上屏", "提前上屏至预编辑", "单字重码组句", "全角标点", "数字直选",
+            "启用全字集", "过滤非汉字",
         };
         static_assert(std::size(kLabels) == HUX_OPTION_COUNT,
                       "状态菜单文案表长度必须等于 HUX_OPTION_COUNT（ABI 角色数）");
@@ -936,6 +964,10 @@ private:
         if (const char *status = hux_engine_status(engine_)) {
             FCITX_INFO() << "hux: " << status;
         }
+        // 重新装载后的码表摘要（同构造期那行）：装了几张、两个字集开关的生效值。
+        if (const char *info = hux_engine_data_info(engine_)) {
+            FCITX_INFO() << "hux: data " << info;
+        }
     }
 
     /// 清空全部输入上下文的面板（预编辑 / 候选 / 两排辅助文本）与会话里的 UI 快照。
@@ -1022,6 +1054,9 @@ private:
         options.page_cycle = behavior.pageCycle.value() ? 1 : 0;
         options.min_retained_input_length =
             behavior.minRetainedInputLength.value();
+        const auto &charset = config_.charset.value();
+        options.full_charset = charset.fullCharset.value() ? 1 : 0;
+        options.filter_non_han = charset.filterNonHan.value() ? 1 : 0;
         if (hux_engine_apply_settings(engine_, &options) == 0) {
             FCITX_WARN() << "hux: apply settings failed";
         }
@@ -1032,40 +1067,69 @@ private:
         if (const char *status = hux_engine_status(engine_)) {
             FCITX_INFO() << "hux: " << status;
         }
+        // 数据装载摘要：设置推送后字集开关可能刚被改写（配置页改了「启用全字集」/「过滤非汉字」，
+        // 或启动时按 `conf/hux.conf` 对齐），补一行让日志落到**最终生效**的装载结果；
+        // 指针同样按契约只用一次。
+        if (const char *data = hux_engine_data_info(engine_)) {
+            FCITX_INFO() << "hux: data " << data;
+        }
     }
 
-    /// 共享开关：状态菜单的 ABI 角色 ↔ 宿主 schema 字段（配置页读的就是它）。
+    /// 与状态菜单共享的开关：角色 ↔ 配置页 schema 字段（配置页读的就是它）。
     ///
-    /// 单张表同时供「写回值」与「取配置文件路径」用，字段名由编译器检查；角色下标即
-    /// `HUX_OPTION_*`（顺序由 Rust 侧钉住）。表外的角色不镜像（引擎新增了 schema 还没有的
-    /// 角色时配置页看不到它，无需镜像；配置页仍能改，反向由 Rust 侧 `apply_settings` 写回存储）。
-    static constexpr SharedBehaviorOption kSharedOptions[] = {
-        {HUX_OPTION_EARLY_COMMIT, &HuxBehaviorConfig::earlyCommit},
-        {HUX_OPTION_EARLY_COMMIT_TO_PREEDIT,
-         &HuxBehaviorConfig::earlyCommitToPreedit},
-        {HUX_OPTION_ALLOW_DUPLICATE_SINGLE,
-         &HuxBehaviorConfig::allowDuplicateSingle},
-        {HUX_OPTION_FULL_SHAPE, &HuxBehaviorConfig::fullShape},
-        {HUX_OPTION_DIGIT_SELECT, &HuxBehaviorConfig::digitSelect},
-    };
+    /// 表同时供「写回值」与「取配置文件路径」用，字段名由编译器检查；角色下标即
+    /// `HUX_OPTION_*`（顺序由 Rust 侧钉住）。共享开关分属两个分区，故一张分区一张表；
+    /// 表外的角色不镜像（引擎新增了 schema 还没有的角色时配置页看不到它，无需镜像；
+    /// 配置页仍能改，反向由 Rust 侧 `apply_settings` 写回存储）。
+    static constexpr SharedRuntimeOption<HuxBehaviorConfig>
+        kSharedBehaviorOptions[] = {
+            {HUX_OPTION_EARLY_COMMIT, &HuxBehaviorConfig::earlyCommit},
+            {HUX_OPTION_EARLY_COMMIT_TO_PREEDIT,
+             &HuxBehaviorConfig::earlyCommitToPreedit},
+            {HUX_OPTION_ALLOW_DUPLICATE_SINGLE,
+             &HuxBehaviorConfig::allowDuplicateSingle},
+            {HUX_OPTION_FULL_SHAPE, &HuxBehaviorConfig::fullShape},
+            {HUX_OPTION_DIGIT_SELECT, &HuxBehaviorConfig::digitSelect},
+        };
+    static constexpr SharedRuntimeOption<HuxCharsetConfig>
+        kSharedCharsetOptions[] = {
+            {HUX_OPTION_FULL_CHARSET, &HuxCharsetConfig::fullCharset},
+            {HUX_OPTION_FILTER_NON_HAN, &HuxCharsetConfig::filterNonHan},
+        };
 
-    /// 角色对应的 schema 字段（表外角色返回空）。
-    SharedBehaviorOption::Option *sharedOption(int32_t role) {
-        HuxBehaviorConfig *behavior = config_.behavior.mutableValue();
-        for (const auto &entry : kSharedOptions) {
+    /// 共享开关的字段类型（两个分区同款）。
+    using SharedOption = SharedRuntimeOption<HuxBehaviorConfig>::Option;
+
+    /// 在某分区的开关表里按角色取字段（表外角色返回空）。
+    template <typename Partition, size_t N>
+    static typename SharedRuntimeOption<Partition>::Option *
+    findSharedOption(Partition &partition,
+                     const SharedRuntimeOption<Partition> (&table)[N],
+                     int32_t role) {
+        for (const auto &entry : table) {
             if (entry.role == role) {
-                return &(behavior->*(entry.field));
+                return &(partition.*(entry.field));
             }
         }
         return nullptr;
     }
 
-    /// 该字段在本配置文件里的路径（`Behavior/<键>`）。
+    /// 角色对应的 schema 字段与它在本配置文件里的路径（表外角色返回 `{nullptr, ""}`）。
     ///
-    /// 由 schema 自身的 `path()` 拼出、不写字面量：schema 改名时「文件里显式写过吗」的判断
-    /// 不会失配（否则启动对齐会悄悄退回缺省值）。
-    std::string sharedOptionPath(const SharedBehaviorOption::Option &option) const {
-        return config_.behavior.path() + "/" + option.path();
+    /// 路径由 schema 自身拼出（分区 `path()` + 字段 `path()`）、不写字面量：分区或字段改名时
+    /// 「文件里显式写过吗」的判断不会失配（否则启动对齐会悄悄退回缺省值）。
+    std::pair<SharedOption *, std::string> sharedOption(int32_t role) {
+        HuxBehaviorConfig *behavior = config_.behavior.mutableValue();
+        if (auto *option =
+                findSharedOption(*behavior, kSharedBehaviorOptions, role)) {
+            return {option, config_.behavior.path() + "/" + option->path()};
+        }
+        HuxCharsetConfig *charset = config_.charset.mutableValue();
+        if (auto *option =
+                findSharedOption(*charset, kSharedCharsetOptions, role)) {
+            return {option, config_.charset.path() + "/" + option->path()};
+        }
+        return {nullptr, {}};
     }
 
     /// 状态菜单翻转后的镜像：把新值写回本 schema（配置页读的就是它），可选落盘。
@@ -1073,11 +1137,11 @@ private:
     /// 不落盘只用于启动时的对齐（[`HuxEngine::adoptStoredRuntimeOptions`]）：那次写入的值
     /// 马上会由 `applyConfig()` 推回引擎，磁盘上的旧文件无需改写。
     void mirrorRuntimeRole(int32_t role, bool value, bool persist = true) {
-        auto *option = sharedOption(role);
-        if (option == nullptr) {
+        const auto shared = sharedOption(role);
+        if (shared.first == nullptr) {
             return;
         }
-        option->setValue(value);
+        shared.first->setValue(value);
         if (!persist) {
             return;
         }
@@ -1089,26 +1153,28 @@ private:
 
     /// 启动对齐：配置文件里**没写过**的共享键沿用引擎（`options.yaml`）的现存值。
     ///
-    /// 那 5 个开关的持久化值由引擎持有（`options.yaml`）；用户在状态菜单里的改动若从未落进
+    /// 这些开关的持久化值由引擎持有（`options.yaml`）；用户在状态菜单里的改动若从未落进
     /// 本 schema（文件缺失 / 只保存过配置页的其它项），直接 `applyConfig()` 会把 schema 缺省
     /// 推给引擎，从而在启动时把用户设置重置。故先按**文件里出现过的键**为界补齐：文件显式写过
     /// 的键以文件为准（配置页权威），没写过的键沿用引擎值（此后也会随 `apply_settings` 写回存储）。
     void adoptStoredRuntimeOptions() {
         fcitx::RawConfig raw;
         fcitx::readAsIni(raw, kConfigPath);
-        for (const auto &entry : kSharedOptions) {
-            auto *option = sharedOption(entry.role);
-            if (option == nullptr ||
-                raw.valueByPath(sharedOptionPath(*option)) != nullptr) {
+        // 角色集合与顺序取自引擎（ABI）：宿主 schema 还没有的角色由 `sharedOption` 返回空、跳过。
+        const int32_t roles = hux_engine_option_role_count();
+        for (int32_t role = 0; role < roles; ++role) {
+            const auto shared = sharedOption(role);
+            if (shared.first == nullptr ||
+                raw.valueByPath(shared.second) != nullptr) {
                 continue; // 文件显式给出 ⇒ 以文件为准
             }
-            const char *key = hux_engine_option_key(engine_, entry.role);
+            const char *key = hux_engine_option_key(engine_, role);
             if (key == nullptr) {
                 continue;
             }
             const int32_t value = hux_engine_option_value(engine_, key);
             if (value >= 0) {
-                option->setValue(value == 1);
+                shared.first->setValue(value == 1);
             }
         }
     }
@@ -1157,11 +1223,13 @@ public:
 // 故在此钉住尺寸与关键偏移——改 `hux_abi.h` 时必须同步三处。
 static_assert(sizeof(hux_key_list) == 4 + 2 * HUX_MAX_KEYS * 4,
               "hux_key_list 布局与 Rust 契约不一致");
-static_assert(sizeof(hux_options) == 13 * 4 + 4 * sizeof(hux_key_list),
+static_assert(sizeof(hux_options) == 15 * 4 + 4 * sizeof(hux_key_list),
               "hux_options 布局与 Rust 契约不一致");
 static_assert(offsetof(hux_options, reverse_lookup_character) == 7 * 4 + sizeof(hux_key_list),
               "hux_options 字段顺序与 Rust 契约不一致");
 static_assert(offsetof(hux_options, min_retained_input_length) == 12 * 4 + 4 * sizeof(hux_key_list),
               "hux_options 末尾字段偏移与 Rust 契约不一致");
+static_assert(offsetof(hux_options, full_charset) == 13 * 4 + 4 * sizeof(hux_key_list),
+              "hux_options 字集字段偏移与 Rust 契约不一致");
 
 FCITX_ADDON_FACTORY(HuxFactory);

@@ -80,9 +80,11 @@ FCITX_ADDON_DIRS=$HOME/.local/lib/fcitx5:/usr/lib/fcitx5
   清单 `assets/themes/MANIFEST`，说明见 [`../assets/themes/README.md`](../assets/themes/README.md)）。
   选用：`fcitx5-configtool` →「附加组件」→「经典界面」→ 主题，或改
   `~/.config/fcitx5/conf/classicui.conf` 的 `Theme=`（fcitx5 会合并系统级与用户级主题目录）。
-- `<prefix>/share/fcitx5/hux/`：**随包数据**（`data/MANIFEST` 列出的码表四件套、词先验位图、
-  音反查索引、标点表）——由 `cmake --install` 按同一清单一并安装；缺了它，引擎的 `Lexicon` /
-  `PunctTable` 静默降级（打字无输出 / 无标点）。
+- `<prefix>/share/fcitx5/hux/`：**随包数据**（`data/MANIFEST` 列出的码表四件套 + 追加码表
+  `tiger_sentence.codes.huma.txt`（生僻字可打，10.3 万字）、词先验位图、音反查索引、标点表）
+  ——由 `cmake --install` 按同一清单一并安装；缺了它，引擎的 `Lexicon` /
+  `PunctTable` 静默降级（打字无输出 / 无标点）。追加码表按「主表 → 追加表」拼接，主表 rank 与
+  简码分配不变；编排见 [`../data/README.md`](../data/README.md) 的「追加码表」。
 - 仅用户级：`~/.config/environment.d/90-hux.conf`（见上）。
 
 两份清单（`data/MANIFEST`、`assets/themes/MANIFEST`）是安装 / 卸载 / CMake 的**单一来源**：
@@ -158,9 +160,13 @@ cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
 配置项见 [`config.md`](config.md)（可在配置工具的「虎虚」页修改）。
 
 状态菜单「**虎虚**」子菜单可随时切换： \
-提前上屏、提前上屏至预编辑、单字重码组句、全角标点、数字直选 \
-（与配置页「行为」分区是同一批项：改动即时生效，并双向同步\
-`tiger_sentence.options.yaml` 与 `conf/hux.conf`，重启后保持）；此外还有「候选窗口显示预编辑」\
+提前上屏、提前上屏至预编辑、单字重码组句、全角标点、数字直选（与配置页「行为」分区是同一批项）、\
+启用全字集、过滤非汉字（与配置页「字集」分区是同一批项）\
+——改动即时生效，并双向同步 `tiger_sentence.options.yaml` 与 `conf/hux.conf`，重启后保持。 \
+其中「启用全字集」关掉后只装主表码表（9,794 字），生僻字不再可打（省约 88 MB 常驻、启动快约 0.13 s）；\
+「过滤非汉字」只作用于追加码表里落在 CJK 统一表意文字区段之外的符号（部首/笔画/注音/假名/兼容汉字等 939 条），主表自带的标点/假名不受影响。 \
+装载结果（几张码表、条目/字数、两个开关的生效值）会随启动日志与「重新部署」各输出一行 `hux: data …`。 \
+此外还有「候选窗口显示预编辑」\
 （写入 `conf/hux.conf`，切换即时生效）、「重新部署」（重读配置与选项存储、重装数据与模型、\
 重置全部会话）与一行模型信息（`模型：<文件名> — <状态>`）。
 

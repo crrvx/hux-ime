@@ -37,6 +37,14 @@ impl<K, V> Map<K, V> {
             entries: hashbrown::HashMap::new(),
         }
     }
+
+    /// 预留至少 `capacity` 个元素的容量（已知规模的集合一次到位，避免增长重哈希）。
+    /// 与底层容器同义：容量是下限提示，不改变任何取值 / 迭代语义。
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            entries: hashbrown::HashMap::with_capacity(capacity),
+        }
+    }
 }
 
 impl<K: Hash + Eq, V> Map<K, V> {
@@ -103,6 +111,13 @@ impl<T: Hash + Eq> Set<T> {
     pub fn new() -> Self {
         Self {
             entries: hashbrown::HashSet::new(),
+        }
+    }
+
+    /// 预留至少 `capacity` 个元素的容量（同 [`Map::with_capacity`]）。
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            entries: hashbrown::HashSet::with_capacity(capacity),
         }
     }
 
@@ -198,6 +213,20 @@ mod tests {
         assert_eq!(map.len(), 1);
         map.clear();
         assert!(map.is_empty());
+    }
+
+    /// 预留容量的入口只影响容量：取值 / 去重语义与 `new` 一致。
+    #[test]
+    fn with_capacity_keeps_container_semantics() {
+        let mut map: Map<String, usize> = Map::with_capacity(64);
+        assert!(map.is_empty());
+        assert_eq!(map.insert("甲".to_string(), 1), None);
+        assert_eq!(map.insert("甲".to_string(), 2), Some(1));
+        assert_eq!(map.len(), 1);
+        let mut set: Set<String> = Set::with_capacity(64);
+        assert!(set.insert("甲".to_string()));
+        assert!(!set.insert("甲".to_string()));
+        assert_eq!(set.len(), 1);
     }
 
     #[test]

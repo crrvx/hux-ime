@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::abi::{HostCallback, core_modifiers};
@@ -13,10 +14,10 @@ use crate::learning_store::{self, LearningStore};
 use crate::paths::{data_dirs, default_model_path, user_data_dir};
 use crate::session::{ReverseLookupState, Session};
 use hux_cfg::roles::{
-    OptionKeys, ROLE_ALLOW_DUPLICATE_SINGLE, ROLE_HIGH_FREQ_LIMIT, ROLE_LEARNING_ON_TAB,
-    ROLE_MIN_RETAINED_INPUT_LENGTH, ROLE_PAGE_CYCLE, ROLE_PAGE_DOWN_KEYS, ROLE_PAGE_SIZE,
-    ROLE_PAGE_UP_KEYS, ROLE_REVERSE_LOOKUP_CHARACTER_KEYS, ROLE_REVERSE_LOOKUP_PRONUNCIATION_KEYS,
-    RUNTIME_OPTION_ROLES,
+    OptionKeys, ROLE_ALLOW_DUPLICATE_SINGLE, ROLE_FILTER_NON_HAN, ROLE_FULL_CHARSET,
+    ROLE_HIGH_FREQ_LIMIT, ROLE_LEARNING_ON_TAB, ROLE_MIN_RETAINED_INPUT_LENGTH, ROLE_PAGE_CYCLE,
+    ROLE_PAGE_DOWN_KEYS, ROLE_PAGE_SIZE, ROLE_PAGE_UP_KEYS, ROLE_REVERSE_LOOKUP_CHARACTER_KEYS,
+    ROLE_REVERSE_LOOKUP_PRONUNCIATION_KEYS, RUNTIME_OPTION_ROLES,
 };
 use hux_cfg::{CandidateLayout, OptionsStore, Settings};
 
@@ -32,9 +33,34 @@ pub(crate) fn wall_clock() -> f64 {
         .unwrap_or(0.0)
 }
 
+/// 运行时开关的**生效值**（会话 → 存储 → 设置缺省；角色无键时按出厂缺省计）。
+///
+/// 这些开关都随会话/存储变化，装配处（构造 / 重新部署 / 每次按键）必须按同一口径取一次：
+/// 配置袋里的值与上下文选项值不一致时，方案的词库 / 学习 mode 会与会话选项脱节。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RuntimeOptions {
+    /// 单字重码参与组句（学习 mode 的 `dup` 位）。
+    duplicate: bool,
+    /// 启用全字集（装载追加码表）。
+    full_charset: bool,
+    /// 过滤追加码表里的非汉字。
+    filter_non_han: bool,
+}
+
+impl RuntimeOptions {
+    /// 设置缺省（构造期：尚无会话与存储，运行时开关的初始值即设置值）。
+    fn from_settings(settings: &Settings) -> Self {
+        Self {
+            duplicate: settings.allow_duplicate_single,
+            full_charset: settings.full_charset,
+            filter_non_han: settings.filter_non_han,
+        }
+    }
+}
+
 impl Engine {
     /// 状态菜单可切换的运行时开关（顺序即菜单顺序 = C ABI 的 `HUX_OPTION_*` 角色序）：
-    /// 方案声明的 4 项 + rime 标准的 `full_shape`。方案未声明的角色**不出现在菜单里**。
+    /// 方案声明的 6 项 + rime 标准的 `full_shape`。方案未声明的角色**不出现在菜单里**。
     pub(crate) fn runtime_options(&self) -> Vec<&'static str> {
         RUNTIME_OPTION_ROLES
             .iter()
@@ -49,27 +75,47 @@ impl Engine {
             .any(|role| self.option_roles.key(role) == Some(name))
     }
 
-    /// 单字重码选项的**生效值**（会话 → 存储 → 设置缺省；角色无键时按 `true` 计，同迁移前）。
-    fn effective_duplicate(&self) -> bool {
+    /// 某个运行时开关的**生效值**（会话 → 存储 → 设置缺省；角色无键时按 `fallback` 计）。
+    fn effective_option(&self, role: &str, fallback: bool) -> bool {
         self.option_roles
-            .key(ROLE_ALLOW_DUPLICATE_SINGLE)
+            .key(role)
             .and_then(|name| self.option_value(name))
-            .unwrap_or(true)
+            .unwrap_or(fallback)
     }
 
-    /// 下发配置袋（设置派生的角色 + 运行时选项的生效值），方案据此自算学习 mode。
+    /// 运行时开关的生效值集合（构造 / 重新部署 / 每次按键共用同一口径）。
+    fn runtime_option_values(&self) -> RuntimeOptions {
+        RuntimeOptions {
+            duplicate: self.effective_option(ROLE_ALLOW_DUPLICATE_SINGLE, true),
+            full_charset: self.effective_option(ROLE_FULL_CHARSET, true),
+            filter_non_han: self.effective_option(ROLE_FILTER_NON_HAN, true),
+        }
+    }
+
+    /// 设置派生的角色 + 运行时开关的生效值（与 [`scheme_config_with_runtime`] 同一装袋口径）。
+    pub(crate) fn scheme_config_with_runtime(&self) -> SchemeConfig {
+        scheme_config_with_runtime(&self.settings, self.runtime_option_values())
+    }
+
+    /// 下发配置袋（设置派生的角色 + 运行时开关的生效值），方案据此自算学习 mode、重建词库。
     ///
-    /// 按键路径每次都会问一次：设置未变且单字重码值不变时直接返回，不重建配置袋。
+    /// 按键路径每次都会问一次：设置未变且运行时开关值不变时直接返回，不重建配置袋。
     pub(crate) fn push_scheme_config(&mut self) {
-        let duplicate = self.effective_duplicate();
-        if !self.config_dirty && self.applied_duplicate == Some(duplicate) {
+        let runtime = self.runtime_option_values();
+        if !self.config_dirty && self.applied_runtime == Some(runtime) {
             return;
         }
         self.config_dirty = false;
-        self.applied_duplicate = Some(duplicate);
-        let config =
-            scheme_config(&self.settings).with(ROLE_ALLOW_DUPLICATE_SINGLE, Value::Bool(duplicate));
+        self.applied_runtime = Some(runtime);
+        let config = self.scheme_config_with_runtime();
         self.apply_scheme_config(config);
+    }
+
+    /// 数据装载摘要（`hux_engine_data_info`）：首次调用按方案算一次并缓存
+    /// （`&self` 入口，故用 `OnceLock`）；配置下发 / 重新部署时置空失效（旧指针随之失效）。
+    pub(crate) fn data_info(&self) -> &CString {
+        self.data_info
+            .get_or_init(|| crate::ui::cstring_lossy(&self.scheme.data_info()))
     }
 
     /// 下发一个配置袋并收录诊断。
@@ -78,6 +124,8 @@ impl Engine {
     /// 平台把诊断并入状态串（与装配期 `config:` 诊断同风格），避免运行期静默降级。
     pub(crate) fn apply_scheme_config(&mut self, config: SchemeConfig) {
         let result = self.scheme.apply_config(&config);
+        // 方案可能已按新的高频上限 / 字集开关重建词库 ⇒ 装载摘要失效，下次按需重算。
+        self.data_info = OnceLock::new();
         let notes: Vec<String> = match result {
             Ok(()) => Vec::new(),
             Err(errors) => errors
@@ -139,10 +187,23 @@ pub(crate) fn unparsable_key_bindings(settings: &Settings) -> Vec<String> {
     notes
 }
 
+/// hux 自身设置 + 运行时开关的生效值 → 完整配置袋。
+///
+/// 设置派生的角色见 [`scheme_config`]；运行时开关（单字重码 / 全字集 / 过滤非汉字）
+/// 由调用方按[会话 → 存储 → 设置缺省]取好（构造期尚无会话与存储，取设置值）。
+pub(crate) fn scheme_config_with_runtime(
+    settings: &Settings,
+    runtime: RuntimeOptions,
+) -> SchemeConfig {
+    scheme_config(settings)
+        .with(ROLE_ALLOW_DUPLICATE_SINGLE, Value::Bool(runtime.duplicate))
+        .with(ROLE_FULL_CHARSET, Value::Bool(runtime.full_charset))
+        .with(ROLE_FILTER_NON_HAN, Value::Bool(runtime.filter_non_han))
+}
+
 /// hux 自身设置 → 方案配置袋（平台是装配根：只有这里知道「设置 → 角色」的对应关系）。
 ///
-/// 角色词汇归 `hux-cfg`；本函数只搬运设置值，方案的运行时选项值（单字重码）由
-/// [`Engine::push_scheme_config`] 追加。
+/// 角色词汇归 `hux-cfg`；本函数只搬运设置值。
 pub(crate) fn scheme_config(settings: &Settings) -> SchemeConfig {
     let host = settings.host_options();
     SchemeConfig::new()
@@ -240,8 +301,8 @@ pub struct Engine {
     pub(crate) option_keys: Vec<Option<CString>>,
     /// 设置派生的配置袋是否需要重下发（`apply_settings` 置位）。
     config_dirty: bool,
-    /// 上次下发的单字重码生效值（`None` = 尚未下发）。
-    applied_duplicate: Option<bool>,
+    /// 上次下发的运行时开关生效值（`None` = 尚未下发）。
+    applied_runtime: Option<RuntimeOptions>,
     /// 本次按键「已提交且未消费」：宿主层应消费该键并以 `forwardKey` 重发，
     /// 保证「提交 → 按键」送达顺序（对齐 fcitx5 核心 `KeyEventOrderFix` 修法）。
     pub forward_after_commit: bool,
@@ -276,6 +337,9 @@ pub struct Engine {
     /// 模型摘要（`hux_engine_model_info` 的指针来源）：**重新部署后替换**，
     /// 此前返回的指针随即失效（同 `status` 的契约）。
     pub(crate) model_info: CString,
+    /// 数据装载摘要（`hux_engine_data_info` 的指针来源）：**首次调用时算一次**并缓存；
+    /// 配置下发 / 重新部署时置空（此前返回的指针随即失效，同 `status` 的契约）。
+    pub(crate) data_info: OnceLock<CString>,
 }
 impl Engine {
     pub(crate) fn new(host: Option<HostCallback>) -> Self {
@@ -315,10 +379,9 @@ impl Engine {
         model_source: ModelSource,
     ) -> Self {
         let settings = Settings::default();
-        // 构造方案前先按设置装配配置袋；单字重码的初始值取设置缺省（尚无会话与存储）。
-        let applied_duplicate = settings.allow_duplicate_single;
-        let initial = scheme_config(&settings)
-            .with(ROLE_ALLOW_DUPLICATE_SINGLE, Value::Bool(applied_duplicate));
+        // 构造方案前先按设置装配配置袋；运行时开关的初始值取设置缺省（尚无会话与存储）。
+        let applied_runtime = RuntimeOptions::from_settings(&settings);
+        let initial = scheme_config_with_runtime(&settings, applied_runtime);
         let (mut scheme, option_roles, mut notes) =
             assemble_scheme(&dirs, model_source.resolve(&dirs), &initial);
         // 选项：有存储则同步（参照 `M.options.sync`，同步写入由核心抑制观察）；
@@ -360,7 +423,7 @@ impl Engine {
             option_roles,
             option_keys,
             config_dirty: false,
-            applied_duplicate: Some(applied_duplicate),
+            applied_runtime: Some(applied_runtime),
             forward_after_commit: false,
             status: crate::ui::cstring_lossy(&status_base),
             status_base,
@@ -374,6 +437,7 @@ impl Engine {
             options_dir,
             model_source,
             model_info,
+            data_info: OnceLock::new(),
         }
     }
 
@@ -865,11 +929,8 @@ impl Engine {
         let dirs = self.dirs.clone();
         let options_dir = self.options_dir.clone();
         let model = self.model_source.resolve(&dirs);
-        // 配置袋与构造同源：设置派生的角色 + 运行时选项的生效值（单字重码）。
-        let config = scheme_config(&self.settings).with(
-            ROLE_ALLOW_DUPLICATE_SINGLE,
-            Value::Bool(self.effective_duplicate()),
-        );
+        // 配置袋与构造同源：设置派生的角色 + 运行时开关的生效值（单字重码 / 字集开关）。
+        let config = self.scheme_config_with_runtime();
         let (mut scheme, option_roles, mut notes) = assemble_scheme(&dirs, model, &config);
         // 学习库：重开（重读库文件）。必须先释放旧句柄——同一路径二次打开会撞上 LevelDB 的
         // 独占锁（rusty-leveldb 的 `LOCK`）；库名依赖方案 id，故按**新**方案的 id 打开。
@@ -924,10 +985,11 @@ impl Engine {
         }
         // 新方案拿到配置袋（与构造同源；学习索引在下一次按键时下发）。
         self.config_dirty = true;
-        self.applied_duplicate = None;
+        self.applied_runtime = None;
         self.push_scheme_config();
-        // 模型摘要：指针在此替换（此前返回的指针随即失效，见 `hux_abi.h`）。
+        // 模型摘要 / 数据装载摘要：指针在此替换（此前返回的指针随即失效，见 `hux_abi.h`）。
         self.model_info = crate::ui::cstring_lossy(self.scheme.model_info());
+        self.data_info = OnceLock::new();
         true
     }
 

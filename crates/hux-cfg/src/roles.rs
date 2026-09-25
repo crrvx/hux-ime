@@ -30,6 +30,10 @@ pub const ROLE_EARLY_COMMIT_TO_PREEDIT: &str = "early_commit_to_preedit";
 pub const ROLE_ALLOW_DUPLICATE_SINGLE: &str = "allow_duplicate_single";
 /// 数字直选（运行时选项；键由方案声明）。
 pub const ROLE_DIGIT_SELECT: &str = "digit_select";
+/// 启用全字集（运行时选项；键由方案声明）：关掉只装主表码表，不装追加码表。
+pub const ROLE_FULL_CHARSET: &str = "full_charset";
+/// 过滤非汉字（运行时选项；键由方案声明）：追加码表里的部首/笔画/注音/假名等不入词库。
+pub const ROLE_FILTER_NON_HAN: &str = "filter_non_han";
 /// 全角标点（**宿主标准选项**：键即 rime 标准名，不由方案声明）。
 pub const ROLE_FULL_SHAPE: &str = "full_shape";
 /// ASCII 标点（**宿主标准选项**：键即 rime 标准名，不由方案声明）。
@@ -60,6 +64,8 @@ pub const SCHEME_OPTION_ROLES: &[&str] = &[
     ROLE_EARLY_COMMIT_TO_PREEDIT,
     ROLE_ALLOW_DUPLICATE_SINGLE,
     ROLE_DIGIT_SELECT,
+    ROLE_FULL_CHARSET,
+    ROLE_FILTER_NON_HAN,
 ];
 
 /// 宿主 / 内核标准选项角色：**键 = 角色名**（rime 标准名，不由方案声明）。
@@ -72,6 +78,8 @@ pub const RUNTIME_OPTION_ROLES: &[&str] = &[
     ROLE_ALLOW_DUPLICATE_SINGLE,
     ROLE_FULL_SHAPE,
     ROLE_DIGIT_SELECT,
+    ROLE_FULL_CHARSET,
+    ROLE_FILTER_NON_HAN,
 ];
 
 /// 引擎设置映射到方案配置袋的角色全集（装配完整性由此守护：缺一即测试失败）。
@@ -175,6 +183,14 @@ mod tests {
                 role: ROLE_DIGIT_SELECT,
                 key: "scheme_digit_select",
             },
+            OptionDecl {
+                role: ROLE_FULL_CHARSET,
+                key: "scheme_full_charset",
+            },
+            OptionDecl {
+                role: ROLE_FILTER_NON_HAN,
+                key: "scheme_filter_non_han",
+            },
         ]
     }
 
@@ -222,7 +238,7 @@ mod tests {
 
     #[test]
     fn resolve_needs_every_scheme_role() {
-        // 正例：4 个角色齐备，宿主标准键就位。
+        // 正例：方案声明的角色齐备，宿主标准键就位。
         let keys = OptionKeys::resolve(&declarations()).expect("完整声明");
         assert_eq!(keys.key(ROLE_EARLY_COMMIT), Some("scheme_early_commit"));
         assert_eq!(keys.key(ROLE_FULL_SHAPE), Some("full_shape"));
