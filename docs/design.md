@@ -39,7 +39,9 @@ crate / 模块级结构与「结构正义」硬规则见 [`refactor.md`](refacto
   > `$XDG_DATA_DIRS/*/fcitx5/hux`（缺省 `/usr/local/share`、`/usr/share`）；
   可写数据（选项 / 学习库 / 模型）落用户目录；开发可用 `HUX_DATA_DIRS`（冒号分隔）
   与 `HUX_MODEL` 覆盖。
-- 运行数据：码表四件套（`tiger_sentence.{codes,char_ranks,full_code_whitelist,supplement}.txt`）、
+- 运行数据：码表四件套（`tiger_sentence.{codes,char_ranks,full_code_whitelist,supplement}.txt`）
+  与追加码表 `tiger_sentence.codes.<name>.txt`（拼在主表之后，主表 rank 不变；见
+  [`../data/README.md`](../data/README.md) 的「追加码表」）、
   `models/sentence-ngram-mobile.bin`（TCSKNM02）、`symbols.yaml`、词先验（TCSLEX01）、音反查索引（TCSRV01）、
   `tiger_sentence.options.yaml`、学习库 `tiger_sentence_learning_<hash>.userdb/`（LevelDB 同构）。
 - 仓库 `data/` 的清单、来源与署名见 [`../data/README.md`](../data/README.md) 与

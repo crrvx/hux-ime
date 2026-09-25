@@ -80,9 +80,11 @@ FCITX_ADDON_DIRS=$HOME/.local/lib/fcitx5:/usr/lib/fcitx5
   清单 `assets/themes/MANIFEST`，说明见 [`../assets/themes/README.md`](../assets/themes/README.md)）。
   选用：`fcitx5-configtool` →「附加组件」→「经典界面」→ 主题，或改
   `~/.config/fcitx5/conf/classicui.conf` 的 `Theme=`（fcitx5 会合并系统级与用户级主题目录）。
-- `<prefix>/share/fcitx5/hux/`：**随包数据**（`data/MANIFEST` 列出的码表四件套、词先验位图、
-  音反查索引、标点表）——由 `cmake --install` 按同一清单一并安装；缺了它，引擎的 `Lexicon` /
-  `PunctTable` 静默降级（打字无输出 / 无标点）。
+- `<prefix>/share/fcitx5/hux/`：**随包数据**（`data/MANIFEST` 列出的码表四件套 + 追加码表
+  `tiger_sentence.codes.huma.txt`（生僻字可打，10.3 万字）、词先验位图、音反查索引、标点表）
+  ——由 `cmake --install` 按同一清单一并安装；缺了它，引擎的 `Lexicon` /
+  `PunctTable` 静默降级（打字无输出 / 无标点）。追加码表按「主表 → 追加表」拼接，主表 rank 与
+  简码分配不变；编排见 [`../data/README.md`](../data/README.md) 的「追加码表」。
 - 仅用户级：`~/.config/environment.d/90-hux.conf`（见上）。
 
 两份清单（`data/MANIFEST`、`assets/themes/MANIFEST`）是安装 / 卸载 / CMake 的**单一来源**：

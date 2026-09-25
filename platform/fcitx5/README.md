@@ -105,7 +105,8 @@ D 16:41:47.539737 hux.cpp:404] hux: ~HuxEngine
   与 `install.sh` / `uninstall.sh` / CI 守卫同源）；
 - `<prefix>/share/icons/hicolor/{scalable,48x48,22x22}/apps/hux.{svg,png}`（输入法条目与状态区图标，
   `Icon=hux` 按主题名解析；图形主源在多平台共享目录 `assets/branding/hux.png`，其余由它派生）；
-- `<prefix>/share/fcitx5/hux/`：码表四件套 + 词先验 + 拼音索引 + 标点表（`data/MANIFEST` 单一来源，
+- `<prefix>/share/fcitx5/hux/`：码表四件套 + 追加码表 `tiger_sentence.codes.huma.txt`（生僻字
+  可打，主表 rank 不变）+ 词先验 + 拼音索引 + 标点表（`data/MANIFEST` 单一来源，
   `install.sh` 装后逐条核对、`uninstall.sh` 按同一清单删除）。
 
 **随包数据随 `cmake --install` 一并安装**（CMake 按 `data/MANIFEST` 读出文件清单）：只装 3 个插件

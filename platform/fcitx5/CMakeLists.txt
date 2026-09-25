@@ -75,7 +75,8 @@ install(FILES "${HUX_WORKSPACE}/assets/branding/hux-22.png"
         DESTINATION share/icons/hicolor/22x22/apps
         RENAME hux.png)
 
-# 随包数据（码表四件套 + 词先验 + 拼音索引 + 标点表）：清单 `data/MANIFEST` 是**单一来源**——
+# 随包数据（码表四件套 + 追加码表 `tiger_sentence.codes.<name>.txt` + 词先验 + 拼音索引 + 标点表）：
+# 清单 `data/MANIFEST` 是**单一来源**——
 # `install.sh` 按它核对落盘、`uninstall.sh` 按它删除（`tools/checks/check_data_manifest.sh` 守护三者一致）。
 #
 # 此前 CMake 只装 `libhux.so` 与两个 conf，只走 `cmake --install`
