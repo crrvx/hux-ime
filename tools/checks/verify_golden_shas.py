@@ -1,20 +1,16 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""校验 `goldens/regenerate.md` 的校验和表与金样内部头部。
-
-> 表与 pin 声明在 `goldens/regenerate.md`（`goldens/README.md` 只留清单 / transcript 格式 /
-> 校验入口 / 规则），
-> 校验项与强度不变。
+"""校验 `goldens/README.md` 的校验和表与金样内部头部。
 
 三件事，任一不符即 `exit 1`：
 
-1. **表 ↔ 文件**：`regenerate.md`「数据夹具」「已入库金样 sha256」两张表里每一条 `| 文件 | sha256 |`
+1. **表 ↔ 文件**：`goldens/README.md`「数据夹具」「已入库金样 sha256」两张表里每一条 `| 文件 | sha256 |`
    都按候选根（仓库根 / `goldens/` / `goldens/lexicon/`）唯一解析到实际文件并逐字节比对；
    且顶层金样（`goldens/*.tsv.gz`、`goldens/ngram_fixture.bin`）**必须**都在表里（防新增未登记）。
 2. **内部头部 ↔ 表 / 文档声明的 pin**：四份探针 / 表金样（`key`、`key_sequence`、
    `key_sequence_tab`、`sound_to_char_shape`）头部的 `# reference: … @ <pin>` 与 `<来源文件> sha256:` 必须与
-   `regenerate.md`「来源与校验和」声明的 pin / sha 一致（换 pin 重生成后只改表、不改头部即失败）。
+   `goldens/README.md`「来源与校验和」声明的 pin / sha 一致（换 pin 重生成后只改表、不改头部即失败）。
 3. **参照仓库文件 ↔ pin**（`--reference DIR`，需要参照检出）：`lua/*`、`tools/*` 行按该行声明的
    pin 用 `git show <pin>:<path>` 取内容比对；「两 pin 相同」的行两个 pin 都必须相符。
 
@@ -34,7 +30,7 @@ import sys
 from pathlib import Path
 
 # sha 表与 pin 声明所在文档。
-SHA_DOC = Path("goldens/regenerate.md")
+SHA_DOC = Path("goldens/README.md")
 SHA256_RE = re.compile(r"\b[0-9a-f]{64}\b")
 SHA1_RE = re.compile(r"\b[0-9a-f]{40}\b")
 TOP_LEVEL_GLOBS = ("*.tsv.gz", "ngram_fixture.bin")
@@ -97,7 +93,7 @@ def parse_tables(text: str) -> tuple[dict[str, str], dict[str, tuple[str, str, s
             continue
         path = path_match.group(1)
         label = cells[0].replace("`", "")
-        # 参照仓库文件行：首列以 `lua/` / `tools/` 开头（`regenerate.md` 明标「均为参照仓库路径」）。
+        # 参照仓库文件行：首列以 `lua/` / `tools/` 开头（`goldens/README.md` 明标「均为参照仓库路径」）。
         if path.startswith(("lua/", "tools/")):
             reference[label] = (cells[1], shas[0], path)
         else:
