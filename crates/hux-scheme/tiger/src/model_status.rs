@@ -86,22 +86,18 @@ impl ModelStatus {
     }
 
     /// 一行摘要（宿主状态菜单「模型」项直接显示）：
-    /// `<文件名> — 已加载（<格式标签>）` / `未找到模型（整句排序退化为码表名次）` /
-    /// `<文件名> — 装载失败：<原因>`。
+    /// `已加载（<格式标签>）` / `未找到模型` / `装载失败：<原因>`。
+    ///
+    /// 文件名不进摘要（模型文件名固定，菜单里不靠它辨认）；失败原因由装载器给出，
+    /// 原样照抄、不解析。
     pub fn summary(&self) -> String {
         match self.state {
-            ModelState::Loaded => format!("{} — 已加载（{}）", self.display_file(), self.format),
-            ModelState::NotFound => "未找到模型（整句排序退化为码表名次）".to_string(),
-            ModelState::Failed => format!(
-                "{} — 装载失败：{}",
-                self.display_file(),
-                self.error.as_deref().unwrap_or("未知原因")
-            ),
+            ModelState::Loaded => format!("已加载（{}）", self.format),
+            ModelState::NotFound => "未找到模型".to_string(),
+            ModelState::Failed => {
+                format!("装载失败：{}", self.error.as_deref().unwrap_or("未知原因"))
+            }
         }
-    }
-
-    fn display_file(&self) -> &str {
-        self.file.as_deref().unwrap_or("模型")
     }
 }
 
@@ -128,7 +124,7 @@ fn format_label_of(path: &Path) -> &'static str {
     }
 }
 
-/// 文件名（摘要只显示文件名，不显示完整路径）。
+/// 文件名（只留基名，不含完整路径）。
 fn file_name(path: &Path) -> String {
     path.file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -158,32 +154,26 @@ mod tests {
     }
 
     #[test]
-    fn summary_covers_every_state_with_the_file_name() {
+    fn summary_covers_every_state() {
         let mut status = ModelStatus::not_found();
         assert_eq!(status.state(), ModelState::NotFound);
         assert_eq!(status.file(), None);
-        assert_eq!(status.summary(), "未找到模型（整句排序退化为码表名次）");
+        assert_eq!(status.summary(), "未找到模型");
 
-        // 三阶夹具：真实文件头 ⇒ 三阶标签 + 文件名（不含路径）。
+        // 三阶夹具：真实文件头 ⇒ 三阶标签（摘要只报格式标签，不报文件名）。
         let three = fixture("ngram_fixture.bin");
         status.record_loaded(&three);
         assert_eq!(status.state(), ModelState::Loaded);
         assert_eq!(status.file(), Some("ngram_fixture.bin"));
         assert_eq!(status.format(), "三阶 TCSKNM02");
-        assert_eq!(
-            status.summary(),
-            "ngram_fixture.bin — 已加载（三阶 TCSKNM02）"
-        );
+        assert_eq!(status.summary(), "已加载（三阶 TCSKNM02）");
 
         // 装载失败：错误原文照抄（调用方不做任何解析）。
         status.record_failed(&three, "not a mobile TCSKNM02 model");
         assert_eq!(status.state(), ModelState::Failed);
         assert_eq!(status.file(), Some("ngram_fixture.bin"));
         assert_eq!(status.error(), Some("not a mobile TCSKNM02 model"));
-        assert_eq!(
-            status.summary(),
-            "ngram_fixture.bin — 装载失败：not a mobile TCSKNM02 model"
-        );
+        assert_eq!(status.summary(), "装载失败：not a mobile TCSKNM02 model");
     }
 
     /// 五阶标签不必等五阶夹具/读取器落地：标签按 magic 判定，用临时文件即可覆盖
@@ -198,10 +188,7 @@ mod tests {
         assert_eq!(status.state(), ModelState::Failed);
         assert_eq!(status.format(), "五阶 TCSKNM03");
         assert_eq!(status.file(), Some("sentence-fivegram-mobile.bin"));
-        assert_eq!(
-            status.summary(),
-            "sentence-fivegram-mobile.bin — 装载失败：unsupported magic"
-        );
+        assert_eq!(status.summary(), "装载失败：unsupported magic");
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -213,9 +200,6 @@ mod tests {
         status.record_loaded(&path);
         assert_eq!(status.format(), "未知格式");
         assert_eq!(status.state(), ModelState::Loaded);
-        assert_eq!(
-            status.summary(),
-            "tiger_sentence.codes.txt — 已加载（未知格式）"
-        );
+        assert_eq!(status.summary(), "已加载（未知格式）");
     }
 }

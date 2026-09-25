@@ -110,11 +110,11 @@ CI `rust` 作业以同一 sha 校验该数据文件（防止替换或漂移）�
 
 | 资源（安装目录内文件名） | 来源（项目 / 作者 / URL / pin 或 sha256） | 作用 | 许可 | 随包 | 默认去向 | 校验（守卫 / CI 作业） | 再生 / 更新 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `models/sentence-ngram-mobile.bin` | 虎整句（tiger-sentense-rime）作者与贡献者；上游 [model release](https://github.com/lvyww/tiger-sentense-rime/releases/tag/model) 或虎码 QQ 群 `948170058` | 三阶 KN 语言模型（TCSKNM02），整句排序打分 | `GPL-3.0-only` | 否 | 用户级 `~/.local/share/fcitx5/hux/models/`（推荐）；系统级 `<prefix>/share/fcitx5/hux/models/`；`HUX_MODEL` 可指向任意路径 | 文件头 magic `TCSKNM02` + 上游 Release 附件的 sha256（当前默认 `full-kn-m5-v2`：469,886,928 字节 / 448.12 MiB，sha256 `c0063898fdff27c1fb00c1c72fa28a6c1b375fade1ec2045d731b9db958bdecc`，另有 fused 214 MiB 变体）；状态菜单「模型」显示 `<文件名> — 已加载（三阶 TCSKNM02）` | 用户自取（上游 Release / 虎码 QQ 群）后放到「默认去向」的 `models/` 下 |
+| `models/sentence-ngram-mobile.bin` | 虎整句（tiger-sentense-rime）作者与贡献者；上游 [model release](https://github.com/lvyww/tiger-sentense-rime/releases/tag/model) 或虎码 QQ 群 `948170058` | 三阶 KN 语言模型（TCSKNM02），整句排序打分 | `GPL-3.0-only` | 否 | 用户级 `~/.local/share/fcitx5/hux/models/`（推荐）；系统级 `<prefix>/share/fcitx5/hux/models/`；`HUX_MODEL` 可指向任意路径 | 文件头 magic `TCSKNM02` + 上游 Release 附件的 sha256（当前默认 `full-kn-m5-v2`：469,886,928 字节 / 448.12 MiB，sha256 `c0063898fdff27c1fb00c1c72fa28a6c1b375fade1ec2045d731b9db958bdecc`，另有 fused 214 MiB 变体）；状态菜单「模型」显示 `已加载（三阶 TCSKNM02）`（只报状态 + 格式标签，不报文件名） | 用户自取（上游 Release / 虎码 QQ 群）后放到「默认去向」的 `models/` 下 |
 | `models/sentence-fivegram-mobile.bin` | 同上 | 五阶 KN 语言模型（TCSKNM03） | `GPL-3.0-only` | 否 | 同上 | 文件头 magic `TCSKNM03`（状态菜单按文件头标为「五阶 TCSKNM03」）；装载器只接受 TCSKNM02 mobile，默认查找也只找 `models/sentence-ngram-mobile.bin`——把五阶文件放进 `models/` 不会被默认命中，经 `HUX_MODEL` 指向它会以 `not a mobile TCSKNM02 model` 装载失败 | 同上 |
 
 **本节守卫**：不随包，故无仓库内校验；放置后看状态菜单「模型」一行
-（`已加载（三阶 TCSKNM02）` / `未找到模型（整句排序退化为码表名次）` / `装载失败：<原因>`），
+（`已加载（三阶 TCSKNM02）` / `未找到模型` / `装载失败：<原因>`），
 选项与诊断说明见 [`config.md`](config.md)。安装脚本与 README 都只给下载入口与落点，不捆绑模型文件。
 
 ## 3. 共享图形（随包，Linux 安装规则取用）

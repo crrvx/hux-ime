@@ -2408,6 +2408,9 @@ fn host_schema_reverse_lookup_defaults_are_grave_and_asciitilde() {
 ///
 /// 两边各写一份默认值且此前无任何校验：C++ 构造时即 `applyConfig` 覆盖引擎侧默认，
 /// 故 Rust 侧漂移不会被发现。此处以「解析 C++ 源 ↔ 逐项比对」把它变成 CI 不变量。
+/// 两个三态项（「提前上屏」「标点」）各承载两个 `Settings` 布尔字段：期望值取**两个布尔的
+/// 默认值按引擎折算规则**拼出的枚举名（见 `tri_state_options_fold_to_engine_booleans`），
+/// 故两侧任一处漂移都会在此失败。
 #[test]
 fn schema_defaults_match_settings_defaults() {
     let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/shell/hux.cpp"))
@@ -2462,14 +2465,23 @@ fn schema_defaults_match_settings_defaults() {
     let enum_tail = |raw: &str| raw.rsplit("::").next().unwrap_or(raw).to_string();
 
     let settings = Settings::default();
+    // 三态项的期望枚举名：由两个布尔按引擎折算规则拼出（配置页 ⇒ `applyConfig()` 的同一映射）。
+    let early_commit_mode = match (settings.early_commit, settings.early_commit_to_preedit) {
+        (false, _) => "Off",
+        (true, true) => "ToPreedit",
+        (true, false) => "ToOutput",
+    };
+    let punct_mode = match (settings.ascii_punct, settings.full_shape) {
+        (true, _) => "Ascii",
+        (false, true) => "FullShapeAll",
+        (false, false) => "FullShapeCommon",
+    };
     let mut checked = 0usize;
     for (name, raw) in &defaults {
         let expected: String = match name.as_str() {
-            "EarlyCommit" => settings.early_commit.to_string(),
-            "EarlyCommitToPreedit" => settings.early_commit_to_preedit.to_string(),
+            "EarlyCommitMode" => early_commit_mode.to_string(),
+            "PunctMode" => punct_mode.to_string(),
             "AllowDuplicateSingle" => settings.allow_duplicate_single.to_string(),
-            "FullShape" => settings.full_shape.to_string(),
-            "AsciiPunct" => settings.ascii_punct.to_string(),
             "TabLearning" => settings.learning_on_tab.to_string(),
             "DigitSelect" => settings.digit_select.to_string(),
             "PageCycle" => settings.page_cycle.to_string(),
@@ -2496,7 +2508,10 @@ fn schema_defaults_match_settings_defaults() {
         assert_eq!(actual, expected, "schema 默认值与 Settings 不一致：{name}");
         checked += 1;
     }
-    assert_eq!(checked, 17, "应逐项核对 17 个引擎设置");
+    assert_eq!(
+        checked, 15,
+        "应逐项核对 15 个引擎设置（两个三态项各承载两个布尔字段：19 个字段 = 17 项）"
+    );
 }
 
 /// 反向守护：上面那条测试只保证「schema 里出现的项与 `Settings` 一致」，
@@ -2506,18 +2521,20 @@ fn schema_defaults_match_settings_defaults() {
 ///
 /// 表内每项都用 `offset_of!` 引用真实字段名 ⇒ **改名字段即编译失败**；`FIELDS.len()` 被钉住
 /// ⇒ 新增字段必须同步本表与配置页（否则此测试先红）。这正是本表要堵的漂移入口。
+/// 两个三态项各承载两个字段（「提前上屏」↔ `early_commit` / `early_commit_to_preedit`、
+/// 「标点」↔ `ascii_punct` / `full_shape`），故路径列允许重复、比对前对期望集合去重。
 #[test]
 fn every_settings_field_is_declared_in_the_schema() {
-    // （字段名，schema 路径名，偏移）。顺序 = `Settings` 声明序。
+    // （字段名，承载它的 schema 路径名，偏移）。顺序 = `Settings` 声明序。
     const FIELDS: &[(&str, &str, usize)] = &[
         (
             "early_commit",
-            "EarlyCommit",
+            "EarlyCommitMode",
             std::mem::offset_of!(Settings, early_commit),
         ),
         (
             "early_commit_to_preedit",
-            "EarlyCommitToPreedit",
+            "EarlyCommitMode",
             std::mem::offset_of!(Settings, early_commit_to_preedit),
         ),
         (
@@ -2527,12 +2544,12 @@ fn every_settings_field_is_declared_in_the_schema() {
         ),
         (
             "full_shape",
-            "FullShape",
+            "PunctMode",
             std::mem::offset_of!(Settings, full_shape),
         ),
         (
             "ascii_punct",
-            "AsciiPunct",
+            "PunctMode",
             std::mem::offset_of!(Settings, ascii_punct),
         ),
         (
@@ -2652,9 +2669,349 @@ fn every_settings_field_is_declared_in_the_schema() {
     engine_paths.sort_unstable();
     let mut expected: Vec<&str> = FIELDS.iter().map(|(_, path, _)| *path).collect();
     expected.sort_unstable();
+    // 一个三态项承载两个字段 ⇒ 期望集合先去重；`declared` 本身已去重。
+    expected.dedup();
     assert_eq!(
         engine_paths, expected,
         "schema 路径集合与 Settings 字段表不一致（双向守护：两侧都必须有对方）"
+    );
+}
+
+/// 三态下拉（「提前上屏」「标点」）↔ 引擎四个布尔开关的映射守卫（源码级）。
+///
+/// 三态**只存在于配置页与状态菜单之间**：引擎侧仍是 `hux_options` 的四个 `int32_t`
+/// （`HUX_OPTION_*` 角色与 ABI 一律不动）。折算规则写在 C++ 里、cargo 测试执行不到，故按源码
+/// 文本把三条链路钉住：schema（路径 / 行标签 / 三项显示名 / 默认态）、`applyConfig()`（枚举 →
+/// 四个布尔，即配置页推送方向）、三个翻转函数（引擎开关值 → 枚举，即状态菜单方向）。
+/// 回滚本次改动（恢复四个布尔项）本测试即失败；另经变异核对：改折算方向、改角色指向的字段
+/// 或调换表项角色序都会红。
+#[test]
+fn tri_state_options_fold_to_engine_booleans() {
+    let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/shell/hux.cpp"))
+        .expect("read hux.cpp");
+    // 折成单行：断行与缩进不影响断言（涉及的字符串字面量里没有空白，故折叠不改变它们）。
+    let flat = source.split_whitespace().collect::<Vec<_>>().join(" ");
+    // 取某个函数「签名 + 函数体」（按花括号配平，避免窗口切进下一个函数）。
+    let function = |signature: &str| -> String {
+        let start = flat
+            .find(signature)
+            .unwrap_or_else(|| panic!("hux.cpp 缺少 {signature}"));
+        let open = start
+            + flat[start..]
+                .find('{')
+                .unwrap_or_else(|| panic!("{signature} 没有函数体"));
+        let mut depth = 0i32;
+        for (offset, ch) in flat[open..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return flat[start..open + offset + 1].to_string();
+                    }
+                }
+                _ => {}
+            }
+        }
+        panic!("{signature} 的花括号不配平");
+    };
+    // 取某段源码（从签名到其后的第一个 `};`，用于表 / 文案表这种聚合块）。
+    let block = |signature: &str| -> &str {
+        let start = flat
+            .find(signature)
+            .unwrap_or_else(|| panic!("hux.cpp 缺少 {signature}"));
+        let end = start
+            + flat[start..]
+                .find("};")
+                .unwrap_or_else(|| panic!("{signature} 未闭合"));
+        &flat[start..end]
+    };
+
+    // 1) 两个三态项：行标签 + 三项显示名（两侧注解必须逐字相同，宏自带 static_assert）。
+    for declaration in [
+        ".description{\"提前上屏\"}",
+        ".description{\"标点\"}",
+        "FCITX_CONFIG_ENUM_NAME(HuxEarlyCommitMode, \"关闭\", \"至输出\", \"至预编辑串\");",
+        "FCITX_CONFIG_ENUM_I18N_ANNOTATION(HuxEarlyCommitMode, \"关闭\", \"至输出\", \"至预编辑串\");",
+        "FCITX_CONFIG_ENUM_NAME(HuxPunctMode, \"ascii（all）\", \"全角（常用）\", \"全角（all）\");",
+        "FCITX_CONFIG_ENUM_I18N_ANNOTATION(HuxPunctMode, \"ascii（all）\", \"全角（常用）\", \"全角（all）\");",
+    ] {
+        assert!(
+            flat.contains(declaration),
+            "三态下拉的 schema 声明缺失：{declaration}"
+        );
+    }
+
+    // 2) 默认态 = 现状：提前上屏「至输出」（`early_commit` 开、不进预编辑）、标点「全角（常用）」
+    //    （两个标点开关皆关）。
+    assert_eq!(
+        schema_default("EarlyCommitMode"),
+        "HuxEarlyCommitMode::ToOutput"
+    );
+    assert_eq!(schema_default("PunctMode"), "HuxPunctMode::FullShapeCommon");
+
+    // 3) 配置页推送：枚举 → 四个布尔（`hux_options` 的字段名不变）。
+    for folded in [
+        "options.early_commit = earlyCommitMode == HuxEarlyCommitMode::Off ? 0 : 1;",
+        "options.early_commit_to_preedit = earlyCommitMode == HuxEarlyCommitMode::ToPreedit ? 1 : 0;",
+        "options.ascii_punct = punctMode == HuxPunctMode::Ascii ? 1 : 0;",
+        "options.full_shape = punctMode == HuxPunctMode::FullShapeAll ? 1 : 0;",
+    ] {
+        assert!(
+            flat.contains(folded),
+            "applyConfig() 的三态折算与契约不符：{folded}"
+        );
+    }
+
+    // 4) 状态菜单翻转：引擎开关值 → 枚举。勾选态由引擎选项给出（即上面第 3 条的折算结果），
+    //    故「勾选态 = 关闭 / 至输出 / 至预编辑串」与「全角标点 = 全角（all）」在此一并钉住。
+    let early_commit = function("constexpr HuxEarlyCommitMode toggleEarlyCommit(");
+    assert!(
+        early_commit.contains("if (!on) { return HuxEarlyCommitMode::Off; }"),
+        "关「提前上屏」必须落「关闭」：{early_commit}"
+    );
+    assert!(
+        early_commit.contains(
+            "return mode == HuxEarlyCommitMode::Off ? HuxEarlyCommitMode::ToOutput : mode;"
+        ),
+        "开「提前上屏」只在「关闭」时落到「至输出」（不夺「至预编辑串」）：{early_commit}"
+    );
+    assert!(
+        !early_commit.contains("ToPreedit"),
+        "「提前上屏」的翻转不得改动「至预编辑串」：{early_commit}"
+    );
+
+    let to_preedit = function("constexpr HuxEarlyCommitMode toggleEarlyCommitToPreedit(");
+    assert!(
+        to_preedit.contains("if (on) { return HuxEarlyCommitMode::ToPreedit; }"),
+        "开「提前上屏至预编辑」必须落「至预编辑串」：{to_preedit}"
+    );
+    assert!(
+        to_preedit.contains(
+            "return mode == HuxEarlyCommitMode::ToPreedit ? HuxEarlyCommitMode::ToOutput : mode;"
+        ),
+        "关「提前上屏至预编辑」只把「至预编辑串」降为「至输出」、其余态保持\
+         （无条件降级会在启动对齐里复活刚定下的「关闭」）：{to_preedit}"
+    );
+
+    let punct = function("constexpr HuxPunctMode togglePunct(");
+    assert!(
+        punct.contains("return on ? HuxPunctMode::FullShapeAll : HuxPunctMode::FullShapeCommon;"),
+        "「全角标点」开 ⇒ 「全角（all）」、关 ⇒ 「全角（常用）」：{punct}"
+    );
+    assert!(
+        !punct.contains("Ascii"),
+        "「全角标点」关不得落回「ascii（all）」（该态不进托盘）：{punct}"
+    );
+
+    // 5) 角色 → 字段 + 读/写方向：两个「提前上屏」角色共用同一个三态项、「全角标点」指向「标点」
+    //    三态项（其余两个布尔角色照旧直读直写）；顺序即 `HUX_OPTION_*` 角色序
+    //    （启动对齐按它逐个折算）。读方向即托盘勾选态，也是「一次切换把这一对的两个布尔都推给
+    //    引擎」时取值的方向（`reconcileRuntimePair`，见第 9 条），故与 `applyConfig()` 同一口径。
+    let table = block("kSharedBehaviorOptions[] = {");
+    let mut cursor = 0usize;
+    let mut entries: Vec<(&str, &str)> = Vec::new();
+    for (role, field, read, write) in [
+        (
+            "HUX_OPTION_EARLY_COMMIT",
+            "earlyCommitMode",
+            "!= HuxEarlyCommitMode::Off",
+            "toggleEarlyCommit(",
+        ),
+        (
+            "HUX_OPTION_EARLY_COMMIT_TO_PREEDIT",
+            "earlyCommitMode",
+            "== HuxEarlyCommitMode::ToPreedit",
+            "toggleEarlyCommitToPreedit(",
+        ),
+        (
+            "HUX_OPTION_ALLOW_DUPLICATE_SINGLE",
+            "allowDuplicateSingle",
+            "return config.allowDuplicateSingle.value();",
+            "config.allowDuplicateSingle.setValue(on)",
+        ),
+        (
+            "HUX_OPTION_FULL_SHAPE",
+            "punctMode",
+            "== HuxPunctMode::FullShapeAll",
+            "togglePunct(on)",
+        ),
+        (
+            "HUX_OPTION_DIGIT_SELECT",
+            "digitSelect",
+            "return config.digitSelect.value();",
+            "config.digitSelect.setValue(on)",
+        ),
+    ] {
+        let marker = format!("{{{role},");
+        let at = table[cursor..]
+            .find(&marker)
+            .map(|index| index + cursor)
+            .unwrap_or_else(|| panic!("kSharedBehaviorOptions 缺少角色或角色序错乱：{role}"));
+        cursor = at + marker.len();
+        // 本项到下一项（表项均以 `{HUX_OPTION_` 开头）之间的文本片段。
+        let next = table[cursor..]
+            .find("{HUX_OPTION_")
+            .map(|index| index + cursor)
+            .unwrap_or(table.len());
+        let entry = &table[at..next];
+        assert!(
+            entry.contains(&format!("return config.{field}.path();")),
+            "角色 {role} 的配置路径未指向 schema 的 {field}：{entry}"
+        );
+        assert!(
+            entry.contains(read),
+            "角色 {role} 的读方向与勾选态契约不符（托盘勾选态与引擎下发都用它）：{entry}"
+        );
+        assert!(
+            entry.contains(write),
+            "角色 {role} 的写回未经过 {write}：{entry}"
+        );
+        entries.push((role, entry));
+    }
+    let entry = |role: &str| -> &str {
+        entries
+            .iter()
+            .find(|(name, _)| *name == role)
+            .unwrap_or_else(|| panic!("kSharedBehaviorOptions 缺少角色 {role}"))
+            .1
+    };
+
+    // 读方向与 `applyConfig()` 必须同一口径：读用哪一态算「开」，推送就得由同一态得出开
+    // （否则一次切换推给引擎的布尔与配置页推送的会互相打架）。
+    for (read, mode, fold) in [
+        (
+            "!= HuxEarlyCommitMode::Off",
+            "HuxEarlyCommitMode::Off",
+            "options.early_commit = earlyCommitMode == HuxEarlyCommitMode::Off ? 0 : 1;",
+        ),
+        (
+            "== HuxEarlyCommitMode::ToPreedit",
+            "HuxEarlyCommitMode::ToPreedit",
+            "options.early_commit_to_preedit = earlyCommitMode == HuxEarlyCommitMode::ToPreedit ? 1 : 0;",
+        ),
+        (
+            "== HuxPunctMode::FullShapeAll",
+            "HuxPunctMode::FullShapeAll",
+            "options.full_shape = punctMode == HuxPunctMode::FullShapeAll ? 1 : 0;",
+        ),
+    ] {
+        assert!(
+            flat.contains(read) && flat.contains(fold) && fold.contains(mode),
+            "读方向 {read} 与 applyConfig 的折算 {fold} 不同口径（枚举态应为 {mode}）"
+        );
+    }
+
+    // 6) 托盘（状态菜单）项不变：仍是独立勾选项，文案表按角色下标取。
+    let labels = block("kLabels[] = {");
+    for label in [
+        "\"提前上屏\"",
+        "\"提前上屏至预编辑\"",
+        "\"全角标点\"",
+        "\"数字直选\"",
+    ] {
+        assert!(labels.contains(label), "状态菜单文案表缺少 {label}");
+    }
+
+    // 7) 旧布尔项不得残留：四个 schema 项已被两个三态项取代（回滚本次改动即在此失败）。
+    for stale in [
+        ".path{\"EarlyCommit\"}",
+        ".path{\"EarlyCommitToPreedit\"}",
+        ".path{\"FullShape\"}",
+        ".path{\"AsciiPunct\"}",
+        "earlyCommitToPreedit",
+        "fullShape",
+        "asciiPunct",
+    ] {
+        assert!(!flat.contains(stale), "仍残留旧布尔项：{stale}");
+    }
+
+    // 8) 启动对齐：**总闸角色最后折算**（行为保真）。`(0,1)`（旧配置页两个独立勾选框可造出：
+    //    提前上屏关 + 至预编辑开）的有效行为是「不提前上屏」，按角色序一趟折完会把它重新打开。
+    //    真值在 C++ 侧以 `static_assert` 于**编译期**钉住（`cmake --build` 即校验），这里再断言
+    //    那四条仍在（删掉即红），且「子角色先、总闸最后」的次序与运行时两趟一致。
+    assert!(
+        entry("HUX_OPTION_EARLY_COMMIT").contains("/*gate=*/true"),
+        "「提前上屏」必须标为这一对的总闸（启动对齐最后折算）"
+    );
+    assert!(
+        !entry("HUX_OPTION_EARLY_COMMIT_TO_PREEDIT").contains("/*gate=*/true"),
+        "「提前上屏至预编辑」不是总闸（它必须先于总闸折算）"
+    );
+    let adopt = function("constexpr HuxEarlyCommitMode adoptEarlyCommitMode(");
+    let sub_first = adopt
+        .find("toggleEarlyCommitToPreedit(HuxEarlyCommitMode::ToOutput, toPreedit)")
+        .unwrap_or_else(|| panic!("对齐真值复算未先折子角色：{adopt}"));
+    let gate_last = adopt
+        .find("return toggleEarlyCommit(mode, earlyCommit);")
+        .unwrap_or_else(|| panic!("对齐真值复算未最后折总闸：{adopt}"));
+    assert!(
+        sub_first < gate_last,
+        "对齐真值复算必须先折「至预编辑串」再折总闸：{adopt}"
+    );
+    for truth in [
+        "static_assert(adoptEarlyCommitMode(false, false) == HuxEarlyCommitMode::Off,",
+        "static_assert(adoptEarlyCommitMode(false, true) == HuxEarlyCommitMode::Off,",
+        "static_assert(adoptEarlyCommitMode(true, false) == HuxEarlyCommitMode::ToOutput,",
+        "static_assert(adoptEarlyCommitMode(true, true) == HuxEarlyCommitMode::ToPreedit,",
+    ] {
+        assert!(flat.contains(truth), "启动对齐的四组合真值缺一条：{truth}");
+    }
+    let adopt_loop = function("void adoptStoredRuntimeOptions()");
+    assert!(
+        adopt_loop.contains("for (const bool gatePass : {false, true}) {")
+            && adopt_loop.contains("shared.gate != gatePass"),
+        "启动对齐必须是两趟（非总闸先、总闸最后）：{adopt_loop}"
+    );
+
+    // 9) 托盘一次切换要把该三态对的**两个布尔**都下发（只改被点的那一个会「点了没反应」）：
+    //    同路径的角色（= 同一个三态项承载的角色）按 schema 的读方向逐个经 ABI 角色键推回；
+    //    推不到的那一半（`ascii_punct`：不是运行时角色）由 `applyConfig()` 收口，
+    //    并由它保证引擎与 schema 三态一致（同一映射，不另起一套）。
+    let reconcile = function("void reconcileRuntimePair(int32_t role)");
+    assert!(
+        reconcile.contains("shared.path != clicked.path"),
+        "一次切换必须覆盖同一三态项的全部角色：{reconcile}"
+    );
+    assert!(
+        reconcile.contains("hux_engine_set_option(engine_, key, shared.read() ? 1 : 0);"),
+        "三态对的每个角色都要按读方向经角色键推给引擎：{reconcile}"
+    );
+    assert!(
+        reconcile.contains("hux_engine_option_key(engine_, peer)"),
+        "角色键必须经 ABI 取自引擎：{reconcile}"
+    );
+    assert!(
+        entry("HUX_OPTION_FULL_SHAPE").contains("/*applyConfig=*/true"),
+        "「标点」对里 `ascii_punct` 没有运行时角色 ⇒ 必须标 `/*applyConfig=*/true` 由 applyConfig 收口"
+    );
+    assert!(
+        !entry("HUX_OPTION_EARLY_COMMIT").contains("/*applyConfig=*/true"),
+        "「提前上屏」对两个角色都在角色表里 ⇒ 不需要 applyConfig 收口"
+    );
+    assert!(
+        reconcile.contains("clicked.needsApplySettings") && reconcile.contains("applyConfig();"),
+        "推不到的那一半必须由 applyConfig() 收口：{reconcile}"
+    );
+    let mirror = function("void mirrorRuntimeRole(");
+    let pair = mirror
+        .find("reconcileRuntimePair(role);")
+        .unwrap_or_else(|| panic!("托盘镜像未做引擎对齐：{mirror}"));
+    let refresh = mirror
+        .find("refreshToggleActions(inputContext);")
+        .unwrap_or_else(|| panic!("托盘镜像未刷新勾选态：{mirror}"));
+    assert!(
+        pair < refresh,
+        "顺序应为：schema 镜像/落盘 → 引擎对齐 → 托盘刷新：{mirror}"
+    );
+    let refresh_body = function("void refreshToggleActions(");
+    assert!(
+        refresh_body.contains("action->update(inputContext);"),
+        "三态对的另一项勾选态要立刻刷新：{refresh_body}"
+    );
+    assert!(
+        flat.contains("mirrorRuntimeRole(role, value, true, inputContext);"),
+        "状态菜单回调要把当前输入上下文交给镜像（供刷新另一项勾选态）"
     );
 }
 
@@ -2672,14 +3029,14 @@ fn model_info_reports_file_format_and_state() {
             .into_owned()
     };
 
-    // 已装载：三阶夹具（文件名 + 格式标签都来自模型自身）。
+    // 已装载：三阶夹具（摘要只报格式标签，不报文件名）。
     let engine = Box::into_raw(Box::new(Engine::new_with_dirs(
         host(),
         fixture_dirs(),
         Some(goldens.join("ngram_fixture.bin")),
         Some(temp_user_dir("model-info-loaded")),
     )));
-    assert_eq!(read(engine), "ngram_fixture.bin — 已加载（三阶 TCSKNM02）");
+    assert_eq!(read(engine), "已加载（三阶 TCSKNM02）");
     unsafe { hux_engine_free(engine) };
 
     // 未找到：数据目录里没有模型资产。
@@ -2690,7 +3047,7 @@ fn model_info_reports_file_format_and_state() {
         None,
         Some(temp_user_dir("model-info-none")),
     )));
-    assert_eq!(read(engine), "未找到模型（整句排序退化为码表名次）");
+    assert_eq!(read(engine), "未找到模型");
     unsafe { hux_engine_free(engine) };
     std::fs::remove_dir_all(&empty_dir).ok();
 
@@ -2702,10 +3059,7 @@ fn model_info_reports_file_format_and_state() {
         Some(temp_user_dir("model-info-failed")),
     )));
     let failed = read(engine);
-    assert!(
-        failed.starts_with("tiger_sentence.codes.txt — 装载失败："),
-        "{failed}"
-    );
+    assert!(failed.starts_with("装载失败："), "{failed}");
     assert!(
         failed.contains("TCSKNM02"),
         "失败原因应说明期望的模型格式：{failed}"
@@ -2766,10 +3120,7 @@ fn redeploy_refreshes_model_info_and_resets_sessions() {
             .into_owned()
     };
     let failed = read();
-    assert!(
-        failed.starts_with("sentence-ngram-mobile.bin — 装载失败："),
-        "{failed}"
-    );
+    assert!(failed.starts_with("装载失败："), "{failed}");
 
     // 建一个会话并留下组合状态：重新部署后 id 必须仍然有效、组合必须被清空。
     let session = unsafe { hux_engine_session_new(engine) };
@@ -2784,10 +3135,7 @@ fn redeploy_refreshes_model_info_and_resets_sessions() {
     // 「装好数据再重新部署」：模型文件就位 → 摘要刷新成已加载。
     std::fs::copy(goldens.join("ngram_fixture.bin"), &model).expect("copy");
     assert_eq!(unsafe { hux_engine_redeploy(engine) }, 1);
-    assert_eq!(
-        read(),
-        "sentence-ngram-mobile.bin — 已加载（三阶 TCSKNM02）"
-    );
+    assert_eq!(read(), "已加载（三阶 TCSKNM02）");
 
     // 会话 id 仍可用（重置而非释放）；未知 id 仍被忽略。
     let state = unsafe { &*engine };
