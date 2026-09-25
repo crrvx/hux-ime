@@ -1,4 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com> -->
+
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 
 # AGENTS.md
@@ -10,13 +11,13 @@
 - **虎虚 hux**：fcitx5 原生输入引擎（Rust 实现），内核独立于方案与平台
 - 平台优先级：linux / android → windows → macos / ios
 - 运行时不依赖 librime、不依赖 Lua（Lua 仅作测试 oracle）
-- 结构与重构原则见 `docs/refactor.md`（活规则）；历史与逐批记录见 `docs/review-ledger.md`，有意偏离见 `docs/upstream-deviations.md`
+- 结构与设计原则见 `docs/design.md`（活规则）；历史纪要见 `docs/review-ledger.md`；有意偏离见 `docs/upstream-deviations.md`
 
 ## 当前方案
 
 - **虎句**（`tiger_sentence`）：虎码体系（字 / 词 / 句）的整句输入方案，本轮唯一全量实现
 - 语义、数据与金样参照 tiger-sentense-rime；方案标识保持 `tiger_sentence`（与上游数据互通）
-- 其他方案（宇浩、五笔、双拼、全拼）仅留骨架，适配暂缓（见 `docs/refactor.md`）
+- 其他方案（宇浩、五笔、双拼、全拼）仅留骨架，适配暂缓（见 `docs/design.md` §5）
 
 ## AI 风格
 
@@ -38,7 +39,7 @@
 2. 修改过程中：可按需执行更多的 `jj new`，只落在 ai `jj new` 的副本内，不改动其他已有节点
 3. 修改过程中：尽量按功能拆成多条 jj commit
 4. 修改完成后：须同步对应文档，根据改动编辑 “jj commit” 消息（简短一句），并交由用户审阅确认
-5. jj 历史整理, push/fetch：由用户自行执行，AI 不代做
+5. jj 历史整理, push/fetch，pr：除非用户直接要求，否则 AI 不代做
 
 ## 相关项目
 
@@ -75,7 +76,8 @@
 - 非简单任务：下放到子代理
 - 指代 jj 历史节点：使用 change id 而非 commit id
 - PR 描述：更应关注项目的功能/bug
-  
+
 ## 特殊目录
+
 - `_tmp/`：本地开发 / 临时记录
 - `_external/`：用于快捷访问 本地外部文件

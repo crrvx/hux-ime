@@ -3,88 +3,73 @@
 
 # 资源总账：来源、作用、去向、再生与校验
 
-全仓资源的统一台账：每一项登记七要素——**来源**（项目 / 作者 / URL / pin 或 sha256）、**作用**、
-**许可**、**是否随包**、**默认去向**（系统级与用户级）、**再生或更新方式**、**校验守卫**（守卫命令 + CI 作业）。
-
-本页不参与安装：装 / 卸的实际输入是两份清单——数据 [`../data/MANIFEST`](../data/MANIFEST)、
-主题 [`../assets/themes/MANIFEST`](../assets/themes/MANIFEST)；本页是给人看的账本，同时是机检对象：
-`python3 tools/checks/check_resources.py` 核对「随仓资源是否都登记在本页的表格里」与
-「本页写的许可是否与 [`../REUSE.toml`](../REUSE.toml) 一致」，漏登记或写错许可即失败（CI `rust` 作业已接入）。
-各分册（**操作步骤归分册**，本页只链接）：
-[`../data/README.md`](../data/README.md)、
-[`../assets/branding/README.md`](../assets/branding/README.md)、
-[`../assets/themes/README.md`](../assets/themes/README.md)、
-[`../goldens/README.md`](../goldens/README.md)。
+全仓资源台账，栏目即七要素（**来源** = 项目 / 作者 / URL / pin 或 sha256； \
+**校验** = 守卫命令 + CI 作业（映射见末节「自动校验」）。 \
+操作步骤归各分册（[`../data/README.md`](../data/README.md)、 \
+[`../assets/branding/README.md`](../assets/branding/README.md)、 \
+[`../assets/themes/README.md`](../assets/themes/README.md)、 \
+[`../goldens/README.md`](../goldens/README.md)），本页只登记与链接； \
+安装的输入是 [`../data/MANIFEST`](../data/MANIFEST) 与 \
+[`../assets/themes/MANIFEST`](../assets/themes/MANIFEST)，不是本页。 \
+本页被 `python3 tools/checks/check_resources.py`（CI `rust`）机检： \
+随仓资源须逐条登记、许可须与 [`../REUSE.toml`](../REUSE.toml) 一致。
 
 ## pin 与出处
 
 | 名称 | 出处 | pin / sha256 | 提供 |
 | --- | --- | --- | --- |
-| 主干 pin | 虎爪-rime（[tiger-sentense-rime](https://github.com/lvyww/tiger-sentense-rime)，虎句参照实现）的 main 尖端 | `abad411750f79cfca750985fa266689b5d9b865f` | 码表四件套与 `symbols.yaml`；Lua 核心生成的夹具 / decode / learning / lexical 金样；键序列与 Tab 锁探针金样 |
-| 反查 pin | 同上 `feat/reverse-lookup` 尖端（主干 pin 的后代，`abad411` 在其祖先链上） | `92a0b54b53114e7e5aa6a1ff48efa95db0e21f9c` | 音反查源 `PY_c.dict.yaml`（自 `898579f` 起未变）；音反查探针金样与夹具 |
-| 词先验上游 | [rime-mohu](https://github.com/fcxxxz/rime-mohu) | `9f43098cefdb450fe8dec0f3069fe8d9999b9d10` | 源词库 `mohu_flypy.base.dict.yaml`（见「词先验：署名与复现」） |
+| 主干 pin | 虎爪-rime（虎句参照）<br>[tiger-sentense-rime](https://github.com/lvyww/tiger-sentense-rime) main 尖端 | `abad411750f79cfca750985fa266689b5d9b865f` | 码表四件套与 `symbols.yaml`；Lua 金样；键序列 / Tab 锁探针金样 |
+| 反查 pin | 同上 `feat/reverse-lookup` 尖端（主干 pin 后代，`abad411` 在祖先链上） | `92a0b54b53114e7e5aa6a1ff48efa95db0e21f9c` | 音反查源 `PY_c.dict.yaml`（自 `898579f` 未变）；音反查探针金样与夹具 |
+| 词先验上游 | [rime-mohu](https://github.com/fcxxxz/rime-mohu) | `9f43098cefdb450fe8dec0f3069fe8d9999b9d10` | 源词库 `mohu_flypy.base.dict.yaml`（见下节） |
 | 键名表上游 | [librime](https://github.com/rime/librime) | `33e78140250125871856cdc5b42ddc6a5fcd3cd4` | `src/rime/key_table.cc` |
 | 主题上游 | 虎符（[hufu-ime-rust](https://github.com/LeafHW/hufu-ime-rust)） | `54c0339` | 官方皮肤的 fcitx5 主题转换产物（19 套） |
-| 追加码表上游 | 虎码官方（虎码输入法官方版）`2026.08.15` 的 `publish/rime/tiger.dict.yaml` | `ca172d4e55006bec389b6e3876bb08d4db1e1d1ae49a64f5d9d2c7d8c5e3abe5` | 主表没有的 `(字, 码)` 对（源不入库） |
+| 追加码表上游 | 虎码官方版 `2026.08.15` 的 `publish/rime/tiger.dict.yaml` | `ca172d4e55006bec389b6e3876bb08d4db1e1d1ae49a64f5d9d2c7d8c5e3abe5` | 主表没有的 `(字, 码)` 对（源不入库） |
 
 ## 落点与查找顺序
 
-- **系统级**：`<prefix>` = 安装前缀（`install.sh` 与 `cmake --install` 用 `/usr`）；插件本体
-  `libhux.so` 落在 fcitx5 的 addon 目录（Debian/Ubuntu 为 `lib/<triplet>/fcitx5`，
-  Arch/Fedora 为 `lib/fcitx5` 或 `lib64/fcitx5`）。
-- **用户级**：数据 `$XDG_DATA_HOME/fcitx5/hux`（缺省 `~/.local/share/fcitx5/hux`），
-  配置 `$XDG_CONFIG_HOME/fcitx5/conf/hux.conf`（缺省 `~/.config/fcitx5/conf/hux.conf`）。
-- **查找顺序**（引擎）：`HUX_DATA_DIRS`（开发覆盖）→ 用户级 →
-  `$XDG_DATA_DIRS/*/fcitx5/hux`（缺省 `/usr/local/share`、`/usr/share`）；
-  模型另有 `HUX_MODEL` 覆盖。
+**账本口径**：系统级 `<prefix>`（`-s` / `cmake --install` 用 `/usr`）与用户级去向见表内列； \
+`libhux.so` 随 fcitx5 addon 目录。 \
+安装落点与目录查找顺序见 [`usage.md`](usage.md) 与 [`design.md`](design.md) §7（单一来源）。
 
 ## 1. 方案数据（随包）
 
-| 资源（仓库路径） | 来源（项目 / 作者 / URL / pin 或 sha256） | 作用 | 许可 | 随包 | 默认去向 | 校验（守卫 / CI 作业） | 再生 / 更新 |
+| 资源（仓库路径） | 来源 | 作用 | 许可 | 随包 | 默认去向 | 校验 | 再生 / 更新 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `data/tiger_sentence.codes.txt`<br>`data/tiger_sentence.char_ranks.txt`<br>`data/tiger_sentence.full_code_whitelist.txt`<br>`data/tiger_sentence.supplement.txt` | 虎整句（[tiger-sentense-rime](https://github.com/lvyww/tiger-sentense-rime)）作者与贡献者；上游同名文件 @ 「主干 pin」；`supplement.txt` 仅注释里的方案名由「虎整句」改为「虎句」 | 字词码表 / 字频 / 全码白名单 / 补充词（词库解析的输入） | `GPL-3.0-only` | 是 | 系统级 `<prefix>/share/fcitx5/hux/`；用户级 `~/.local/share/fcitx5/hux/` | sha256 与 [`../goldens/README.md`](../goldens/README.md)「数据夹具」表同值：codes `1d3e9b0ce0e4a603be3f220c71acecad846f020e87a52723ecb3814f6b53ac0e`、char_ranks `bd64e4bf333b2096a9a61fd5ece868e37912057bd1a812d75b2d5ccb4c994dcf`、full_code_whitelist `05d257457898146262f7dbf264103c70a8cf2ee92d188b770ad13232b293f566`、supplement `f229832bc92f89d87e4b1d29984aec53e627cedb23dda5074ad03cbcabdf0900`（上游 pin 原文件为 `538f7d60ae378235628a86e7ef20d24396453488fde950a88e52fdb6f558a5ac`，差改名一处）；该表由 `python3 tools/checks/verify_golden_shas.py` 逐字节核对（CI `rust` 作业）；`bash tools/checks/check_data_manifest.sh`（清单 ↔ `data/` ↔ 装 / 卸 / CMake，CI `rust` 作业）+ 装后逐条核对 `data/MANIFEST` | 随「主干 pin」前进重取上游同名文件（`supplement.txt` 的改名需重做）；步骤见 [`../data/README.md`](../data/README.md) |
-| `data/tiger_sentence.lexical.bin` | [rime-mohu](https://github.com/fcxxxz/rime-mohu) 的作者与贡献者；由「词先验上游」的 `mohu_flypy.base.dict.yaml` 经上游 `tools/build_lexical_prior.py` 生成 | 紧凑词先验位图（TCSLEX01 Bloom filter，150,032 字节），整句排序用 | `CC-BY-4.0` | 是 | 同上 | sha256 `8dbc884b6cb719d07e4cef153c8048db19a11f8224f75a4ed87853e688a27393`（CI `rust` 作业「Verify lexical prior data」逐条 `sha256sum -c`）；署名与复现见本页「词先验：署名与复现」 | 上游 `tools/build_lexical_prior.py`（源词库不入库）；步骤与对拍见本页「词先验：署名与复现」 |
-| `data/tiger_sentence.codes.huma.txt` | 虎码官方（虎码输入法官方版）作者与贡献者；由「追加码表上游」单字表里**主表没有的字**（102,332 条、93,666 字）生成，源不入库 | 追加码表：生僻字可打（基本区全覆盖 + 扩展 A/B–G 等，主表 9,794 字 → 合计 10.3 万字）。内核把追加表拼在主表之后，故主表 rank 与简码分配、`optimal_single` 等派生标志都不变；删掉本文件即回滚 | `LicenseRef-HuMa-Official`（官方随包未声明形式化授权，如实记录，见 [`../LICENSES/LicenseRef-HuMa-Official.txt`](../LICENSES/LicenseRef-HuMa-Official.txt)） | 是 | 同上 | sha256 `896f1aa2a302e33b6ec9beb8c516994c46e6a83fe6bd10b8cf9179c8d4a065a7`（[`../goldens/README.md`](../goldens/README.md)「随包追加码表」表，`python3 tools/checks/verify_golden_shas.py` 逐字节核对，CI `rust` 作业）+ `python3 tools/checks/check_code_tables.py`（命名口径 / 行格式 / 跨表去重 / 只补主表没有的字，CI `rust` 作业）+ `bash tools/checks/check_data_manifest.sh` + `cargo test -p hux-scheme-tiger --test shipped_data`（逐码比对「仅主表」与合并装载：前缀、rank、`optimal_single` 全等） | 生成器 `tools/generators/merge_huma_codes.py`（读不入库的官方单字表，路径走环境变量）；登记四处与回滚见 [`../data/README.md`](../data/README.md)「追加码表」 |
-| `data/tiger_sentence.pinyin.bin.gz` | 虎整句（tiger-sentense-rime）作者与贡献者；由「反查 pin」的 `PY_c.dict.yaml` 生成（该文件自 `898579f` 起未变，源自官方字词版 / 秃版小狼毫的简体拼音词典） | 音反查索引（TCSRV01：音节表 + 拼写表 + 按码分组的词条），反引号键音反查用 | `GPL-3.0-only` | 是 | 同上 | sha256 `18a0931a323ad58e1b13e610ec93183297118033d571ae303678613a217dad2a`（8,054,016 字节；CI `rust` 作业「Verify pinyin index data」逐条 `sha256sum -c`）；`tools/generators/gen_pinyin_index.py` 可用夹具重生成比对（CI `rust` 作业「Verify pinyin index fixture」） | 生成器 `tools/generators/gen_pinyin_index.py` 从上游 `PY_c.dict.yaml` 重建；命令见 [`../goldens/README.md`](../goldens/README.md) |
-| `data/symbols.yaml` | 虎整句（tiger-sentense-rime）作者与贡献者；上游 `symbols.yaml` @ 「主干 pin」（该文件自 `35a10b9` 以来未变，两个 pin 逐字节相同） | 标点表（`punctuator` 的 `half_shape` / `full_shape` 两组）；发布版仅覆盖 half_shape 的 `/`（参照原表为 `、`），full_shape 不变 | `GPL-3.0-only` | 是 | 同上 | 与参照原样夹具 `goldens/key_sequence/symbols.yaml`（sha256 `9b45c4a2f179d42585d5cc1439bfbcb5a585520f0de3ce83232180990e5cc9b1`，即上游两 pin 的同名文件）比对，差异只有上述一处；发布文件自身 sha256 `6011dc59464cf915cfe5a509c1030924c02c23bbb6f429b0a24516fe9809a239` 不在 CI 固定 | 随「主干 pin」重取上游 `symbols.yaml`，重做 half_shape 的 `/` 一处默认 |
+| `data/tiger_sentence.codes.txt`<br>`data/tiger_sentence.char_ranks.txt`<br>`data/tiger_sentence.full_code_whitelist.txt`<br>`data/tiger_sentence.supplement.txt` | 「主干 pin」上游同名文件（作者见「pin 与出处」）<br>`supplement.txt` 仅注释里方案名改为「虎句」 | 字词码表 / 字频 / 全码白名单 / 补充词 | `GPL-3.0-only` | 是 | 系统级 `<prefix>/share/fcitx5/hux/`<br>用户级 `~/.local/share/fcitx5/hux/` | sha256 见 [`../goldens/README.md`](../goldens/README.md)「数据夹具」表 | 随「主干 pin」重取同名文件；见 [`../data/README.md`](../data/README.md) |
+| `data/tiger_sentence.lexical.bin` | [rime-mohu](https://github.com/fcxxxz/rime-mohu)<br>由「词先验上游」源词库生成 | 紧凑词先验位图（TCSLEX01），整句排序用 | `CC-BY-4.0` | 是 | 同上 | sha256 见下节；参数见 [`../data/README.md`](../data/README.md) | 上游 `tools/build_lexical_prior.py`；步骤见下节 |
+| `data/tiger_sentence.codes.huma.txt` | 由「追加码表上游」单字表里**主表没有的字**生成（源不入库） | 追加码表：生僻字可打；见下 | `LicenseRef-HuMa-Official` | 是 | 同上 | sha256 见 [`../goldens/README.md`](../goldens/README.md)「随包追加码表」表 | `tools/generators/merge_huma_codes.py`（源不入库）<br>回滚与登记见 [`../data/README.md`](../data/README.md)「追加码表」 |
+| `data/tiger_sentence.pinyin.bin.gz` | 由「反查 pin」的 `PY_c.dict.yaml` 生成<br>（自 `898579f` 未变，源自官方字词版 / 秃版小狼毫） | 音反查索引（TCSRV01），反引号键音反查 | `GPL-3.0-only` | 是 | 同上 | sha256 `18a0931a323ad58e1b13e610ec93183297118033d571ae303678613a217dad2a` | `tools/generators/gen_pinyin_index.py`<br>从上游 `PY_c.dict.yaml` 重建（重生成与逐字节比对见 [`../goldens/README.md`](../goldens/README.md)） |
+| `data/symbols.yaml` | 「主干 pin」上游 `symbols.yaml`<br>（自 `35a10b9` 未变，两个 pin 逐字节相同） | 标点表（`punctuator` 的 `half_shape` / `full_shape`）<br>发布版仅覆盖 half_shape 的 `/`（参照 `、`） | `GPL-3.0-only` | 是 | 同上 | 发布文件 sha256 `6011dc59464cf915cfe5a509c1030924c02c23bbb6f429b0a24516fe9809a239`（**不在 CI 固定**）<br>夹具 `goldens/key_sequence/symbols.yaml` 保持参照原样（`9b45c4a2…`，`verify_golden_shas.py`） | 随「主干 pin」重取上游 `symbols.yaml`，重做 `/` 一处默认 |
 
-**本节守卫**：`bash tools/checks/check_data_manifest.sh`（清单 ↔ `data/` 实况 ↔ 装 / 卸 / CMake 三处一致）、
-`python3 tools/checks/check_resources.py`（本页登记与许可）、
-`python3 tools/checks/check_code_tables.py`（码表格式 + 跨表去重）、
-`python3 tools/checks/verify_golden_shas.py`（含追加码表的 sha256 表），
-以及 CI `rust` 作业里的两条 `sha256sum -c`（词先验、音反查索引）与音反查夹具重生成比对。
-细节与不随包说明见 [`../data/README.md`](../data/README.md)。
+- 四件套 sha256 见 [`../goldens/README.md`](../goldens/README.md)「数据夹具」表； \
+  其中 `supplement.txt` 是唯一的本地改动（重取上游后须重做）。
+- 追加码表只增不改：拼在主表之后，主表 rank 与 `optimal_single` 等派生标志不变， \
+  删该文件即回滚；条数与门槛（`check_code_tables.py`、`shipped_data` 逐码比对）见 \
+  [`../data/README.md`](../data/README.md)「追加码表」。
+- `LicenseRef-HuMa-Official`：官方随包未声明形式化授权，如实记录； \
+  原文见 [`../LICENSES/LicenseRef-HuMa-Official.txt`](../LICENSES/LicenseRef-HuMa-Official.txt)（§9）。
 
 ## 词先验：署名与复现
 
-`data/tiger_sentence.lexical.bin`（TCSLEX01 Bloom filter，150,032 字节，
-sha256 `8dbc884b6cb719d07e4cef153c8048db19a11f8224f75a4ed87853e688a27393`）
-是「紧凑排序先验」所用的词存在性位图，**不含词文本与权重**。
+`data/tiger_sentence.lexical.bin`（TCSLEX01， \
+sha256 `8dbc884b6cb719d07e4cef153c8048db19a11f8224f75a4ed87853e688a27393`） \
+是紧凑排序先验的词存在性位图（**不含词文本与权重**）；源词库不入库； \
+参数与口径见 [`../data/README.md`](../data/README.md)。
 
-**上游与许可**
-
-- 项目 / 作者：[`fcxxxz/rime-mohu`](https://github.com/fcxxxz/rime-mohu) 的 contributors。
-- 源文件：`mohu_flypy.base.dict.yaml` @ `9f43098cefdb450fe8dec0f3069fe8d9999b9d10`，
+- 项目 / 作者：[`fcxxxz/rime-mohu`](https://github.com/fcxxxz/rime-mohu) contributors； \
+  源文件 `mohu_flypy.base.dict.yaml` @ `9f43098…`（见「词先验上游」）， \
   原文件 SHA-256 `877c6dacb4d5bb6738e230ce2d9235f3ac0f48404959c2db26fb18c7ddd31cb6`。
-- 原文件列明的数据来源：Rime 八股文词库、THUOCL（依其原许可再发行）、
-  雾凇拼音词库补充数据及人工补充词。
-- 许可：原文件声明 **CC BY 4.0**；原项目说明「完整方案按 GPL-3.0 发布，文件另有声明时以文件声明为准」。
-  正文见 [`../LICENSES/CC-BY-4.0.txt`](../LICENSES/CC-BY-4.0.txt)（SPDX 官方镜像副本），
-  亦可访问 <https://creativecommons.org/licenses/by/4.0/>。
+- 源数据：Rime 八股文词库、THUOCL（依其原许可再发行）、雾凇拼音补充数据及人工补充词。
+- 许可：原文件声明 **CC BY 4.0**（原项目： \
+  「完整方案按 GPL-3.0 发布，文件另有声明时以文件声明为准」）； \
+  正文见[`../LICENSES/CC-BY-4.0.txt`](../LICENSES/CC-BY-4.0.txt)、 \
+  <https://creativecommons.org/licenses/by/4.0/>。
+- 本仓**原样沿用**该位图（sha256 与上游一致），仅由参照仓库根移到 `data/`； \
+  Rust 侧读取与打分在 `crates/hux-scheme/tiger/src/lexical.rs`； \
+  转换与移植不表示上游作者认可本项目。
 
-**变更**
-
-- 上游 tiger-sentense-rime 侧：只保留虎句码表可编码的 2～4 字条目，按上游权重、词长和 Unicode 顺序
-  稳定排序，选取前 50,000 条；随后丢弃词文本和权重，仅发布 1,200,000 bit、10 次散列的 TCSLEX01
-  Bloom filter（估算假阳性率约 `2.11e-5`）。
-- 本仓侧：**数据文件原样沿用**（sha256 与上游一致），仅将其由参照仓库根目录移至 `data/`，
-  并在 Rust 侧实现读取与打分（`crates/hux-scheme/tiger/src/lexical.rs`）。
-  转换与移植均不表示上游作者认可本项目。
-- 精确摘要：可编码 2–4 字条目 764,132 条 → 前 50,000 条；生成时码表输入 `tiger_sentence.codes.txt`
-  sha256 为 `1d3e9b0ce0e4a603be3f220c71acecad846f020e87a52723ecb3814f6b53ac0e`。
-
-**复现**：取得上述上游版本的源词库后，在参照检出（外部检出统一放 `_external/`，
-见 [`../AGENTS.md`](../AGENTS.md)）内用其脚本复现：
+**复现**：取得源词库后，在参照检出（放 `_external/`，见 [`../AGENTS.md`](../AGENTS.md)）\
+内用上游脚本：
 
 ```sh
 git clone https://github.com/fcxxxz/rime-mohu _external/rime-mohu
@@ -101,150 +86,145 @@ git clone https://github.com/fcxxxz/rime-mohu _external/rime-mohu
 )
 ```
 
-产物应与 `data/tiger_sentence.lexical.bin`（sha256 见上）一致；`--manifest` 输出可留作对拍。
-
-**校验**：`sha256sum data/tiger_sentence.lexical.bin` 应为 `8dbc884b…`（与清单同值）；
-CI `rust` 作业以同一 sha 校验该数据文件（防止替换或漂移）。
+产物应与 `data/tiger_sentence.lexical.bin`（sha256 见上）一致，`--manifest` 可留作对拍。
 
 ## 2. 模型（不随包，用户自取）
 
-| 资源（安装目录内文件名） | 来源（项目 / 作者 / URL / pin 或 sha256） | 作用 | 许可 | 随包 | 默认去向 | 校验（守卫 / CI 作业） | 再生 / 更新 |
+| 资源（安装目录内文件名） | 来源 | 作用 | 许可 | 随包 | 默认去向 | 校验 | 再生 / 更新 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `models/sentence-ngram-mobile.bin` | 虎整句（tiger-sentense-rime）作者与贡献者；上游 [model release](https://github.com/lvyww/tiger-sentense-rime/releases/tag/model) 或虎码 QQ 群 `948170058` | 三阶 KN 语言模型（TCSKNM02），整句排序打分 | `GPL-3.0-only` | 否 | 用户级 `~/.local/share/fcitx5/hux/models/`（推荐）；系统级 `<prefix>/share/fcitx5/hux/models/`；`HUX_MODEL` 可指向任意路径 | 文件头 magic `TCSKNM02` + 上游 Release 附件的 sha256（当前默认 `full-kn-m5-v2`：469,886,928 字节 / 448.12 MiB，sha256 `c0063898fdff27c1fb00c1c72fa28a6c1b375fade1ec2045d731b9db958bdecc`，另有 fused 214 MiB 变体）；托盘首项「虎虚」显示检测到的模型格式名（`虎虚：三阶 TCSKNM02` / `虎虚：无模型`；装载失败时 `<格式名>（装载失败）`），点击该项打开模型所在目录，文件名与失败原因进状态串的 `model:` 行 | 用户自取（上游 Release / 虎码 QQ 群）后放到「默认去向」的 `models/` 下 |
-| `models/sentence-fivegram-mobile.bin` | 同上 | 五阶 KN 语言模型（TCSKNM03） | `GPL-3.0-only` | 否 | 同上 | 文件头 magic `TCSKNM03`（状态菜单按文件头标为「五阶 TCSKNM03」）；装载器只接受 TCSKNM02 mobile，默认查找也只找 `models/sentence-ngram-mobile.bin`——把五阶文件放进 `models/` 不会被默认命中，经 `HUX_MODEL` 指向它会以 `not a mobile TCSKNM02 model` 装载失败 | 同上 |
+| `models/sentence-ngram-mobile.bin` | [model release](https://github.com/lvyww/tiger-sentense-rime/releases/tag/model)<br>（上游）或虎码 QQ 群 `948170058` | 三阶 KN 语言模型（TCSKNM02），整句打分 | `GPL-3.0-only` | 否 | 用户级 `~/.local/share/fcitx5/hux/models/`（推荐）<br>系统级 `<prefix>/share/fcitx5/hux/models/`<br>`HUX_MODEL` 可覆盖 | magic `TCSKNM02` + Release 附件 sha256（见下） | 用户自取后放到 `models/` 下 |
+| `models/sentence-fivegram-mobile.bin` | 同上 | 五阶 KN 语言模型（TCSKNM03） | `GPL-3.0-only` | 否 | 同上 | magic `TCSKNM03`；只接受三阶 mobile（见下） | 同上 |
 
-**本节守卫**：不随包，故无仓库内校验；放置后看托盘首项「虎虚」一行
-（`虎虚：<模型格式名>` / `虎虚：无模型` / `虎虚：<格式名>（装载失败）`），点它可直接打开模型目录，
-诊断细节看日志的 `model:` 行，
-选项与诊断说明见 [`config.md`](config.md)。安装脚本与 README 都只给下载入口与落点，不捆绑模型文件。
+- 不随包、无仓库内校验；README 与安装脚本只给入口与落点，不捆绑模型文件。
+- 默认模型 `full-kn-m5-v2`：469,886,928 字节 / 448.12 MiB， \
+  sha256 `c0063898fdff27c1fb00c1c72fa28a6c1b375fade1ec2045d731b9db958bdecc`； \
+  另有 fused 214 MiB 变体。
+- 装载器只接受 TCSKNM02 mobile、默认只找 `models/sentence-ngram-mobile.bin`； \
+  五阶文件放进 `models/` 不命中，经 `HUX_MODEL` 指向它以 `not a mobile TCSKNM02 model` 失败； \
+  状态菜单按文件头标为「五阶 TCSKNM03」，诊断见 [`config.md`](config.md)。
 
 ## 3. 共享图形（随包，Linux 安装规则取用）
 
-| 资源（仓库路径） | 来源（项目 / 作者 / URL / pin 或 sha256） | 作用 | 许可 | 随包 | 默认去向 | 校验（守卫 / CI 作业） | 再生 / 更新 |
+| 资源（仓库路径） | 来源 | 作用 | 许可 | 随包 | 默认去向 | 校验 | 再生 / 更新 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `assets/branding/hux.png`<br>`assets/branding/hux.svg`<br>`assets/branding/hux-22.png`<br>`assets/branding/hux-48.png` | 本仓自绘（明雅流风）；`hux.png` 是**主源**（1600×1600 艺术位图），其余三个由它派生 | 输入法条目与状态区图标：主源 + 自包含 SVG（内嵌主源，供支持 SVG 的主题）+ 22 / 48 px 位图 | `GPL-3.0-or-later` | 是（`hux.png` 仅作主源，不安装） | 系统级 `<prefix>/share/icons/hicolor/{scalable,48x48,22x22}/apps/`（`hux.svg` 原名，两个位图安装时改名为 `hux.png`）；用户级（`install.sh -u`）同构于 `~/.local/share/icons/hicolor/…` | `python3 tools/checks/check_branding_assets.py`（CI `rust` 作业）：主源 sha256 `dbb46e2b6700589a9634aef0918630f2f48d3d5effa824d529271c688a605036`、`hux.svg` 自包含且内嵌当前主源、位图边长与文件名一致、四文件聚合指纹 `9bc316e2bee17e62514d4c091a1996d85f5d1b3dc9be631d95f96072c550c6df`；有 `rsvg-convert` 时查可渲染 | 生成器 `tools/generators/gen_branding_icons.py`（由主源派生，勿手改派生文件）；命令与各平台取用见 [`../assets/branding/README.md`](../assets/branding/README.md) |
+| `assets/branding/hux.png`<br>`assets/branding/hux.svg`<br>`assets/branding/hux-22.png`<br>`assets/branding/hux-48.png` | 本仓自绘（明雅流风）；`hux.png` 是**主源**（1600×1600 艺术位图）<br>其余由它派生 | 输入法条目与状态区图标 | `GPL-3.0-or-later` | 是（`hux.png` 仅主源，不安装） | 系统级 `<prefix>/share/icons/hicolor/{scalable,48x48,22x22}/apps/`<br>用户级（`-u`）同构 `~/.local/share/icons/…`<br>（`hux.svg` 原名，位图安装时改名 `hux.png`） | `python3 tools/checks/check_branding_assets.py`（CI `rust`） | `tools/generators/gen_branding_icons.py`（勿手改派生文件）<br>取用见 [`../assets/branding/README.md`](../assets/branding/README.md) |
 
-**本节守卫**：见上表；生成命令与各平台取用方式见
-[`../assets/branding/README.md`](../assets/branding/README.md)。
+- 主源 sha256：`dbb46e2b6700589a9634aef0918630f2f48d3d5effa824d529271c688a605036`。
+- 四文件聚合指纹：`9bc316e2bee17e62514d4c091a1996d85f5d1b3dc9be631d95f96072c550c6df`。
 
 ## 4. 共享主题（随包）
 
-| 资源（仓库路径） | 来源（项目 / 作者 / URL / pin 或 sha256） | 作用 | 许可 | 随包 | 默认去向 | 校验（守卫 / CI 作业） | 再生 / 更新 |
+| 资源（仓库路径） | 来源 | 作用 | 许可 | 随包 | 默认去向 | 校验 | 再生 / 更新 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `assets/themes/hufu-canghai/`<br>`assets/themes/hufu-chenwu/`<br>`assets/themes/hufu-default/`<br>`assets/themes/hufu-huguang/`<br>`assets/themes/hufu-hupo/`<br>`assets/themes/hufu-luoxia/`<br>`assets/themes/hufu-mocha/`<br>`assets/themes/hufu-moyan/`<br>`assets/themes/hufu-mushan/`<br>`assets/themes/hufu-ouhe/`<br>`assets/themes/hufu-qingci/`<br>`assets/themes/hufu-rongyan/`<br>`assets/themes/hufu-shiyou/`<br>`assets/themes/hufu-songyan/`<br>`assets/themes/hufu-sujian/`<br>`assets/themes/hufu-xingyu/`<br>`assets/themes/hufu-xuanmo/`<br>`assets/themes/hufu-yingxiong/`<br>`assets/themes/hufu-yuebai/` | 虎符（[hufu-ime-rust](https://github.com/LeafHW/hufu-ime-rust)）作者与贡献者；其官方皮肤的 fcitx5 主题转换产物（取用自「主题上游」），原样入库（每套 `theme.conf` + 6 张 PNG） | 19 套候选窗口主题（面板 / 高亮 / 翻页箭头 / 单选图） | `GPL-3.0-only` | 是 | 系统级 `<prefix>/share/fcitx5/themes/<主题目录>/`；用户级 `~/.local/share/fcitx5/themes/<主题目录>/`（fcitx5 合并两侧目录） | `python3 tools/checks/check_themes.py`（CI `rust` 作业）：`assets/themes/MANIFEST` ↔ 目录 ↔ 文件集合 ↔ `theme.conf` 引用图 + 取用指纹 `7ad673c4c6df5330db8fc84566a65b93ab39c6686de12428f7caa208208c7a9d`；`reuse lint`（CI `reuse` 作业） | 在虎符仓库重新生成主题产物后覆盖本目录并同步 `MANIFEST` 与指纹常量；步骤见 [`../assets/themes/README.md`](../assets/themes/README.md) |
+| `assets/themes/hufu-canghai/`<br>`assets/themes/hufu-chenwu/`<br>`assets/themes/hufu-default/`<br>`assets/themes/hufu-huguang/`<br>`assets/themes/hufu-hupo/`<br>`assets/themes/hufu-luoxia/`<br>`assets/themes/hufu-mocha/`<br>`assets/themes/hufu-moyan/`<br>`assets/themes/hufu-mushan/`<br>`assets/themes/hufu-ouhe/`<br>`assets/themes/hufu-qingci/`<br>`assets/themes/hufu-rongyan/`<br>`assets/themes/hufu-shiyou/`<br>`assets/themes/hufu-songyan/`<br>`assets/themes/hufu-sujian/`<br>`assets/themes/hufu-xingyu/`<br>`assets/themes/hufu-xuanmo/`<br>`assets/themes/hufu-yingxiong/`<br>`assets/themes/hufu-yuebai/` | 虎符（[hufu-ime-rust](https://github.com/LeafHW/hufu-ime-rust)）作者与贡献者<br>官方皮肤的主题转换产物（见下） | 19 套候选窗口主题（每套 `theme.conf` + 6 张 PNG） | `GPL-3.0-only` | 是 | 系统级 `<prefix>/share/fcitx5/themes/<主题目录>/`<br>用户级 `~/.local/share/fcitx5/themes/<主题目录>/`<br>（fcitx5 合并两侧目录） | 取用指纹 `7ad673c4…`<br>`python3 tools/checks/check_themes.py`（CI `rust`） | 虎符仓库重生成后覆盖本目录并同步 `MANIFEST`<br>见 [`../assets/themes/README.md`](../assets/themes/README.md) |
 
-**本节守卫**：`python3 tools/checks/check_themes.py`（清单 / 目录 / 文件 / `theme.conf` 引用图 / 聚合指纹）；
-更新步骤见 [`../assets/themes/README.md`](../assets/themes/README.md)。
+- 取用指纹（133 个文件的聚合 sha256）、文件集合与更新步骤见 \
+  [`../assets/themes/README.md`](../assets/themes/README.md)。
 
 ## 5. 测试金样与夹具（不随包）
 
-| 资源（仓库路径 / glob） | 来源（项目 / 作者 / URL / pin 或 sha256） | 作用 | 许可 | 随包 | 默认去向 | 校验（守卫 / CI 作业） | 再生 / 更新 |
+| 资源（仓库路径 / glob） | 来源 | 作用 | 许可 | 随包 | 默认去向 | 校验 | 再生 / 更新 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `goldens/**` | 上游 Lua 核心（「主干 pin」）生成的夹具 / decode / learning / lexical 金样；真 librime 探针录制的 `key`、`key_sequence`、`key_sequence_tab`、`sound_to_char_shape`（音反查取「反查 pin」）；本项目自造的解析边界夹具（`lexicon_variants/`、`lexicon_codes_only/`）与合成码表 / `symbols.yaml` / `ngram_fixture.bin` | 差分 oracle：Rust 侧逐位重放比对，判定移植是否等价；不进运行时 | `GPL-3.0-only` | 否 | 无（只在仓库内被测试读取；真实模型抽样金样 `goldens/local/` 不入库） | sha256 表 + 金样内部头部 + 参照检出溯源（`python3 tools/checks/verify_golden_shas.py [--reference _external/tiger-sentense-rime]`：表与头部在 CI `rust` 作业，`--reference` 溯源在 CI `golden` 作业）；夹具类金样在 CI `golden` / `golden-lua-latest` 作业里重生成逐字节比对 | 重生成命令全表见 [`../goldens/README.md`](../goldens/README.md)「重新生成」 |
-| `goldens/key.tsv.gz` | RIME Developers；由系统 librime 1.17.0 的 `tools/probes/key_probe.cpp` 录制，键名表源自 librime `src/rime/key_table.cc` @「键名表上游」 | 键名 / 键事件金样（`name`/`repr`/`parse`/`modifier`） | `BSD-3-Clause` | 否 | 无（同上级目录） | sha256 `7fae4983ab69e36ebd2e5cac267df81e9bc325731deaefcaa22873aeca8660c0`（CI `rust` 作业内联校验，不重生成；内部头部另由 `verify_golden_shas.py` 核对） | CI 不重生成（依赖具体 librime / librime-lua 版本）；重生成脚本 `tools/generators/gen_key_golden.sh` |
+| `goldens/**` | 「主干 pin」Lua 核心生成的金样<br>真 librime 探针录制的四份金样（音反查取「反查 pin」）<br>本项目自造的解析边界夹具与合成码表 / `symbols.yaml` | 差分 oracle：逐位重放比对；不进运行时 | `GPL-3.0-only` | 否 | 无（只在仓库内被测试读取；`goldens/local/` 为本地抽样金样，不入库、不随包） | sha256 表 + 内部头部 + 参照溯源（`verify_golden_shas.py`；`--reference` 另核检出） | 重生成命令与规则见 [`../goldens/README.md`](../goldens/README.md) |
+| `goldens/key.tsv.gz` | RIME Developers；系统 librime 1.17.0 的 `tools/probes/key_probe.cpp` 录制<br>键名表源自 librime `src/rime/key_table.cc` @「键名表上游」 | 键名 / 键事件金样（`name`/`repr`/`parse`/`modifier`） | `BSD-3-Clause` | 否 | 无（同上） | sha256 `7fae4983…`；CI 内联 `sha256sum -c` | CI 不重生成（依赖 librime 版本）；脚本 `tools/generators/gen_key_golden.sh` |
 
-**本节守卫**：`python3 tools/checks/verify_golden_shas.py`（表 ↔ 文件 ↔ 内部头部）；
-再加 `--reference _external/tiger-sentense-rime` 核对参照检出里的 `lua/*`、`tools/*`。
-清单、transcript 格式、重生成命令全表与「金样不得因有意偏离而重生成」的规则见
-[`../goldens/README.md`](../goldens/README.md)。
+- 金样清单、transcript 格式、每份金样的来源 pin 与 sha256 表见 \
+  [`../goldens/README.md`](../goldens/README.md)。
+- 探针用例矩阵 `tools/cases/*.txt` 与探针 `tools/probes/*.cpp`：本仓自写、不随包、无生成器 \
+  （探针依赖系统 librime / librime-lua，用法见 [`../goldens/README.md`](../goldens/README.md)）。
 
 ## 6. 源码生成物（不随包，编进插件）
 
-| 资源（仓库路径） | 来源（项目 / 作者 / URL / pin 或 sha256） | 作用 | 许可 | 随包 | 默认去向 | 校验（守卫 / CI 作业） | 再生 / 更新 |
+| 资源（仓库路径） | 来源 | 作用 | 许可 | 随包 | 默认去向 | 校验 | 再生 / 更新 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `crates/hux-core/src/key_table.rs` | RIME Developers；由 librime `src/rime/key_table.cc` @「键名表上游」（sha256 `2f7c6a8b4f2aa474d700a87bd4bd1baa48a2655cd6ce4d2ba05b768f284d9d78`）经 `tools/generators/gen_key_table.py` 生成，请勿手改 | 键名与修饰位表（键解析与键金样共用） | `BSD-3-Clause` | 否（编进 `libhux.so`） | 无 | CI `golden` 作业下载该 pin 的单文件后重生成并 `diff` 比对；文件头部自述来源 sha256；命令见本节末 | 生成器 `tools/generators/gen_key_table.py`（下载 pin 单文件后重生成，见本节末命令） |
+| `crates/hux-core/src/key_table.rs` | RIME Developers；由 librime `src/rime/key_table.cc` @「键名表上游」<br>经 `gen_key_table.py` 生成，勿手改 | 键名与修饰位表 | `BSD-3-Clause` | 否（编进 `libhux.so`） | 无 | 文件头部自述来源 sha256 | `tools/generators/gen_key_table.py`（命令见本节末） |
 
-**本节守卫**：`python3 tools/generators/gen_key_table.py --source <librime>/src/rime/key_table.cc --out /tmp/key_table.rs && diff /tmp/key_table.rs crates/hux-core/src/key_table.rs`
-（CI 的 `golden` 作业执行同一比对）。
+- **本节守卫**： \
+  `python3 tools/generators/gen_key_table.py --source <librime>/src/rime/key_table.cc --out /tmp/key_table.rs && diff /tmp/key_table.rs crates/hux-core/src/key_table.rs`（ \
+  CI `golden` 同）。
 
 ## 7. 文档图片（不随包）
 
-| 资源（仓库路径） | 来源（项目 / 作者 / URL / pin 或 sha256） | 作用 | 许可 | 随包 | 默认去向 | 校验（守卫 / CI 作业） | 再生 / 更新 |
+| 资源（仓库路径） | 来源 | 作用 | 许可 | 随包 | 默认去向 | 校验 | 再生 / 更新 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `docs/images/虎句.png`<br>`docs/images/虍.png`<br>`docs/images/配置页.png`<br>`docs/images/音反查.png`<br>`docs/images/字反查.png` | 本仓截图（明雅流风） | README 与文档的插图（候选窗口 / 图标 / 配置页 / 反查） | `GPL-3.0-or-later` | 否 | 无 | 无内容校验，仅按 [`../REUSE.toml`](../REUSE.toml) 目录标注许可；`reuse lint`（CI `reuse` 作业） | 人工截图，无生成器 |
+| `docs/images/虎句.png`<br>`docs/images/虍.png`<br>`docs/images/配置页.png`<br>`docs/images/音反查.png`<br>`docs/images/字反查.png` | 本仓截图（明雅流风） | README / 文档插图 | `GPL-3.0-or-later` | 否 | 无 | 无内容校验（登记 / 许可由 `check_resources.py` 核对） | 人工截图，无生成器 |
 
 ## 8. 插件元数据与配置（随包）
 
-| 资源（仓库路径） | 来源（项目 / 作者 / URL / pin 或 sha256） | 作用 | 许可 | 随包 | 默认去向 | 校验（守卫 / CI 作业） | 再生 / 更新 |
+| 资源（仓库路径） | 来源 | 作用 | 许可 | 随包 | 默认去向 | 校验 | 再生 / 更新 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `platform/fcitx5/conf/hux.addon.conf`<br>`platform/fcitx5/conf/hux.inputmethod.conf` | 本仓（明雅流风） | fcitx5 addon 元数据（`Category=InputMethod`、`Library=libhux`、`OnDemand`）与输入法条目 | `GPL-3.0-or-later` | 是 | 系统级 `<prefix>/share/fcitx5/addon/hux.conf` 与 `<prefix>/share/fcitx5/inputmethod/hux.conf`（安装时都改名为 `hux.conf`）；用户级（`install.sh -u`）`~/.local/share/fcitx5/{addon,inputmethod}/hux.conf` | `cmake --install` 落点核对（CI 的 `addon` 作业按 `DESTDIR` 检查两个 conf）+ `uninstall.sh` 按固定路径删除 + `python3 tools/checks/check_uninstall_clean.py`（CI 的 `addon` 作业：安装集合 ⊆ 可卸载集合） | 随仓手写配置，随 addon 元数据与落点演进同步 |
+| `platform/fcitx5/conf/hux.addon.conf`<br>`platform/fcitx5/conf/hux.inputmethod.conf` | 本仓（明雅流风） | fcitx5 addon 元数据与输入法条目<br>（`Category=InputMethod`、`Library=libhux`、`OnDemand`） | `GPL-3.0-or-later` | 是 | 系统级 `<prefix>/share/fcitx5/{addon,inputmethod}/hux.conf`<br>用户级（`-u`）同构于 `~/.local/share/fcitx5/…`<br>（都改名 `hux.conf`） | CI `addon` 按 `DESTDIR` 查安装的两个 conf + `check_uninstall_clean.py` | 随仓手写，随元数据与落点演进；addon 契约见 [`../platform/README.md`](../platform/README.md) |
 
 ## 9. 许可证文本
 
-| 资源（仓库路径） | 来源（项目 / 作者 / URL / pin 或 sha256） | 作用 | 许可 | 随包 | 默认去向 | 校验（守卫 / CI 作业） | 再生 / 更新 |
+| 资源（仓库路径） | 来源 | 作用 | 许可 | 随包 | 默认去向 | 校验 | 再生 / 更新 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `LICENSE` | 本仓（明雅流风） | 项目许可正文（GPL-3.0，供 GitHub 识别） | `GPL-3.0-or-later` | 否 | 无 | `reuse lint`（REUSE 规范忽略根许可正文；CI `reuse` 作业） | 随项目许可变更替换正文 |
-| `LICENSES/GPL-3.0-or-later.txt`<br>`LICENSES/GPL-3.0-only.txt`<br>`LICENSES/CC-BY-4.0.txt`<br>`LICENSES/BSD-3-Clause.txt`<br>`LICENSES/LicenseRef-HuMa-Official.txt` | SPDX 官方许可正文镜像（各许可的发布方）；`LicenseRef-HuMa-Official.txt` 是本仓自写的情况说明（虎码官方随包未声明形式化授权） | 各许可全文：项目代码 / 上游派生数据 / 词先验 / 键名表；以及追加码表的授权口径说明 | `GPL-3.0-or-later`<br>`GPL-3.0-only`<br>`CC-BY-4.0`<br>`BSD-3-Clause`<br>`LicenseRef-HuMa-Official` | 否 | 无 | `reuse lint`（CI `reuse` 作业）+ 与各文件 SPDX 头 / [`../REUSE.toml`](../REUSE.toml) 标注对应 | 从 SPDX 许可列表重取正文；`LicenseRef-HuMa-Official.txt` 由本仓撰写（口径变更时同步） |
-| `REUSE.toml` | 本仓（明雅流风） | 无 SPDX 头的二进制 / 第三方文件的许可与版权标注（REUSE 规范） | `GPL-3.0-or-later` | 否 | 无 | `reuse lint`（CI `reuse` 作业）；许可一致性另由 `python3 tools/checks/check_resources.py`（CI `rust` 作业）与本页比对 | 新增随包资源时同步补标注 |
-
-**本节守卫**：`reuse lint`（CI 的 `reuse` 作业）。逐文件许可标注以后者为准；本页写的是各类资源的**许可归属**。
+| `LICENSE` | GNU/FSF 的 GPL-3.0 正文；本仓随项目发布 | 项目许可正文（GPL-3.0，供 GitHub 识别） | `GPL-3.0-or-later` | 否 | 无 | `reuse lint`（REUSE 忽略根许可正文） | 随项目许可变更替换正文 |
+| `LICENSES/GPL-3.0-or-later.txt`<br>`LICENSES/GPL-3.0-only.txt`<br>`LICENSES/CC-BY-4.0.txt`<br>`LICENSES/BSD-3-Clause.txt`<br>`LICENSES/LicenseRef-HuMa-Official.txt` | SPDX 官方正文镜像（各发布方，<https://spdx.org/licenses/>）；`LicenseRef-HuMa-Official.txt` 为本仓自写说明 | 各许可全文（项目代码 / 派生数据 / 词先验 / 键名表 / 追加码表） | `GPL-3.0-or-later`<br>`GPL-3.0-only`<br>`CC-BY-4.0`<br>`BSD-3-Clause`<br>`LicenseRef-HuMa-Official` | 否 | 无 | `reuse lint` + 与 SPDX 头 / [`../REUSE.toml`](../REUSE.toml) 对应 | SPDX 列表重取正文；`LicenseRef-HuMa-Official.txt` 本仓撰写 |
+| `REUSE.toml` | 本仓（明雅流风） | 无 SPDX 头的二进制 / 第三方文件的许可与版权标注 | `GPL-3.0-or-later` | 否 | 无 | `reuse lint`；许可一致性由 `check_resources.py` 比对 | 新增随包资源时同步补标注 |
 
 ## 10. 运行时可写数据（不随包，卸载对账用）
 
-| 资源（默认路径） | 来源（项目 / 作者 / URL / pin 或 sha256） | 作用 | 许可 | 随包 | 默认去向 | 校验（守卫 / CI 作业） | 再生 / 更新 |
+| 资源（默认路径） | 来源 | 作用 | 许可 | 随包 | 默认去向 | 校验 | 再生 / 更新 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `tiger_sentence.options.yaml` | 引擎运行时写入（方案选项持久化） | 状态菜单 / 配置页切换的选项落盘（合并顺序：本文件 > 设置 > 内建缺省） | `GPL-3.0-or-later`（运行时产物） | 否 | 用户级 `~/.local/share/fcitx5/hux/tiger_sentence.options.yaml` | 无内容校验；交互式卸载的「是否删除用户数据」一问回答 y 才删 | 引擎运行时写入，无生成器 |
-| `tiger_sentence_learning_<hash>.userdb/` | 引擎运行时写入（LevelDB 学习库） | 用户选词学习与打分（键 `e/%010d`；`<hash>` = 方案 id 哈希） | `GPL-3.0-or-later`（运行时产物） | 否 | 用户级 `~/.local/share/fcitx5/hux/tiger_sentence_learning_<hash>.userdb/` | 无内容校验；同一问回答 y 才删（缺省保留） | 引擎运行时写入，无生成器 |
-| `conf/hux.conf` | fcitx5 配置页与状态菜单写入 | 配置项落盘（配置页「虎虚」页；与选项存储双向同步、切换即时生效） | 无（用户配置） | 否 | 用户级 `~/.config/fcitx5/conf/hux.conf` | 无内容校验；同一问回答 y 才删 | fcitx5 配置页与状态菜单写入 |
+| `tiger_sentence.options.yaml` | 引擎运行时写入（选项持久化） | 选项落盘（合并顺序：本文件 > 设置 > 内建缺省） | `GPL-3.0-or-later`（运行时产物） | 否 | 用户级 `~/.local/share/fcitx5/hux/tiger_sentence.options.yaml` | 无内容校验 | 运行时写入，无生成器 |
+| `tiger_sentence_learning_<hash>.userdb/` | 引擎运行时写入（LevelDB 学习库） | 选词学习与打分（键 `e/%010d`；`<hash>` = 方案 id 哈希） | `GPL-3.0-or-later`（运行时产物） | 否 | 用户级 `~/.local/share/fcitx5/hux/tiger_sentence_learning_<hash>.userdb/` | 无内容校验（缺省保留） | 运行时写入，无生成器 |
+| `conf/hux.conf` | fcitx5 配置页与状态菜单写入 | 配置项落盘（配置页「虎虚」页；与选项存储双向同步） | 无（用户配置） | 否 | 用户级 `~/.config/fcitx5/conf/hux.conf` | 无内容校验 | fcitx5 配置页与状态菜单写入 |
 
-**本节守卫**：三者都不是随包资源，不进 `data/MANIFEST`；此处登记只为「卸载干净」对账
-（`./uninstall.sh` 的「是否删除用户数据」一问回答 `n` 即保留、回答 `y` 即清除），精确落点与语义见
-[`config.md`](config.md) 与 [`usage.md`](usage.md)。
-安装脚本本身**不写**任何持久文件（除 `-u` 的 `~/.config/environment.d/90-hux.conf`，见下）。
+- 三者都不随包、不进 `data/MANIFEST`；登记只为「卸载干净」对账（见 [`usage.md`](usage.md)）。
+- 安装脚本不写持久文件，除 `-u` 的 `~/.config/environment.d/90-hux.conf`。
 
 ## 10b. 安装模式写入的配置（仅 `install.sh -u`）
 
-| 资源（仓库路径） | 来源（项目 / 作者 / URL / pin 或 sha256） | 作用 | 许可 | 随包 | 默认去向 | 校验（守卫 / CI 作业） | 再生 / 更新 |
+| 资源（仓库路径） | 来源 | 作用 | 许可 | 随包 | 默认去向 | 校验 | 再生 / 更新 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `~/.config/environment.d/90-hux.conf` | 本仓安装脚本生成（非仓库文件） | 让 systemd 用户实例为 fcitx5 带上 `FCITX_ADDON_DIRS=$HOME/.local/lib/fcitx5:/usr/lib/fcitx5`——fcitx5 的 addon 库目录**没有用户级缺省值**，只有该变量能让用户级插件被加载（它会**取代**缺省值，故必须显式带上系统目录） | 无（用户环境配置） | 否 | 用户级 `~/.config/environment.d/90-hux.conf` | 写入时内容幂等（相同则不改写）；`uninstall.sh` 删除；生效需重新登录或启动前 export | `install.sh -u` 生成（内容固定，幂等） |
+| `~/.config/environment.d/90-hux.conf` | 本仓安装脚本生成（非仓库文件） | 让 systemd 用户实例为 fcitx5 带上 `FCITX_ADDON_DIRS`<br>（值与原因见 [`usage.md`](usage.md)） | 无（用户环境配置） | 否 | 用户级 `~/.config/environment.d/90-hux.conf` | 写入幂等（相同不改写）；`uninstall.sh` 删除；生效需重登或启动前 export | `install.sh -u` 生成（幂等） |
 
-两种安装模式（`-s` 系统级 `<prefix>=/usr`、`-u` 用户级 `<prefix>=$HOME/.local`）的落点与前提见
-[`usage.md`](usage.md)；用户级模式下上表第 1 / 3 / 4 / 8 节的 `<prefix>` 即 `$HOME/.local`。
+- 写入内容、生效条件与未继承时的处理见 [`usage.md`](usage.md)「用户级（`-u`）的环境变量」。
+
+两种安装模式（`-s` `/usr`、`-u` `$HOME/.local`）的落点与前提见 [`usage.md`](usage.md)； \
+用户级下第 1 / 3 / 4 / 8 节的 `<prefix>` 即 `$HOME/.local`。
 
 ## 11. 后台服务与端口
 
 **本引擎无常驻服务、无 socket、无端口**：
 
-- addon 是 fcitx5 进程内的动态库（`libhux.so`，`OnDemand=True` 按需加载）：没有自己的守护进程，
-  不监听端口，也不与任何外部进程或服务通信（有的实现把引擎放到独立进程再经 socket / IPC 通信，
-  本仓没有这条路径）。
-- 学习库是同进程内的 LevelDB（`…userdb/`），只用文件锁，不占端口。
-- 诊断日志走 fcitx5 自身的日志设施，类别 `hux`；安装脚本不再自动重启 fcitx5（结尾只给重启命令），
-  因此不产生脚本侧的日志文件。
-- 开发 / 部署期的进程环境覆盖只有 `HUX_DATA_DIRS`（数据目录）与 `HUX_MODEL`（模型路径）；
-  其余 `HUX_*` 名字只出现在测试与探针里。
+- addon 是 fcitx5 进程内的动态库（`libhux.so`，`OnDemand=True`）：无守护进程、不监听端口、不与外部通信。
+- 学习库是同进程内的 LevelDB（`…userdb/`），只用文件锁。
+- 日志走 fcitx5 设施（类别 `hux`）；安装脚本不自动重启 fcitx5，不产生脚本侧日志。
+- 进程环境覆盖只有 `HUX_DATA_DIRS`（数据）与 `HUX_MODEL`（模型）；其余 `HUX_*` 只见于测试与探针。
 
 ## 12. 未随包 / 未使用的第三方
 
 | 项目 | 用途 | 现状 |
 | --- | --- | --- |
-| [虎爪-rime](https://github.com/lvyww/tiger-sentense-rime) 的 Lua 核心 | 测试 oracle：生成金样、对照语义 | 不进运行时；检出不入库（本地 `_external/`，CI 自建临时检出后弃用） |
-| librime / librime-lua | 生成金样的探针（`tools/probes/*.cpp`）与键名表来源 | 运行时不链接、不依赖；仅测试期与生成期使用 |
-| [rime-mohu](https://github.com/fcxxxz/rime-mohu) | 词先验位图的上游词库 | 只经派生位图间接使用（`CC-BY-4.0`，署名见本页「词先验：署名与复现」） |
-| [hufu-ime-rust](https://github.com/LeafHW/hufu-ime-rust) | 共享主题的来源 | 只用转换后的主题产物（`assets/themes/`），不引入其代码 |
-| 真实 n-gram 模型与本地抽样金样（`goldens/local/`） | 性能基准与真实模型差分 | 均不入库：模型用户自取，抽样金样本地生成 |
+| [虎爪-rime](https://github.com/lvyww/tiger-sentense-rime) 的 Lua 核心 | 测试 oracle：生成金样、对照语义 | 不进运行时；检出不入库（`_external/`，CI 临时检出） |
+| librime / librime-lua | 金样探针（`tools/probes/*.cpp`）与键名表来源 | 不链接、不依赖；仅测试期与生成期用 |
+| [rime-mohu](https://github.com/fcxxxz/rime-mohu) | 词先验位图的上游词库 | 只经派生位图间接使用（`CC-BY-4.0`，署名见上节） |
+| [hufu-ime-rust](https://github.com/LeafHW/hufu-ime-rust) | 共享主题的来源 | 只用转换后的主题产物 |
+| 真实 n-gram 模型与本地抽样金样（`goldens/local/`） | 性能基准与真实模型差分 | 均不入库（模型自取，抽样金样本地生成） |
 
-**校验**：依赖边界由 CI 的层依赖守卫与 `cargo tree` 判定（内核不依赖方案、平台不直接引用方案内部模块），
-见 [`refactor.md`](refactor.md) §7。
+**校验**：依赖边界（内核不依赖方案、平台不引用方案内部模块）由 CI 层依赖守卫与 `cargo tree` \
+判定，见 [`design.md`](design.md) §4（依赖校验）。
 
 ## 自动校验
 
 | 守卫命令 | 覆盖对象 | CI 作业 |
 | --- | --- | --- |
-| `python3 tools/checks/check_resources.py` | 本页登记 ↔ 随仓资源 ↔ [`../REUSE.toml`](../REUSE.toml) 许可 | `rust` |
-| `bash tools/checks/check_data_manifest.sh` | 随包数据清单 ↔ `data/` ↔ 装 / 卸 / CMake | `rust` |
-| `python3 tools/checks/check_code_tables.py` | 码表命名口径 / 行格式 / 跨表去重 / 只补主表没有的字 | `rust` |
-| `python3 tools/checks/verify_golden_shas.py` | 金样 sha256 表 ↔ 文件 ↔ 内部头部 | `rust` |
-| `python3 tools/checks/verify_golden_shas.py --reference _external/tiger-sentense-rime` | 参照检出的 `lua/*`、`tools/*` 溯源 | `golden` |
-| `python3 tools/checks/check_branding_assets.py` | 主源 sha256 / SVG 自包含 / 位图边长 / 四文件聚合指纹 | `rust` |
-| `python3 tools/checks/check_themes.py` | 主题清单 ↔ 目录 ↔ 文件 ↔ `theme.conf` 引用图 ↔ 聚合指纹 | `rust` |
-| `python3 tools/checks/check_uninstall_clean.py` | 「安装集合 ⊆（可卸载集合 ∪ 保留表）」 | `addon` |
-| `python3 tools/generators/gen_key_table.py` + `diff` | `key_table.rs` ↔ librime pin 单文件重生成 | `golden` |
+| `python3 tools/checks/check_resources.py` | 本页登记 / 许可 ↔ 仓库资源 | `rust` |
+| `bash tools/checks/check_data_manifest.sh` | 清单 ↔ `data/` ↔ 装 / 卸 / CMake | `rust` |
+| `python3 tools/checks/check_code_tables.py` | 码表命名 / 行格式 / 去重 / 只补缺字 | `rust` |
+| `python3 tools/checks/verify_golden_shas.py` | 金样表 ↔ 文件 ↔ 头部 | `rust` |
+| `python3 tools/checks/verify_golden_shas.py --reference _external/tiger-sentense-rime` | 参照检出 `lua/*`、`tools/*` | `golden` |
+| `python3 tools/checks/check_branding_assets.py` | 主源 / SVG / 位图 / 聚合指纹 | `rust` |
+| `python3 tools/checks/check_themes.py` | 主题清单 ↔ 目录 ↔ 文件 ↔ 引用图 | `rust` |
+| `python3 tools/checks/check_uninstall_clean.py` | 安装集合 ⊆ 可卸载集合 | `addon` |
+| `python3 tools/generators/gen_key_table.py` + `diff` | `key_table.rs` ↔ librime pin 重生成 | `golden` |
 | 夹具类金样重生成 + 逐字节比对 | 夹具 / decode / learning / lexical 金样 | `golden`、`golden-lua-latest` |
-| CI 内联 `sha256sum -c` | 词先验、音反查索引，以及四份不重生成金样（`key` / `key_sequence` / `key_sequence_tab` / `sound_to_char_shape`） | `rust` |
-| `reuse lint` | 逐文件许可与版权标注 | `reuse` |
+| CI 内联 `sha256sum -c` | 词先验、音反查索引与四份不重生成金样 | `rust` |
+| `reuse lint` | 逐文件许可 / 版权标注 | `reuse` |
 
-新增随包资源（数据 / 主题 / 图形 / 插件 conf）时：先落清单（`data/MANIFEST` 或
-`assets/themes/MANIFEST`），再在本页补一行；新增文档图片、许可证文本同样要在本页补一行。
-只落清单不补本页会被 `check_resources.py` 拦下（随包资源与上述几类要求逐条登记，
-宽 glob 不作为登记；`goldens/**` 这类测试金样按组登记即可）。
+新增随包资源（数据 / 主题 / 图形 / 插件 conf）： \
+先落清单（`data/MANIFEST` 或 `assets/themes/MANIFEST`）再在本页补一行； \
+文档图片、许可证文本同样补一行。只落清单会被 `check_resources.py` 拦下（宽 glob 不算； \
+`goldens/**` 按组）。
