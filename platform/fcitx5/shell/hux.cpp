@@ -569,9 +569,31 @@ public:
     /// 配置 schema（fcitx5-configtool 生成设置页；保存到 ~/.config/fcitx5/conf/hux.conf）。
     const fcitx::Configuration *getConfig() const override { return &config_; }
 
-    /// 用户在配置工具中保存后：落盘由框架负责，这里应用到引擎（即时生效项）。
+    /// 重新读取本 addon 的配置文件并推给引擎。
+    ///
+    /// fcitx5 在「配置文件被外部改动 / 要求重新加载」时调本入口
+    /// （`Instance::reloadAddonConfig` ← D-Bus `ReloadAddonConfig`）；**不实现时它是基类的
+    /// 空实现**（`fcitx/addoninstance.h`：`virtual void reloadConfig() {}`），文件里的新值
+    /// 永远进不了引擎——用户侧就是「改了配置没反应」。读取与构造期同一路径、同一 API 家族。
+    void reloadConfig() override {
+        fcitx::readAsIni(config_, kConfigPath);
+        applyConfig();
+    }
+
+    /// 用户在配置工具中保存后：**先落盘，再应用到引擎**（即时生效项）。
+    ///
+    /// 落盘归 addon、**不归框架**：fcitx5 的 D-Bus `Controller1::SetConfig` 只调
+    /// `addonInstance->setConfig(config)`（`fcitx5/src/modules/dbus/dbusmodule.cpp`），
+    /// 官方 addon 写法即 `config_.load(config, true); safeSaveAsIni(config_, configFile);`。
+    /// 不落盘时本进程内虽即时生效，但下次启动的 `adoptStoredRuntimeOptions()` 以「文件里显式
+    /// 写过」的键为准 ⇒ 文件里的旧值把配置页的改动静默压回（用户侧「勾选后没有效果」），
+    /// 不落盘、也不进 `options.yaml` 的项（ASCII 直通 / 快捷键 / 页大小 / 候选排列 / 预编辑
+    /// 内容 / 翻页循环 / 最短保留码数 / 高频上限 / Tab 学习）则直接丢失。
     void setConfig(const fcitx::RawConfig &raw) override {
         config_.load(raw, true);
+        if (!fcitx::safeSaveAsIni(config_, kConfigPath)) {
+            FCITX_WARN() << "hux: 写入 " << kConfigPath << " 失败（配置页保存）";
+        }
         applyConfig();
     }
 

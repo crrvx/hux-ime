@@ -2927,3 +2927,137 @@ fn redeploy_rereads_data_files() {
     std::fs::remove_dir_all(&data).ok();
     std::fs::remove_dir_all(&user).ok();
 }
+
+/// 配置页「提前上屏至预编辑」的全链路回归：C++ 壳（`applyConfig` → `hux_engine_apply_settings`）
+/// → 引擎（`apply_settings` 写回选项存储并 `sync` 进会话上下文）→ 方案（`submit_early` 进缓冲）。
+///
+/// 该开关此前**只在方案的 `submit_early` 里被读一次**，上面任一段断开都表现为「勾选后没有效果」；
+/// 故判据取宿主可见的两端（不是 `set_option` 的桩）：开启时**没有 host_commit**、文本留在
+/// `buffered_text`（并出现在预编辑里）；关闭时同一串按键**直接上屏**。两半互相钉桩——
+/// 开关被忽略（两半都提交）或恒开（两半都不提交）都会失败。
+#[test]
+fn config_page_early_commit_to_preedit_buffers_instead_of_committing() {
+    let _guard = serial();
+    // 夹具词库：`ni` 的首选是 `玉`，再打一键证据即成熟（对照 `goldens/lexicon`）。
+    let dirs = || {
+        vec![
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/lexicon"),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+        ]
+    };
+    let code = b"nihaoma";
+
+    // ---- 开启（配置页勾选）：早提交进本层缓冲，不上屏 ----
+    let dir = temp_user_dir("early-commit-to-preedit");
+    COMMITS.lock().unwrap().clear();
+    UPDATES.lock().unwrap().clear();
+    let mut engine = Engine::new_with_dirs(host(), dirs(), None, Some(dir.clone()));
+    let options = HuxOptions {
+        early_commit: 1,
+        early_commit_to_preedit: 1,
+        ..ffi_options()
+    };
+    assert_eq!(
+        unsafe { hux_engine_apply_settings(&mut engine, &options) },
+        1
+    );
+    let session = engine.session_new();
+    assert!(
+        engine
+            .sessions
+            .get(&session)
+            .expect("session")
+            .context
+            .get_option("tiger_sentence_early_commit_to_preedit"),
+        "配置页推送 true 后会话上下文必须为 true（否则方案侧永远读到 false）"
+    );
+    let mut buffered = String::new();
+    for ch in code {
+        engine.key(session, u32::from(*ch), 0, false);
+        buffered = engine
+            .scheme
+            .buffered_text(&engine.sessions.get(&session).expect("session").context);
+        if !buffered.is_empty() {
+            break;
+        }
+    }
+    assert_eq!(buffered, "玉", "证据成熟的早提交文本应进本层缓冲");
+    assert!(
+        COMMITS.lock().unwrap().is_empty(),
+        "缓冲分支不得交给应用：{:?}",
+        COMMITS.lock().unwrap()
+    );
+    let (preedit, ..) = last_update();
+    assert!(
+        preedit.contains("玉"),
+        "缓冲文本应以预编辑呈现：{preedit:?}"
+    );
+    // 配置页的值须活过重启（引擎把它写回 `options.yaml`，宿主 `adoptStoredRuntimeOptions`
+    // 据此补齐 schema）：否则下次启动会把配置页的改动静默压回。
+    let restarted = Engine::new_with_dirs(host(), dirs(), None, Some(dir.clone()));
+    assert_eq!(
+        restarted.option_value("tiger_sentence_early_commit_to_preedit"),
+        Some(true),
+        "重启后（无会话）仍应读到配置页推送的值"
+    );
+
+    // ---- 关闭（同一入口推 false）：同一串按键直接上屏 ----
+    COMMITS.lock().unwrap().clear();
+    UPDATES.lock().unwrap().clear();
+    let mut engine = Engine::new_with_dirs(host(), dirs(), None, Some(dir.clone()));
+    let options = HuxOptions {
+        early_commit: 1,
+        early_commit_to_preedit: 0,
+        ..ffi_options()
+    };
+    assert_eq!(
+        unsafe { hux_engine_apply_settings(&mut engine, &options) },
+        1
+    );
+    let session = engine.session_new();
+    for ch in code {
+        engine.key(session, u32::from(*ch), 0, false);
+        if !COMMITS.lock().unwrap().is_empty() {
+            break;
+        }
+    }
+    assert_eq!(
+        COMMITS.lock().unwrap().clone(),
+        vec!["玉".to_string()],
+        "关闭时早提交应直接交给应用"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// C++ 壳的配置生命周期（源码级守卫，同 `schema_defaults_match_settings_defaults` 的风格）：
+/// `setConfig` 必须 `safeSaveAsIni` 落盘、`reloadConfig` 必须重读文件。
+///
+/// 依据：fcitx5 的 D-Bus `Controller1::SetConfig` 只调 `addonInstance->setConfig(config)`、
+/// **不代写配置文件**（`fcitx5/src/modules/dbus/dbusmodule.cpp`），落盘归 addon；而基类
+/// `reloadConfig()` 是空实现（`fcitx/addoninstance.h`）。不落盘时配置页的改动只活在内存 +
+/// `options.yaml` 里，任何**文件里显式写过**的键都会在下次启动被
+/// `adoptStoredRuntimeOptions()` 当权威、把配置页的改动静默压回（「勾选后没有效果」），
+/// 不进 `options.yaml` 的项（ASCII 直通 / 快捷键 / 页大小 / 候选排列 / 预编辑内容 /
+/// 翻页循环 / 最短保留码数 / 高频上限 / Tab 学习）则直接丢失。
+#[test]
+fn host_config_page_saves_and_reloads_the_addon_config() {
+    let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/shell/hux.cpp"))
+        .expect("read hux.cpp");
+    let body = |signature: &str| -> String {
+        let start = source
+            .find(signature)
+            .unwrap_or_else(|| panic!("hux.cpp 缺少 {signature}"));
+        // 按字符取窗口：源码含中文注释，字节切片会落在字符边界内。
+        source[start..].chars().take(240).collect()
+    };
+    let set_config = body("void setConfig(const fcitx::RawConfig &raw) override");
+    assert!(
+        set_config.contains("safeSaveAsIni(config_, kConfigPath)"),
+        "setConfig 必须落盘 conf/hux.conf（否则下次启动被旧值压回）：{set_config}"
+    );
+    let reload_config = body("void reloadConfig() override");
+    assert!(
+        reload_config.contains("readAsIni(config_, kConfigPath)"),
+        "reloadConfig 必须重读 conf/hux.conf：{reload_config}"
+    );
+}
