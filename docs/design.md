@@ -4,9 +4,8 @@
 # 设计
 
 hux-ime（虎虚）：虎句（`tiger_sentence`）输入方案的 fcitx5 原生 Rust 实现。
-参照实现（测试 oracle，仅开发/CI 使用）：<https://github.com/lvyww/tiger-sentense-rime>；
-金样清单见 [`../goldens/README.md`](../goldens/README.md)，重新生成命令与校验和见
-[`../goldens/regenerate.md`](../goldens/regenerate.md)。
+参照实现（测试 oracle，仅开发 / CI 使用）：<https://github.com/lvyww/tiger-sentense-rime>；
+金样清单、重新生成命令与校验和见 [`../goldens/README.md`](../goldens/README.md)。
 
 ## 1. 仓库结构
 
@@ -45,7 +44,7 @@ crate / 模块级结构与「结构正义」硬规则见 [`refactor.md`](refacto
   `models/sentence-ngram-mobile.bin`（TCSKNM02）、`symbols.yaml`、词先验（TCSLEX01）、音反查索引（TCSRV01）、
   `tiger_sentence.options.yaml`、学习库 `tiger_sentence_learning_<hash>.userdb/`（LevelDB 同构）。
 - 仓库 `data/` 的清单、来源与署名见 [`../data/README.md`](../data/README.md) 与
-  [`LEXICAL_PRIOR_ATTRIBUTION.md`](LEXICAL_PRIOR_ATTRIBUTION.md)。
+  [`resources.md`](resources.md)（资源细则）。
 
 ## 4. fcitx5 集成要点
 
@@ -76,12 +75,10 @@ crate / 模块级结构与「结构正义」硬规则见 [`refactor.md`](refacto
   > 受影响金样用例按 `DEVIATIONS` 登记期望值（金样字节不动）。
 
 - **英文模式不实现**（设计取舍）：英文输入交由 fcitx5 切换输入法；大写字母经 `char_handler` 直通（先提交组合）。
-- **提交与按键顺序**：可打印字符的 `char_handler` 在核心语义为「提交组合 + 不消费」（同 librime）；宿主层
-  （`platform/fcitx5`）据此消费该键并以 `forwardKey` 重发，保证客户端先收到提交、后收到按键
-  （与 fcitx5 核心 `KeyEventOrderFix` 修法一致）。**例外**：布局转换键（如系统 colemak + 方案 `Layout=us`）
-  **不自行转发**，交回核心在 `ReservedLast` 提交转换后的字符——否则客户端会按系统布局重新解释该键。
-  机制是 C ABI 处置位 `HUX_KEY_FORWARD_AFTER_COMMIT`（`crates/hux-ffi/include/hux_abi.h`）+
-  `platform/fcitx5/shell/hux.cpp` 用 fcitx5 自己的 `keyEvent.forward()` 判断是否重发。
+- **提交与按键顺序**：可打印字符的 `char_handler` 在核心语义为「提交组合 + 不消费」（同 librime）；
+  机制是 C ABI 处置位 `HUX_KEY_FORWARD_AFTER_COMMIT`（`crates/hux-ffi/include/hux_abi.h`）——
+  宿主据此重发按键（保证客户端先收到提交、后收到按键），布局转换键则交回核心提交**转换后**的字符。
+  行为契约（含例外与实现落点）见 [`../platform/README.md`](../platform/README.md)。
 - **UI 同步**：preedit 参照 librime `Composition::GetPreedit`——高亮候选的 `preedit`（正常段按词
   分码，如 `sh ks`；音反查段按音节，如 `` `zhong guo ``）优先，组合之后的原始输入原样接在其后
   （左右移动光标时保持分码，如 `` ab cd `` + 尾部 `ja` → `` ab cdja ``）；无高亮候选时回退
@@ -89,7 +86,7 @@ crate / 模块级结构与「结构正义」硬规则见 [`refactor.md`](refacto
 - **反查**：音反查（`sound_to_char_shape.rs`）语义对齐 librime 词典反查——拼写缩写罚 `log 0.5`、全拼可达时
   缩写路径剪枝、补全罚 `log 0.05`、排序 = 可信度 + `ln(权重)`、上限 20；字反查（`char_to_sound_shape.rs`）
   取光标左侧 1 字，上排拼音（排头「咅」）、下排虎码（排头「虍」）。两者触发键可配置，**仅单字符触发键**
-  给默认可上屏候选。详见 [`../platform/fcitx5/README.md`](../platform/fcitx5/README.md)。
+  给默认可上屏候选。行为契约（含周边文本不可用时的兜底与作废时机）见 [`../platform/README.md`](../platform/README.md)。
 - **候选点击**：面板候选为自定义 `CandidateWord`，点击经 `hux_engine_select_candidate` 按全局索引
   选中并上屏（与空格同一条确认/学习链）。
 - **学习**：提交点通知器（参照 `Context::Commit` 的 `commit_notifier`）内建于核心路径
@@ -113,4 +110,65 @@ crate / 模块级结构与「结构正义」硬规则见 [`refactor.md`](refacto
 1. **Rust 差分**：模块对金样逐位断言（fixture 入库；真实模型本地/定期）；
 2. **键序列金样**：真 librime 探针生成「键序列 → 提交/候选/预编辑」，Rust 重放比对；
 3. **CI**：fmt/clippy/差分 + 以固定参照提交重生成 fixture 金样比对（溯源校验），见
-   [`../goldens/regenerate.md`](../goldens/regenerate.md)。
+   [`../goldens/README.md`](../goldens/README.md)。
+
+## 6. 性能
+
+纪律（见 [`refactor.md`](refactor.md) §6）：**优化只允许「金样不变」的改动，且须有前后对比数据**——
+先建基准、留下基线，再按需优化。
+
+基准是两个 `--release` 示例（另有 `ngram_bench.rs`）；不新建 `hux-bench` crate、不引入 `criterion`，
+保持离线可构建：
+
+```sh
+# decode 冷路径：重放 goldens/decode.tsv.gz 的 847 条输入（与差分测试同一批语料）
+cargo run --release --example decode_bench
+cargo run --release --example decode_bench -- --model goldens/ngram_fixture.bin \
+    --lexical data/tiger_sentence.lexical.bin
+
+# 整键路径：经方案契约驱动会话，测「process_key + rebuild」单键耗时
+cargo run --release --example key_bench
+cargo run --release --example key_bench -- --model goldens/ngram_fixture.bin
+```
+
+参数：`decode_bench` 支持 `--model <bin>` / `--lexical <bin>` / `--repeat N`；
+`key_bench` 支持 `--codes N`（送入的码条数）/ `--repeat N` / `--model <bin>`。
+输出：`decode_bench` 打一行 JSON（`corpus`/`repeat`/`ops`/`mean_us`/`p50_us`/`p95_us`/`max_us`/`checksum`）
+再打按输入长度分桶的 5 行文本；`key_bench` 打一行 JSON（`codes`/`repeat`/`keys`/`model`/`mean_us`/…，无 `checksum`）。
+`checksum`（`decode_bench`）用于确认测量期间计算真的发生了且结果稳定。
+
+**基线**（2026-09-21，开发机 Arch + release，`--repeat 20` / `key_bench --repeat 10`）：
+
+| 场景 | p50 | p95 | max | 说明 |
+| --- | --- | --- | --- | --- |
+| decode 冷路径（无模型） | **1.00 µs** | 2.29 µs | 4779 µs | 16,940 次 |
+| decode 冷路径（fixture 模型） | 1.06 µs | 2.56 µs | 2605 µs | 16,940 次 |
+| decode 冷路径（+ 真实词先验位图） | 1.08 µs | 2.58 µs | 2671 µs | 16,940 次 |
+| 整键路径（无模型） | **2.41 µs** | 181 µs | 2670 µs | 4,990 次 |
+| 整键路径（fixture 模型） | 2.71 µs | 204 µs | 2871 µs | 4,990 次 |
+
+按输入长度分桶（decode 冷路径，无模型）：
+
+| 输入长度 | 样本 | p50 | p95 | max |
+| --- | --- | --- | --- | --- |
+| 1–2 字符 | 14,080 | 0.96 µs | 1.69 µs | 786 µs |
+| 3–5 字符 | 2,820 | 1.63 µs | 3.38 µs | 10.3 µs |
+| > 20 字符 | 40 | **2278 µs** | 2355 µs | 4779 µs |
+
+**结论**：
+
+1. 打字路径已是微秒级：1–5 字符（占语料 99.8%）单次 decode ≤3.4 µs（p95），整键（处理器 + 宿主链 +
+   重建）p50 约 2.4 µs，相对键盘输入间隔（数十毫秒）可忽略，**不构成优化理由**。
+2. 全部尾部代价来自 >20 字符的长整句（p50 ≈ 2.3 ms）：beam 解码在长输入上的固有工作量，仍远低于
+   交互预算（~10 ms），且该形态本就少见。
+3. 因此**不做**参照实现的「增量 / 锁解码缓存」：收益集中在长输入路径，而风险在于该缓存需与解码
+   arena 的路径下标生命周期绑定（`decode.rs` 的 `Evaluated::path` 注释：「仅对产生它的那次
+   `decode*` 返回值有效」），属「改动语义边界」的一类优化，不符合「金样不变 + 按需」的前提。
+4. **复核触发条件**：① Android 中低端机实测长整句出现可感卡顿；② 输入长度上限（`MAX_RAW_LENGTH`）
+   放宽；③ 模型从 mobile 换成更大模型——届时再做该项缓存并用本节基准给前后数据。
+
+**维护约定**：改动 decode / 交互路径后跑一遍上面四条命令并与基线比对；**checksum 变化即为行为变化**，
+必须查清（差分金样也应同时报警）。新基准沿用 JSON 单行输出，便于脚本对拍。
+
+词库装载（构造期一次性）另有一套实测：全量装载（主表 + 追加表）140–156 ms，仅主表约 17 ms，
+代价与数字见 [`../data/README.md`](../data/README.md) 的「代价」一节。

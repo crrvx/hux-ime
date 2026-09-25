@@ -128,9 +128,9 @@ jobs:
             exit 1
           fi
       - name: Verify golden checksums & headers
-        # 逐行解析 goldens/regenerate.md 的 sha256 表并与实际文件比对，
+        # 逐行解析 goldens/README.md 的 sha256 表并与实际文件比对，
         # 另核对三份「不重生成」金样（key / key_sequence / sound_to_char_shape）的内部头部
-        # （`# reference … @ <pin>` 与来源文件 sha256）与 regenerate.md 声明的 pin 是否一致。
+        # （`# reference … @ <pin>` 与来源文件 sha256）与 goldens/README.md 声明的 pin 是否一致。
         run: python3 tools/checks/verify_golden_shas.py
       - name: Verify non-regenerated goldens (sha256)
         run: |

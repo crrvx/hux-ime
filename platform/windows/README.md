@@ -1,10 +1,6 @@
 <!-- SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com> -->
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 
-# platform/windows
+# platform/windows（Windows）
 
-Windows 平台适配（**骨架，暂缓**）。
-
-- 首要约束：`hux-core` 无平台假设，经 `hux-ffi` 边界接入（见 [`../../docs/refactor.md`](../../docs/refactor.md)）；
-- 参考上游 `虎爪`（tigerclaw，win 原生）与 fcitx5-windows；
-- 状态：仅占位。
+预留目录：状态、构建与落点见 [`../README.md`](../README.md)。

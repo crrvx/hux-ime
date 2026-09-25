@@ -41,7 +41,7 @@ except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
 LEDGER = Path("docs/resources.md")
 REUSE = Path("REUSE.toml")
 # 清单与说明文档不是资源本体，不要求逐条登记。
-SKIP_NAMES = frozenset({"MANIFEST", "README.md", "regenerate.md"})
+SKIP_NAMES = frozenset({"MANIFEST", "README.md"})
 # 账本「许可」列认得的 SPDX 标识；REUSE.toml 里出现的标识会自动并入。
 KNOWN_SPDX = frozenset(
     {

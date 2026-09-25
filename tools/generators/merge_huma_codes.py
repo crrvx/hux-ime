@@ -18,7 +18,7 @@
 
 输出按「码 → 官方权重降序 → 字」排序：同一码内先出高频字。同源必得同字节（源里带 version、
 生成时把源的 sha256 写进表头，故表头也不随机器变化）；改了源就重跑并更新 `data/MANIFEST` 与
-`goldens/regenerate.md` 里的 sha。
+`goldens/README.md` 里的 sha。
 """
 
 from __future__ import annotations

@@ -117,7 +117,6 @@ mod tests {
     fn repo_path_points_at_repository_root() {
         assert!(repo_path("Cargo.toml").is_file());
         assert!(repo_path("goldens/README.md").is_file());
-        assert!(repo_path("goldens/regenerate.md").is_file());
     }
 
     #[test]

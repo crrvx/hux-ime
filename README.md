@@ -44,10 +44,8 @@ n-gram 模型不随包，能明显提升整句质量： \
 - 用户级 `~/.local/share/fcitx5/hux/models/`（推荐）
 - 系统级 `/usr/share/fcitx5/hux/models/`
 
-不装也能使用，仅整句排序略弱。 \
-上游自 2026-09-20 起默认模型为 `full-kn-m5-v2`（469,886,928 字节 / 448.12 MiB，
-sha256 `c0063898fdff27c1fb00c1c72fa28a6c1b375fade1ec2045d731b9db958bdecc`；文件名与
-`TCSKNM02` 格式不变，另有 fused 214 MiB 变体）。本仓不捆绑模型，以 Release 附件校验值为准。
+不装也能使用，仅整句排序略弱；本仓不捆绑模型，文件名与校验值（含 fused 变体）见
+[`docs/resources.md`](docs/resources.md) §2。
 
 **基本键位**
 
@@ -81,26 +79,25 @@ sha256 `c0063898fdff27c1fb00c1c72fa28a6c1b375fade1ec2045d731b9db958bdecc`；文�
 | 文档                                                       | 内容                                                |
 | ---------------------------------------------------------- | --------------------------------------------------- |
 | [`docs/usage.md`](docs/usage.md)                           | 指南：开发 / 安装 / 使用 / 卸载                     |
-| [`docs/config.md`](docs/config.md)                         | 配置项：行为 / 快捷键 / 选项与学习存储 / 待扩展（B/C 组） |
-| [`docs/design.md`](docs/design.md)                         | 设计：模块映射、数据与目录、fcitx5 集成要点、测试    |
-| [`docs/refactor.md`](docs/refactor.md)                     | 活规则：结构正义 / 目标结构 / 方案契约 / 测试与性能 / 依赖校验 / 骨架 |
-| [`docs/review-ledger.md`](docs/review-ledger.md)           | 台账：未闭合项（活口）、迁移映射与批次（留档）、逐批整改记录、四份审计总账 |
+| [`docs/config.md`](docs/config.md)                         | 配置项：行为 / 字集 / 快捷键 / 选项与学习存储       |
+| [`docs/design.md`](docs/design.md)                         | 设计：模块映射、数据与目录、fcitx5 集成要点、测试、性能 |
+| [`docs/refactor.md`](docs/refactor.md)                     | 活规则：结构正义 / 目标结构 / 方案契约 / 测试 / 依赖校验 / 骨架 |
+| [`docs/resources.md`](docs/resources.md)                   | 资源细则：来源（pin / sha）/ 许可 / 作用 / 随包与去向 / 再生与校验 |
+| [`docs/review-ledger.md`](docs/review-ledger.md)           | 台账：未闭合与待定项（活口）、迁移映射与批次（留档）、审计总账 |
 | [`docs/upstream-deviations.md`](docs/upstream-deviations.md) | 政策：有意偏离上游（①②③④）的依据、可证伪期望值表与回归做法 |
-| [`docs/android.md`](docs/android.md)                       | 计划：fcitx5-android 插件适配                       |
-| [`docs/LEXICAL_PRIOR_ATTRIBUTION.md`](docs/LEXICAL_PRIOR_ATTRIBUTION.md) | 署名：词先验数据的来源与许可         |
-| [`docs/resources.md`](docs/resources.md)                   | 资源总账：来源 / 作用 / 去向 / 溯源与装卸保证                         |
-| [`docs/perf.md`](docs/perf.md)                             | 性能：基准用法、基线数据与优化决定                  |
-| [`platform/fcitx5/README.md`](platform/fcitx5/README.md) | addon 实现：分工、按键语义、反查机制、已知限制      |
-| [`goldens/README.md`](goldens/README.md)                   | 差分金样：清单、transcript 格式、校验入口与规则     |
-| [`goldens/regenerate.md`](goldens/regenerate.md)           | 金样：重新生成命令全表、来源与校验和（sha 表）      |
-| [`data/README.md`](data/README.md)                         | 随包数据说明                                        |
+| [`platform/README.md`](platform/README.md)                 | 平台层：状态总览、Linux 构建安装、fcitx5 addon 契约、Android 计划 |
+| [`crates/hux-scheme/README.md`](crates/hux-scheme/README.md) | 方案区：虎句现状与骨架方案的数据 / 契约需求        |
+| [`goldens/README.md`](goldens/README.md)                   | 金样：清单、transcript 格式、重新生成、来源与校验和（sha 表）、规则 |
+| [`data/README.md`](data/README.md)                         | 随包数据：清单 / 格式 / 追加码表 / 来源与代价       |
+| [`assets/branding/README.md`](assets/branding/README.md)   | 品牌图形：主源、派生与校验                          |
+| [`assets/themes/README.md`](assets/themes/README.md)       | 共享主题：取用与更新步骤                            |
 | [`AGENTS.md`](AGENTS.md)                                   | 协作约定：流程 / 命名 / 代码与移植纪律 / 文档边界   |
-| `crates/hux-scheme/*/README.md`、`platform/*/README.md`     | 各方案骨架与各平台目录的职责与现状（就地索引）      |
 
-> **文档分工（纪律见 `AGENTS.md`「背景与约定」）**：活文档只写**现状与做法**——`docs/refactor.md`
-> （结构与契约等活规则）、`docs/config.md`、`docs/usage.md`、`docs/design.md`、`docs/resources.md`
-> （资源总账）、`goldens/README.md` 与 `goldens/regenerate.md`；**历史与逐批记录**（迁移映射、批次、
-> 审计总账、未闭合项）进 `docs/review-ledger.md`；**有意偏离上游**进 `docs/upstream-deviations.md`。
+> **文档分工（纪律见 `AGENTS.md`「背景与约定」）**：活文档只写**现状与做法**——[`docs/refactor.md`](docs/refactor.md)
+> （结构与契约等活规则）、[`docs/design.md`](docs/design.md)、[`docs/usage.md`](docs/usage.md)、
+> [`docs/config.md`](docs/config.md)、[`docs/resources.md`](docs/resources.md)（资源细则）、
+> [`docs/upstream-deviations.md`](docs/upstream-deviations.md)、其余为各区域的单一来源 README；
+> **历史与逐批记录（含未闭合项、待定配置项）**进 [`docs/review-ledger.md`](docs/review-ledger.md)。
 
 ## 虎码信息汇总
 
@@ -123,7 +120,7 @@ sha256 `c0063898fdff27c1fb00c1c72fa28a6c1b375fade1ec2045d731b9db958bdecc`；文�
 - 拼音数据 `data/tiger_sentence.pinyin.bin.gz` 转换自 [虎码官方秃版小狼毫](https://huma.ysepan.com)。
 - 词先验数据 `data/tiger_sentence.lexical.bin`：[CC-BY-4.0](LICENSES/CC-BY-4.0.txt)
   派生自 [rime-mohu](https://github.com/fcxxxz/rime-mohu)； \
-  署名见 [`docs/LEXICAL_PRIOR_ATTRIBUTION.md`](docs/LEXICAL_PRIOR_ATTRIBUTION.md)。
+  署名与复现见 [`docs/resources.md`](docs/resources.md)。
 - 模型/码表/其他数据 `data/tiger_sentence.*`：[GPL-3.0](LICENSES/GPL-3.0-only.txt)
   取自 [tiger-sentense-rime](https://github.com/lvyww/tiger-sentense-rime)。
 

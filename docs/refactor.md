@@ -4,12 +4,11 @@
 # 重构：核心引擎化 / 平台无关 / 码表无关 / 测试正式化
 
 目标：把现状（虎句 + fcitx5 桌面）整理为可承载**多方案、多平台**的引擎结构。 \
-**当前范围**：双端（linux / android）+ 虎码（字 / 词 / 句）；其他方案与平台仅留 README 骨架。
+**当前范围**：双端（linux / android）+ 虎码（字 / 词 / 句）；其他方案与平台只留骨架目录与说明。
 
 ## 本文边界
 
-> 章节号保留原编号（§3 / §4 / §8 已移出，故不连续）——代码注释 / CI / 文档里既有的
-> 「`refactor.md` §1 / §2 / §5 / §6 / §7 / §9」引用**仍然有效**，无需改号。
+> 章节号沿用原编号（§3 / §4 / §8 已移出，故不连续），既有引用**无需改号**。
 
 - **活规则（本文，只写现状与做法）**：§1 结构正义（硬规则）、§2 目标结构、§5 方案契约、
   §6 测试与性能、§7 依赖校验、§9 骨架。
@@ -19,7 +18,7 @@
   （含用户决定 B）、② addon 扩展、③ pin 差异、④ 宿主链交互；含金样「字节不动 + `DEVIATIONS`
   可证伪期望值表」策略与回归做法。
 - **文档纪律**：活文档只写现状与做法；历史与逐批记录进 `review-ledger.md`，有意偏离进
-  `upstream-deviations.md`（见 `AGENTS.md`「背景与约定」）——`refactor.md` 曾因混入流水账达 1100+ 行。
+  `upstream-deviations.md`（见 `AGENTS.md`「背景与约定」）。
 
 ## 1. 结构正义（硬规则）
 
@@ -47,15 +46,15 @@ crates/                       # 平台无关的 Rust 库
   hux-ffi/                    # C ABI：C 布局类型 + 导出函数（桌面 / Android 共用）
   hux-scheme/
     tiger/                    # 虎码（字/词/句）——当前唯一全量实现
-    yuhao/  wubi/             # init：README 骨架（形码族，复用 tiger 框架）
-    shuangpin/  quanpin/      # init：README 骨架（拼音族，接口预留）
+    yuhao/  wubi/             # init：骨架（形码族，复用 tiger 框架；说明见 README）
+    shuangpin/  quanpin/      # init：骨架（拼音族，接口预留；说明见 README）
   hux-test-support/           # 测试助手（金样路径 / transcript 编解码 / 临时目录）
 platform/                     # 平台适配
   fcitx5/                     # 共享 fcitx5 适配：Rust 组装（Engine/UI 快照/存储实现/Paths）
                               #   + C++ 壳 + CMake（linux 与 android 共用）
   linux/                      # 桌面：构建 / 安装说明（入口脚本在仓库根；打包待做）
   android/                    # Android：构建接线（对接 fcitx5-android fork 的 plugin/hux）
-  windows/  macos/  ios/      # init：README 骨架
+  windows/  macos/  ios/      # init：骨架（说明见 platform/README.md）
 ```
 
 平台层分工：`platform/fcitx5` 是**共用适配**（两端都是 fcitx5，环境变量与路径解析同一套）；
@@ -71,11 +70,11 @@ platform/                     # 平台适配
 - `platform/fcitx5`：C++ 薄壳（`shell/hux.cpp`）+ Rust 组装（`engine` / `session` / `ui` / `paths` /
   `learning_store` / `abi`，导出 C ABI）。
 
-其余目录：`data/`（随包数据源）、`assets/branding/`（多平台共享品牌图形，唯一源是 SVG）、
+其余目录：`data/`（随包数据源）、`assets/branding/`（多平台共享品牌图形，主源是艺术位图 `hux.png`）、
 `goldens/`（差分金样与夹具）、
 `tools/`（金样生成器 `generators/`、探针与基准 `probes/`、探针用例 `cases/`）、
-`docs/`（设计 / 重构 / 使用 / 配置 / 性能 / Android 等，索引见根 `README.md`「文档」表）；
-`platform/android` 的插件接线**待启动**，见 [`android.md`](android.md)；`platform/linux` 的打包待做。
+`docs/`（使用 / 配置 / 设计 / 资源 / 台账 / 偏离等，索引见根 `README.md`「文档」表）；
+`platform/android` 的插件接线**待启动**，见 [`../platform/README.md`](../platform/README.md)；`platform/linux` 的打包待做。
 
 参照实现 → Rust 的模块映射（含各模块差分手段）见 [`design.md`](design.md) §2。
 
@@ -152,7 +151,7 @@ platform/                     # 平台适配
   **方案专属夹具留在各自 `tests/`**（如 `decode_differential.rs` 的 `make_decoder`）；
   若本 crate 超过约 200 行或开始承载业务逻辑，立即停手、退回各 crate 内 `#[cfg(test)]` 助手。
 - `hux-bench` **不新建**：基准以 `--release` 示例提供（`crates/hux-scheme/tiger/examples/{decode_bench,key_bench}.rs`），
-  避免新依赖（保持离线可构建）；基线与结论见 [`perf.md`](perf.md)。
+  避免新依赖（保持离线可构建）；基准用法、基线与结论见 [`design.md`](design.md) §6。
 - 优化只允许「金样不变」的改动，且须有前后对比数据。
 - CI 现状：`rust` 作业（fmt / clippy / **分层测试**：内核+助手 → 方案 → 配置+平台 /
   core 平台痕迹与「core 无方案引用 / 平台不引用方案内部」校验 / 数据溯源 /
@@ -178,7 +177,7 @@ platform/                     # 平台适配
   `lib.rs` / `scheme.rs` / `host.rs` / `session.rs` 里「不依赖 hux-scheme」的说明性提及是合法的，实测 6 处），
   也不得引用已迁出的方案模块（`decode` / `lexicon` / `lexical` / `ngram` / `interaction` / 反查）；
 - ✅ 已入 CI：`cargo tree` 校验 `hux-core` 无 `hux-scheme/*` 依赖边，且 `hux-scheme/*` 只依赖 `hux-core`；
-- ✅ 已入 CI：`platform/fcitx5/src` 的方案引用走**白名单**（此前只是「内部模块黑名单」）：
+- ✅ 已入 CI：`platform/fcitx5/src` 的方案引用走**两级白名单**（模块 + 导入名）：
   ① 出现的方案模块只能是 `hux_scheme_tiger::scheme`（装配根构造方案，`hux_scheme_tiger::<其它模块>` 一律失败）；
   ② 从 `scheme` 大括号导入的名字只允许 `ASSETS` / `TigerScheme` / `SCHEME_ID`；
   ③ 保留原有内部模块黑名单（`interaction` / `decode` / `lexicon` / …）——即「平台经契约驱动」；
@@ -191,8 +190,9 @@ platform/                     # 平台适配
 
 ## 9. 骨架（已落地）
 
-- 方案骨架：`crates/hux-scheme/{yuhao,wubi,shuangpin,quanpin}/README.md`（+ `crates/hux-scheme/README.md`）；
-- 平台骨架：`platform/{windows,macos,ios}/README.md`。
+- 方案骨架：`crates/hux-scheme/{yuhao,wubi,shuangpin,quanpin}/`——说明见
+  [`../crates/hux-scheme/README.md`](../crates/hux-scheme/README.md)；
+- 平台骨架：`platform/{windows,macos,ios}/`——说明见 [`../platform/README.md`](../platform/README.md)。
 
-每个骨架 README 写明：目标、与 tiger / fcitx5 的差异、数据与 API 需求、依赖方向；
-**仅 README，不进 workspace**，避免空壳与死代码。
+每个骨架目录写明：目标、与 tiger / fcitx5 的差异、数据与 API 需求、依赖方向；
+**仅目录与说明，不进 workspace**，避免空壳与死代码。
