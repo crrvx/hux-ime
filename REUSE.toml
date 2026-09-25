@@ -21,6 +21,13 @@ path = "data/tiger_sentence.lexical.bin"
 SPDX-FileCopyrightText = "rime-mohu contributors"
 SPDX-License-Identifier = "CC-BY-4.0"
 
+# 追加码表（虎码官方版单字表里主表没有的 (字, 码)）：官方随包未声明形式化授权，
+# 故用 LicenseRef 如实记录来源与口径，不冒充 GPL；文本见 LICENSES/LicenseRef-HuMa-Official.txt。
+[[annotations]]
+path = "data/tiger_sentence.codes.huma.txt"
+SPDX-FileCopyrightText = ["虎码官方（虎码输入法官方版）作者与贡献者", "2026 明雅流风 <crrvx@outlook.com>"]
+SPDX-License-Identifier = "LicenseRef-HuMa-Official"
+
 [[annotations]]
 path = "goldens/**"
 SPDX-FileCopyrightText = ["虎整句（tiger-sentense-rime）作者与贡献者", "2026 明雅流风 <crrvx@outlook.com>"]

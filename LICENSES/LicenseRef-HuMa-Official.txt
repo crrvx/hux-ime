@@ -1,0 +1,10 @@
+本仓的 `data/tiger_sentence.codes.huma.txt`（追加码表）取自虎码官方版
+（虎码输入法官方版 `2026.08.15`，`publish/rime/tiger.dict.yaml`，sha256
+ca172d4e55006bec389b6e3876bb08d4db1e1d1ae49a64f5d9d2c7d8c5e3abe5）中**我方主表没有**的
+`(字, 码)` 对。官方随包（7z 与说明文档）中未见形式化的许可/授权声明，故本仓：
+
+- 不把该数据标为 GPL 或任何既有 SPDX 许可，而用本 `LicenseRef-HuMa-Official` 如实记录；
+- 只登记「字 → 码」映射（打字的必要事实），并保留来源、版本与 sha256 以便追溯；
+- 一旦虎码官方给出明确口径，就把 `REUSE.toml` 与该台账行改成官方口径（或删除本文件）。
+
+版权归虎码官方及其贡献者；本仓的整理与生成脚本归 2026 明雅流风（GPL-3.0-or-later）。

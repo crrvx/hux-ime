@@ -34,11 +34,14 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | `data/tiger_sentence.codes.txt`<br>`data/tiger_sentence.char_ranks.txt`<br>`data/tiger_sentence.full_code_whitelist.txt`<br>`data/tiger_sentence.supplement.txt` | 虎整句（[tiger-sentense-rime](https://github.com/lvyww/tiger-sentense-rime)）作者与贡献者；主干 pin `abad411750f79cfca750985fa266689b5d9b865f`，取自上游同名文件（`supplement.txt` 仅注释里的方案名由「虎整句」改为「虎句」） | 字词码表 / 字频 / 全码白名单 / 补充词（词库解析的输入） | `GPL-3.0-only` | 是 | 系统级 `<prefix>/share/fcitx5/hux/`；用户级 `~/.local/share/fcitx5/hux/` | sha256 表（[`../goldens/regenerate.md`](../goldens/regenerate.md) 数据夹具表）+ `data/MANIFEST` 装后逐条核对 |
 | `data/tiger_sentence.lexical.bin` | [rime-mohu](https://github.com/fcxxxz/rime-mohu) 的作者与贡献者；由上游 `mohu_flypy.base.dict.yaml` @ `9f43098cefdb450fe8dec0f3069fe8d9999b9d10` 经 `build_lexical_prior.py` 生成 | 紧凑词先验位图（TCSLEX01 Bloom filter，150,032 字节），整句排序用 | `CC-BY-4.0` | 是 | 同上 | sha256 `8dbc884b6cb719d07e4cef153c8048db19a11f8224f75a4ed87853e688a27393`（CI 校验；署名与复现见 [`LEXICAL_PRIOR_ATTRIBUTION.md`](LEXICAL_PRIOR_ATTRIBUTION.md)） |
+| `data/tiger_sentence.codes.huma.txt` | 虎码官方（虎码输入法官方版）作者与贡献者；官方版 `2026.08.15` 的单字表（`publish/rime/tiger.dict.yaml`，sha256 `ca172d4e…`）里**主表没有的字**（102,332 条、93,666 字），源不入库 | 追加码表：生僻字可打（基本区全覆盖 + 扩展 A/B–G 等，主表 9,794 字 → 合计 10.3 万字）。内核把追加表拼在主表之后，故主表 rank 与简码分配、`optimal_single` 等派生标志都不变；删掉本文件即回滚 | `LicenseRef-HuMa-Official`（官方随包未声明形式化授权，如实记录，见 [`../LICENSES/LicenseRef-HuMa-Official.txt`](../LICENSES/LicenseRef-HuMa-Official.txt)） | 是 | 同上 | sha256 表（[`../goldens/regenerate.md`](../goldens/regenerate.md) 追加码表段）+ `data/MANIFEST` 装后逐条核对 + `python3 tools/checks/check_code_tables.py`（命名口径 / 行格式 / 跨表去重 / 只补主表没有的字）+ `cargo test -p hux-scheme-tiger --test shipped_data`（逐码比对「仅主表」与合并装载：前缀、rank、`optimal_single` 全等）；生成器 `tools/generators/merge_huma_codes.py` |
 | `data/tiger_sentence.pinyin.bin.gz` | 虎整句（tiger-sentense-rime）作者与贡献者；上游 `PY_c.dict.yaml` @ 反查 pin `92a0b54b53114e7e5aa6a1ff48efa95db0e21f9c`（该文件自 `898579f` 起未变，源自官方字词版 / 秃版小狼毫的简体拼音词典） | 音反查索引（TCSRV01：音节表 + 拼写表 + 按码分组的词条），反引号键音反查用 | `GPL-3.0-only` | 是 | 同上 | sha256 `18a0931a323ad58e1b13e610ec93183297118033d571ae303678613a217dad2a`（8,054,016 字节，CI 校验）；生成器 `tools/generators/gen_pinyin_index.py` 可用夹具重生成比对（CI 亦跑） |
 | `data/symbols.yaml` | 虎整句（tiger-sentense-rime）作者与贡献者；上游 `symbols.yaml` @ 主干 pin `abad411750f79cfca750985fa266689b5d9b865f`（该文件自 `35a10b9` 以来未变，两个 pin 逐字节相同） | 标点表（`punctuator` 的 `half_shape` / `full_shape` 两组）；发布版仅覆盖 half_shape 的 `/`（参照原表为 `、`），full_shape 不变 | `GPL-3.0-only` | 是 | 同上 | 与参照原样夹具 `goldens/key_sequence/symbols.yaml`（sha256 `9b45c4a2f179d42585d5cc1439bfbcb5a585520f0de3ce83232180990e5cc9b1`）比对，差异只有上述一处；发布文件自身的 sha256 不在 CI 固定 |
 
 **校验**：`bash tools/checks/check_data_manifest.sh`（清单 ↔ `data/` 实况 ↔ 装 / 卸 / CMake 三处一致）、
 `python3 tools/checks/check_resources.py`（本页登记与许可）、
+`python3 tools/checks/check_code_tables.py`（码表格式 + 跨表去重）、
+`python3 tools/checks/verify_golden_shas.py`（含追加码表的 sha256 表），
 以及 CI 里的两条 sha256（词先验、音反查索引）。
 细节与不随包说明见 [`../data/README.md`](../data/README.md)。
 
@@ -110,7 +113,7 @@
 | 资源（仓库路径） | 来源 | 作用 | 许可 | 随包 | 默认去向 | 校验 |
 | --- | --- | --- | --- | --- | --- | --- |
 | `LICENSE` | 本仓（明雅流风） | 项目许可正文（GPL-3.0，供 GitHub 识别） | `GPL-3.0-or-later` | 否 | 无 | `reuse lint`（REUSE 规范忽略根许可正文） |
-| `LICENSES/GPL-3.0-or-later.txt`<br>`LICENSES/GPL-3.0-only.txt`<br>`LICENSES/CC-BY-4.0.txt`<br>`LICENSES/BSD-3-Clause.txt` | SPDX 官方许可正文镜像（各许可的发布方） | 各许可全文：项目代码 / 上游派生数据 / 词先验 / 键名表 | `GPL-3.0-or-later`<br>`GPL-3.0-only`<br>`CC-BY-4.0`<br>`BSD-3-Clause` | 否 | 无 | `reuse lint` + 与各文件 SPDX 头 / [`../REUSE.toml`](../REUSE.toml) 标注对应 |
+| `LICENSES/GPL-3.0-or-later.txt`<br>`LICENSES/GPL-3.0-only.txt`<br>`LICENSES/CC-BY-4.0.txt`<br>`LICENSES/BSD-3-Clause.txt`<br>`LICENSES/LicenseRef-HuMa-Official.txt` | SPDX 官方许可正文镜像（各许可的发布方）；`LicenseRef-HuMa-Official.txt` 是本仓自写的情况说明（虎码官方随包未声明形式化授权） | 各许可全文：项目代码 / 上游派生数据 / 词先验 / 键名表；以及追加码表的授权口径说明 | `GPL-3.0-or-later`<br>`GPL-3.0-only`<br>`CC-BY-4.0`<br>`BSD-3-Clause`<br>`LicenseRef-HuMa-Official` | 否 | 无 | `reuse lint` + 与各文件 SPDX 头 / [`../REUSE.toml`](../REUSE.toml) 标注对应 |
 | `REUSE.toml` | 本仓（明雅流风） | 无 SPDX 头的二进制 / 第三方文件的许可与版权标注（REUSE 规范） | `GPL-3.0-or-later` | 否 | 无 | `reuse lint`；许可一致性另由 `python3 tools/checks/check_resources.py` 与本页比对 |
 
 **校验**：`reuse lint`（CI 的 `reuse` 作业）。逐文件许可标注以后者为准；本页写的是各类资源的**许可归属**。
