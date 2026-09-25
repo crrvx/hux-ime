@@ -58,7 +58,7 @@
   **本仓逐步期望值**，并断言「期望 ≠ 金样」的步集合**恰好等于**「实测 ≠ 金样」的步集合
   （既证明确有差异，也防止实现回退成上游后静默通过）；反向断言「登记的偏离已消失」即红。
   文档侧的单一来源是**本文**；金样侧说明见 [`../goldens/README.md`](../goldens/README.md) 的内容表与
-  [`../goldens/regenerate.md`](../goldens/regenerate.md) 的「金样不得因本仓有意的行为差异而重生成」。
+  [`../goldens/README.md`](../goldens/README.md) 的「金样不得因本仓有意的行为差异而重生成」。
   登记名必须真实存在；不得静默跳过其它用例：
 
 - **偏离表（三类合并；`steps` 列 = 金样步数，偏离步为「本仓期望 ≠ 金样」的步）**：
@@ -111,7 +111,7 @@
   `tools/generators/gen_key_sequence_golden.sh`，得到的行与本仓**逐位相同**（`Page_Down` 后 `consumed=0`）
   ⇒ 该差异是**上游自己后续提交**带来的，不是本仓发明；改回 `" "` 等于回退上游改动。
 - **覆盖与守护**：金样新增 `apostrophe_digit_page`/`apostrophe_semicolon_page`
-  （只增不改：旧内容是新文件的**严格前缀**；66 例/275 步 → **68 例/285 步**，sha 见 [`../goldens/regenerate.md`](../goldens/regenerate.md)），
+  （只增不改：旧内容是新文件的**严格前缀**；66 例/275 步 → **68 例/285 步**，sha 见 [`../goldens/README.md`](../goldens/README.md)），
   登记为 `BranchPinDelimiter`；`abc_segmentor_splits_after_a_delimiter_before_a_digit` 单测钉住
   `abc_segmentor` 的断段行为（`'`+数字/`;` 断开、`'`+首字母单段）。
   负向对照：把常量改回 `" "` ⇒ 两条登记项报「登记的偏离已消失」并失败。

@@ -22,7 +22,7 @@
 > **不再保留「文档说未做、代码已做」（或反之）的条目**：每批追平/整改收尾时勾对一次。
 > `[误报·已核实]` ＝ 审计结论被实测否掉（反证随条目给出）——仅用于 §5 的「总账」。
 > **非审计来源的未闭合项**：发行版打包（PKGBUILD，AUR `fcitx5-hux`）——状态见
-> [`../platform/linux/README.md`](../platform/linux/README.md)。
+> [`../platform/README.md`](../platform/README.md)（平台层）；**待定配置项**（B/C 组）见 §0.4。
 > 本节把四份审计总账里**仍活着**的条目提到最前（其余条目均已 `[✅ 已修]`，逐条归宿见 §5）。
 > 行文与 §5 总账**逐字相同**（两处同步，改动以 §5 总账为准）：共 **9 条**——`[待办]` 3 /
 > `[已登记·不修+理由]` 5 / `[误报·已核实]` 1。
@@ -33,7 +33,7 @@
 |---|---|---|---|
 | C7（`Group.code`） | 60 万次 `Group.code: Vec<u16>` 小分配 | [待办] | 未做（第 3b 批登记）：需先有基准数据，且要改组查找 / 前缀剪枝 / `collect_chunks` 的取值路径（扁平 `Vec<u16>` + `(start, len)`），收益与风险不匹配，留待性能批 |
 | F16 | C++ 壳两处脆弱模式：`applyUpdate` 每次 UI 刷新都重建状态区；`HuxCandidateWord::select` 内同步触发回调可能销毁候选对象自身 | [待办] | 未改（当前**无实测故障**，C++ 侧以 `session == nullptr` 早退规避）：需真机 fcitx5 压力验证后再定是否投递到事件循环；本机无 fcitx5 运行环境。**UAF 收尾批补充**：生命周期侧的悬垂风险已加固（候选词弱引用 + `~HuxEngine` 清状态区，见 §5.3 的「报告 §5①」结案段），**重入 / 自毁结构未动** |
-| M8 | 依赖 / 版本未固定的位置（action 移动标签、`archlinux:latest`、`librime-dev` 版本） | [待办] | **③④ 已实施 / 已注明**：`pacman -Sy` → `-Syu`；`archlinux:latest` **有意不钉**（作业目的即「最新 Lua」）；已在 `goldens/regenerate.md` 注明 CI 的 librime 版本可不同、仅做语法检查。**② rust 工具链：有意不钉**（跟随 stable 最新版；CI 用 `dtolnay/rust-toolchain@stable`）——代价是 stable 漂移可能让 `cargo fmt --all --check` / clippy `-D warnings` 无预警变红，届时按当时的稳定版修正即可。**① action 钉 commit sha 仍待办**：离线无法验证 GitHub 侧可用性，擅自钉死有让 CI 无预警变红的实际风险 |
+| M8 | 依赖 / 版本未固定的位置（action 移动标签、`archlinux:latest`、`librime-dev` 版本） | [待办] | **③④ 已实施 / 已注明**：`pacman -Sy` → `-Syu`；`archlinux:latest` **有意不钉**（作业目的即「最新 Lua」）；已在 `goldens/README.md` 注明 CI 的 librime 版本可不同、仅做语法检查。**② rust 工具链：有意不钉**（跟随 stable 最新版；CI 用 `dtolnay/rust-toolchain@stable`）——代价是 stable 漂移可能让 `cargo fmt --all --check` / clippy `-D warnings` 无预警变红，届时按当时的稳定版修正即可。**① action 钉 commit sha 仍待办**：离线无法验证 GitHub 侧可用性，擅自钉死有让 CI 无预警变红的实际风险 |
 
 ### 0.2 `[已登记·不修+理由]`（5 条：tiger `A7`/`C3`（跨 crate）/`C8`、文档工具CI `M12`/`M17`）
 
@@ -51,8 +51,54 @@
 |---|---|---|---|
 | B2·子断言 | 审计称「本仓把 `ab'1` 切成 abc 段 + raw 段 ⇒ 有 rank-3 候选」 | [误报·已核实] | 第 3b 批实测**两 pin 行完全一致**（`ab'1` 都是 `count=0`）：段结构差异不落在比对面（`preedit` 按设计不比对）；`apostrophe_*_split` 两例逐位通过、无需登记 |
 
+
+### 0.4 待定配置项（B/C 组）
+
+> 原 `docs/config.md`「待扩展（B/C 组）」（更早来自 `docs/config-options.md`，2026-09 文档肃清时迁入本表）。
+> A 组四项（候选排列、预编辑内容、翻页循环、最短保留码数）已实施，见 [`config.md`](config.md)。
+> **记录规则**：新想法先落本表（价值 / 现状 / 实现点 / 成本），低风险小项可随时转实施；
+> 实施后从本表移除，并同步 `config.md` 的「行为 / 字集 / 快捷键」三表、测试与相关文档。
+
+**低成本余项（现管线只差暴露）**
+
+| 项 | 现状 | 实现点 | 备注 |
+| --- | --- | --- | --- |
+| 反查候选上限 | 固定 20 | 方案常量（`sound_to_char_shape::CANDIDATE_LIMIT`）→ 设置 + ABI `int` | 少用 |
+| 学习库上限 | 固定 1 万条 / 16 MiB | `learning_store` 常量 → 设置（重启生效） | 少用；「清空学习库」需另做动作，非配置 |
+| 候选序号显示 | 随数字直选联动（直选开启才显示 `1`–`9`/`0`） | C++ `setSelectionKey` 条件 → 三态设置 | 少用 |
+
+**B 组（中等成本，可排期）**
+
+- **B1 模型路径**：价值 = 自定义 / 禁用 n-gram 模型，Android 模型分发也依赖该能力（模型 APK 走默认目录）；
+  现状 = 仅 `HUX_MODEL` 环境变量，模型在引擎创建时加载（改动需重启）；实现 = schema `String` → ABI 传路径
+  （缺省 / 空串语义待定：空 = 默认查找还是禁用）+ 与 `HUX_MODEL` 的优先级约定；成本 / 风险 = 中 / 低。
+- **B2 候选选择键可配置**：价值 = 除 Tab/Shift+Tab、Up/Down 外可自定义选字键；现状 = host `key_binder`
+  固定 Tab/Shift+Tab，`selector` 固定 Up/Down（横排）/ ←→（竖排）；实现 = `HostOptions` 增
+  `prev/next_candidate_keys`（rime 键名，`KeyList` 可多项），`selector` 按列表匹配，并理清与翻页键、
+  导航键在处理器链中的优先级；成本 / 风险 = 中 / 低。
+- **B3 普通候选显示虎码注释**：价值 = 学码友好；现状 = 普通解码候选 `comment` 为空、音反查候选注释 = 虎码；
+  实现 = 注释来源（候选路径的编码 / 词条虎码）、显示格式与宽度，**仅展示层换算，不得进入排序**；
+  成本 / 风险 = 中 / 中。
+- **B4 码表 / 标点表自定义**：现状 = **用户目录同名文件覆盖已可用**（`$XDG_DATA_HOME/fcitx5/hux/`，
+  即 `~/.local/share/fcitx5/hux/`，放 `tiger_sentence.*.txt` 或 `symbols.yaml` 即生效），无需代码；
+  路线 = 先补文档（`usage.md` / `data/README.md`），若需 UI 指定路径（`String` 项 + 重启）再排期；
+  成本 = 文档小 / UI 中。
+
+**C 组（高成本，暂缓）**
+
+- **C1 简繁转换**：价值 = 输出简 / 繁切换（参照未带，属扩展）；前置 = OpenCC 级转换表（体积 / 许可 / 来源）、
+  转换挂点（提交文本与候选文本）、与学习库及反查展示的交互契约；成本 / 风险 = 高（数据 + 全链路）。
+- **C2 用户词 / 自造词**：价值 = 用户词典导入导出与编辑、学习过程可见化；现状 = 只有打分式学习库
+  （LevelDB 同构），无用户词层；前置 = 数据结构与迁移、与解码排序 / 学习的关系、桌面与 Android 两端 UI；
+  成本 / 风险 = 高。
+
+**明确不做**：早提交概率阈值（share / 证据数，调参危险、参照亦未暴露为 UI）；`memory_profile`
+（compact / balanced，本实现仅支持 TCSKNM02 mobile 模型）；`ascii_composer` 系列（Caps / Shift 行为，
+无内置英文模式）。
+
 ---
 
+## 1. 迁移映射
 ## 1. 迁移映射（P1–P3 已执行，留档；原 `refactor.md` §3）
 
 | 现位置 | 去向 |
@@ -98,7 +144,7 @@
 > P5 全部落地：**`hux-test-support` ✅**（收编两份 `tests/common/`，全仓无 `mod.rs`）、
 > **CI 分层 ✅**（内核+助手 / 方案 / 配置+平台 三步）。
 >
-> P6 已按「先测后优化」收口：基准与基线见 [`perf.md`](perf.md)；数据表明打字路径已是微秒级
+> P6 已按「先测后优化」收口：基准与基线见 [`design.md`](design.md) §6；数据表明打字路径已是微秒级
 > （1–5 字符 p95 ≤ 3.4 µs、整键 p50 ≈ 2.4 µs），尾部仅来自 >20 字符长整句（p50 ≈ 2.3 ms，仍 << 交互预算），
 > 故**不做**参照的增量解码缓存（其收益集中于长输入，且牵涉解码 arena 路径下标生命周期），
 > 复核触发条件记在 `perf.md`。
@@ -161,7 +207,7 @@
   提交反查候选、`92a0b54` 撇号音节分隔），它是主干 pin 的**后代**，故音反查金样 `sound_to_char_shape.tsv.gz`
   单独取自它、**不再做「分支 + 主干本地合并」**（生成器已简化为单 `PIN` + 显式失败护栏）。
 
-详见下文各批次记录；金样来源与 sha 表见 [`../goldens/regenerate.md`](../goldens/regenerate.md)。
+详见下文各批次记录；金样来源与 sha 表见 [`../goldens/README.md`](../goldens/README.md)。
 
 ### 3.2 模型与格式侦察
 
@@ -455,7 +501,7 @@
   `nav_page_up_home_reset`（以上 5 例逐位一致）与 `nav_page_home_minus`（上游行为，登记
   `DEVIATED_CASES`，见上方偏离表）。`key_sequence.tsv.gz` 用主干 pin 的参照核心重生成：
   **57 例 / 242 步逐位不变**（含头部 4 行），仅新增 6 例 → **63 例 / 264 步**，
-  sha256 `f4b032c3…`（`goldens/regenerate.md` 与 CI 硬编码值同步）。
+  sha256 `f4b032c3…`（`goldens/README.md` 与 CI 硬编码值同步）。
   宿主链绑定（金样走不到）另有 core 单测与平台端到端用例钉住。
 - **负向对照（实测）**：把每处修复逐个改回缺陷形态后，对应守护全部失败——
   F2（当时靠标签）→ core `page_up_at_first_page_arms_the_paging_binding` + 平台
@@ -500,7 +546,7 @@
   负向对照：截断 `key_sequence.tsv.gz` ⇒ 「用例数不足 0 < 68」失败。
 - **B5 ngram 真实模型差分在 CI 恒跳过（登记 + 闸门）**：`ngram_sample_transcript_is_bit_exact_when_present`
   在缺 `goldens/local/ngram_sample.tsv.gz`（不入库）或 448 MiB 真实模型时 `eprintln! + return`
-  ⇒ CI 对真实模型路径**零守护**（decode 走 17 KB fixture）。本地复验按 `goldens/regenerate.md` 的 sample
+  ⇒ CI 对真实模型路径**零守护**（decode 走 17 KB fixture）。本地复验按 `goldens/README.md` 的 sample
   生成命令产出抽样金样后 `cargo test -p hux-scheme-tiger --test ngram_differential`；
   本批新增 `HUX_REQUIRE_SAMPLE=1` 闸门（缺失即**失败**，供本地/专项 CI 强制覆盖；缺省仍跳过，
   保住无模型环境的全绿）。**建议（未做，成本登记）**：CI 加可选作业下载模型 + 缓存后跑该闸门——
@@ -532,7 +578,7 @@
   `goldens/decode_learning_evidence.tsv.gz`（`--early-commit 1 --required 1 --learning 1`，12257 行）
   + `gen_decode_golden.lua` 的组合开关 + 差分位级比对 + CI 重生成比对；覆盖 `learning=1 && truncated=1`
   的截断池与 `share`/`base_share` 双权重交互——重生成命令、覆盖点与门槛见 
-  `goldens/regenerate.md`）；
+  `goldens/README.md`）；
   ③ Tab 锁无真机探针 → **已闭合**（第 5 批 `5304bd357903`：新增 `goldens/key_sequence_tab.tsv.gz`
   （8 例 / 44 步）+ 夹具 `goldens/key_sequence_tab/`（`tiger_sentence.custom.yaml` 把
   `tab_learning: true` 这一**条件本身**入库）+ 独立生成器
@@ -547,7 +593,7 @@
 
 依据目录 / 工具侧 D1–D14 / M1–M17 与 cfg / 平台侧 F5/F6/F8/F15；逐条「审计条目 → 修法 → 守护 → 负向对照」见 §5.3 / §5.4，门槛：`cargo test --workspace --locked` **336 用例 0 失败**，fmt / clippy `-D warnings` / `reuse lint` / CI 分层与新增守卫全绿，本地复跑 `rust`（16 步）与 `addon` 作业。
 
-- **金样机制（M1/M2/M5）**：①`goldens/regenerate.md` 的「重新生成」命令块补上**先检出 pin**
+- **金样机制（M1/M2/M5）**：①`goldens/README.md` 的「重新生成」命令块补上**先检出 pin**
   与自检，并写明只读检出的替代做法（可写克隆 + `git fetch origin <sha>` + `checkout --detach`，
   **不要 `--depth 1`**）；②三份「CI 不重生成」金样（`key` / `key_sequence` / `sound_to_char_shape`）
   的内部头部（`# reference … @ <pin>` 与来源文件 sha256）纳入校验——`key.tsv.gz` 头部为**只增不改**
@@ -662,7 +708,7 @@
 - `[✅ 已修]`：`gen_pinyin_index.py --check` 与**由 `--source` 重建**的内容逐字节比对
   （此前不带 `--manifest` 时对任意文件都打印 `check ok`，属恒真检查）；显式传
   `--manifest` 而文件缺失即 `exit 1`。正负例均已验证。
-- `[✅ 已修]`（第 4 批 M1/M2）：`goldens/regenerate.md` 的「重新生成」命令块补上**先检出 pin**
+- `[✅ 已修]`（第 4 批 M1/M2）：`goldens/README.md` 的「重新生成」命令块补上**先检出 pin**
   （`git -C "$REF" checkout --detach abad411…` + `test "$(git … rev-parse HEAD)" = …` 自检）并写明
   参照检出只读时的替代做法（工作区内可写克隆、`git fetch origin <sha>` + `checkout --detach`，
   **不要 `--depth 1`**——浅克隆会让需要本地合并的历史操作被判「无关历史」）；
@@ -685,6 +731,23 @@
   `-D warnings` 无预警变红，届时按当时的稳定版修正即可（不引入 `rust-toolchain.toml`）；
   ③ `archlinux:latest` 是 `golden-lua-latest` 作业的**目的**（测最新 Lua），故不钉镜像；已把
   `pacman -Sy` 改 `-Syu`（Arch 不推荐部分升级）。③ 已实施；② **有意不钉（已定）**；① 待办。
+
+### 4.9 第 6 批：文档肃清整合（合并 / 细化 / 精简）
+
+- **合并**（边缘文档 → 区域单一来源）：平台层 7 份（`platform/{fcitx5,linux,android,windows,macos,ios}/README.md`
+  与 `docs/android.md`）并为 `platform/README.md`；方案区 6 份（`crates/hux-scheme/README.md` 与
+  `{tiger,yuhao,shuangpin,quanpin,wubi}/README.md`）并为 `crates/hux-scheme/README.md`；
+  金样 2 份（`goldens/README.md` + `goldens/regenerate.md`）并为 `goldens/README.md`——两张 sha256 表与
+  「来源与校验和」段逐字节保留，`tools/checks/verify_golden_shas.py`、`.github/workflows/ci.yml` 注释与
+  `crates/hux-test-support` 的 `repo_path` 断言同步。
+- **细化资源细则**：`docs/resources.md` 补齐七要素（来源 pin / sha · 作用 · 许可 · 随包 · 去向 · 再生 · 校验），
+  并把 `docs/LEXICAL_PRIOR_ATTRIBUTION.md` 的词先验署名、变更与复现并入（该文件删除）。
+- **精简**：`docs/perf.md` 并入 `docs/design.md` §6（基准用法、基线、结论与维护约定）；`docs/config.md` 的
+  「待扩展（B/C 组）」迁入本文 §0.4（活口），config.md 只留现行配置项；六份骨架 README 的内容并入上位文档后删除。
+- **保留的有意选择**：`data/README.md`、`assets/{branding,themes}/README.md` 不动——代码 / CMake / CI
+  注释引用它们，而仓库纪律禁止代码注释指向 `docs/*.md`；`docs/resources.md` 只链接这些操作细则，不复制正文。
+- **同步的引用**：`docs/refactor.md` §9 骨架清单与目录说明、根 `README.md` 文档索引、`data/README.md`、
+  `docs/{design,usage,upstream-deviations}.md` 内的相对链接。
 
 ## 5. 总账：四份只读审计逐条归宿
 
@@ -830,7 +893,7 @@
 > **`~HuxEngine` 之后 `~HuxSession` 计数为 0** ⇒ 没有任何会话晚于引擎析构，审计提出的 UAF 假设不成立。
 > 一处如实澄清：这一轮里 4 个会话是**随各自 IC 在收尾时先销毁**的（故 `~HuxEngine` 那行虽在析构体首行却排在其后），
 > 即本轮的 `unregister()` 没赶上销毁会话；`unregister()` 路径的安全性由源码链条证明（见上），两条证据合起来闭环。
-> 步骤与判据见 `platform/fcitx5/README.md`「析构顺序核对（真机）」。
+> 步骤与判据见 [`../platform/README.md`](../platform/README.md)「析构顺序核对（真机）」。
 >
 > ② `HuxCandidateWord::select` 期间自毁：**仍未做真机压力验证**（见 F16 行；本批只加生命周期防护，未改重入结构）。
 > ③ C++ 侧编译 / 安装实测：CI `addon` 作业覆盖，第 4 批与本批均本机复跑
@@ -854,14 +917,14 @@
 | D12 | `README.md` 的 `crates/*/README.md` 索引与实际不符（4 个 crate 无 README） | [✅ 已修] | 第 4 批：改为 `crates/hux-scheme/*/README.md` |
 | D13 | §9 与 4 份骨架 README 实况不符（无「依赖方向」/「数据与 API 需求」；`yuhao` 的「学习规则串」契约过期） | [✅ 已修] | 第 4 批：4 份 README 补「依赖方向」+「契约需求」（`Scheme` 回调 / 4 个运行时角色 / `learning_mode` 自算），`wubi`/`shuangpin`/`quanpin` 补「数据需求」 |
 | D14 | `docs/usage.md` 手工卸载与 `uninstall.sh` 契约不一致（会连自取模型一起删） | [✅ 已修] | 第 4 批：补「`rm -rf /usr/share/fcitx5/hux` 会连自取模型一起删」+ 按 `data/MANIFEST` 只删随包数据的写法 |
-| M1 | `goldens/regenerate.md` 的「重新生成」块缺 pin 检出步骤，不可照抄 | [✅ 已修] | 第 4 批：命令块首加 `set -euo pipefail` + `git -C "$REF" checkout --detach abad411…` + `rev-parse` 自检，并写明只读检出的替代做法（可写克隆 + `fetch <sha>`，**不要 `--depth 1`**）；探针段注明生成器自建隔离工作区、无需 checkout |
+| M1 | `goldens/README.md` 的「重新生成」块缺 pin 检出步骤，不可照抄 | [✅ 已修] | 第 4 批：命令块首加 `set -euo pipefail` + `git -C "$REF" checkout --detach abad411…` + `rev-parse` 自检，并写明只读检出的替代做法（可写克隆 + `fetch <sha>`，**不要 `--depth 1`**）；探针段注明生成器自建隔离工作区、无需 checkout |
 | M2 | 「金样不得重生成」的守护不完整：三份 `.gz` 内部 pin/sha 头无人核对；README sha 表无校验器 | [✅ 已修] | 第 4 批：① `key.tsv.gz` 头部**只增不改**补齐（解压后 5132 条记录逐字节不变）；② 新增 `tools/checks/verify_golden_shas.py`（README 表逐行 ↔ 文件、头部 ↔ 声明、`--reference` 按 pin 核参照）接入 `rust` + `golden` 两作业；③ `goldens/local/` 与真实模型抽样口径按审计「可接受」只文档约定 |
 | M3 | 探针脚本把**入库夹具**当副作用重写且无校验（上游一变就静默改动另一 pin 的夹具） | [✅ 已修] | 第 5 批 `5304bd35`：两个生成器（`gen_key_sequence_*` / `gen_sound_to_char_shape_*`）加 `guard_fixture`——先写临时产物，与入库夹具 `cmp` 逐字节比对，不一致即失败并区分「pin 变化 / 夹具漂移」，**入库文件不再被改写**；Tab 生成器同构 |
 | M4 | 偏离登记完整，但 §8 措辞易读成「两个常量」、两端登记分散 | [✅ 已修] | 本次：§8（今 [`upstream-deviations.md`](upstream-deviations.md)）该句改写为「偏离用**单一期望值表** `DEVIATIONS` 表达（一个常量服务两份金样），并断言『期望 ≠ 金样』的步集合 == 『实测 ≠ 金样』的步集合」，并写明**文档侧单一来源是偏离说明**（2026-09 重整后为 [`upstream-deviations.md`](upstream-deviations.md)；当时在 `goldens/README.md` 与 `docs/refactor.md` §8） |
 | M5 | `gen_key_golden.sh` 是唯一缺「原子写 + 非空断言」的生成器；`key_probe.cpp` 不检查输入 ⇒ 可把入库 `key.tsv.gz` 静默覆盖成 32 行 | [✅ 已修] | 第 4 批 `9774b639`：`key_probe.cpp` 两个 `ifstream` 加可读性检查（`return 2`）、空输入非零退出；`gen_key_golden.sh` 写 `$OUT.tmp.$$` → 断言至少 1 条 `name` + 1 条 `parse` → `mv`；负向对照 6 组、入库金样未被改动 |
 | M6 | `rime_sequence_probe.cpp` 设置选项不检查返回值（方案改键名即静默失效） | [✅ 已修] | 第 5 批：`set_option_checked` 断言「`tiger_sentence_` 前缀的选项已在已部署方案的 `switches` 里声明」，改键名即显式失败；并注明 librime 1.17 的 `set_option` 返回 `void` 且不校验名 ⇒「设完回读」是恒真检查，故不走回读 |
 | M7 | 插件路径检查失败时无任何提示（`set -e` 下静默退出） | [✅ 已修] | 第 5 批：三个探针生成器均显式报「生成失败：缺少 librime-lua 插件：$plugin（可用 `LUA_PLUGIN` 覆盖）」 |
-| M8 | 依赖 / 版本未固定的位置（action 移动标签、`archlinux:latest`、`librime-dev` 版本） | [待办] | **③④ 已实施 / 已注明**：`pacman -Sy` → `-Syu`；`archlinux:latest` **有意不钉**（作业目的即「最新 Lua」）；已在 `goldens/regenerate.md` 注明 CI 的 librime 版本可不同、仅做语法检查。**② rust 工具链：有意不钉**（跟随 stable 最新版；CI 用 `dtolnay/rust-toolchain@stable`）——代价是 stable 漂移可能让 `cargo fmt --all --check` / clippy `-D warnings` 无预警变红，届时按当时的稳定版修正即可。**① action 钉 commit sha 仍待办**：离线无法验证 GitHub 侧可用性，擅自钉死有让 CI 无预警变红的实际风险 |
+| M8 | 依赖 / 版本未固定的位置（action 移动标签、`archlinux:latest`、`librime-dev` 版本） | [待办] | **③④ 已实施 / 已注明**：`pacman -Sy` → `-Syu`；`archlinux:latest` **有意不钉**（作业目的即「最新 Lua」）；已在 `goldens/README.md` 注明 CI 的 librime 版本可不同、仅做语法检查。**② rust 工具链：有意不钉**（跟随 stable 最新版；CI 用 `dtolnay/rust-toolchain@stable`）——代价是 stable 漂移可能让 `cargo fmt --all --check` / clippy `-D warnings` 无预警变红，届时按当时的稳定版修正即可。**① action 钉 commit sha 仍待办**：离线无法验证 GitHub 侧可用性，擅自钉死有让 CI 无预警变红的实际风险 |
 | M9 | `gen_key_table.py` 直接写目标（含**源码**路径）、`ValueError` 以 traceback 呈现 | [✅ 已修] | 第 5 批：`write_atomic`（同目录 `mkstemp` + 权限对齐 + `os.replace`，非常规文件退回直写）+ `except ValueError` 干净退出（`gen_key_table: <消息>`，退出码 1） |
 | M10 | Lua 生成器与 README 的 `gzip > goldens/…` 之间无失败短路（可能压入不完整 TSV） | [✅ 已修] | 第 4 批：命令块首加 `set -euo pipefail` 并把「生成 → 压缩」串起来（与 M1 同批） |
 | M11 | 探针两处弱校验：忽略维护失败、不检测用例重名 | [✅ 已修] | 第 5 批：`start_maintenance` 结果入 `check`（先 `join` 再 `check`，失败不留后台线程）；用例名重复即显式失败（含行号） |

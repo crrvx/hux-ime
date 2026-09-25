@@ -15,9 +15,8 @@ reuse lint                      # 许可标注（CI 亦跑）
 ```
 
 设计、模块映射与测试说明见 [`design.md`](design.md)； \
-差分金样清单见 [`../goldens/README.md`](../goldens/README.md)，重新生成命令与校验和见
-[`../goldens/regenerate.md`](../goldens/regenerate.md)； \
-性能基准与基线见 [`perf.md`](perf.md)（`cargo run --release --example {decode_bench,key_bench}`）。 \
+差分金样的清单、重新生成命令与校验和见 [`../goldens/README.md`](../goldens/README.md)； \
+性能基准与基线见 [`design.md`](design.md) §6（`cargo run --release --example {decode_bench,key_bench}`）。 \
 **一键安装 / 卸载命令只写在根 [`README.md`](../README.md)「快速指南」**——本文只留手工步骤与产物清单。
 
 开发可用环境变量覆盖数据目录与模型（目录冒号分隔；`data/` 已含全部随包数据）：
