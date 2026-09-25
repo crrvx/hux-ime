@@ -63,8 +63,9 @@ install(FILES conf/hux.inputmethod.conf
 # 输入法条目 / 状态区图标：装进 freedesktop 图标主题目录，`Icon=hux` 按主题名解析。
 # 图形是**多平台共享**资源，源在 `${HUX_WORKSPACE}/assets/branding/`；此前指向 `fcitx-tiger`
 # （由 fcitx5-chinese-addons 提供）——未装该包时托盘与输入法列表显示缺图占位。
-# `hux.svg` 供支持 SVG 的主题；22/48 px 的 PNG 是位图主题（或缩放器不可用）时的回退，
-# 由同目录 `hux.svg` 生成（生成命令与校验见 `assets/branding/README.md`、`tools/checks/`）。
+# `hux.svg` 供支持 SVG 的主题（自包含：内嵌主源位图）；22/48 px 的 PNG 是位图主题（或缩放器
+# 不可用）时的回退。四者由主源 `hux.png` 派生（生成命令与校验见 `assets/branding/README.md`、
+# `tools/checks/check_branding_assets.py`）。
 install(FILES "${HUX_WORKSPACE}/assets/branding/hux.svg"
         DESTINATION share/icons/hicolor/scalable/apps)
 install(FILES "${HUX_WORKSPACE}/assets/branding/hux-48.png"

@@ -43,7 +43,7 @@ path = "assets/themes/**"
 SPDX-FileCopyrightText = ["HuFu（hufu-ime-rust）作者与贡献者", "2026 明雅流风 <crrvx@outlook.com>"]
 SPDX-License-Identifier = "GPL-3.0-only"
 
-# 品牌图形位图（由同目录 hux.svg 生成，二进制无 SPDX 头，按目录标注）
+# 品牌图形位图（主源 hux.png 与其派生位图，二进制无 SPDX 头，按目录标注）
 [[annotations]]
 path = ["assets/branding/*.png"]
 SPDX-FileCopyrightText = "2026 明雅流风 <crrvx@outlook.com>"

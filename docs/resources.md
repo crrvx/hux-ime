@@ -57,7 +57,7 @@
 
 | 资源（仓库路径） | 来源 | 作用 | 许可 | 随包 | 默认去向 | 校验 |
 | --- | --- | --- | --- | --- | --- | --- |
-| `assets/branding/hux.svg`<br>`assets/branding/hux-22.png`<br>`assets/branding/hux-48.png` | 本仓自绘（明雅流风）；位图由同目录 `hux.svg` 用 `rsvg-convert` 生成 | 输入法条目与状态区图标（矢量源 + 22 / 48 px 位图；纯几何、不含文字） | `GPL-3.0-or-later` | 是 | 系统级 `<prefix>/share/icons/hicolor/{scalable,48x48,22x22}/apps/`（`hux.svg` 原名，两个位图安装时改名为 `hux.png`）；用户级（`install.sh -u`）同构于 `~/.local/share/icons/hicolor/…` | `python3 tools/checks/check_branding_assets.py`（矢量存在、位图尺寸与文件名一致、有 `rsvg-convert` 时 SVG 可渲染；不做逐字节比对） |
+| `assets/branding/hux.png`<br>`assets/branding/hux.svg`<br>`assets/branding/hux-22.png`<br>`assets/branding/hux-48.png` | 本仓自绘（明雅流风）；`hux.png` 是**主源**（1600×1600 艺术位图），其余三个由它派生（`tools/generators/gen_branding_icons.py`） | 输入法条目与状态区图标：主源 + 自包含 SVG（内嵌主源，供支持 SVG 的主题）+ 22 / 48 px 位图 | `GPL-3.0-or-later` | 是（`hux.png` 仅作主源，不安装） | 系统级 `<prefix>/share/icons/hicolor/{scalable,48x48,22x22}/apps/`（`hux.svg` 原名，两个位图安装时改名为 `hux.png`）；用户级（`install.sh -u`）同构于 `~/.local/share/icons/hicolor/…` | `python3 tools/checks/check_branding_assets.py`（主源 sha256、SVG 自包含且内嵌当前主源、位图边长与文件名一致、四文件聚合指纹；有 `rsvg-convert` 时查可渲染） |
 
 **校验**：见上表；生成命令与各平台取用方式见
 [`../assets/branding/README.md`](../assets/branding/README.md)。
