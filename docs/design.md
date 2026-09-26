@@ -263,10 +263,13 @@ platform/                     # 平台适配
   `sh ks`，反查段按音节）优先，其后原始输入原样接续（移动光标时保持分码， \
   如 `` ab cd `` + 尾部 `ja` → `` ab cdja ``）；无高亮候选回退「缓冲 + 原始输入」，光标为字节偏移。
 - **反查**：`sound_to_char_shape.rs`（音）/ `char_to_sound_shape.rs`（字）对齐 librime 词典反查； \
-  字反查的取字来源依序为「客户端上报的周边文本 → 经 AT-SPI 取焦点对象文本 → 无」； \
+  字反查的取字来源依序为「客户端上报的周边文本 → 经 AT-SPI 取焦点对象文本 → 无」， \
+  两源不一致时以更晚变化者为准； \
   AT-SPI 为可选构建（CMake `HUX_ATSPI=AUTO`/`ON`/`OFF`， \
   实现见 `platform/fcitx5/shell/atspi_source.{h,cpp}`），运行期只读缓存快照、 \
-  按键路径不做 D-Bus 往返；契约与不可用时的行为见 \
+  按键路径不做 D-Bus 往返；周边文本一变引擎即回推（`push_update`）， \
+  平台层在两排显示期间每 150 ms 复查来源 ⇒ 光标移动或应用改内容后不必再按键； \
+  契约与不可用时的行为见 \
   [`platform/README.md`](../platform/README.md)。
 - **学习**：提交点通知器（参照 `Context::Commit`）覆盖核心路径与宿主链提交点； \
   `LiveLearning::submitted` 排空落库、`store_ready` 后生效，库 1 万条 / 16 MiB、60 秒节流。 \
