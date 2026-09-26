@@ -23,6 +23,7 @@
 #include <fcitx/text.h>
 #include <fcitx/userinterface.h>
 #include <fcitx/userinterfacemanager.h>
+#include <fcitx-utils/event.h>
 #include <fcitx-utils/key.h>
 #include <fcitx-utils/log.h>
 #include <fcitx-utils/trackableobject.h>
@@ -36,6 +37,7 @@
 #include <functional>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -66,6 +68,11 @@ constexpr int kPageSizeMax = 10;
 /// 读入、状态菜单里的宿主开关用 `fcitx::safeSaveAsIni` 写回——两者必须同路径、同 API 家族，
 /// 否则「界面上改了但重启就丢」或写进另一个文件。
 constexpr const char *kConfigPath = "conf/hux.conf";
+
+/// 字反查两排显示期间的刷新间隔（微秒）：周边文本/光标可能**不按键**就变（应用自己更新
+/// 上报，或 AT-SPI 轮询拿到新光标），而 fcitx5 没有「周边文本更新」的回调钩子 ⇒ 只能轮询。
+/// 只在两排显示期间跑（见 `startSurroundingWatch`），150 ms 对提示是「立刻」的量级。
+constexpr uint64_t kSurroundingWatchUs = 150 * 1000;
 
 /// 数字直选键序（1–9、0=第 10 个）：候选面板序号显示用。
 const fcitx::KeyList &digitSelectionKeys() {
@@ -703,6 +710,8 @@ public:
     /// `~HuxSession` 日志**早于** `~HuxEngine`（顺序相反即命中悬垂路径）。
     ~HuxEngine() override {
         HUX_DEBUG() << "hux: ~HuxEngine";
+        // 0) 先停刷新定时器（它的回调捕获 `this`）。
+        stopSurroundingWatch();
         // 1) 注销工厂 ⇒ fcitx5 立刻销毁全部已注册会话（见上方契约注释）。
         sessionFactory_.unregister();
         // 2) 摘掉 IC 状态区里指向本对象成员的裸指针（平铺条目 + 两个三态子菜单；此时本对象
@@ -750,6 +759,89 @@ public:
         refreshStatusAreas();
     }
 
+    /// 「当前有效的取字来源」的候选：文本 + 字符制光标 + 是否取自 AT-SPI。
+    struct Surrounding {
+        std::string text;
+        int32_t cursor = 0;
+        /// 取自 AT-SPI 时后续要催轮询，否则那一源永远不会更新。
+        bool fromAtspi = false;
+    };
+
+    /// 客户端上报的周边文本（`cursor()` 是**字符**制偏移）；应用不支持/不可用时 `nullopt`。
+    std::optional<std::pair<std::string, int32_t>> clientSurrounding(
+        fcitx::InputContext *inputContext) {
+        const auto &surrounding = inputContext->surroundingText();
+        if (!surrounding.isValid()) {
+            return std::nullopt;
+        }
+        return std::make_pair(surrounding.text(),
+                              static_cast<int32_t>(surrounding.cursor()));
+    }
+
+    /// AT-SPI 快照（`cursorChars` 是**窗口内**的字符制光标：窗口以光标结尾 ⇒ 等于串的字符数，
+    /// 不是字节数——`text` 是 UTF-8，中文下字节数是它的 3 倍）；没有可用快照时 `nullopt`。
+    std::optional<std::pair<std::string, int32_t>> atspiSurrounding() {
+        const auto fetched = atspi_.snapshot();
+        if (!fetched.has_value()) {
+            return std::nullopt;
+        }
+        return std::make_pair(fetched->text,
+                              static_cast<int32_t>(fetched->cursorChars));
+    }
+
+    /// 该用哪一源的周边文本：**客户端上报优先**，但客户端「送进来就不再更新」而 AT-SPI 仍在
+    /// 跟着走时改用 AT-SPI（issue #20：输入框内容一变，两排就卡在旧值上）。
+    ///
+    /// 判据是「谁更晚变化」：每次观察都记下两源各自上一次变化的时刻，更晚变化的那一源才是活的
+    /// （客户端的上报可能停在它送进来的那一刻，而 AT-SPI 是轮询出来的、始终跟着应用走）。
+    std::optional<Surrounding> effectiveSurrounding(
+        fcitx::InputContext *inputContext) {
+        const uint64_t nowMs = fcitx::now(CLOCK_MONOTONIC) / 1000;
+        const auto client = clientSurrounding(inputContext);
+        if (client.has_value() && client != clientSeen_) {
+            clientSeen_ = client;
+            clientSeenMs_ = nowMs;
+        }
+        const auto atspi = atspiSurrounding();
+        if (atspi.has_value() && atspi != atspiSeen_) {
+            atspiSeen_ = atspi;
+            atspiSeenMs_ = nowMs;
+        }
+        if (atspi.has_value() && atspiSeenMs_ > clientSeenMs_) {
+            return Surrounding{atspi->first, atspi->second, true};
+        }
+        if (client.has_value()) {
+            return Surrounding{client->first, client->second, false};
+        }
+        if (atspi.has_value()) {
+            return Surrounding{atspi->first, atspi->second, true};
+        }
+        return std::nullopt;
+    }
+
+    /// 把周边文本推给引擎（字反查的取字来源）。`source` 由调用方取好传入：一次按键 / 一次 tick
+    /// 里只取**一次**值，免得「记下来的签名」与「实际推给引擎的值」来自两次不同的取值。
+    ///
+    /// 没有来源时传 `nullopt`（引擎按「无来源」退化，两排留空）；只要用到 AT-SPI 这一源就顺手催
+    /// 一次轮询（缓存为空时才会真起线程，已有线程时只是把活跃窗往后推），这样下一次按键/下一次
+    /// tick 就能读到新值。
+    void pushSurrounding(HuxSession *huxSession,
+                         const std::optional<Surrounding> &source) {
+        if (source.has_value()) {
+            // 正文**不进日志**，只记来源与量级（排查「取到旧值」用）。
+            HUX_DEBUG() << "hux: 取字来源 " << (source->fromAtspi ? "AT-SPI" : "客户端上报")
+                        << "，字节数 " << static_cast<int>(source->text.size())
+                        << "，光标 " << source->cursor;
+            hux_engine_set_surrounding(engine_, huxSession->id(), source->text.c_str(),
+                                       source->cursor, 1);
+        } else {
+            hux_engine_set_surrounding(engine_, huxSession->id(), nullptr, 0, 0);
+        }
+        if (!source.has_value() || source->fromAtspi) {
+            atspi_.requestRefresh();
+        }
+    }
+
     void keyEvent(const fcitx::InputMethodEntry &entry,
                   fcitx::KeyEvent &keyEvent) override {
         FCITX_UNUSED(entry);
@@ -760,28 +852,7 @@ public:
             return;
         }
         context_ = inputContext;
-        // 应用侧周边文本（字反查用；应用不支持时 valid=0）。
-        //
-        // 三分支：客户端上报有效 → 直接用；否则试 AT-SPI 取字来源（终端这类不上报周边文本的
-        // 客户端）；两者都没有 → 传 nullptr（引擎按「无来源」退化）。
-        //
-        // 只走「客户端有效」这一支时不请求 AT-SPI：不上报的客户端每次都落进 else，第一次按键
-        // 就把后台线程带起来（惰性启动），此后按键路径只读缓存 —— 不在这里做 D-Bus 往返。
-        const auto &surrounding = inputContext->surroundingText();
-        if (surrounding.isValid()) {
-            hux_engine_set_surrounding(engine_, huxSession->id(),
-                                       surrounding.text().c_str(),
-                                       static_cast<int32_t>(surrounding.cursor()), 1);
-        } else if (const auto fetched = atspi_.snapshot(); fetched.has_value()) {
-            // `cursorChars` 是**窗口内**的字符制光标 —— 窗口以光标结尾，故它等于串的字符数
-            // （不是字节数：`text` 是 UTF-8，中文下字节数是它的 3 倍）。
-            hux_engine_set_surrounding(engine_, huxSession->id(), fetched->text.c_str(),
-                                       static_cast<int32_t>(fetched->cursorChars), 1);
-            atspi_.requestRefresh();
-        } else {
-            hux_engine_set_surrounding(engine_, huxSession->id(), nullptr, 0, 0);
-            atspi_.requestRefresh();
-        }
+        pushSurrounding(huxSession, effectiveSurrounding(inputContext));
         const int32_t disposition =
             hux_engine_key(engine_, huxSession->id(), key.sym(),
                            key.states().toInteger(),
@@ -829,6 +900,7 @@ public:
         // 切换输入法/重置：本层直接丢弃（不提交；上游默认在切换时提交，本实现取丢弃）。
         resetSession(event);
         atspi_.invalidate();
+        stopSurroundingWatch();
     }
 
     void reset(const fcitx::InputMethodEntry &entry,
@@ -836,6 +908,112 @@ public:
         FCITX_UNUSED(entry);
         resetSession(event);
         atspi_.invalidate();
+        stopSurroundingWatch();
+    }
+
+    /// 开始（或维持）「反查两排显示期间」的低频刷新；已为该输入上下文运行时是空操作。
+    ///
+    /// 为什么需要：两排（上排 = 光标左 1 字的拼音，下排 = 虎码）由**周边文本 + 光标**算出，
+    /// 而这两个输入可以**不按键**就变 —— 应用自己更新上报（frontend 异步送入），或客户端不报
+    /// 周边文本时由 AT-SPI 轮询拿到新光标（issue #20「光标移动，但字反查不更新」）。fcitx5 没有
+    /// 「周边文本更新」的回调钩子，故只能低频轮询；退出反查（两排清空）立刻停。
+    void startSurroundingWatch(fcitx::InputContext *inputContext) {
+        if (inputContext == nullptr || instance_ == nullptr || engine_ == nullptr) {
+            return;
+        }
+        if (surroundingWatch_ != nullptr &&
+            surroundingWatchContext_ == inputContext) {
+            return;
+        }
+        stopSurroundingWatch();
+        surroundingWatchContext_ = inputContext;
+        // 起点签名取「当前来源」：它正是刚渲染的那一份，不必立刻再推一次。
+        if (const auto source = effectiveSurrounding(inputContext);
+            source.has_value()) {
+            surroundingWatchText_ = source->text;
+            surroundingWatchCursor_ = source->cursor;
+            surroundingWatchValid_ = true;
+        }
+        // 手上若还留着一块（上一次是在回调里停的，只禁用没析构）：复用它。本函数可能
+        // 正被回调间接调用（重推 → 宿主刷新 → `render` → 这里），所以不能换新表。
+        if (surroundingWatch_ != nullptr) {
+            // `setNextInterval` 本身就是「下一轮到 now + 间隔」，不必再 `setTime` 一次。
+            surroundingWatch_->setNextInterval(kSurroundingWatchUs);
+            surroundingWatch_->setEnabled(true);
+            return;
+        }
+        surroundingWatch_ = instance_->eventLoop().addTimeEvent(
+            CLOCK_MONOTONIC, fcitx::now(CLOCK_MONOTONIC) + kSurroundingWatchUs, 0,
+            [this](fcitx::EventSourceTime *source, uint64_t) {
+                source->setNextInterval(kSurroundingWatchUs);
+                onSurroundingWatchTick();
+                return true;
+            });
+    }
+
+    /// 停表。**回调内只禁用、不析构**：事件循环正在派发这块 `EventSource`，回调里析构它会让
+    /// 循环踩空；留到下一次起表（复用同一块）或失焦 / 析构等非回调路径再释放。
+    void stopSurroundingWatch() {
+        if (surroundingWatch_ != nullptr) {
+            if (inSurroundingWatchTick_) {
+                surroundingWatch_->setEnabled(false);
+            } else {
+                surroundingWatch_.reset();
+            }
+        }
+        surroundingWatchContext_ = nullptr;
+        surroundingWatchValid_ = false;
+    }
+
+    /// 一次刷新：焦点输入上下文没变、且「当前来源」与上次推给引擎的不同 ⇒ 重推一次。
+    ///
+    /// 重推本身就会让引擎回推两排（`Engine::set_surrounding_in` 在周边文本变化时
+    /// `push_update`），宿主随即按新快照刷新面板 —— 不需要按键参与。
+    void onSurroundingWatchTick() {
+        /// 回调内禁止析构自己的 `EventSource`：本作用域里 `stopSurroundingWatch()` 只禁用。
+        struct TickScope {
+            bool &flag;
+            explicit TickScope(bool &value) : flag(value) { flag = true; }
+            ~TickScope() { flag = false; }
+        } tickScope(inSurroundingWatchTick_);
+        fcitx::InputContext *inputContext =
+            instance_ != nullptr
+                ? instance_->inputContextManager().lastFocusedInputContext()
+                : nullptr;
+        HuxSession *huxSession = session(inputContext);
+        if (engine_ == nullptr || inputContext == nullptr || huxSession == nullptr ||
+            inputContext != surroundingWatchContext_ || !inputContext->hasFocus()) {
+            // 焦点走了/上下文没了：停止轮询（下次进反查再起）。
+            stopSurroundingWatch();
+            return;
+        }
+        // 让 AT-SPI 这一源保持活跃：客户端若停在某一刻不再上报，只有它能把变化带进来
+        // （轮询结果更新缓存，下一次 tick 就能读到新值）。
+        atspi_.requestRefresh();
+        const auto source = effectiveSurrounding(inputContext);
+        if (!source.has_value()) {
+            // 来源整个没了（应用不再上报、AT-SPI 也读不到）：交回引擎清空两排；
+            // 两排清空后 `render` 会停掉本定时器（下次进反查再起）。
+            if (surroundingWatchValid_) {
+                surroundingWatchValid_ = false;
+                context_ = inputContext;
+                pushSurrounding(huxSession, source);
+                context_ = nullptr;
+            }
+            return;
+        }
+        if (surroundingWatchValid_ && source->text == surroundingWatchText_ &&
+            source->cursor == surroundingWatchCursor_) {
+            return;  // 没变：什么都不做，别白刷面板
+        }
+        surroundingWatchText_ = source->text;
+        surroundingWatchCursor_ = source->cursor;
+        surroundingWatchValid_ = true;
+        context_ = inputContext;
+        // 用同一次取到的 `source` 推（别在 `pushSurrounding` 里再取一次：两次取值之间
+        // AT-SPI 快照可能刚被后台线程换掉，签名的值会与实推的值不一致）。
+        pushSurrounding(huxSession, source);
+        context_ = nullptr;
     }
 
     /// 面板候选点击：以该输入上下文交给引擎（提交/预编辑/候选经回调送出）。
@@ -1169,6 +1347,12 @@ private:
         inputContext->updateUserInterface(
             fcitx::UserInterfaceComponent::InputPanel);
         updateStatusArea(inputContext);
+        // 两排显示期间盯着周边文本/光标（它们可能不按键就变）；两排清空即停。
+        if (!snapshot.auxUp.empty() || !snapshot.auxDown.empty()) {
+            startSurroundingWatch(inputContext);
+        } else {
+            stopSurroundingWatch();
+        }
     }
 
     /// 宿主项「候选窗口显示预编辑」：改配置 → 落盘 → 按该输入上下文的最近一次快照
@@ -1694,6 +1878,23 @@ private:
     /// 惰性启动（第一次需要才起后台线程）、按键路径只读缓存 ⇒ 不影响输入延迟；
     /// 本构建未带 AT-SPI 时是空实现（见 `atspi_source.h` 的 `compiled()`）。
     hux::AtspiSource atspi_;
+    /// 反查两排显示期间的低频刷新（见 [`startSurroundingWatch`]）：周边文本/光标可能不按键就变。
+    std::unique_ptr<fcitx::EventSourceTime> surroundingWatch_;
+    /// 被刷新的输入上下文。只在每次 tick 里与**当前焦点**指针比较，从不解引用旧指针
+    /// （IC 生命周期长于本对象，见 `~HuxEngine` 契约注释；焦点变化另有 `deactivate` 兜底）。
+    fcitx::InputContext *surroundingWatchContext_ = nullptr;
+    /// 上一次推给引擎的（文本, 光标）与「有没有来源」：没变就什么都不做。
+    std::string surroundingWatchText_;
+    int32_t surroundingWatchCursor_ = 0;
+    bool surroundingWatchValid_ = false;
+    /// 是否正处在定时器回调里（回调内只能禁用这块 EventSource，不能析构，见 `stopSurroundingWatch`）。
+    bool inSurroundingWatchTick_ = false;
+    /// 两源各自「上一次变化的观测」与时刻（单调毫秒；只用于比较谁更晚变化，见
+    /// [`effectiveSurrounding`]）：客户端的上报可能停在某一刻，而 AT-SPI 一直跟着应用走。
+    std::optional<std::pair<std::string, int32_t>> clientSeen_;
+    std::optional<std::pair<std::string, int32_t>> atspiSeen_;
+    uint64_t clientSeenMs_ = 0;
+    uint64_t atspiSeenMs_ = 0;
 };
 
 void HuxCandidateWord::select(fcitx::InputContext *inputContext) const {

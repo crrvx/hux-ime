@@ -558,7 +558,7 @@ impl Engine {
         self.forward_after_commit = false;
         let key = KeyEvent::new(keysym as i32, core_modifiers(states, release));
         // 字反查段：←/→/↑/↓ **交应用处理**（应用光标随动），本层不消费也不改动输入；
-        // 两排在应用回传周边文本后的下一次按键（含 release）时刷新。
+        // 应用回传周边文本时 `set_surrounding_in` 自己就会回推新两排（不必等下一次按键）。
         if !release
             && self.scheme.auxiliary_lookup_active(&session.context)
             && matches!(key.repr().as_str(), "Left" | "Right" | "Up" | "Down")
@@ -714,21 +714,29 @@ impl Engine {
         text: Option<&str>,
         cursor_chars: usize,
     ) {
+        let (valid, new_text) = match text {
+            Some(text) => (true, text),
+            None => (false, ""),
+        };
+        let new_cursor = if valid {
+            cursor_chars.min(new_text.chars().count())
+        } else {
+            0
+        };
         let state = &mut session.reverse_lookup;
-        match text {
-            Some(text) => {
-                state.valid = true;
-                state.text = text.to_string();
-                state.cursor = cursor_chars.min(state.text.chars().count());
-            }
-            None => {
-                state.valid = false;
-                state.text.clear();
-                state.cursor = 0;
-            }
-        }
+        // 变没变：宿主每次按键都会送一次同样的周边文本，不能次次都回推。
+        let changed = state.valid != valid || state.text != new_text || state.cursor != new_cursor;
+        state.valid = valid;
+        state.text = new_text.to_string();
+        state.cursor = new_cursor;
         if self.reverse_lookup_tagged(session) {
             self.refresh_reverse_lookup_aux(session);
+            if changed {
+                // 两排是由周边文本算出来的，而变化可能发生在**两次按键之间**（应用自己更新
+                // 上报，或平台层轮询到光标移动）：这里必须回推一次，否则界面停在移动前的
+                // 位置，直到用户再按键（issue #20 的「光标移动，但字反查不更新」）。
+                self.push_update(session);
+            }
         }
     }
 

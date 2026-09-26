@@ -1494,12 +1494,25 @@ fn reverse_lookup_character_end_to_end() {
     );
     assert_eq!(up, "咅 ?");
     assert_eq!(down, "虍 nbe/nbeq");
-    // ←/→ 交应用（不消费）；周边文本光标随动后，两排在下一次按键刷新。
+    // ←/→ 交应用（不消费）；两排随周边文本**立即**刷新，不依赖下一次按键。
     assert!(!engine.key(0xff51, 0, false), "Left 应交应用");
     assert!(!engine.key(0xff53, 0, false), "Right 应交应用");
     assert!(!engine.key(0xff52, 0, false), "Up 应交应用");
     assert!(!engine.key(0xff54, 0, false), "Down 应交应用");
     engine.set_surrounding(Some("中欧中兴"), 1);
+    // 光标一动就刷新（issue #20「光标移动，但字反查不更新」）：送回周边文本本身就回推一次，
+    // 平台层因此可以在不按键的情况下把新两排推给面板。
+    let (_, _, _, _, up, down) = last_update();
+    assert_eq!(up, "咅 zhong", "光标移动后立即刷新上排");
+    assert_eq!(down, "虍 d/dg/dgs", "光标移动后立即刷新下排");
+    // 周边文本没变则**不**回推（按键路径每次都会原样送一次，不能次次刷 UI）。
+    let pushes = UPDATES.lock().unwrap().len();
+    engine.set_surrounding(Some("中欧中兴"), 1);
+    assert_eq!(
+        UPDATES.lock().unwrap().len(),
+        pushes,
+        "周边文本未变化不应回推"
+    );
     assert!(!engine.key(0xffe1, 0, false), "修饰键不消费");
     let (_, _, _, _, up, down) = last_update();
     assert_eq!(up, "咅 zhong");
@@ -1602,7 +1615,8 @@ fn reverse_lookup_character_without_surrounding_shows_nothing() {
     assert!(down.is_empty(), "周边文本不可用时下排应为空：{down:?}");
 }
 
-/// 字反查：周边文本恢复后，同一查码段在下一次按键刷新出两排。
+/// 字反查：周边文本由「不可用」恢复成可用时**立即**刷出两排（不必等下一次按键）；
+/// 反过来丢掉来源时也立即清空两排。
 #[test]
 fn reverse_lookup_character_refreshes_when_surrounding_available() {
     let _guard = serial();
@@ -1611,10 +1625,41 @@ fn reverse_lookup_character_refreshes_when_surrounding_available() {
     engine.set_surrounding(None, 0);
     assert!(engine.key(0x7e, 0, false), "~ 应被消费");
     engine.set_surrounding(Some("中欧中兴"), 2);
-    assert!(!engine.key(0xffe1, 0, false), "修饰键不消费（触发刷新）");
     let (_, _, _, _, up, down) = last_update();
-    assert_eq!(up, "咅 ?");
-    assert_eq!(down, "虍 nbe/nbeq");
+    assert_eq!(up, "咅 ?", "周边文本恢复后立即刷新上排");
+    assert_eq!(down, "虍 nbe/nbeq", "周边文本恢复后立即刷新下排");
+    // 来源整个消失（应用不再上报）：同一查码段里也立即清空两排（面板随之停表）。
+    engine.set_surrounding(None, 0);
+    let (_, _, _, _, up, down) = last_update();
+    assert!(up.is_empty(), "来源消失后上排应立即清空：{up:?}");
+    assert!(down.is_empty(), "来源消失后下排应立即清空：{down:?}");
+}
+
+/// 字反查：`set_surrounding` 只在**查码段**里回推。
+///
+/// 查码段之外送达的周边文本只存进会话（留给后续按键带出），不该白刷面板；
+/// 光标越界被夹到同一个值时同理（内容其实没变）。
+#[test]
+fn reverse_lookup_surrounding_outside_lookup_does_not_push() {
+    let _guard = serial();
+    UPDATES.lock().unwrap().clear();
+    let mut engine = TestEngine::new(host(), reverse_lookup_character_dirs(), None, None);
+    engine.set_surrounding(Some("中欧中兴"), 2);
+    assert!(
+        UPDATES.lock().unwrap().is_empty(),
+        "不在查码段时不回推：{:?}",
+        UPDATES.lock().unwrap().len()
+    );
+    assert!(engine.key(0x7e, 0, false), "~ 应被消费");
+    // 越界光标（99 > 4）夹到串长 4：先推一次；再来一个越界值（42）夹到同值 ⇒ 不再推。
+    engine.set_surrounding(Some("中欧中兴"), 99);
+    let pushes = UPDATES.lock().unwrap().len();
+    engine.set_surrounding(Some("中欧中兴"), 42);
+    assert_eq!(
+        UPDATES.lock().unwrap().len(),
+        pushes,
+        "夹到同一光标值不应回推"
+    );
 }
 
 /// 预编辑「按词分码」：使用高亮候选的 preedit（`ab cd`）。
