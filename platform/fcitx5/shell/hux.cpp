@@ -27,7 +27,12 @@
 #include <fcitx-utils/log.h>
 #include <fcitx-utils/trackableobject.h>
 
+#include <sys/wait.h>
+#include <unistd.h>
+
 #include <algorithm>
+#include <cerrno>
+#include <filesystem>
 #include <functional>
 #include <iterator>
 #include <memory>
@@ -95,6 +100,76 @@ enum class HuxPreeditMode { CandidateCode, RawInput, Hidden };
 FCITX_CONFIG_ENUM_NAME(HuxPreeditMode, "候选分码", "原始输入", "不显示");
 FCITX_CONFIG_ENUM_I18N_ANNOTATION(HuxPreeditMode, "候选分码", "原始输入", "不显示");
 
+/// 提前上屏（配置页三态；一项 ↔ 引擎 `early_commit` + `early_commit_to_preedit` 两个布尔）。
+///
+/// 成员顺序 = `RawConfig` 里的字符串值顺序 = 下拉项顺序；两侧注解的显示名必须逐字相同
+/// （`FCITX_CONFIG_ENUM_I18N_ANNOTATION` 自带 `static_assert`，错位即编译失败）。
+enum class HuxEarlyCommitMode { Off, ToOutput, ToPreedit };
+FCITX_CONFIG_ENUM_NAME(HuxEarlyCommitMode, "关闭", "至输出", "至预编辑串");
+FCITX_CONFIG_ENUM_I18N_ANNOTATION(HuxEarlyCommitMode, "关闭", "至输出", "至预编辑串");
+
+/// 标点（配置页三态；一项 ↔ 引擎 `ascii_punct` + `full_shape` 两个布尔）。
+///
+/// 显示名同时是配置页下拉项与托盘「标点映射」子菜单的文案（后者经
+/// `HuxPunctModeI18NAnnotation::toString` 取，故不会两处各写一份）。
+enum class HuxPunctMode { Ascii, FullShapeCommon, FullShapeAll };
+FCITX_CONFIG_ENUM_NAME(HuxPunctMode, "关闭（半角）", "全角（常用）", "全角（all）");
+FCITX_CONFIG_ENUM_I18N_ANNOTATION(HuxPunctMode, "关闭（半角）", "全角（常用）", "全角（all）");
+
+/// 「提前上屏」三态 ↔ 引擎两个**角色**的折算（启动对齐按角色逐个折时落到的态）。
+///
+/// 托盘侧不再有角色级翻转：三态由「提前上屏」子菜单直接写 schema（见 [`HuxModeAction`]），
+/// 推送由 `applyConfig()` 统一完成（它按同一折算推 `early_commit` = 非「关闭」、
+/// `early_commit_to_preedit` = 「至预编辑串」）。这里保留角色级折算，是因为启动对齐
+/// （[`HuxEngine::adoptStoredRuntimeOptions`]）仍按 `options.yaml` 里的**每个角色**补值。
+constexpr HuxEarlyCommitMode toggleEarlyCommit(HuxEarlyCommitMode mode, bool on) {
+    if (!on) {
+        return HuxEarlyCommitMode::Off;
+    }
+    // 已在「至预编辑串」时不动：开「提前上屏」不夺另一个角色的态。
+    return mode == HuxEarlyCommitMode::Off ? HuxEarlyCommitMode::ToOutput : mode;
+}
+
+constexpr HuxEarlyCommitMode toggleEarlyCommitToPreedit(HuxEarlyCommitMode mode,
+                                                        bool on) {
+    if (on) {
+        return HuxEarlyCommitMode::ToPreedit;
+    }
+    // 只降「至预编辑串」：**不能**无条件落「至输出」——启动对齐按角色逐个折算，
+    // 提前上屏刚定下的「关闭」会被本位复活。
+    return mode == HuxEarlyCommitMode::ToPreedit ? HuxEarlyCommitMode::ToOutput : mode;
+}
+
+/// 「标点」翻转：开 ⇒ 「全角（all）」、关 ⇒ 「全角（常用）」（「关闭（半角）」不进这个勾选项，
+/// 故关不回到它）；勾选态 = 「全角（all）」⇔ 引擎 `full_shape`。
+constexpr HuxPunctMode togglePunct(bool on) {
+    return on ? HuxPunctMode::FullShapeAll : HuxPunctMode::FullShapeCommon;
+}
+
+/// 复算「启动对齐」对「提前上屏」三态的结果：**非总闸角色先折、总闸角色最后折**
+/// （与 [`HuxEngine::adoptStoredRuntimeOptions`] 的两趟同序），schema 缺项时起于默认「至输出」。
+constexpr HuxEarlyCommitMode adoptEarlyCommitMode(bool earlyCommit,
+                                                  bool toPreedit) {
+    // 子角色先折、总闸最后折：顺序是行为保真要求，不是风格（见下面的真值断言）。
+    HuxEarlyCommitMode mode =
+        toggleEarlyCommitToPreedit(HuxEarlyCommitMode::ToOutput, toPreedit);
+    return toggleEarlyCommit(mode, earlyCommit);
+}
+
+/// 启动对齐的**四组合真值**（引擎侧那两个布尔独立，旧配置页的两个勾选框互不联动）：
+///   - `(1,1)` ⇒ 至预编辑串、`(1,0)` ⇒ 至输出（总闸开：去向由子角色定）；
+///   - `(0,0)` ⇒ 关闭、`(0,1)` ⇒ **关闭**（总闸关胜出：旧配置「提前上屏关 + 至预编辑开」的
+///     可观测行为就是不提前上屏，按角色序一趟折完会把它重新打开 ⇒ 等于在启动时改用户设置）。
+/// 在**编译期**钉住：改任一折算函数、或把对齐的两个角色调换，这里直接编译失败。
+static_assert(adoptEarlyCommitMode(false, false) == HuxEarlyCommitMode::Off,
+              "启动对齐 (early_commit=0, to_preedit=0) 必须落「关闭」");
+static_assert(adoptEarlyCommitMode(false, true) == HuxEarlyCommitMode::Off,
+              "启动对齐 (early_commit=0, to_preedit=1) 必须落「关闭」（总闸关胜出）");
+static_assert(adoptEarlyCommitMode(true, false) == HuxEarlyCommitMode::ToOutput,
+              "启动对齐 (early_commit=1, to_preedit=0) 必须落「至输出」");
+static_assert(adoptEarlyCommitMode(true, true) == HuxEarlyCommitMode::ToPreedit,
+              "启动对齐 (early_commit=1, to_preedit=1) 必须落「至预编辑串」");
+
 /// 枚举注解 + 悬浮说明（`EnumI18n` 与 `Tooltip` 并存）。
 template <typename EnumAnnotation>
 struct EnumAnnotationWithTooltip : EnumAnnotation {
@@ -113,21 +188,11 @@ private:
 };
 
 /// 行为设置（配置页「行为」分区）。
+///
+/// 行序 = 项在此的声明序：布尔项 → `int` 等值选项 → 其余枚举 → 两个三态项（提前上屏 /
+/// 标点映射，本分区末尾两条；它们同时是状态菜单里两个单选子菜单的取值来源）。
 FCITX_CONFIGURATION(
     HuxBehaviorConfig,
-    fcitx::OptionWithAnnotation<bool, fcitx::ToolTipAnnotation> earlyCommit{{
-        .parent = this,
-        .path{"EarlyCommit"},
-        .description{"提前上屏"},
-        .defaultValue = true,
-        .annotation{"组合中证据成熟即提交当前候选；关闭后仅在空格/回车确认时上屏。"}}};
-    fcitx::OptionWithAnnotation<bool, fcitx::ToolTipAnnotation>
-        earlyCommitToPreedit{{
-            .parent = this,
-            .path{"EarlyCommitToPreedit"},
-            .description{"提前上屏至预编辑"},
-            .defaultValue = false,
-            .annotation{"提前上屏改为写入预编辑（缓冲，不直接提交），继续输入可修正。"}}};
     fcitx::OptionWithAnnotation<bool, fcitx::ToolTipAnnotation>
         allowDuplicateSingle{{
             .parent = this,
@@ -135,18 +200,6 @@ FCITX_CONFIGURATION(
             .description{"单字重码参与组句"},
             .defaultValue = true,
             .annotation{"允许同一单字的重码候选参与整句解码；关闭可减少同字重复。"}}};
-    fcitx::OptionWithAnnotation<bool, fcitx::ToolTipAnnotation> fullShape{{
-        .parent = this,
-        .path{"FullShape"},
-        .description{"全角标点"},
-        .defaultValue = false,
-        .annotation{"标点输出全角形式（如 `,` → `，`）。"}}};
-    fcitx::OptionWithAnnotation<bool, fcitx::ToolTipAnnotation> asciiPunct{{
-        .parent = this,
-        .path{"AsciiPunct"},
-        .description{"ASCII 标点直通"},
-        .defaultValue = false,
-        .annotation{"标点不做中文映射，直接输出 ASCII。"}}};
     fcitx::OptionWithAnnotation<bool, fcitx::ToolTipAnnotation> learningOnTab{{
         .parent = this,
         .path{"TabLearning"},
@@ -176,13 +229,14 @@ FCITX_CONFIGURATION(
     // 值选项（`int` 等）列在布尔选项之后。
     fcitx::Option<int, fcitx::IntConstrain, fcitx::DefaultMarshaller<int>,
                   fcitx::ToolTipAnnotation>
-        highFreqLimit{{
+        minRetainedInputLength{{
             .parent = this,
-            .path{"HighFreqLimit"},
-            .description{"高频字过滤上限"},
-            .defaultValue = 1500,
-            .constrain = fcitx::IntConstrain(0, 20000),
-            .annotation{"仅使用最优码组句的高频字数量上限；0 = 不限制。保存后即时生效。"}}};
+            .path{"MinRetainedRawLength"},
+            .description{"提前上屏最短保留码数"},
+            .defaultValue = 0,
+            .constrain = fcitx::IntConstrain(0, 20),
+            .annotation{"提前上屏与空码上屏共用的最短保留编码数；0 = 不额外限制"
+                        "（概率型早提交仍不少于 3）。"}}};
     fcitx::Option<int, fcitx::IntConstrain, fcitx::DefaultMarshaller<int>,
                   fcitx::ToolTipAnnotation>
         pageSize{{
@@ -211,28 +265,65 @@ FCITX_CONFIGURATION(
             .defaultValue = HuxPreeditMode::CandidateCode,
             .annotation{"候选分码：按词分段显示（如 `ab cd`）；原始输入：按输入原文；"
                         "不显示：仅候选与注释。"}}};
-    fcitx::Option<int, fcitx::IntConstrain, fcitx::DefaultMarshaller<int>,
-                  fcitx::ToolTipAnnotation>
-        minRetainedInputLength{{
+    fcitx::OptionWithAnnotation<
+        HuxEarlyCommitMode,
+        EnumAnnotationWithTooltip<HuxEarlyCommitModeI18NAnnotation>>
+        earlyCommitMode{{
             .parent = this,
-            .path{"MinRetainedRawLength"},
-            .description{"提前上屏最短保留码数"},
-            .defaultValue = 0,
-            .constrain = fcitx::IntConstrain(0, 20),
-            .annotation{"提前上屏与空码上屏共用的最短保留编码数；0 = 不额外限制"
-                        "（概率型早提交仍不少于 3）。"}}};);
+            .path{"EarlyCommitMode"},
+            .description{"提前上屏"},
+            .defaultValue = HuxEarlyCommitMode::ToOutput,
+            .annotation{"至输出：组合中证据成熟即提交当前候选；至预编辑串：改为写入预编辑"
+                        "（缓冲，不直接提交），继续输入可修正；关闭：仅在空格/回车确认时上屏。"
+                        "状态菜单「虎虚」里的「提前上屏」子菜单即本项（三态单选）。"}}};
+    fcitx::OptionWithAnnotation<HuxPunctMode,
+                                EnumAnnotationWithTooltip<HuxPunctModeI18NAnnotation>>
+        punctMode{{
+            .parent = this,
+            .path{"PunctMode"},
+            .description{"标点映射"},
+            .defaultValue = HuxPunctMode::FullShapeCommon,
+            .annotation{"关闭（半角）：标点不做中文映射，直接输出 ASCII；全角（常用）："
+                        "常用标点输出全角（如 `,` → `，`）；全角（all）：标点全部输出全角"
+                        "（如 `/` → `／`）。状态菜单「虎虚」里的「标点映射」子菜单即本项"
+                        "（三态单选）。"}}};
+);
 
-/// 与状态菜单（引擎运行时选项）共享的 schema 开关：角色 + 所在分区的字段。
+/// 与状态菜单（引擎运行时选项）共享的 schema 开关：角色 + 所在分区的字段访问器。
 ///
-/// 成员指针让字段名由编译器检查；`path()`（分区路径 + 字段路径）供宿主判断「配置文件里显式
-/// 写过这一项吗」，故字段改名不会让该判断失配。共享开关分布在两个分区（「行为」「字集」），
-/// 分区类型不同、字段类型相同，故按分区各实例化一张表。
+/// 开关在 schema 里是**两种形状**：布尔项（如「单字重码组句」）与三态枚举（「提前上屏」
+/// 「标点」各一项承载两个角色）；共享开关又分属两个分区（「行为」「字集」），故按分区各实例化
+/// 一张表。表项里的路径与读/写方向都是函数（函数体直接取字段 ⇒ 字段名仍由编译器检查）：
+/// `path()`（分区路径 + 字段路径）供宿主判断「配置文件里显式写过这一项吗」，故字段改名不会让
+/// 该判断失配；读方向是「枚举按某一态折算成开」（与 `applyConfig()` 同一口径：状态菜单勾选态、
+/// 以及一次切换要把三态对的两个布尔都下发时取的就是它），写方向是枚举按折算落到某一态
+/// （见 [`toggleEarlyCommit`] 等）、`bool` 字段直写直读。
 template <typename Partition>
 struct SharedRuntimeOption {
-    using Option = fcitx::OptionWithAnnotation<bool, fcitx::ToolTipAnnotation>;
-    using Member = Option Partition::*;
+    /// 字段在配置文件里的路径（`OptionBase::path()`）。
+    using PathOf = std::string (*)(const Partition &);
+    /// 引擎开关值 → 字段。
+    using Write = void (*)(Partition &, bool);
     int32_t role;
-    Member field;
+    PathOf path;
+    Write write;
+    /// 配对三态项的**总闸**角色：启动对齐时它必须**最后**折算（见 `adoptStoredRuntimeOptions`）。
+    bool gate = false;
+};
+
+/// 角色在 schema 上的**已解析**绑定：配置文件路径 + 写回函数 + 总闸标记。
+///
+/// `std::function` 在这里把「分区实例 + 表项」收敛成一个类型（两个分区、两种字段形状的差异
+/// 就此擦除）；调用点只有构造期每个角色一次与（布尔项的）状态菜单点击一次，开销无关紧要。
+struct SharedRuntimeBinding {
+    /// 引擎有、本 schema 还没有的角色为 `false` ⇒ 调用方跳过。
+    bool known = false;
+    /// 该角色是所在三态对的**总闸**（启动对齐最后折算）。
+    bool gate = false;
+    /// 该字段在本配置文件里的完整路径（如 `Behavior/EarlyCommitMode`）。
+    std::string path;
+    /// 引擎开关值 → 字段。
+    std::function<void(bool)> write;
 };
 
 /// 快捷键设置（配置页「快捷键」分区；`KeyList` 可多项，与全局设置同款）。
@@ -288,9 +379,10 @@ FCITX_CONFIGURATION(
             fcitx::KeyListConstrain(fcitx::KeyConstrainFlag::AllowModifierLess),
         .annotation{"可多项。有候选时生效；Page_Down 键始终可用。"}}};);
 
-/// 字集设置（配置页「字集」分区）：决定装载哪几张码表。
+/// 字集设置（配置页「字集」分区）：决定装载哪几张码表、哪些字参与组句。
 ///
-/// 两项都只改**数据装载范围**，不动解码/排序语义；引擎在设置变更后重装码表，故保存即生效。
+/// 三项都只改**数据装载范围**，不动解码/排序语义；引擎在设置变更后重装码表或重建索引，
+/// 故保存即生效。
 FCITX_CONFIGURATION(
     HuxCharsetConfig,
     fcitx::OptionWithAnnotation<bool, fcitx::ToolTipAnnotation> fullCharset{{
@@ -306,26 +398,36 @@ FCITX_CONFIGURATION(
         .description{"过滤非汉字"},
         .defaultValue = true,
         .annotation{"过滤追加码表里的部首/笔画/注音/假名等非汉字符号（现数据 931 条）；"
-                    "主表自带的标点/假名不受影响。保存后即时生效。"}}};);
+                    "主表自带的标点/假名不受影响。保存后即时生效。"}}};
+    fcitx::Option<int, fcitx::IntConstrain, fcitx::DefaultMarshaller<int>,
+                  fcitx::ToolTipAnnotation>
+        highFreqLimit{{
+            .parent = this,
+            .path{"HighFreqLimit"},
+            .description{"高频字过滤上限"},
+            .defaultValue = 1500,
+            .constrain = fcitx::IntConstrain(0, 20000),
+            .annotation{"仅使用最优码组句的高频字数量上限；0 = 不限制。保存后即时生效。"}}};);
 
 /// 配置 schema：fcitx5-configtool 依据它自动生成设置页（fcitx://config/addon/hux）；
 /// 分区结构参照全局设置（`Option<SubConfig>` → 分组标题，选项带悬浮说明）。
 FCITX_CONFIGURATION(
     HuxConfig,
-    fcitx::Option<HuxBehaviorConfig> behavior{this, "Behavior", "行为"};
     fcitx::Option<HuxCharsetConfig> charset{this, "Charset", "字集"};
+    fcitx::Option<HuxBehaviorConfig> behavior{this, "Behavior", "行为"};
     fcitx::Option<HuxHotkeyConfig> hotkeys{this, "Hotkey", "快捷键"};);
 
 /// 「虎虚」状态菜单开关：勾选态取自引擎运行时选项（`options.yaml`），激活即翻转并落盘。
 ///
 /// 这些开关与配置页的「行为」分区是**同一批项**（`HUX_OPTION_*` 角色 ↔ schema 字段）。
-/// 翻转后经 `onChanged` 让宿主把新值写回自己的 schema 并落盘：配置页读的就是该 schema，
-/// 于是「配置页改了」与「状态菜单改了」互相立刻可见（反向由 Rust 侧
-/// `Engine::apply_settings` 把设置值写回 `options.yaml`，见该函数契约）。
+/// 翻转后经 `onChanged`（带当前输入上下文，供刷新状态区条目的勾选态）让宿主把新值写回自己的
+/// schema 并落盘：配置页读的就是该 schema，于是「配置页改了」与「状态菜单改了」互相立刻可见
+/// （反向由 Rust 侧 `Engine::apply_settings` 把设置值写回 `options.yaml`，见该函数契约）。
+/// 只承载**布尔项**：两个三态项已由 [`HuxModeAction`] 组成的单选子菜单取代。
 class HuxToggleAction : public fcitx::Action {
 public:
     HuxToggleAction(hux_engine *engine, const char *option, const char *label,
-                    std::function<void(bool)> onChanged)
+                    std::function<void(fcitx::InputContext *, bool)> onChanged)
         : engine_(engine),
           option_(option),
           label_(label),
@@ -345,7 +447,7 @@ public:
         return hux_engine_option_value(engine_, option_.c_str()) == 1;
     }
 
-    void activate(fcitx::InputContext * /*unused*/) override {
+    void activate(fcitx::InputContext *inputContext) override {
         const int32_t value = hux_engine_option_value(engine_, option_.c_str());
         if (value < 0) {
             return;
@@ -355,7 +457,8 @@ public:
         // 引擎侧可能保存失败（options.yaml 只读/磁盘满），但会话值已经翻转；schema 仍按
         // 引擎**实际**生效值镜像，避免两侧显示不一致。
         if (onChanged_) {
-            onChanged_(hux_engine_option_value(engine_, option_.c_str()) == 1);
+            onChanged_(inputContext,
+                       hux_engine_option_value(engine_, option_.c_str()) == 1);
         }
     }
 
@@ -363,7 +466,7 @@ private:
     hux_engine *engine_;
     std::string option_;
     std::string label_;
-    std::function<void(bool)> onChanged_;
+    std::function<void(fcitx::InputContext *, bool)> onChanged_;
 };
 
 class HuxEngine;
@@ -403,20 +506,61 @@ private:
     std::function<void(fcitx::InputContext *)> toggled_;
 };
 
-/// 宿主项动作（「重新部署」与「模型」信息行）：文案每次取用时现算——「模型」行随重新
-/// 部署变化，故宿主不另存一份；`activate` 可缺省（信息项不可点，点击为无操作）。
+/// 三态子菜单里的**单选项**（「提前上屏」「标点映射」各三项）：
+/// 勾选态取自 schema 字段（`selected_`），点击即写该态（`choose_`）。
+///
+/// 与 [`HuxToggleAction`] 的区别是事实来源：那个读**引擎运行时选项**，这个读**schema**——
+/// 「标点映射」尤其：引擎里根本没有 `ascii_punct` 这个运行时角色，只有 schema 才是三态的唯一
+/// 事实来源（配置页保存后子菜单的勾选态也因此立刻正确，见 `refreshStatusAreas`）。
+class HuxModeAction : public fcitx::Action {
+public:
+    HuxModeAction(std::string label, std::function<bool()> selected,
+                  std::function<void(fcitx::InputContext *)> choose)
+        : label_(std::move(label)),
+          selected_(std::move(selected)),
+          choose_(std::move(choose)) {
+        setCheckable(true);
+    }
+
+    std::string shortText(fcitx::InputContext * /*unused*/) const override {
+        return label_;
+    }
+
+    std::string icon(fcitx::InputContext * /*unused*/) const override {
+        return {};
+    }
+
+    bool isChecked(fcitx::InputContext * /*unused*/) const override {
+        return selected_();
+    }
+
+    void activate(fcitx::InputContext *inputContext) override {
+        choose_(inputContext);
+    }
+
+private:
+    std::string label_;
+    std::function<bool()> selected_;
+    std::function<void(fcitx::InputContext *)> choose_;
+};
+
+/// 宿主项动作（「虎虚」首项与「重新部署」）：文案每次取用时现算——首项带模型短名、
+/// 随重新部署变化，故宿主不另存一份；`activate` 与 `icon` 可缺省（信息项不可点 / 无图标）。
 class HuxHostAction : public fcitx::Action {
 public:
     HuxHostAction(std::function<std::string()> label,
-                  std::function<void(fcitx::InputContext *)> activate = {})
-        : label_(std::move(label)), activate_(std::move(activate)) {}
+                  std::function<void(fcitx::InputContext *)> activate = {},
+                  std::string icon = {})
+        : label_(std::move(label)),
+          activate_(std::move(activate)),
+          icon_(std::move(icon)) {}
 
     std::string shortText(fcitx::InputContext * /*unused*/) const override {
         return label_();
     }
 
     std::string icon(fcitx::InputContext * /*unused*/) const override {
-        return {};
+        return icon_;
     }
 
     void activate(fcitx::InputContext *inputContext) override {
@@ -428,6 +572,7 @@ public:
 private:
     std::function<std::string()> label_;
     std::function<void(fcitx::InputContext *)> activate_;
+    std::string icon_;
 };
 
 /// 最近一次 UI 快照（面板预编辑 / 候选 / 高亮 / 两排辅助文本）。
@@ -559,7 +704,8 @@ public:
         HUX_DEBUG() << "hux: ~HuxEngine";
         // 1) 注销工厂 ⇒ fcitx5 立刻销毁全部已注册会话（见上方契约注释）。
         sessionFactory_.unregister();
-        // 2) 摘掉 IC 状态区里指向本对象成员的裸指针（此时本对象成员仍存活）。
+        // 2) 摘掉 IC 状态区里指向本对象成员的裸指针（平铺条目 + 两个三态子菜单；此时本对象
+        //    成员仍存活）。
         clearStatusAreas();
         // 3) 引擎最后释放；指针置空，任何迟到的宿主回调都只是无操作。
         hux_engine_free(engine_);
@@ -569,10 +715,38 @@ public:
     /// 配置 schema（fcitx5-configtool 生成设置页；保存到 ~/.config/fcitx5/conf/hux.conf）。
     const fcitx::Configuration *getConfig() const override { return &config_; }
 
-    /// 用户在配置工具中保存后：落盘由框架负责，这里应用到引擎（即时生效项）。
+    /// 重新读取本 addon 的配置文件并推给引擎。
+    ///
+    /// fcitx5 在「配置文件被外部改动 / 要求重新加载」时调本入口
+    /// （`Instance::reloadAddonConfig` ← D-Bus `ReloadAddonConfig`）；**不实现时它是基类的
+    /// 空实现**（`fcitx/addoninstance.h`：`virtual void reloadConfig() {}`），文件里的新值
+    /// 永远进不了引擎——用户侧就是「改了配置没反应」。读取与构造期同一路径、同一 API 家族。
+    void reloadConfig() override {
+        fcitx::readAsIni(config_, kConfigPath);
+        applyConfig();
+        // 三态子菜单的勾选态取自 schema（本函数的 `readAsIni` 刚改过它），布尔开关取自引擎选项
+        // （`applyConfig` 刚推过）⇒ 两侧都要通知 UI 重取，否则面板上还留着旧勾选。
+        refreshStatusAreas();
+    }
+
+    /// 用户在配置工具中保存后：**先落盘，再应用到引擎**（即时生效项）。
+    ///
+    /// 落盘归 addon、**不归框架**：fcitx5 的 D-Bus `Controller1::SetConfig` 只调
+    /// `addonInstance->setConfig(config)`（`fcitx5/src/modules/dbus/dbusmodule.cpp`），
+    /// 官方 addon 写法即 `config_.load(config, true); safeSaveAsIni(config_, configFile);`。
+    /// 不落盘时本进程内虽即时生效，但下次启动的 `adoptStoredRuntimeOptions()` 以「文件里显式
+    /// 写过」的键为准 ⇒ 文件里的旧值把配置页的改动静默压回（用户侧「勾选后没有效果」），
+    /// 不落盘、也不进 `options.yaml` 的项（ASCII 直通 / 快捷键 / 页大小 / 候选排列 / 预编辑
+    /// 内容 / 翻页循环 / 最短保留码数 / 高频上限 / Tab 学习）则直接丢失。
     void setConfig(const fcitx::RawConfig &raw) override {
         config_.load(raw, true);
+        if (!fcitx::safeSaveAsIni(config_, kConfigPath)) {
+            FCITX_WARN() << "hux: 写入 " << kConfigPath << " 失败（配置页保存）";
+        }
         applyConfig();
+        // 配置页改了「提前上屏」「标点映射」等项后，状态区的两个子菜单勾选态要跟着变
+        // （它们的当前态取自 schema，不是引擎选项）。
+        refreshStatusAreas();
     }
 
     void keyEvent(const fcitx::InputMethodEntry &entry,
@@ -659,13 +833,50 @@ private:
         return static_cast<HuxSession *>(inputContext->property(&sessionFactory_));
     }
 
-    /// 状态菜单：注册「虎虚」子菜单与核心开关（构造时一次）。
+    /// 造一个三态**单选子菜单**：父项（挂菜单）+ **每态一项**（顺序 = 枚举声明序 = 配置页
+    /// 下拉序；文案取枚举注解的显示名 ⇒ 托盘与配置页逐字一致，不会两处各写一份）。
+    ///
+    /// 单选由构造保证：三项各自的 `selected` 都拿同一个 schema 字段与自己的值比，值互异且覆盖
+    /// 整枚举（`Annotation::enumLength` 即枚举项数）⇒ 恒有且仅有一项打勾。父项只负责展开菜单。
+    template <typename Enum, typename Annotation>
+    void addModeMenu(fcitx::SimpleAction &parentAction, fcitx::Menu &menu,
+                     std::vector<std::unique_ptr<HuxModeAction>> &items,
+                     const char *parentLabel, const std::string &namePrefix,
+                     const std::function<Enum()> &current,
+                     const std::function<void(Enum, fcitx::InputContext *)> &choose) {
+        parentAction.setShortText(parentLabel);
+        for (size_t index = 0; index < Annotation::enumLength; ++index) {
+            const Enum mode = static_cast<Enum>(index);
+            auto item = std::make_unique<HuxModeAction>(
+                Annotation::toString(mode), [current, mode] { return current() == mode; },
+                [choose, mode](fcitx::InputContext *inputContext) {
+                    choose(mode, inputContext);
+                });
+            instance_->userInterfaceManager().registerAction(
+                namePrefix + "-" + std::to_string(index), item.get());
+            menu.addAction(item.get());
+            items.push_back(std::move(item));
+        }
+        parentAction.setMenu(&menu);
+        registerStatusAction(namePrefix, parentAction);
+    }
+
+    /// 状态菜单：把全部条目注册为状态区的**同级**条目（构造时一次；顺序 = 注册顺序
+    /// = [`updateStatusArea`] 的添加顺序 = [`statusActions_`] 的次序）。
+    ///
+    /// 结构（顺序即注册顺序即显示顺序）：四个引擎布尔开关 →「候选窗口显示预编辑」→
+    /// 「提前上屏」子菜单 →「标点映射」子菜单 →「重新部署」→「模型」信息行 →
+    /// 「虎虚」标识条目（仅图标 + 标题、**不挂菜单**，点了无动作）。
+    /// 两个三态项不再以布尔开关出现，而是各自的**单选子菜单**（当前态取自 schema）。
     ///
     /// **选项键经 ABI 取自引擎**（`hux_engine_option_key`，与 `HUX_OPTION_*` 角色一一对应），
-    /// 宿主只保留 UI 文案——方案改名或换方案时菜单自动跟随，不会静默失效。
+    /// 宿主只保留 UI 文案——方案改名或换方案时开关自动跟随，不会静默失效。
     /// 文案表按 **ABI 角色下标**取（`kLabels[role]`），故长度必须等于 `HUX_OPTION_COUNT`：
     /// 角色数增加而文案漏补时，这里是越界读（UB）；`static_assert` 把它变成编译失败
     /// （角色**调序**由 Rust 侧 `option_role_order_matches_the_abi_header` 抓）。
+    /// 其中「提前上屏」「提前上屏至预编辑」「全角标点」三个角色的文案**已不被托盘使用**
+    /// （它们被两个三态子菜单取代），仍保留在表里：文案按角色下标取，抽掉任一项都会让后面
+    /// 的下标整体错位，而角色序（ABI）本层不动。
     void setupStatusMenu() {
         static constexpr const char *kLabels[] = {
             "提前上屏", "提前上屏至预编辑", "单字重码组句", "全角标点", "数字直选",
@@ -673,64 +884,97 @@ private:
         };
         static_assert(std::size(kLabels) == HUX_OPTION_COUNT,
                       "状态菜单文案表长度必须等于 HUX_OPTION_COUNT（ABI 角色数）");
-        menuAction_.setShortText("虎虚");
+        // 1) 「虎虚」首项：图标 + 「虎虚：<模型短名>」（模型信息并入本项），**可点**——
+        //    点击打开「所加载模型所在目录」（没有模型时就是它该放的目录，见
+        //    [`openModelDirectory`]）；不挂菜单。
         // 状态区图标用本包自带的主题名（与 `conf/hux.inputmethod.conf` 的 `Icon` 一致）；
         // 不设时 fcitx5 回退到输入法条目图标——那个在缺 fcitx5-chinese-addons 的机器上是缺图占位。
-        menuAction_.setIcon("hux");
+        menuAction_ = std::make_unique<HuxHostAction>(
+            [this] { return std::string("虎虚：") + modelText(); },
+            [this](fcitx::InputContext *inputContext) {
+                openModelDirectory(inputContext);
+            },
+            "hux");
+        registerStatusAction("hux-menu", *menuAction_);
+        // 2) 引擎运行时开关里**仍是布尔项**的那些；两个三态项（提前上屏 / 标点映射）跳过，
+        //    它们由下面的子菜单承载。
         const int32_t roles = hux_engine_option_role_count();
         for (int32_t role = 0; role < roles; ++role) {
+            if (isTriStateRole(role)) {
+                continue;
+            }
             const char *option = hux_engine_option_key(engine_, role);
             if (option == nullptr) {
                 continue;
             }
             auto action = std::make_unique<HuxToggleAction>(
                 engine_, option, kLabels[role],
-                [this, role](bool value) { mirrorRuntimeRole(role, value); });
-            instance_->userInterfaceManager().registerAction(
-                std::string("hux-") + option, action.get());
-            menu_.addAction(action.get());
+                [this, role](fcitx::InputContext *inputContext, bool value) {
+                    mirrorRuntimeRole(role, value, true, inputContext);
+                });
+            registerStatusAction(std::string("hux-") + option, *action);
             toggleActions_.push_back(std::move(action));
         }
-        // 宿主项（不属 `HUX_OPTION_*` 角色，不进上面的文案表）：候选窗口显示预编辑。
+        // 3) 宿主项（不属 `HUX_OPTION_*` 角色，不进上面的文案表）：候选窗口显示预编辑。
         panelPreeditAction_ = std::make_unique<HuxHostToggleAction>(
             "候选窗口显示预编辑",
             [this] { return config_.behavior->panelPreedit.value(); },
             [this](fcitx::InputContext *inputContext) {
                 togglePanelPreedit(inputContext);
             });
-        instance_->userInterfaceManager().registerAction("hux-panel-preedit",
-                                                         panelPreeditAction_.get());
-        menu_.addAction(panelPreeditAction_.get());
-        // 「重新部署」与「模型」信息行：文案现算（模型摘要来自引擎，见 `modelText`）。
+        registerStatusAction("hux-panel-preedit", *panelPreeditAction_);
+        // 4) 两个三态**单选子菜单**：三项文案 = schema 枚举的显示名（配置页下拉项与托盘逐字一致）。
+        addModeMenu<HuxEarlyCommitMode, HuxEarlyCommitModeI18NAnnotation>(
+            earlyCommitMenuAction_, earlyCommitMenu_, earlyCommitItems_,
+            "提前上屏", "hux-early-commit",
+            [this] { return config_.behavior->earlyCommitMode.value(); },
+            [this](HuxEarlyCommitMode mode, fcitx::InputContext *inputContext) {
+                chooseEarlyCommitMode(mode, inputContext);
+            });
+        addModeMenu<HuxPunctMode, HuxPunctModeI18NAnnotation>(
+            punctMenuAction_, punctMenu_, punctItems_, "标点映射", "hux-punct",
+            [this] { return config_.behavior->punctMode.value(); },
+            [this](HuxPunctMode mode, fcitx::InputContext *inputContext) {
+                choosePunctMode(mode, inputContext);
+            });
+        // 5) 「重新部署」（模型信息已并入首项「虎虚」，不再单独占一行）。
         redeployAction_ = std::make_unique<HuxHostAction>(
             [] { return std::string("重新部署"); },
             [this](fcitx::InputContext *inputContext) { redeploy(inputContext); });
-        instance_->userInterfaceManager().registerAction("hux-redeploy",
-                                                         redeployAction_.get());
-        menu_.addAction(redeployAction_.get());
-        modelAction_ = std::make_unique<HuxHostAction>([this] { return modelText(); });
-        instance_->userInterfaceManager().registerAction("hux-model",
-                                                         modelAction_.get());
-        menu_.addAction(modelAction_.get());
-        menuAction_.setMenu(&menu_);
-        instance_->userInterfaceManager().registerAction("hux-menu",
-                                                         &menuAction_);
+        registerStatusAction("hux-redeploy", *redeployAction_);
+        updateDynamicLabels();
     }
 
-    /// 把「虎虚」子菜单挂到当前输入上下文的状态区（仅在本输入法激活时显示）。
+    /// 该角色是否已被三态子菜单取代（不再作为托盘布尔开关）。
+    static constexpr bool isTriStateRole(int32_t role) {
+        return role == HUX_OPTION_EARLY_COMMIT ||
+               role == HUX_OPTION_EARLY_COMMIT_TO_PREEDIT ||
+               role == HUX_OPTION_FULL_SHAPE;
+    }
+
+    /// 登记一个状态区条目：注册到 `UserInterfaceManager`（D-Bus / 动作查找用）并记入显示顺序。
+    void registerStatusAction(const std::string &name, fcitx::Action &action) {
+        instance_->userInterfaceManager().registerAction(name, &action);
+        statusActions_.push_back(&action);
+    }
+
+    /// 把全部状态区条目挂到当前输入上下文（仅在本输入法激活时显示；顺序 = `statusActions_`）。
     void updateStatusArea(fcitx::InputContext *inputContext) {
         if (inputContext == nullptr) {
             return;
         }
         auto &statusArea = inputContext->statusArea();
         statusArea.clearGroup(fcitx::StatusGroup::InputMethod);
-        statusArea.addAction(fcitx::StatusGroup::InputMethod, &menuAction_);
+        for (fcitx::Action *action : statusActions_) {
+            statusArea.addAction(fcitx::StatusGroup::InputMethod, action);
+        }
     }
 
-    /// 摘掉**所有**输入上下文状态区里指向本对象成员的裸指针（`&menuAction_` 及其子菜单）。
+    /// 摘掉**所有**输入上下文状态区里指向本对象成员的裸指针（[`statusActions_`] 里的每个条目，
+    /// 含两个子菜单的父项与「虎虚」首项）。
     ///
     /// 归 IC 所有的对象比 addon 实例活得久（见 `~HuxEngine` 契约注释），故引擎释放前
-    /// 必须把「虎虚」子菜单从每个 IC 摘除。这里用 `InputContextManager::foreach`
+    /// 必须把状态区条目从每个 IC 摘除。这里用 `InputContextManager::foreach`
     /// （`inputcontextmanager.cpp`：遍历 `inputContexts_`，visitor 返回 false 即中止）
     /// + `StatusArea::clearGroup`（`statusarea.cpp`：逐个 `removeAction`）。
     ///
@@ -929,10 +1173,84 @@ private:
         }
     }
 
-    /// 「模型」行的文案 = `模型：` + 引擎给出的一行摘要（方案侧结构化产出，本层不解析）。
+    /// 首项里的模型短名 = 引擎给的那段原文（方案侧结构化产出，本层不解析、**不加任何前缀**）。
+    ///
+    /// 前缀由调用方按自己的标签加一次（首项是「虎虚：」）；此前把「模型：」写在里面，
+    /// 与首项的前缀叠成了「虎虚：模型：…」。
     std::string modelText() const {
         const char *info = hux_engine_model_info(engine_);
-        return std::string("模型：") + (info != nullptr ? info : "不可用");
+        return info != nullptr ? std::string(info) : std::string("不可用");
+    }
+
+    /// 首项点击：打开「所加载模型所在目录」（模型路径经 `hux_engine_model_path` 取）。
+    ///
+    /// 目录不存在就先建出来——没有模型时它正是「模型该放的地方」，把用户送到那儿才知道往
+    /// 哪里放。拉起文件管理器见 [`launchFileManager`]；任一步失败只记日志，不影响其它功能。
+    void openModelDirectory(fcitx::InputContext * /*unused*/) {
+        const char *path = hux_engine_model_path(engine_);
+        if (path == nullptr) {
+            HUX_DEBUG() << "hux: 引擎没有模型路径，无法打开模型目录";
+            return;
+        }
+        // 去掉最后一段即目录：路径本身可能是「该放的位置」（文件还不存在）也照样取父目录。
+        const std::filesystem::path directory =
+            std::filesystem::path(path).parent_path();
+        if (directory.empty()) {
+            FCITX_WARN() << "hux: 模型路径没有父目录：" << path;
+            return;
+        }
+        std::error_code error;
+        if (!std::filesystem::is_directory(directory, error)) {
+            std::filesystem::create_directories(directory, error);
+            if (error) {
+                FCITX_WARN() << "hux: 建立模型目录失败 " << directory.string()
+                             << "：" << error.message();
+                return;
+            }
+            FCITX_INFO() << "hux: 已建立模型目录 " << directory.string();
+        }
+        // 先记意图再拉起：exec 发生在孙进程里，父进程看不到它的失败（缺 xdg-open / 无图形会话
+        // 时用户侧就是「点了没反应」），日志里至少留下路径可手工打开。
+        FCITX_INFO() << "hux: 打开模型目录 " << directory.string();
+        if (!launchFileManager(directory.string())) {
+            FCITX_WARN() << "hux: 拉起文件管理器失败 " << directory.string();
+        }
+    }
+
+    /// 拉起文件管理器打开 `directory`：**双 fork + `execlp`**（先 `xdg-open`，exec 失败再
+    /// `gio open`）。
+    ///
+    /// 为什么不是 `std::system`：它经 `/bin/sh -c` 解释整串，目录名里的空格 / 元字符会变成
+    /// 命令注入（模型路径来自环境变量与配置，不是可信输入）；`execlp` 逐个参数传，不经 shell。
+    /// 为什么双 fork：文件管理器可能活很久，父进程不能等它——中间进程 fork 完立刻 `_exit`，
+    /// 孙进程被 init 收尸，故**没有任何僵尸**；中间进程本身必须收一下（它才是父进程的孩子），
+    /// 而它 fork 后立即退出，这个 wait 不会有可感阻塞。
+    ///
+    /// 返回 `false` = 连 fork 都没成功（调用方只记日志）。
+    static bool launchFileManager(const std::string &directory) {
+        const pid_t child = fork();
+        if (child < 0) {
+            return false;
+        }
+        if (child == 0) {
+            const pid_t grandchild = fork();
+            if (grandchild < 0) {
+                _exit(1);
+            }
+            if (grandchild > 0) {
+                _exit(0); // 中间进程：孙进程已脱离父进程，这里立刻退出
+            }
+            execlp("xdg-open", "xdg-open", directory.c_str(),
+                   static_cast<char *>(nullptr));
+            execlp("gio", "gio", "open", directory.c_str(),
+                   static_cast<char *>(nullptr));
+            _exit(1);
+        }
+        // 只等中间进程（毫秒级；不去等孙进程里的文件管理器）。
+        int status = 0;
+        while (waitpid(child, &status, 0) < 0 && errno == EINTR) {
+        }
+        return true;
     }
 
     /// 重新部署：重读配置 → 引擎重走构造期读取 → 对齐共享开关 → 清面板 → 刷新状态菜单与日志。
@@ -959,7 +1277,7 @@ private:
         // 4) 清空各输入上下文的面板与会话里的 UI 快照。
         clearPanels();
         // 5) 「模型」行与状态菜单刷新（文案现算，这里只通知 UI 重取）。
-        refreshHostActions(inputContext);
+        refreshStatusAreas(inputContext);
         // 6) 新状态串落日志：排查「重新部署后还是老样子」时先看这里。
         if (const char *status = hux_engine_status(engine_)) {
             FCITX_INFO() << "hux: " << status;
@@ -995,20 +1313,49 @@ private:
             });
     }
 
-    /// 通知状态菜单里的宿主项重新取文案/勾选态（重新部署后「模型」行会变）。
-    void refreshHostActions(fcitx::InputContext *inputContext) {
+    /// 通知某个输入上下文的状态区条目重新取勾选态/文案（引擎开关的勾选态、三态子菜单的当前态、
+    /// 「模型」行文案都是现算的，这里只通知 UI 重取）。
+    /// 「虎虚」首项与两个子菜单父项的文案都带**当前值**（模型状态 / 三态选择）：现算，随刷新下发。
+    ///
+    /// 三者都会变：模型摘要在「重新部署」后、三态选择在配置页保存与托盘点选后。故统一在
+    /// [`refreshActions`] 里重算一次，再由各项的 `update()` 通知面板——文案与状态不会脱节。
+    void updateDynamicLabels() {
+        // 首项（「虎虚：<模型短名>」）的文案由 `HuxHostAction` 的 label 函数现算，不在这里设：
+        // 基类 `setShortText` 存的那份会被我们的 `shortText()` 覆盖忽略。两个子菜单父项是
+        // `SimpleAction`（文案是存下来的），故在这里重设。
+        earlyCommitMenuAction_.setShortText(
+            "提前上屏：" + HuxEarlyCommitModeI18NAnnotation::toString(
+                               config_.behavior->earlyCommitMode.value()));
+        punctMenuAction_.setShortText(
+            "标点映射：" + HuxPunctModeI18NAnnotation::toString(
+                               config_.behavior->punctMode.value()));
+    }
+
+    void refreshActions(fcitx::InputContext *inputContext) {
         if (inputContext == nullptr) {
             return;
         }
-        if (panelPreeditAction_ != nullptr) {
-            panelPreeditAction_->update(inputContext);
+        updateDynamicLabels();
+        for (fcitx::Action *action : statusActions_) {
+            action->update(inputContext);
         }
-        if (redeployAction_ != nullptr) {
-            redeployAction_->update(inputContext);
+    }
+
+    /// 刷状态区条目：给了输入上下文只刷它；没有（配置页保存 / 重新加载等入口拿不到单一上下文）
+    /// 就对每个输入上下文各刷一遍（`InputContextManager::foreach` 遍历现存 IC）。
+    void refreshStatusAreas(fcitx::InputContext *inputContext = nullptr) {
+        if (inputContext != nullptr) {
+            refreshActions(inputContext);
+            return;
         }
-        if (modelAction_ != nullptr) {
-            modelAction_->update(inputContext);
+        if (instance_ == nullptr) {
+            return;
         }
+        instance_->inputContextManager().foreach(
+            [this](fcitx::InputContext *inputContext) {
+                refreshActions(inputContext);
+                return true;
+            });
     }
 
     /// 把 schema 值经 C ABI 推给 Rust 侧（`Settings::apply_settings`）。
@@ -1018,16 +1365,23 @@ private:
         }
         hux_options options = {};
         const auto &behavior = config_.behavior.value();
+        const auto &charset = config_.charset.value();
         const auto &hotkeys = config_.hotkeys.value();
-        options.early_commit = behavior.earlyCommit.value() ? 1 : 0;
+        // 两个三态项各折算成两个布尔（`hux_options` 的四个 `int32_t` 不动）：
+        // 「提前上屏」= 关闭 / 至输出 / 至预编辑串 ⇒ 开·关 / 开·关 / 开·开；
+        // 「标点映射」= 关闭（半角）/ 全角（常用）/ 全角（all）⇒ `ascii_punct` 开·关·关、
+        // `full_shape` 关·关·开。
+        const auto earlyCommitMode = behavior.earlyCommitMode.value();
+        options.early_commit = earlyCommitMode == HuxEarlyCommitMode::Off ? 0 : 1;
         options.early_commit_to_preedit =
-            behavior.earlyCommitToPreedit.value() ? 1 : 0;
+            earlyCommitMode == HuxEarlyCommitMode::ToPreedit ? 1 : 0;
         options.allow_duplicate_single =
             behavior.allowDuplicateSingle.value() ? 1 : 0;
-        options.full_shape = behavior.fullShape.value() ? 1 : 0;
-        options.ascii_punct = behavior.asciiPunct.value() ? 1 : 0;
+        const auto punctMode = behavior.punctMode.value();
+        options.ascii_punct = punctMode == HuxPunctMode::Ascii ? 1 : 0;
+        options.full_shape = punctMode == HuxPunctMode::FullShapeAll ? 1 : 0;
         options.learning_on_tab = behavior.learningOnTab.value() ? 1 : 0;
-        options.high_freq_limit = behavior.highFreqLimit.value();
+        options.high_freq_limit = charset.highFreqLimit.value();
         fillKeyList(&options.reverse_lookup_pronunciation,
                     hotkeys.reverseLookupPronunciationKeys.value());
         fillKeyList(&options.reverse_lookup_character,
@@ -1054,7 +1408,6 @@ private:
         options.page_cycle = behavior.pageCycle.value() ? 1 : 0;
         options.min_retained_input_length =
             behavior.minRetainedInputLength.value();
-        const auto &charset = config_.charset.value();
         options.full_charset = charset.fullCharset.value() ? 1 : 0;
         options.filter_non_han = charset.filterNonHan.value() ? 1 : 0;
         if (hux_engine_apply_settings(engine_, &options) == 0) {
@@ -1081,67 +1434,124 @@ private:
     /// `HUX_OPTION_*`（顺序由 Rust 侧钉住）。共享开关分属两个分区，故一张分区一张表；
     /// 表外的角色不镜像（引擎新增了 schema 还没有的角色时配置页看不到它，无需镜像；
     /// 配置页仍能改，反向由 Rust 侧 `apply_settings` 写回存储）。
+    ///
+    /// 两个三态项各承载两个角色：**托盘侧**由「提前上屏」「标点映射」两个单选子菜单直接写
+    /// schema（`HuxModeAction`）+ `applyConfig()` 推送，故这里的角色级写回只剩两条调用路径：
+    /// 布尔项（单字重码组句 / 数字直选 / 两个字集开关）的托盘开关，以及启动对齐
+    /// （[`HuxEngine::adoptStoredRuntimeOptions`]，按 `options.yaml` 的每个角色补值）。
+    /// `/*gate=*/true` 标在「提前上屏」上：它是「提前上屏」这一对的总闸，启动对齐时最后折算。
     static constexpr SharedRuntimeOption<HuxBehaviorConfig>
         kSharedBehaviorOptions[] = {
-            {HUX_OPTION_EARLY_COMMIT, &HuxBehaviorConfig::earlyCommit},
+            {HUX_OPTION_EARLY_COMMIT,
+             [](const HuxBehaviorConfig &config) {
+                 return config.earlyCommitMode.path();
+             },
+             [](HuxBehaviorConfig &config, bool on) {
+                 config.earlyCommitMode.setValue(
+                     toggleEarlyCommit(config.earlyCommitMode.value(), on));
+             },
+             /*gate=*/true},
             {HUX_OPTION_EARLY_COMMIT_TO_PREEDIT,
-             &HuxBehaviorConfig::earlyCommitToPreedit},
+             [](const HuxBehaviorConfig &config) {
+                 return config.earlyCommitMode.path();
+             },
+             [](HuxBehaviorConfig &config, bool on) {
+                 config.earlyCommitMode.setValue(toggleEarlyCommitToPreedit(
+                     config.earlyCommitMode.value(), on));
+             }},
             {HUX_OPTION_ALLOW_DUPLICATE_SINGLE,
-             &HuxBehaviorConfig::allowDuplicateSingle},
-            {HUX_OPTION_FULL_SHAPE, &HuxBehaviorConfig::fullShape},
-            {HUX_OPTION_DIGIT_SELECT, &HuxBehaviorConfig::digitSelect},
+             [](const HuxBehaviorConfig &config) {
+                 return config.allowDuplicateSingle.path();
+             },
+             [](HuxBehaviorConfig &config, bool on) {
+                 config.allowDuplicateSingle.setValue(on);
+             }},
+            {HUX_OPTION_FULL_SHAPE,
+             [](const HuxBehaviorConfig &config) {
+                 return config.punctMode.path();
+             },
+             [](HuxBehaviorConfig &config, bool on) {
+                 config.punctMode.setValue(togglePunct(on));
+             }},
+            {HUX_OPTION_DIGIT_SELECT,
+             [](const HuxBehaviorConfig &config) {
+                 return config.digitSelect.path();
+             },
+             [](HuxBehaviorConfig &config, bool on) {
+                 config.digitSelect.setValue(on);
+             }},
         };
     static constexpr SharedRuntimeOption<HuxCharsetConfig>
         kSharedCharsetOptions[] = {
-            {HUX_OPTION_FULL_CHARSET, &HuxCharsetConfig::fullCharset},
-            {HUX_OPTION_FILTER_NON_HAN, &HuxCharsetConfig::filterNonHan},
+            {HUX_OPTION_FULL_CHARSET,
+             [](const HuxCharsetConfig &config) {
+                 return config.fullCharset.path();
+             },
+             [](HuxCharsetConfig &config, bool on) {
+                 config.fullCharset.setValue(on);
+             }},
+            {HUX_OPTION_FILTER_NON_HAN,
+             [](const HuxCharsetConfig &config) {
+                 return config.filterNonHan.path();
+             },
+             [](HuxCharsetConfig &config, bool on) {
+                 config.filterNonHan.setValue(on);
+             }},
         };
 
-    /// 共享开关的字段类型（两个分区同款）。
-    using SharedOption = SharedRuntimeOption<HuxBehaviorConfig>::Option;
-
-    /// 在某分区的开关表里按角色取字段（表外角色返回空）。
+    /// 在某分区的开关表里按角色取绑定（表外角色 `known = false`）。
+    ///
+    /// 绑定里的指针分别指向**静态**表项与本对象的 schema 分区，故 `std::function` 可以带着它们
+    /// 离开本函数（调用点随即使用，不跨 `config_` 生命周期）。
     template <typename Partition, size_t N>
-    static typename SharedRuntimeOption<Partition>::Option *
+    static SharedRuntimeBinding
     findSharedOption(Partition &partition,
                      const SharedRuntimeOption<Partition> (&table)[N],
-                     int32_t role) {
-        for (const auto &entry : table) {
-            if (entry.role == role) {
-                return &(partition.*(entry.field));
+                     const std::string &sectionPath, int32_t role) {
+        for (const SharedRuntimeOption<Partition> &entry : table) {
+            if (entry.role != role) {
+                continue;
             }
+            Partition *target = &partition;
+            const SharedRuntimeOption<Partition> *source = &entry;
+            return {true,
+                    entry.gate,
+                    sectionPath + "/" + entry.path(partition),
+                    [target, source](bool value) { source->write(*target, value); }};
         }
-        return nullptr;
+        return {};
     }
 
-    /// 角色对应的 schema 字段与它在本配置文件里的路径（表外角色返回 `{nullptr, ""}`）。
+    /// 角色对应的 schema 字段绑定（两个分区依次试；表外角色 `known = false`）。
     ///
     /// 路径由 schema 自身拼出（分区 `path()` + 字段 `path()`）、不写字面量：分区或字段改名时
     /// 「文件里显式写过吗」的判断不会失配（否则启动对齐会悄悄退回缺省值）。
-    std::pair<SharedOption *, std::string> sharedOption(int32_t role) {
-        HuxBehaviorConfig *behavior = config_.behavior.mutableValue();
-        if (auto *option =
-                findSharedOption(*behavior, kSharedBehaviorOptions, role)) {
-            return {option, config_.behavior.path() + "/" + option->path()};
+    SharedRuntimeBinding sharedOption(int32_t role) {
+        if (SharedRuntimeBinding behavior =
+                findSharedOption(*config_.behavior.mutableValue(),
+                                 kSharedBehaviorOptions, config_.behavior.path(),
+                                 role);
+            behavior.known) {
+            return behavior;
         }
-        HuxCharsetConfig *charset = config_.charset.mutableValue();
-        if (auto *option =
-                findSharedOption(*charset, kSharedCharsetOptions, role)) {
-            return {option, config_.charset.path() + "/" + option->path()};
-        }
-        return {nullptr, {}};
+        return findSharedOption(*config_.charset.mutableValue(),
+                                kSharedCharsetOptions, config_.charset.path(), role);
     }
 
-    /// 状态菜单翻转后的镜像：把新值写回本 schema（配置页读的就是它），可选落盘。
+    /// 布尔开关（托盘里的 `HuxToggleAction`）翻转后的镜像：把新值写回本 schema、落盘、刷新勾选态。
     ///
-    /// 不落盘只用于启动时的对齐（[`HuxEngine::adoptStoredRuntimeOptions`]）：那次写入的值
-    /// 马上会由 `applyConfig()` 推回引擎，磁盘上的旧文件无需改写。
-    void mirrorRuntimeRole(int32_t role, bool value, bool persist = true) {
-        const auto shared = sharedOption(role);
-        if (shared.first == nullptr) {
+    /// 推送这一半由 `HuxToggleAction::activate` 自己做（`hux_engine_set_option`，键取自 ABI）：
+    /// 布尔角色一项对应一个布尔字段，单角色下发就是完整的。
+    /// `persist = false` 只用于启动对齐（[`HuxEngine::adoptStoredRuntimeOptions`]）：那次写入的值
+    /// 马上会由构造末尾的 `applyConfig()` 推回引擎、磁盘旧文件也无需改写 ⇒ 跳过落盘与刷新
+    /// （此时 `inputContext` 为 `nullptr`）。
+    void mirrorRuntimeRole(int32_t role, bool value, bool persist = true,
+                           fcitx::InputContext *inputContext = nullptr) {
+        const SharedRuntimeBinding shared = sharedOption(role);
+        if (!shared.known) {
             return;
         }
-        shared.first->setValue(value);
+        shared.write(value);
         if (!persist) {
             return;
         }
@@ -1149,6 +1559,42 @@ private:
         if (!fcitx::safeSaveAsIni(config_, kConfigPath)) {
             FCITX_WARN() << "hux: 写入 " << kConfigPath << " 失败（运行时开关镜像）";
         }
+        refreshStatusAreas(inputContext);
+    }
+
+    /// 两个三态子菜单选中后的落地顺序：**落盘 → 推送 → 刷新勾选态**（写 schema 由
+    /// [`chooseEarlyCommitMode`] / [`choosePunctMode`] 在调用本函数前完成）。
+    ///
+    /// 推送统一走 `applyConfig()`，不按角色 `hux_engine_set_option`：
+    ///   - 它是「三态 → 四个布尔」的**唯一**映射 ⇒ 推送后引擎与 schema 三态恒一致，
+    ///     不会出现第二条映射与它打架；
+    ///   - 「提前上屏」对的两个布尔一起下发（`early_commit` = 非「关闭」、
+    ///     `early_commit_to_preedit` = 「至预编辑串」），不会留下半生效的状态；
+    ///   - 「标点映射」对里只有它能推 `ascii_punct`：`ascii_punct` 不是运行时角色
+    ///     （Rust 侧 `is_runtime_option` 只认 `RUNTIME_OPTION_ROLES`，`hux_engine_set_option`
+    ///     拒收），而引擎的标点链**先查 `ascii_punct`** ⇒ 不收口就从「关闭（半角）」选
+    ///     「全角（all）」仍是半角。
+    void commitModeChoice(fcitx::InputContext *inputContext) {
+        // 与构造时的 `readAsIni`、其余落盘点同一路径、同一 API 家族。
+        if (!fcitx::safeSaveAsIni(config_, kConfigPath)) {
+            FCITX_WARN() << "hux: 写入 " << kConfigPath << " 失败（三态子菜单）";
+        }
+        applyConfig();
+        refreshStatusAreas(inputContext);
+    }
+
+    /// 「提前上屏」子菜单选中某一态：写 schema → [`commitModeChoice`]。
+    void chooseEarlyCommitMode(HuxEarlyCommitMode mode,
+                               fcitx::InputContext *inputContext) {
+        // `Option::operator->` 是 const 限定（只读视图），写入口是 `mutableValue()`。
+        config_.behavior.mutableValue()->earlyCommitMode.setValue(mode);
+        commitModeChoice(inputContext);
+    }
+
+    /// 「标点映射」子菜单选中某一态：写 schema → [`commitModeChoice`]。
+    void choosePunctMode(HuxPunctMode mode, fcitx::InputContext *inputContext) {
+        config_.behavior.mutableValue()->punctMode.setValue(mode);
+        commitModeChoice(inputContext);
     }
 
     /// 启动对齐：配置文件里**没写过**的共享键沿用引擎（`options.yaml`）的现存值。
@@ -1157,24 +1603,33 @@ private:
     /// 本 schema（文件缺失 / 只保存过配置页的其它项），直接 `applyConfig()` 会把 schema 缺省
     /// 推给引擎，从而在启动时把用户设置重置。故先按**文件里出现过的键**为界补齐：文件显式写过
     /// 的键以文件为准（配置页权威），没写过的键沿用引擎值（此后也会随 `apply_settings` 写回存储）。
+    ///
+    /// **两趟**：先折非总闸角色、最后折总闸角色（`gate`，现为 `HUX_OPTION_EARLY_COMMIT`）。
+    /// 这不是风格偏好而是行为保真：引擎侧「提前上屏 + 提前上屏至预编辑」是两个独立布尔，旧配置页
+    /// 的两个勾选框互不联动，故可能存在「提前上屏关 + 至预编辑开」，其可观测行为是**不提前上屏**；
+    /// 若按角色序 0→1 一趟折完，角色 1 的「开 ⇒ 至预编辑串」会把刚被角色 0 关掉的提前上屏重新
+    /// 打开——等于在启动时改掉用户设置，正是本函数要防的事。四组合真值见文件头的 `static_assert`。
     void adoptStoredRuntimeOptions() {
         fcitx::RawConfig raw;
         fcitx::readAsIni(raw, kConfigPath);
-        // 角色集合与顺序取自引擎（ABI）：宿主 schema 还没有的角色由 `sharedOption` 返回空、跳过。
+        // 角色集合与顺序取自引擎（ABI）：宿主 schema 还没有的角色由 `sharedOption` 报
+        // `known = false`、跳过。
         const int32_t roles = hux_engine_option_role_count();
-        for (int32_t role = 0; role < roles; ++role) {
-            const auto shared = sharedOption(role);
-            if (shared.first == nullptr ||
-                raw.valueByPath(shared.second) != nullptr) {
-                continue; // 文件显式给出 ⇒ 以文件为准
-            }
-            const char *key = hux_engine_option_key(engine_, role);
-            if (key == nullptr) {
-                continue;
-            }
-            const int32_t value = hux_engine_option_value(engine_, key);
-            if (value >= 0) {
-                shared.first->setValue(value == 1);
+        for (const bool gatePass : {false, true}) {
+            for (int32_t role = 0; role < roles; ++role) {
+                const SharedRuntimeBinding shared = sharedOption(role);
+                if (!shared.known || shared.gate != gatePass ||
+                    raw.valueByPath(shared.path) != nullptr) {
+                    continue; // 表外角色 / 非本趟 / 文件显式给出 ⇒ 跳过
+                }
+                const char *key = hux_engine_option_key(engine_, role);
+                if (key == nullptr) {
+                    continue;
+                }
+                const int32_t value = hux_engine_option_value(engine_, key);
+                if (value >= 0) {
+                    shared.write(value == 1);
+                }
             }
         }
     }
@@ -1188,15 +1643,28 @@ private:
     /// IC 的生命周期长于本对象（见 `~HuxEngine` 契约注释），故该指针本身不会悬垂；
     /// 引擎释放后由 `applyCommit`/`applyUpdate` 的 `engine_ == nullptr` 早退兜住。
     fcitx::InputContext *context_ = nullptr;
-    fcitx::Menu menu_;
-    fcitx::SimpleAction menuAction_;
+    /// 状态区条目（裸指针指向本对象的成员 action 与 `unique_ptr` 成员持有的 action；
+    /// 顺序 = 注册顺序 = 显示顺序，见 [`setupStatusMenu`] / [`~HuxEngine`] 的清理契约）。
+    std::vector<fcitx::Action *> statusActions_;
+    /// 「虎虚」首项：图标 + 「虎虚：<模型短名>」，点击打开模型目录，不挂菜单。
+    std::unique_ptr<HuxHostAction> menuAction_;
+    /// 引擎运行时开关里仍是布尔项的那些（单字重码组句 / 数字直选 / 两个字集开关）。
     std::vector<std::unique_ptr<HuxToggleAction>> toggleActions_;
     /// 宿主项开关「候选窗口显示预编辑」（引擎选项之外的一项，见 `HuxHostToggleAction`）。
     std::unique_ptr<HuxHostToggleAction> panelPreeditAction_;
+    /// 「提前上屏」单选子菜单：菜单、父项（`setMenu`）、三个单选项（当前态取自 schema）。
+    ///
+    /// **声明序即析构序的反序**：`Menu` 先声明 ⇒ 最后析构；子项与父项各自析构时 `Menu` 仍存活
+    /// （`Action` 是 `Menu` 的 friend，析构路径会把自己从菜单摘掉），与原「虎虚」菜单同款。
+    fcitx::Menu earlyCommitMenu_;
+    fcitx::SimpleAction earlyCommitMenuAction_;
+    std::vector<std::unique_ptr<HuxModeAction>> earlyCommitItems_;
+    /// 「标点映射」单选子菜单（同上）。
+    fcitx::Menu punctMenu_;
+    fcitx::SimpleAction punctMenuAction_;
+    std::vector<std::unique_ptr<HuxModeAction>> punctItems_;
     /// 宿主项「重新部署」。
     std::unique_ptr<HuxHostAction> redeployAction_;
-    /// 宿主项「模型」信息行（不可点）。
-    std::unique_ptr<HuxHostAction> modelAction_;
 };
 
 void HuxCandidateWord::select(fcitx::InputContext *inputContext) const {

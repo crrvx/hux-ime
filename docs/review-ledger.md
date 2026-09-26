@@ -749,6 +749,23 @@
 - **同步的引用**：`docs/refactor.md` §9 骨架清单与目录说明、根 `README.md` 文档索引、`data/README.md`、
   `docs/{design,usage,upstream-deviations}.md` 内的相对链接。
 
+### 4.10 配置页保存不落盘（用户报告「提前上屏至预编辑无效」）
+
+- **现象**：配置页勾选「提前上屏至预编辑」后没有效果；同源还暴露「不进 `options.yaml` 的项直接丢失」。
+- **根因**：`HuxEngine::setConfig` 只 `config_.load(raw, true)` 而**不落盘**（原注释「落盘由框架负责」
+  不成立：fcitx5 的 D-Bus `Controller1::SetConfig` 只调 `setConfig`，官方 addon 自行 `safeSaveAsIni`），
+  且 `reloadConfig()` 未实现（基类是空实现）⇒ 配置页的值只活在内存里：7 个共享开关另由引擎写进
+  `options.yaml` 兜住，下次启动 `adoptStoredRuntimeOptions()` 以「文件里显式写过」的键为权威，
+  文件旧值把配置页改动**静默压回**（用户侧即「勾选后没有效果」）。
+- **修复**：`setConfig` 增 `safeSaveAsIni(config_, kConfigPath)`（失败记 `FCITX_WARN`）并新增
+  `reloadConfig()`（`readAsIni` + `applyConfig`）；回归两条——平台层全链路
+  `config_page_early_commit_to_preedit_buffers_instead_of_committing`（开：无 `host_commit`、文本留在
+  `buffered_text` 并显示为预编辑；关：同一串按键直接上屏——两半互钉）与源码级守卫
+  `host_config_page_saves_and_reloads_the_addon_config`（把该改动回滚即失败）。
+- **已排除**（逐条实测，非推断）：引擎存储同步（`apply_settings` → 会话上下文 → `options.yaml` →
+  重启后仍为 true）、方案侧三条早提交路径（概率早提交 / 空码上屏 / Tab 确认）**全部**经 `submit_early`
+  读该选项、C++ schema 与 `conf` 往返映射、三处角色表顺序。
+
 ## 5. 总账：四份只读审计逐条归宿
 
 > 四份只读审计报告为本地临时件、未入库（

@@ -154,6 +154,11 @@ D 16:41:47.539737 hux.cpp:404] hux: ~HuxEngine
 不保留组合）；切换输入法/重置由本层**直接丢弃**（不提交）。上游默认在切换输入法时提交
 候选/预编辑，本实现有意取「丢弃」契约；打包待做（见「Linux 桌面」节状态）。
 
+- **配置页保存的落盘归 addon**：fcitx5 的 D-Bus `Controller1::SetConfig` 只调 `setConfig`、
+  **不代写配置文件**，故本层在 `setConfig` 里自行 `safeSaveAsIni`，并实现 `reloadConfig()`
+  （`readAsIni` + `applyConfig`）以接收文件被外部改动的情形；缺任一步都会让配置页的改动在下次启动
+  被 `conf/hux.conf` 的旧值压回（`adoptStoredRuntimeOptions` 以「文件里显式写过」的键为权威）。
+
 - **fcitx5 版本**：CI 在 **ubuntu-26.04** 上按 **apt 提供的版本**构建 addon（26.04 = Resolute，其 apt
   当前给 **5.1.19**，不钉具体版本；`ubuntu-latest` 目前仍是 24.04、其 apt 只有 5.1.7，待 GitHub 迁移后
   再换回）。代码下限由
