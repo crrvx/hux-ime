@@ -12,6 +12,37 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # （26.04 当前给 5.1.19，不钉具体版本）；低于下限时在这里直接报错，而不是在 C++ 模板深处炸开。
 find_package(Fcitx5Core 5.1.15 REQUIRED)
 
+# AT-SPI 取字来源（可选）：客户端不上报周边文本时（终端等）从无障碍总线取焦点文本。
+# 开发包缺失（CI 的最小镜像只装 libfcitx5core-dev / librime-dev）时自动关闭，仅退回
+# 「客户端上报」来源，其余功能不受影响 —— 故 `AUTO` 是缺省，`OFF` 供最小构建显式关掉。
+set(HUX_ATSPI "AUTO" CACHE STRING "AT-SPI 取字来源：AUTO（缺开发包即关闭）/ ON（缺即报错）/ OFF")
+set_property(CACHE HUX_ATSPI PROPERTY STRINGS AUTO ON OFF)
+if(NOT HUX_ATSPI MATCHES "^(AUTO|ON|OFF)$")
+    message(FATAL_ERROR "HUX_ATSPI 只能是 AUTO / ON / OFF（当前：${HUX_ATSPI}）")
+endif()
+
+if(NOT HUX_ATSPI STREQUAL "OFF")
+    # `pkg_check_modules` 只认 REQUIRED / QUIET / IMPORTED_TARGET 等关键字：**没有** STATIC /
+    # MODULE 模式（见本机 cmake 4.4.3 的 `Modules/FindPkgConfig.cmake:1160`，
+    # `_pkgconfig_parse_options` 会把不认识的关键字当成**包名** ⇒ `pkg-config --exists
+    # atspi-2 MODULE` 失败、静默探测不到）。当前 cmake 取的是非 `--static` 的 flags
+    # （实测 `-latspi -ldbus-1 -lglib-2.0`），正是这里要的「头文件 + 动态库」。
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(ATSPI QUIET IMPORTED_TARGET atspi-2)
+    endif()
+    if(TARGET PkgConfig::ATSPI)
+        set(HUX_HAVE_ATSPI ON)
+    elseif(HUX_ATSPI STREQUAL "ON")
+        message(FATAL_ERROR
+            "HUX_ATSPI=ON 但未找到 atspi-2 开发包（Debian/Ubuntu 装 libatspi2.0-dev；"
+            "Fedora 装 at-spi2-core-devel），或用 -DHUX_ATSPI=OFF 显式关闭取字来源")
+    else()
+        set(HUX_HAVE_ATSPI OFF)
+        message(STATUS "未找到 atspi-2 开发包：AT-SPI 取字来源关闭（客户端不上报周边文本时无字反查）")
+    endif()
+endif()
+
 # Rust 静态库（逻辑层；cargo 自身增量，故每次构建都调用）。
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(HUX_CARGO_PROFILE "debug")
@@ -29,12 +60,18 @@ add_custom_target(hux-rust ALL
     COMMENT "cargo build -p hux-platform-fcitx5 (${HUX_CARGO_PROFILE})"
     VERBATIM)
 
-add_library(hux SHARED shell/hux.cpp)
+add_library(hux SHARED shell/hux.cpp shell/atspi_source.cpp)
 add_dependencies(hux hux-rust)
 target_include_directories(hux PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/shell"
     "${HUX_WORKSPACE}/crates/hux-ffi/include")
 target_link_libraries(hux PRIVATE Fcitx5::Core "${HUX_RUST_LIB}" dl pthread m)
+if(HUX_HAVE_ATSPI)
+    # 两个 TU 无条件进构建：关掉 AT-SPI 时 `atspi_source.cpp` 编成 stub（空实现），
+    # 这样 `hux.cpp` 的接线不需要 `#ifdef`，也就不存在「开着能编、关掉编不过」的分叉。
+    target_link_libraries(hux PRIVATE PkgConfig::ATSPI)
+    target_compile_definitions(hux PRIVATE HUX_HAVE_ATSPI=1)
+endif()
 set_target_properties(hux PROPERTIES OUTPUT_NAME "hux")
 
 # 插件安装目录：优先跟随 fcitx5 自身的 addon 目录（Fcitx5Utils 提供；Fedora 为 lib64/fcitx5），

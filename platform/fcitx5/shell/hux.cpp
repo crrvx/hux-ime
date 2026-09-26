@@ -40,6 +40,7 @@
 #include <utility>
 #include <vector>
 
+#include "atspi_source.h"
 #include "hux_abi.h"
 
 namespace {
@@ -760,13 +761,26 @@ public:
         }
         context_ = inputContext;
         // 应用侧周边文本（字反查用；应用不支持时 valid=0）。
+        //
+        // 三分支：客户端上报有效 → 直接用；否则试 AT-SPI 取字来源（终端这类不上报周边文本的
+        // 客户端）；两者都没有 → 传 nullptr（引擎按「无来源」退化）。
+        //
+        // 只走「客户端有效」这一支时不请求 AT-SPI：不上报的客户端每次都落进 else，第一次按键
+        // 就把后台线程带起来（惰性启动），此后按键路径只读缓存 —— 不在这里做 D-Bus 往返。
         const auto &surrounding = inputContext->surroundingText();
         if (surrounding.isValid()) {
             hux_engine_set_surrounding(engine_, huxSession->id(),
                                        surrounding.text().c_str(),
                                        static_cast<int32_t>(surrounding.cursor()), 1);
+        } else if (const auto fetched = atspi_.snapshot(); fetched.has_value()) {
+            // `cursorChars` 是**窗口内**的字符制光标 —— 窗口以光标结尾，故它等于串的字符数
+            // （不是字节数：`text` 是 UTF-8，中文下字节数是它的 3 倍）。
+            hux_engine_set_surrounding(engine_, huxSession->id(), fetched->text.c_str(),
+                                       static_cast<int32_t>(fetched->cursorChars), 1);
+            atspi_.requestRefresh();
         } else {
             hux_engine_set_surrounding(engine_, huxSession->id(), nullptr, 0, 0);
+            atspi_.requestRefresh();
         }
         const int32_t disposition =
             hux_engine_key(engine_, huxSession->id(), key.sym(),
@@ -796,7 +810,16 @@ public:
                   fcitx::InputContextEvent &event) override {
         FCITX_UNUSED(entry);
         // 会话在输入上下文注册时已建；激活只刷新状态区。
-        updateStatusArea(event.inputContext());
+        fcitx::InputContext *inputContext = event.inputContext();
+        updateStatusArea(inputContext);
+        // 焦点可能已经换到别的应用：作废 AT-SPI 缓存，别把上一个应用的文本当本应用的。
+        atspi_.invalidate();
+        // 预热：换到终端这类**不上报**周边文本的客户端后，用户往往过一会儿才敲第一个键，
+        // 提前请求一次查询就能让第一键也有提示（快照不随活跃窗关闭而清，这一次足够撑到用户
+        // 开打）；本来上报周边文本的客户端不需要这一路，别去白拉无障碍总线。
+        if (inputContext != nullptr && !inputContext->surroundingText().isValid()) {
+            atspi_.requestRefresh();
+        }
     }
 
     void deactivate(const fcitx::InputMethodEntry &entry,
@@ -805,12 +828,14 @@ public:
         // 失焦：由核心/前端把客户端预编辑以原文提交（fcitx5 惯例，不保留组合）；
         // 切换输入法/重置：本层直接丢弃（不提交；上游默认在切换时提交，本实现取丢弃）。
         resetSession(event);
+        atspi_.invalidate();
     }
 
     void reset(const fcitx::InputMethodEntry &entry,
                fcitx::InputContextEvent &event) override {
         FCITX_UNUSED(entry);
         resetSession(event);
+        atspi_.invalidate();
     }
 
     /// 面板候选点击：以该输入上下文交给引擎（提交/预编辑/候选经回调送出）。
@@ -1665,6 +1690,10 @@ private:
     std::vector<std::unique_ptr<HuxModeAction>> punctItems_;
     /// 宿主项「重新部署」。
     std::unique_ptr<HuxHostAction> redeployAction_;
+    /// AT-SPI 取字来源（字反查用）：客户端不上报周边文本时（终端等）从无障碍总线取焦点文本。
+    /// 惰性启动（第一次需要才起后台线程）、按键路径只读缓存 ⇒ 不影响输入延迟；
+    /// 本构建未带 AT-SPI 时是空实现（见 `atspi_source.h` 的 `compiled()`）。
+    hux::AtspiSource atspi_;
 };
 
 void HuxCandidateWord::select(fcitx::InputContext *inputContext) const {
