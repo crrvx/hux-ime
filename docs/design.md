@@ -166,7 +166,8 @@ platform/                     # 平台适配
     **装-卸-CMake 清单一致自检**（`tools/checks/check_data_manifest.sh`）/两个一键脚本的`bash -n` + \
     `--dry-run` 冒烟）+ `addon` 作业（cmake configure 与构建链接、 \
     `hux_abi.h` ↔ `libhux.so` 符号一致、`DESTDIR` 安装布局 = 3 个插件文件 + \
-    `data/MANIFEST`全部随包数据）+ 金样重生成比对（「层依赖」一步覆盖本文「结构与硬规则」规则 1 的四条边）；
+    `data/MANIFEST`全部随包数据）+ 金样重生成比对 \
+    （「层依赖」一步覆盖本文「结构与硬规则」规则 1 的四条边）；
   - `rust` 作业 16 步；
   - **待补**：`cargo-deny`（可选）、CI action 钉 commit sha（[`review-ledger.md`](review-ledger.md) \
     §0的 `[待办]`）；
@@ -262,7 +263,11 @@ platform/                     # 平台适配
   `sh ks`，反查段按音节）优先，其后原始输入原样接续（移动光标时保持分码， \
   如 `` ab cd `` + 尾部 `ja` → `` ab cdja ``）；无高亮候选回退「缓冲 + 原始输入」，光标为字节偏移。
 - **反查**：`sound_to_char_shape.rs`（音）/ `char_to_sound_shape.rs`（字）对齐 librime 词典反查； \
-  契约见 [`platform/README.md`](../platform/README.md)。
+  字反查的取字来源依序为「客户端上报的周边文本 → 经 AT-SPI 取焦点对象文本 → 无」； \
+  AT-SPI 为可选构建（CMake `HUX_ATSPI=AUTO`/`ON`/`OFF`， \
+  实现见 `platform/fcitx5/shell/atspi_source.{h,cpp}`），运行期只读缓存快照、 \
+  按键路径不做 D-Bus 往返；契约与不可用时的行为见 \
+  [`platform/README.md`](../platform/README.md)。
 - **学习**：提交点通知器（参照 `Context::Commit`）覆盖核心路径与宿主链提交点； \
   `LiveLearning::submitted` 排空落库、`store_ready` 后生效，库 1 万条 / 16 MiB、60 秒节流。 \
   提交点范围见 [`platform/README.md`](../platform/README.md)，存储见 [`config.md`](config.md)。
@@ -276,7 +281,10 @@ platform/                     # 平台适配
 
 1. **Rust 差分**：模块对金样逐位断言；
 2. **键序列金样**：真 librime 探针生成「键序列 → 提交 / 候选 / 预编辑」，Rust 重放比对；
-3. **CI**：fmt / clippy / 差分 + 固定参照提交重生成 fixture 金样比对。
+3. **CI**：fmt / clippy / 差分 + 固定参照提交重生成 fixture 金样比对；
+4. **平台层夹具**：`tools/atspi/`（假可访问应用 + libatspi 探针 + 一键脚本） \
+   在无障碍总线上验证取字来源与降级；登记与用法见 \
+   [`resources.md`](resources.md) §5 与 `tools/atspi/README.md`。
 
 清单、格式、重生成与 sha 校验见 [`goldens/README.md`](../goldens/README.md)， \
 分层、CI 作业与工具链纪律见本文「测试与性能纪律」。
