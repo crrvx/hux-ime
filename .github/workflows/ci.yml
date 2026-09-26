@@ -270,6 +270,40 @@ jobs:
             --manifest build/addon/install_manifest.txt \
             --stage /tmp/stage
 
+  # AT-SPI 取字来源的端到端夹具：装**真** libatspi，起私有会话 + 私有无障碍总线，跑假应用 + 真探针。
+  #
+  # 为什么要独立作业：`addon` 作业故意不装 AT-SPI 开发包（它要证明「没有开发包、CMake 探测
+  # 失败、功能自动关闭」这条退化路径仍然可构建）。取字链路本身（D-Bus 对象形状、字符/字节
+  # 换算、失败退化）只有在装了开发包的环境里才测得到，塞进 `addon` 会把它的验证意图搅浑。
+  # 这里也不需要 cargo/rustc：夹具直接 `g++` 编译真实来源文件 + 探针。
+  atspi:
+    timeout-minutes: 20
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install AT-SPI & D-Bus test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libatspi2.0-dev at-spi2-core python3-dbus python3-gi dbus
+      - name: Show toolchain versions
+        run: |
+          pkg-config --modversion atspi-2
+          g++ --version | head -1
+          python3 -c 'import dbus, gi; print("python3-dbus / python3-gi OK")'
+      - name: Run the AT-SPI end-to-end fixture
+        # 夹具自带全部等待上限（轮询，不靠固定 sleep），并用私有 XDG_RUNTIME_DIR 建
+        # 私有无障碍总线；退出码即断言结果（0 全绿 / 1 有失败 / 2 环境或编译失败）。
+        run: bash tools/atspi/run.sh
+      - name: Upload fixture logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: atspi-fixture-logs
+          path: build/atspi-fixture/
+          if-no-files-found: ignore
+          retention-days: 7
+
   # 一般金样校验：使用 runner 系统提供的 Lua（Ubuntu 当前可用的最新 lua 包）。
   golden:
     timeout-minutes: 30

@@ -75,7 +75,10 @@ addon 目录无用户级缺省值，`FCITX_ADDON_DIRS` **取代**缺省搜索集
 [`../data/README.md`](../data/README.md)）。
 
 手工安装依赖 CMake 3.20+ 与 fcitx5 开发文件（CMake 包 `Fcitx5Core`；Arch `fcitx5`、 \
-Fedora `fcitx5-devel`、Debian/Ubuntu `libfcitx5core-dev`）：
+Fedora `fcitx5-devel`、Debian/Ubuntu `libfcitx5core-dev`）。 \
+可选依赖 `atspi-2`（Arch `at-spi2-core`、Fedora `at-spi2-core-devel`、 \
+Debian/Ubuntu `libatspi2.0-dev`）：装上即启用 AT-SPI 取字来源； \
+装不上或不想用可加 `-DHUX_ATSPI=OFF` 显式关闭：
 
 ```sh
 cmake -S platform/fcitx5 -B build/addon \
@@ -149,6 +152,12 @@ cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
 
 - `方向键` 移动应用光标（信息随光标刷新）
 - `Esc` / 再次触发 / 输入其它键：退出
+- **取字来源**：优先用应用上报的周边文本；应用不上报时（终端等）改用 **AT-SPI** \
+  取焦点处的文本与光标（需系统有无障碍总线，桌面一般默认开启）。两者都没有时两排留空， \
+  不做猜测、也不提示
+- **局限**：AT-SPI 要应用暴露无障碍文本（GTK / Qt / Chromium 系通常可以，纯终端与 \
+  未启用无障碍的应用仍取不到）；若本包构建时缺 `atspi-2` 开发包，插件自动退回 \
+  「只用应用上报的周边文本」
 
 ```
 咅 zhong
