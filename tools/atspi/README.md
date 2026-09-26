@@ -18,7 +18,7 @@ HUX_ATSPI_KEEP_RUN=1 bash tools/atspi/run.sh   # 保留临时 run 目录（默�
 `.gitignore` 忽略）：每个场景一份 mock 日志 + probe 日志，外加作为 `XDG_RUNTIME_DIR` 的
 `run/` 子目录。失败时先看那里。
 
-## 三个文件
+## 夹具的三个文件
 
 - `mock_app.py`：假的「可访问应用」。一个带 `Text` 接口的文本框 + 一个没有 `Text` 接口的
   按钮，通过 `org.a11y.atspi.Socket.Embed` 注册进注册表；文本框内容与光标可由环境变量给定，
@@ -29,6 +29,36 @@ HUX_ATSPI_KEEP_RUN=1 bash tools/atspi/run.sh   # 保留临时 run 目录（默�
 
 `probe.cpp` 只用**实现方的公开接口**（`snapshot()` / `requestRefresh()` /
 `compiled()`），不含任何内部头文件 —— 夹具因此不会被实现的内部重构带走。
+
+## 真机诊断（`live-probe.sh`）
+
+夹具跑在**私有**总线上，验的是实现；真机上的「取不到字 / 取到的不跟手」要用另一个探针，
+它连的是你**当前会话**的无障碍总线（浏览器、编辑器都在那条总线上）：
+
+```
+bash tools/atspi/live-probe.sh [轮数]      # 默认 100 轮 × 200 ms = 20 s
+```
+
+每轮打印一行，**只在读数变化时**输出：焦点应用与角色、`CharacterCount` / `CaretOffset`
+（读不到会明说「属性不支持」）、光标左侧窗口与「该字」。取值口径与
+`platform/fcitx5/shell/atspi_source.cpp` 完全一致（同一套调用、同样的字符制偏移与左侧
+窗口），所以结论可以直接对号：
+
+- 这里看得到、移动光标时这行跟着变，插件两排却卡住 ⇒ 问题在插件一侧；
+- 这里也卡住 / 一直「没有 FOCUSED 节点」⇒ 问题在应用或无障碍一侧，改插件没用。
+
+后者最常见的原因是**系统辅助功能没开**：`org.a11y.Status` 为假时浏览器不会建无障碍树
+（Firefox 只在辅助功能开启时才初始化 ATK，见
+[Mozilla bug 693343](https://bugzilla.mozilla.org/show_bug.cgi?id=693343)），此时无障碍
+总线上根本没有那个应用。先看一眼开关：
+
+```
+busctl --user get-property org.a11y.Bus /org/a11y/bus org.a11y.Status IsEnabled
+```
+
+临时验证可以只给单个应用开：`GNOME_ACCESSIBILITY=1 firefox`（Chromium 系用
+`--force-renderer-accessibility`），改完要**重启那个应用**。KDE 上是系统设置 → 辅助功能 →
+「启用辅助功能」（等价于 `~/.config/kaccessrc` 的 `[Status] IsEnabled=true`）。
 
 ## 断言清单
 
