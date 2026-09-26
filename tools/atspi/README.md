@@ -84,6 +84,9 @@ HUX_ATSPI_KEEP_RUN=1 bash tools/atspi/run.sh   # 保留临时 run 目录（默�
 - **时效断言不靠 `sleep`**：`MOCK_CONTROL_FILE` 是一个文本文件，mock 在**每次 D-Bus 调用
   前**重读它（写入方用临时文件 + rename 原子替换）。所以「改了文本」这件事是**确定的**，
   剩下的只是轮询等结果。
+- **控制文件只在「内容变了」时套用**：否则每次调用前的重读会把进程内的写入（比如
+  `SetCaretOffset`）按文件里的旧值抹回去 —— 表现为「赋值不生效」。caret 因此有两个真源：
+  文件（一变就赢）与 `SetCaretOffset`（文件没变时保持）；夹具只用前者驱动。
 
 ## 稳定性边界
 

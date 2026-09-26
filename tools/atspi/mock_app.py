@@ -106,15 +106,18 @@ class Ref:
 
 
 class ControlFile:
-    """控制文件：`新文本<TAB>新光标`；每次读取即最新值（写入用临时文件 + rename）。
+    """控制文件：`新文本<TAB>新光标`；内容一变即最新值（写入用临时文件 + rename）。
 
     读失败（写入竞态 / 文件被删）时保留上一次的值 —— 夹具不因为一次读失败而炸。
+    **只认「内容变了」**：文件没变就不重新套用，否则每次 D-Bus 调用前的重读会把进程内的
+    写入（`SetCaretOffset`）按文件里的旧值抹掉 —— 一个「赋值不生效」的假象。
     """
 
     def __init__(self, path, text, caret):
         self.path = path
         self.text = text
         self.caret = caret
+        self._last_raw = None
 
     def refresh(self):
         if not self.path:
@@ -124,6 +127,9 @@ class ControlFile:
                 raw = handle.read()
         except OSError:
             return
+        if raw == self._last_raw:
+            return
+        self._last_raw = raw
         line = raw.split("\n", 1)[0].rstrip("\r")
         text, _, caret = line.partition("\t")
         if text:
