@@ -164,7 +164,7 @@ jobs:
         # 两个一键脚本是文档首推入口：语法 + `--dry-run` 冒烟（不写系统目录）。
         # `bash -n a b c` 只检查第一个文件（其余当位置参数），故逐个文件检查。
         run: |
-          for script in install.sh uninstall.sh tools/generators/*.sh tools/generators/lib/*.sh tools/checks/*.sh; do
+          for script in install.sh uninstall.sh platform/linux/*.sh tools/generators/*.sh tools/generators/lib/*.sh tools/checks/*.sh; do
             bash -n "$script"
           done
           ./install.sh --dry-run >/dev/null
@@ -210,7 +210,7 @@ jobs:
           rustc -V
       - name: Configure & build addon (cargo + cmake)
         run: |
-          cmake -S platform/fcitx5 -B build/addon \
+          cmake -S platform/linux -B build/addon \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=/usr
           cmake --build build/addon -j"$(nproc)"

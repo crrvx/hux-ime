@@ -2,11 +2,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Packaged runtime data (one repo-relative path per line; blank lines and `#` lines are comments).
-# Single source of truth for install.sh / uninstall.sh / platform/fcitx5/CMakeLists.txt --
+# Single source of truth for platform/linux/install.sh, platform/linux/uninstall.sh and the
+# per-platform CMake install rules (platform/linux/CMakeLists.txt, platform/android/CMakeLists.txt) --
 # see data/README.md (Chinese) and tools/checks/check_data_manifest.sh (self-check, wired into CI).
 #
 # Encoding: CMake reads this file with an explicit `ENCODING UTF-8`
-# (platform/fcitx5/CMakeLists.txt), so UTF-8 comments are fine here.
+# (platform/linux/CMakeLists.txt), so UTF-8 comments are fine here.
 # Entries are matched as whole lines: no surrounding blanks and no trailing
 # `# comment` (install.sh / uninstall.sh skip only lines that start with `#`).
 #

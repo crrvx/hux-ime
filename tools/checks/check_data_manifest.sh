@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-# 「装 / 卸 / CMake」三处读同一份随包数据清单，且清单与 data/ 实况一致。
+# 「装 / 卸 / 各落点 CMake」读同一份随包数据清单，且清单与 data/ 实况一致。
 #
 #   bash tools/checks/check_data_manifest.sh
 #
@@ -10,8 +10,10 @@
 #   ① data/MANIFEST 存在、至少 1 条有效行、无重复、条目无行首 / 行尾空白、
 #      每行都在 data/ 下且文件存在；
 #   ② `data/` 里 `tiger_sentence.*` 与 `symbols.yaml`（= 旧 install.sh glob 的覆盖范围）全部在清单里；
-#   ③ install.sh 与 uninstall.sh 都引用 data/MANIFEST（不再各自维护名单）；
-#   ④ platform/fcitx5/CMakeLists.txt 引用 data/MANIFEST，且安装目标为 share/fcitx5/hux。
+#   ③ platform/linux/install.sh 与 platform/linux/uninstall.sh 都引用 data/MANIFEST
+#      （仓库根的同名文件只是转发到它们）；
+#   ④ platform/linux/CMakeLists.txt 与 platform/android/CMakeLists.txt 都引用 data/MANIFEST，
+#      且安装目标是引擎查找的数据目录（桌面 share/fcitx5/hux、Android /usr/share/fcitx5/hux）。
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -68,26 +70,30 @@ for path in data/tiger_sentence.* data/symbols.yaml; do
 done
 
 # ③ 两个脚本都读清单
-for script in install.sh uninstall.sh; do
+for script in platform/linux/install.sh platform/linux/uninstall.sh; do
     if ! grep -q 'data/MANIFEST' "$script"; then
         fail "$script 未引用 data/MANIFEST（装/卸清单会各自漂移）"
     fi
 done
 
-# ④ CMake 安装规则读清单且装到引擎查找的数据目录
+# ④ 各落点的 CMake 安装规则读清单且装到引擎查找的数据目录
 # 注意锚定行首：注释掉的规则（`# install(FILES …)`）不得算通过。
-cmake=platform/fcitx5/CMakeLists.txt
-if ! grep -qE '^[[:space:]]*file\(STRINGS[^#]*data/MANIFEST' "$cmake"; then
-    fail "$cmake 未从 data/MANIFEST 读取文件清单（只走 cmake --install 会得到无词库引擎）"
-fi
-if ! grep -qE '^[[:space:]]*install\(FILES[^#]*HUX_DATA_FILES' "$cmake"; then
-    fail "$cmake 未把 data/MANIFEST 读出的文件加入 install(FILES …)"
-fi
-if ! grep -qE '^[[:space:]]*install\(FILES[^#]*DESTINATION[[:space:]]+share/fcitx5/hux' "$cmake"; then
-    fail "$cmake 未把清单文件装到 share/fcitx5/hux"
-fi
+while IFS='|' read -r cmake dest; do
+    if ! grep -qE '^[[:space:]]*file\(STRINGS[^#]*data/MANIFEST' "$cmake"; then
+        fail "$cmake 未从 data/MANIFEST 读取文件清单（只走 cmake --install 会得到无词库引擎）"
+    fi
+    if ! grep -qE '^[[:space:]]*install\(FILES[^#]*HUX_DATA_FILES' "$cmake"; then
+        fail "$cmake 未把 data/MANIFEST 读出的文件加入 install(FILES …)"
+    fi
+    if ! grep -qE "^[[:space:]]*install\\(FILES[^#]*DESTINATION[[:space:]]+$dest" "$cmake"; then
+        fail "$cmake 未把清单文件装到 ${dest#/}"
+    fi
+done <<'EOF'
+platform/linux/CMakeLists.txt|share/fcitx5/hux
+platform/android/CMakeLists.txt|/usr/share/fcitx5/hux
+EOF
 
 if [ "$failed" -ne 0 ]; then
     exit 1
 fi
-echo "check_data_manifest: $count 条随包数据，装/卸/CMake 三处清单一致"
+echo "check_data_manifest: $count 条随包数据，装/卸/各落点 CMake 清单一致"

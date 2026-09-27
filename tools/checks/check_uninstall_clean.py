@@ -156,8 +156,8 @@ def main() -> int:
     parser.add_argument("--stage", default="", help="DESTDIR（清单路径的前缀）；缺省表示无 DESTDIR")
     parser.add_argument(
         "--uninstall",
-        default=str(ROOT / "uninstall.sh"),
-        help="被检查的卸载脚本（缺省仓库根 uninstall.sh）",
+        default=str(ROOT / "platform/linux/uninstall.sh"),
+        help="被检查的卸载脚本（缺省 platform/linux/uninstall.sh，仓库根的同名文件只是转发）",
     )
     args = parser.parse_args()
 
