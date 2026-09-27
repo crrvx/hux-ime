@@ -97,10 +97,8 @@ local function sorted_codes(view)
 end
 
 local mode = opts.mode
-if mode == "present" then
-    sentence.ensure_lexicon(nil)
-elseif mode == "missing" then
-    -- 空目录同样触发惰性装载；数据文件缺失走错误路径。
+if mode == "present" or mode == "missing" then
+    -- 两种模式都触发惰性装载；missing 的空目录走「数据文件缺失」的错误路径。
     sentence.ensure_lexicon(nil)
 else
     error("unknown mode: " .. mode)

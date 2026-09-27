@@ -43,7 +43,9 @@
 
 - **契约需求**（`hux_core::scheme`）：实现 `Scheme`（方法清单见 \
   [`design.md`](../../docs/design.md) §2「落地形态」）——本区自报 `id` / \
-  `option_declarations()`（4 个角色 `SCHEME_OPTION_ROLES`，键自持）/ \
+  `option_declarations()`（本区须声明 **6 个**角色，即 `SCHEME_OPTION_ROLES` 全量： \
+  `early_commit` / `early_commit_to_preedit` / `allow_duplicate_single` / \
+  `digit_select` / `full_charset` / `filter_non_han`；键自持，缺任一即装配报错）/ \
   `learning_mode()`（据配置袋自算的不透明 mode 串）/ `apply_config`（逐角色回报诊断）/ \
   `host_options`；资产目录由平台解析后传入。
 - **依赖方向与守卫**：`hux-scheme/<方案> → hux-core`（内核零方案依赖， \

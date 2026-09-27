@@ -79,7 +79,6 @@ struct Entry {
 
 /// 拼音索引（TCSRV01；音反查与字反查共用）。
 pub struct SoundToCharShapeIndex {
-    syllables: Vec<String>,
     /// 拼写键（字节序）：键 → [(音节 id, 类型)]。
     spellings: Vec<SpellingEntry>,
     /// 词条组（按码字典序；前缀连续）。
@@ -226,7 +225,6 @@ impl SoundToCharShapeIndex {
         }
         Ok(Self {
             character_pinyin,
-            syllables,
             spellings,
             groups,
             text,
@@ -234,13 +232,9 @@ impl SoundToCharShapeIndex {
         })
     }
 
-    /// 音节数量（**当前唯一读取方是测试**：解析自检；保留为诊断面）。
-    pub fn syllable_count(&self) -> usize {
-        self.syllables.len()
-    }
-
-    /// 词条数（诊断）。
-    pub fn entry_count(&self) -> usize {
+    /// 词条数（诊断面：读取方只有本文件单测）。
+    #[cfg(test)]
+    fn entry_count(&self) -> usize {
         self.entries.len()
     }
 
@@ -335,11 +329,13 @@ pub fn translate(
     let code = DelimitedCode::new(raw);
     let mut edges = build_edges(index, &code);
     let types = path_types(&edges, code.len());
-    // `path_types` 恒置 `types[0]`（见其定义）⇒ 该兜底分支不可达，保留为防御。
+    // `path_types` 恒置 `types[0]`（见其定义）⇒ 反向查找必然命中，该兜底分支不可达；
+    // `debug_assert!` 把不变式写明（release 下不生效，返回值行为不变）。
     let Some(farthest) = (0..=code.len())
         .rev()
         .find(|&position| types[position].is_some())
     else {
+        debug_assert!(false, "path_types 恒置 types[0]，反向查找必然命中");
         return Vec::new();
     };
     // 参照 `BuildSyllableGraph` 的剪枝：最远顶点的最优拼写类型决定「缩写/补全」是否被弃
@@ -805,8 +801,8 @@ mod tests {
     #[test]
     fn fixture_index_reports_counts() {
         let index = fixture_index();
-        assert_eq!(index.syllable_count(), 14);
         assert_eq!(index.entry_count(), 22);
+        assert_eq!(index.spellings.len(), 19);
     }
 
     #[test]
@@ -1104,7 +1100,7 @@ mod tests {
             entries: vec![(3, "中国".to_string()), (1, "中".to_string())],
         };
         let index = SoundToCharShapeIndex::parse(&builder.bytes()).expect("合法索引");
-        assert_eq!(index.syllable_count(), 2);
+        assert_eq!(index.spellings.len(), 2);
         assert_eq!(index.entry_count(), 2);
         assert_eq!(index.character_pinyin('中'), ["zhongguo".to_string()]);
         // 头部计数与实际记录数的关系仍被校验（少一条即报错）。

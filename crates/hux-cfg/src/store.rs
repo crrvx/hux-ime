@@ -23,8 +23,8 @@ use yaml_rust2::{Yaml, YamlEmitter, YamlLoader};
 
 /// 主存储文件名（用户数据目录下）。
 pub const OPTIONS_FILE: &str = "tiger_sentence.options.yaml";
-/// legacy 回退文件名（rime 用户配置，只读）。
-pub const LEGACY_FILE: &str = "user.yaml";
+/// legacy 回退文件名（rime 用户配置，只读）；仅本模块的回退路径使用，不对外暴露。
+const LEGACY_FILE: &str = "user.yaml";
 /// 保存失败属性名（参照 `M.options`）。
 pub const OPTIONS_ERROR_PROPERTY: &str = "tiger_sentence_options_error";
 /// 保存失败属性的值（参照 `M.options`）：除 [`OptionsStore::observe`] 外，

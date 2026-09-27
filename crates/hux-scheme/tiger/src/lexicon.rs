@@ -72,7 +72,7 @@ impl Default for LexiconOptions {
 ///
 /// 目录本身由平台层解析（桌面/Android 各自构造），内核不读取环境变量。
 #[cfg(test)]
-pub fn candidate_paths(dirs: &[PathBuf], relative: &str) -> Vec<PathBuf> {
+fn candidate_paths(dirs: &[PathBuf], relative: &str) -> Vec<PathBuf> {
     dirs.iter().map(|dir| dir.join(relative)).collect()
 }
 
@@ -490,7 +490,10 @@ impl Lexicon {
 // ---------------------------------------------------------------- 解析
 
 /// 参照 `parse_codes_content`：`word code`，去重 `(word, code)`，保源序。
-pub fn parse_codes_content(content: &str) -> Vec<(String, String)> {
+///
+/// 读取方只有本文件单测（生产路径直接走 `append_codes_content`），故收为私有并随测试编译。
+#[cfg(test)]
+fn parse_codes_content(content: &str) -> Vec<(String, String)> {
     let normalized = normalize_text_content(content);
     let mut entries = Vec::new();
     let mut seen = HashSet::new();
@@ -536,7 +539,7 @@ fn append_codes_content<'a>(
 }
 
 /// 参照 `parse_ranks_content`：每行首字符按行序获得稠密 rank。
-pub fn parse_ranks_content(content: &str) -> (Map<String, usize>, usize) {
+fn parse_ranks_content(content: &str) -> (Map<String, usize>, usize) {
     let mut ranks = Map::new();
     let mut count = 0usize;
     each_content_line(&normalize_text_content(content), |line| {
@@ -553,7 +556,7 @@ pub fn parse_ranks_content(content: &str) -> (Map<String, usize>, usize) {
 }
 
 /// 参照 `parse_whitelist_content`：行内每个字符入白名单。
-pub fn parse_whitelist_content(content: &str) -> Set<String> {
+fn parse_whitelist_content(content: &str) -> Set<String> {
     let mut characters = Set::new();
     each_content_line(&normalize_text_content(content), |line| {
         for character in line.chars() {

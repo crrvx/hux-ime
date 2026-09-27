@@ -60,7 +60,7 @@ impl RuntimeOptions {
 
 impl Engine {
     /// 状态菜单可切换的运行时开关（顺序即菜单顺序 = C ABI 的 `HUX_OPTION_*` 角色序）：
-    /// 方案声明的 6 项 + rime 标准的 `full_shape`。方案未声明的角色**不出现在菜单里**。
+    /// 方案声明的角色 + 宿主标准的 `full_shape`。方案未声明的角色**不出现在菜单里**。
     pub(crate) fn runtime_options(&self) -> Vec<&'static str> {
         RUNTIME_OPTION_ROLES
             .iter()
@@ -262,7 +262,7 @@ impl ModelSource {
 /// 「模型该放的地方」，宿主的首项据此把用户带到正确目录。
 fn menu_model_path(model: Option<PathBuf>, dirs: &[PathBuf]) -> Option<CString> {
     model
-        .or_else(|| crate::paths::intended_model_path(dirs, hux_scheme_tiger::scheme::ASSETS))
+        .or_else(|| crate::paths::intended_model_path(dirs, ASSETS))
         .map(|path| crate::ui::cstring_lossy(&path.to_string_lossy()))
 }
 
@@ -620,7 +620,7 @@ impl Engine {
     ///
     /// `key_forward`：按键路径传入消费结果（据提交计算 `forward_after_commit`）；
     /// 候选点击传 `None`（非按键路径，恒不转发）。
-    pub(crate) fn finish(&mut self, session: &mut Session, now: f64, key_forward: Option<bool>) {
+    pub(crate) fn finish(&mut self, session: &mut Session, _now: f64, key_forward: Option<bool>) {
         let mut commits = Vec::new();
         let mut invalidated = false;
         // 事件泵：选项事件可能触发确认（进而产生提交），循环至排空。
@@ -651,7 +651,7 @@ impl Engine {
             Some(consumed) => !consumed && committed,
             None => false,
         };
-        // 学习：核心暂存 → 落库；刷新打分（未组合时，60 秒节流）；应用索引。
+        // 学习：核心暂存 → 落库；应用索引。
         let submitted = self.scheme.take_learning_events(session.scheme_session);
         if !submitted.is_empty() {
             self.learning.confirm(&submitted);
@@ -660,9 +660,6 @@ impl Engine {
         // 「学习不生效」。
         self.observe_learning_error();
         self.push_scheme_config();
-        if !session.context.is_composing() {
-            self.learning.refresh_scores(now);
-        }
         let version = self.learning.index_version();
         self.scheme
             .apply_learning_index(session.scheme_session, version, self.learning.index());
@@ -680,7 +677,6 @@ impl Engine {
 
     /// 当前组合末段是否为字反查段（进入/退出由方案处理器负责：触发字符推入/清空组合）；
     /// 查码段内方向键交应用处理（见 `key_in` 开头的早退）。
-    /// 当前组合末段是否为字反查段。
     pub(crate) fn reverse_lookup_tagged(&self, session: &Session) -> bool {
         self.scheme.auxiliary_lookup_active(&session.context)
     }

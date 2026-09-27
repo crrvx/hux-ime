@@ -17,16 +17,20 @@
 > 每批收尾勾对一次，不留「文档说未做、代码已做」的条目。 **非审计来源的未闭合项**： \
 > 发行版打包（PKGBUILD，AUR `fcitx5-hux`）状态见 [`../platform/README.md`](../platform/README.md)；**待定配置项**（B/C 组）见 §0.4。 \
 > 本节把四份总账里**仍活着**的条目提到最前（其余均已 `[✅ 已修]`，本节即其归宿）； \
-> 共 **9 条**——`[待办]` 3 / `[已登记·不修+理由]` 5 /  \
+> 共 **12 条**——`[待办]` 6 / `[已登记·不修+理由]` 5 /  \
 > `[误报·已核实]` 1。
 
-### 0.1 `[待办]`（3 条：tiger `C7`、cfg/平台 `F16`、文档工具CI `M8`）
+### 0.1 `[待办]`（6 条：tiger `C7`、cfg/平台 `F16`、工具CI `M8`、`T3.8b`、`T3.1b`、`K14b`）
 
 | 编号 | 一句话问题 | 状态 | 归宿（提交 / 批次 · 不修理由 · 待办成本） |
 |---|---|---|---|
 | C7（`Group.code`） | 60 万次 `Group.code: Vec<u16>` 小分配 | [待办] | 未做（第 3b 批登记）：需先有基准数据，且要改组查找 / 前缀剪枝 / <br>`collect_chunks` 的取值路径（扁平 `Vec<u16>` + `(start, len)`），<br>收益与风险不匹配，<br>留待性能批 |
 | F16 | C++ 壳两处脆弱模式：`applyUpdate` 每次 UI 刷新都重建状态区；<br>`HuxCandidateWord::select` <br>内同步触发回调可能销毁候选对象自身 | [待办] | 未改（当前**无实测故障**，C++ 侧以 `session == nullptr` 早退规避）：<br>需真机 fcitx5 压力验证后再定是否投递到事件循环；本机无 fcitx5 运行环境。<br>**UAF 收尾批补充**：生命周期侧的悬垂风险已加固（候选词弱引用 + `~HuxEngine` <br>清状态区，见「历史纪要」第 6 批），<br>**重入 / 自毁结构未动** |
 | M8 | 依赖 / 版本未固定的位置（action 移动标签、`archlinux:latest`、<br>`librime-dev` 版本） | [待办] | **③④ 已实施 / 已注明**：`pacman -Sy` → `-Syu`；<br>`archlinux:latest` **有意不钉**（作业目的即「最新 Lua」）；<br>已在 `goldens/README.md` 注明 CI 的 librime 版本可不同、仅做语法检查。<br>（余见下方 M8 补记） |
+
+| T3.8b | `tools/generators/gen_ngram_golden.lua:99` 用 `("不存在"):sub(1, 3)` 造第 26 个 token | [待办] | 代码**是对的**：Lua `sub` 按字节截出 `不`（`e4b88d`）——金样 29617 行 = 26³+3·26²+10013、<br>`e4b88d` 恰 2104 次；但写法隐晦。改成显式 `"不"` 会改金样，<br>故留到下次重生成金样时一并改（属金样冻结范围，非本轮） |
+| T3.1b | `tools/checks/check_data_manifest.sh:32` 用 `sed` 去行尾空白，与 `data/MANIFEST` 的「行首尾不留空白」约定不一致 | [待办] | 这种行能过守卫、却会让 `install.sh` 的整行匹配直接 die ⇒ 应让守卫判错；<br>属行为变更（既有可能让现存清单变红，也牵动装/卸契约），留待下一批 |
+| K14b | 学习库 materialized 缓存可改为共享分区（原 `learning.rs` 注释里的优化设想） | [待办] | 第 8 批只删了那条未来笔记（原文留在台账）：<br>`Fifo<String, Rc<Materialized>>` 改共享需先有基准数据、<br>收益与风险未知，属性能批 |
 
 - **M8 补记**：**② rust 工具链：有意不钉**（跟随 stable 最新版；CI 用 `dtolnay/rust-toolchain@stable`）—— \
   代价是 stable 漂移可能让 `cargo fmt --all --check` / clippy `-D warnings` 无预警变红， \
@@ -128,4 +132,5 @@ balanced，本实现仅支持 TCSKNM02 mobile 模型）；`ascii_composer` 系�
 | 第 7 批：C6 公开 API 去 `hashbrown`（不透明 `Map` / `Set`）+ F10.1 学习索引断言 | 已修：迭代序与哈希器语义逐位不变；负向对照实测失败 | `795e31cf` / `10a2de6f` |
 | 配置页保存不落盘（用户报告「提前上屏至预编辑无效」） | 已修：`setConfig` 增 `safeSaveAsIni` + `reloadConfig()`（值不再被 `options.yaml` 静默压回） | — |
 | 四份只读审计总账（85 条发现 / 96 行） | `[✅ 已修]` 87 / `[待办]` 3 / `[已登记·不修+理由]` 5 / `[误报·已核实]` 1；逐条明细与「修法 + 守卫 + 负向对照」随本次精简删除，活口见 §0 | — |
+| 第 8 批（本轮全仓审计的 0+1 批）：ABI 枚举取值具名化 + 死代码 / 过期记录清理 | 已修：`hux_abi.h` 增 `HUX_CANDIDATE_LAYOUT_*` / `HUX_PREEDIT_MODE_*`，<br>C++ 壳改用宏 + 两条 `static_assert`，`abi.rs` 只给非默认档起名，<br>并加取值守卫用例（`tests.rs` 的 `abi_enum_members` 按前缀分段取枚举）；<br>删死码 K8/K10/K11/K13/K14/K15、B16–B19、D18–D20、T3.1–T3.8、<br>平台 5 项 + `engine.rs:265` + `ui.rs:93-97`、`docs/usage.md:27` 与 5 个 README；<br>K12 复核后**完成**（再导出删除、`store::LEGACY_FILE` 降为模块私有）；<br>用例 391 → 390（删两个、加 `option_value_enums_match_the_abi_header`；<br>「学习分不随时间衰减」失去钉桩，语义改由「方法已不存在」保证）；<br>保留待办 T3.8b / T3.1b / K14b（见 §0.1） | `19423fe1`（ABI）+ `711acd6e`（清理） |
 

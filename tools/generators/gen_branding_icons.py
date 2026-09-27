@@ -126,6 +126,4 @@ def fingerprint(paths: list[Path]) -> str:
 
 
 if __name__ == "__main__":
-    import sys
-
     raise SystemExit(main())

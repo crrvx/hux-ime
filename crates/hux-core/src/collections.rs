@@ -57,6 +57,15 @@ impl<K: Hash + Eq, V> Map<K, V> {
         self.entries.get(key)
     }
 
+    /// 按键取值（可变），用于原地更新已有值。
+    pub fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        self.entries.get_mut(key)
+    }
+
     /// 缺省插入并返回值的可变引用（等价底层容器的 `entry(key).or_default()`，
     /// 但不暴露底层 `Entry` 类型）。
     pub fn entry_or_default(&mut self, key: K) -> &mut V
@@ -111,13 +120,6 @@ impl<T: Hash + Eq> Set<T> {
     pub fn new() -> Self {
         Self {
             entries: hashbrown::HashSet::new(),
-        }
-    }
-
-    /// 预留至少 `capacity` 个元素的容量（同 [`Map::with_capacity`]）。
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self {
-            entries: hashbrown::HashSet::with_capacity(capacity),
         }
     }
 
@@ -223,10 +225,6 @@ mod tests {
         assert_eq!(map.insert("甲".to_string(), 1), None);
         assert_eq!(map.insert("甲".to_string(), 2), Some(1));
         assert_eq!(map.len(), 1);
-        let mut set: Set<String> = Set::with_capacity(64);
-        assert!(set.insert("甲".to_string()));
-        assert!(!set.insert("甲".to_string()));
-        assert_eq!(set.len(), 1);
     }
 
     #[test]

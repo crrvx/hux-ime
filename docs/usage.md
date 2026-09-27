@@ -24,7 +24,7 @@ reuse lint                      # 许可标注（CI 亦跑）
 
 ```sh
 HUX_DATA_DIRS="data" \
-HUX_MODEL="$HOME/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin" \
+HUX_MODEL="$HOME/.local/share/fcitx5/hux/models/sentence-ngram-mobile.bin" \
 fcitx5 -r -d
 ```
 

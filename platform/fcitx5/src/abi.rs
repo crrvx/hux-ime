@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! C ABI：C 布局类型与 `extern "C"` 导出（C++ 薄壳调用；与 `../../crates/hux-ffi/include/hux_abi.h` 一一对应）。
+//! C ABI：C 布局类型与 `extern "C"` 导出（C++ 薄壳调用；与 `../../../crates/hux-ffi/include/hux_abi.h` 一一对应）。
 
 use std::ffi::c_char;
 
@@ -23,6 +23,15 @@ pub(crate) const FCITX_CAPS_LOCK: u32 = 1 << 1;
 pub(crate) const FCITX_CTRL: u32 = 1 << 2;
 pub(crate) const FCITX_ALT: u32 = 1 << 3;
 pub(crate) const FCITX_SUPER: u32 = 1 << 6;
+
+// `hux_abi.h` 的 `HUX_CANDIDATE_LAYOUT_*` / `HUX_PREEDIT_MODE_*` 取值（ABI）：只给非默认档起名，
+// 默认档（跟随全局 / 候选分码）与越界值都是 `hux_engine_apply_settings` 里 `_` 分支的兜底。
+// 壳侧同名宏有 `static_assert` 守卫（`shell/hux.cpp`），本侧由用例
+// `option_value_enums_match_the_abi_header` 逐项比对头文件里的名字与取值。
+pub(crate) const CANDIDATE_LAYOUT_HORIZONTAL: i32 = 1;
+pub(crate) const CANDIDATE_LAYOUT_VERTICAL: i32 = 2;
+pub(crate) const PREEDIT_MODE_RAW_INPUT: i32 = 1;
+pub(crate) const PREEDIT_MODE_HIDDEN: i32 = 2;
 
 /// fcitx5 `KeyState` → core（Rime）掩码。
 pub(crate) fn core_modifiers(states: u32, release: bool) -> i32 {
@@ -237,13 +246,13 @@ pub unsafe extern "C" fn hux_engine_apply_settings(
         full_charset: options.full_charset != 0,
         filter_non_han: options.filter_non_han != 0,
         candidate_layout: match options.candidate_layout {
-            1 => CandidateLayout::Horizontal,
-            2 => CandidateLayout::Vertical,
+            CANDIDATE_LAYOUT_HORIZONTAL => CandidateLayout::Horizontal,
+            CANDIDATE_LAYOUT_VERTICAL => CandidateLayout::Vertical,
             _ => CandidateLayout::FollowGlobal,
         },
         preedit_mode: match options.preedit_mode {
-            1 => PreeditMode::RawInput,
-            2 => PreeditMode::Hidden,
+            PREEDIT_MODE_RAW_INPUT => PreeditMode::RawInput,
+            PREEDIT_MODE_HIDDEN => PreeditMode::Hidden,
             _ => PreeditMode::CandidateCode,
         },
         page_cycle: options.page_cycle != 0,

@@ -25,7 +25,7 @@ just for fun:
 git clone https://github.com/crrvx/hux-ime && cd hux-ime
 
 # 预演：./install.sh --dry-run
-./install.sh -s  # 系统级安装（缺省）：构建 → 装插件 / 数据 / 图标 / 主题
+./install.sh -s  # 系统级安装（缺省，需要 sudo）：构建 → 装插件 / 数据 / 图标 / 主题
 ./install.sh -u  # 用户级安装：全部装到 ~/.local（并写 environment.d 让 fcitx5 找到插件）
 ```
 

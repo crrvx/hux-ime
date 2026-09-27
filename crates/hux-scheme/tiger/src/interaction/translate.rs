@@ -88,7 +88,6 @@ pub fn translate(
         && lock.text == committed_text
     {
         let mut candidate = Candidate::new("sentence_buffered", seg_start, seg_end, "", "");
-        candidate.quality = 1000.0;
         candidate.preedit = buffered;
         out.push(candidate);
         return Ok(());
@@ -133,9 +132,6 @@ pub fn translate(
             "sentence_buffered"
         };
         let mut candidate = Candidate::new(kind, seg_start, seg_end, &text, "");
-        if !buffered.is_empty() {
-            candidate.quality = 1000.0;
-        }
         let separator = if !buffered.is_empty() && !preedit.is_empty() {
             " "
         } else {
@@ -156,7 +152,6 @@ pub fn translate(
             &String::from_utf8_lossy(input),
             "",
         );
-        candidate.quality = 1000.0;
         let separator = if input.is_empty() { "" } else { " " };
         candidate.preedit = format!("{buffered}{separator}{}", String::from_utf8_lossy(input));
         out.push(candidate);
@@ -569,15 +564,6 @@ pub fn update_notifier(context: &mut Context, state: &mut SentenceState, live: &
             context.set_option("_hide_candidate", hide);
         }
     }
-}
-
-/// 参照 `buffer_filter`：缓冲态只保留 `sentence_buffered` 候选。
-pub fn buffer_filter(candidates: &[Candidate], buffered: bool) -> Vec<Candidate> {
-    candidates
-        .iter()
-        .filter(|candidate| !buffered || candidate.kind == "sentence_buffered")
-        .cloned()
-        .collect()
 }
 
 /// 码注释过滤器（同上；音反查接线用）：音反查段候选写入虎码注释。

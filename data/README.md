@@ -15,8 +15,9 @@
 - `uninstall.sh` 按它删除（问答只管主题 / 模型 / 用户数据）。
 
 自查：`bash tools/checks/check_data_manifest.sh`（CI 已接入； \
-`data/` 里 `tiger_sentence.*` 与 `symbols.yaml` 必须全登记）。**清单保持纯 ASCII**： \
-CMake 的 `file(STRINGS)` 默认编码会破坏非 ASCII 字节，把中文注释行拆成假文件名（configure 期报错）。
+`data/` 里 `tiger_sentence.*` 与 `symbols.yaml` 必须全登记）。**清单按 UTF-8 处理**： \
+CMake 侧用 `file(STRINGS … ENCODING UTF-8)` 显式读（别去掉那个选项），中文注释行无碍； \
+条目按整行匹配，行首尾不留空白，也不写行尾 `# 注释`。
 
 不随包：n-gram 模型（用户自取；「是否卸载模型」一问回答 y 才删）与本文件。
 

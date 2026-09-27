@@ -8,7 +8,7 @@
 //! `context`/`static_text`/`frame`/`unframe`/`hash`。
 //! 持久化（LevelDB `open`/`confirm`）在平台层实现：见 `platform/fcitx5/src/learning_store.rs`。
 //!
-//! **人工纠错等级（`7b220ce` 起）**：事件只累加**离散等级**（每次确认 +1，上限 10），
+//! **人工纠错等级**：事件只累加**离散等级**（每次确认 +1，上限 10），
 //! 分数按等级取整（same-context `7+2L`、跨上下文 `4+2L`）；**不再按时间衰减**，
 //! 时间戳只作持久化元数据。故浮点求和只发生在 `weight`（各上下文的整数等级之和）
 //! 累加上，跨进程哈希序不改变结果。
@@ -589,10 +589,10 @@ impl LearningIndex {
 
     /// 参照 `update_index`：重建受影响的 code 分区。
     ///
-    /// 无时间衰减后，`7b220ce` 删除了「时钟回退/未来事件 ⇒ 全量重放」的判据，
-    /// 也删除了逐事件的 `future` 更新（`future` 原样带过）。
+    /// 学习不随「当前时间相对事件时间」衰减，故本仓无「时钟回退 / 未来事件 ⇒ 全量重放」的判据，
+    /// 接受的事件也不参与 `future` 更新（`future` 只作元数据，原样带过）。
     /// 注意：`partitions.clone()` 为整体深拷贝（参照的 `copy` 只复制外层表），
-    /// 单次确认代价 O(历史规模)；如需优化可改为共享分区。
+    /// 单次确认代价 O(历史规模)。
     pub fn update(&self, accepted: &[Event], all_events: &[Event], now: f64) -> Self {
         let Some(partitions) = &self.partitions else {
             return Self::runtime(all_events, now);
@@ -790,7 +790,7 @@ fn summary_code(summary_key: &str) -> String {
 
 /// 参照 `M.early_commit_maturity`：把纠错等级分映射到 `0..1` 的成熟度。
 ///
-/// `7b220ce` 起等级是离散的：`9`（L1，首次同上下文纠错）→ 0、
+/// 等级是离散的：`9`（L1，首次同上下文纠错）→ 0、
 /// `11`（L2）→ 0.5、`13`（L3 及以上）→ 1；不再是 `exp` 连续曲线。
 pub fn early_commit_maturity(score: f64) -> f64 {
     ((score - 9.0) / 4.0).clamp(0.0, 1.0)
@@ -1068,7 +1068,7 @@ mod tests {
 
     #[test]
     fn early_commit_maturity_maps_correction_levels() {
-        // 取自参照测试（`7b220ce` 后）：L1/L2/L3 次同上下文纠错 → 0 / 0.5 / 1。
+        // 取自参照测试：L1/L2/L3 次同上下文纠错 → 0 / 0.5 / 1。
         assert_eq!(early_commit_maturity(9.0), 0.0);
         assert_eq!(early_commit_maturity(8.0), 0.0);
         assert_eq!(early_commit_maturity(11.0), 0.5);

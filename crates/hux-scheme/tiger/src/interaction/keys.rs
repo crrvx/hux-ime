@@ -3,8 +3,12 @@
 
 use super::*;
 
-/// 缓冲前缀属性（**唯一**仍写出的会话属性：`select` / `early_commit` / `learning_glue`
-/// 与内核视图都读它；其余会话状态改由方案侧 `SentenceState` 承载，见 `state.rs` 的 `save`）。
+/// 缓冲前缀属性（方案侧**唯一**仍写出的会话属性：与内核布尔标记同在 `state.rs` 的 `save` 写出；
+/// 宿主另有通用属性通道 `Scheme::set_property`，不在本约定内）。
+/// 属性只作**上层可见的文本快照**：宿主经 `Scheme::buffered_text` 回读，方案侧 `state.rs` 的
+/// `buffered_text`（调用方 `select` / `translate`）亦然；`early_commit` / `learning_glue` 读的
+/// 是状态字段 `SentenceState::buffered_text`。内核判据是同一处 `Context::set_buffered(…)` 的
+/// `is_buffered()` 标记，**不读本属性**；其余会话状态由方案侧 `SentenceState` 承载。
 pub const K_BUFFERED: &str = "tiger_sentence_buffered_text";
 /// 音反查触发键（内部属性：宿主按设置写入逗号分隔的 rime 键名；空/缺省 = 关闭）。
 pub const K_SOUND_TO_CHAR_SHAPE_KEY: &str = "_sound_to_char_shape_key";

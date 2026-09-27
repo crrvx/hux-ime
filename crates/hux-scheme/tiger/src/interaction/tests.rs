@@ -491,15 +491,6 @@ fn code_comment_formats() {
 }
 
 #[test]
-fn buffer_filter_keeps_only_buffered() {
-    let plain = Candidate::new("sentence", 0, 2, "甲", "");
-    let buffered = Candidate::new("sentence_buffered", 0, 2, "乙", "");
-    let all = vec![plain.clone(), buffered.clone()];
-    assert_eq!(buffer_filter(&all, false), all);
-    assert_eq!(buffer_filter(&all, true), vec![buffered]);
-}
-
-#[test]
 fn translate_produces_sentence_candidates() {
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../goldens/lexicon");
     let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);

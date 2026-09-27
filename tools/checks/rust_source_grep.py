@@ -45,7 +45,7 @@ def strip_comments(source: str) -> str:
     while index < length:
         char = source[index]
         if char == '"':
-            index = _skip_string(source, index, out)
+            index = _skip_string(source, index)
             continue
         if char == "'":
             match = CHAR_LITERAL_RE.match(source, index)
@@ -57,7 +57,7 @@ def strip_comments(source: str) -> str:
         if char in "rRbB":
             match = RAW_PREFIX_RE.match(source, index)
             if match:
-                index = _skip_raw_string(source, match.end(), match.group(1), out)
+                index = _skip_raw_string(source, match.end(), match.group(1))
                 continue
             index += 1
             continue
@@ -89,7 +89,7 @@ def strip_comments(source: str) -> str:
     return "".join(out)
 
 
-def _skip_string(source: str, index: int, out: list[str]) -> int:
+def _skip_string(source: str, index: int) -> int:
     """跳过普通字符串字面量（保留内容），返回结束引号之后的下标。"""
     position = index + 1
     length = len(source)
@@ -104,9 +104,8 @@ def _skip_string(source: str, index: int, out: list[str]) -> int:
     return length
 
 
-def _skip_raw_string(source: str, position: int, hashes: str, out: list[str]) -> int:
+def _skip_raw_string(source: str, position: int, hashes: str) -> int:
     """跳过 `r#"…"#` 形式的原始字符串，返回结束分隔符之后的下标。"""
-    del out  # 原始字符串内容原样保留（列位置不变），无需遮罩
     terminator = '"' + hashes
     end = source.find(terminator, position)
     if end < 0:

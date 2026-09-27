@@ -1392,19 +1392,20 @@ private:
         options.digit_select = behavior.digitSelect.value() ? 1 : 0;
         switch (behavior.candidateLayout.value()) {
         case HuxCandidateLayout::Horizontal:
-            options.candidate_layout = 1;
+            options.candidate_layout = HUX_CANDIDATE_LAYOUT_HORIZONTAL;
             break;
         case HuxCandidateLayout::Vertical:
-            options.candidate_layout = 2;
+            options.candidate_layout = HUX_CANDIDATE_LAYOUT_VERTICAL;
             break;
         default:
-            options.candidate_layout = 0;
+            options.candidate_layout = HUX_CANDIDATE_LAYOUT_FOLLOW_GLOBAL;
             break;
         }
         const auto preeditMode = behavior.preeditMode.value();
-        options.preedit_mode = preeditMode == HuxPreeditMode::RawInput   ? 1
-                               : preeditMode == HuxPreeditMode::Hidden ? 2
-                                                                       : 0;
+        options.preedit_mode =
+            preeditMode == HuxPreeditMode::RawInput   ? HUX_PREEDIT_MODE_RAW_INPUT
+            : preeditMode == HuxPreeditMode::Hidden   ? HUX_PREEDIT_MODE_HIDDEN
+                                                      : HUX_PREEDIT_MODE_CANDIDATE_CODE;
         options.page_cycle = behavior.pageCycle.value() ? 1 : 0;
         options.min_retained_input_length =
             behavior.minRetainedInputLength.value();
@@ -1688,7 +1689,7 @@ public:
 
 // C 布局守卫（与 Rust `crates/hux-ffi/src/lib.rs` 的 `c_layout_matches_header` 对应）：
 // 本壳逐字段填充 `hux_options`、Rust 侧逐字段读取，字段顺序/宽度漂移在两侧都能编译通过，
-// 故在此钉住尺寸与关键偏移——改 `hux_abi.h` 时必须同步三处。
+// 故在此钉住尺寸、关键偏移与枚举取值——改 `hux_abi.h` 时必须同步三处。
 static_assert(sizeof(hux_key_list) == 4 + 2 * HUX_MAX_KEYS * 4,
               "hux_key_list 布局与 Rust 契约不一致");
 static_assert(sizeof(hux_options) == 15 * 4 + 4 * sizeof(hux_key_list),
@@ -1699,5 +1700,23 @@ static_assert(offsetof(hux_options, min_retained_input_length) == 12 * 4 + 4 * s
               "hux_options 末尾字段偏移与 Rust 契约不一致");
 static_assert(offsetof(hux_options, full_charset) == 13 * 4 + 4 * sizeof(hux_key_list),
               "hux_options 字集字段偏移与 Rust 契约不一致");
+// 枚举取值守卫：填充 `candidate_layout` / `preedit_mode` 时不再写裸数字，
+// 故这里钉住「C++ 枚举名 ↔ ABI 宏 ↔ Rust 具名常量」三者同值（Rust 侧见 abi.rs 同名常量）。
+static_assert(static_cast<int>(HuxCandidateLayout::FollowGlobal) ==
+                      HUX_CANDIDATE_LAYOUT_FOLLOW_GLOBAL &&
+                  static_cast<int>(HuxCandidateLayout::Horizontal) ==
+                      HUX_CANDIDATE_LAYOUT_HORIZONTAL &&
+                  static_cast<int>(HuxCandidateLayout::Vertical) ==
+                      HUX_CANDIDATE_LAYOUT_VERTICAL &&
+                  HUX_CANDIDATE_LAYOUT_COUNT == 3,
+              "candidate_layout 取值与 Rust 契约不一致");
+static_assert(static_cast<int>(HuxPreeditMode::CandidateCode) ==
+                      HUX_PREEDIT_MODE_CANDIDATE_CODE &&
+                  static_cast<int>(HuxPreeditMode::RawInput) ==
+                      HUX_PREEDIT_MODE_RAW_INPUT &&
+                  static_cast<int>(HuxPreeditMode::Hidden) ==
+                      HUX_PREEDIT_MODE_HIDDEN &&
+                  HUX_PREEDIT_MODE_COUNT == 3,
+              "preedit_mode 取值与 Rust 契约不一致");
 
 FCITX_ADDON_FACTORY(HuxFactory);

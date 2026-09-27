@@ -99,7 +99,7 @@ if learning_flag then
         if not entries or not entries[index] then return nil end
         return entries[index].t
     end
-    local first_a, second_a = pick("a", 1), pick("a", 2)
+    local _, second_a = pick("a", 1), pick("a", 2)
     local first_ab, second_ab = pick("ab", 1), pick("ab", 2)
     local second_abc = pick("abc", 2)
     local context = first_ab and utf8.char(utf8.codepoint(first_ab)) or ""
@@ -126,7 +126,6 @@ if learning_flag then
     learning_now = 40 * 86400
     local index = module.build(learning_events, learning_now)
     sentence.set_learning_for_test(index, "t")
-    local _ = first_a
 end
 
 local inputs, seen = {}, {}

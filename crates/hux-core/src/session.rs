@@ -30,7 +30,6 @@ pub struct Candidate {
     pub text: String,
     pub comment: String,
     pub preedit: String,
-    pub quality: f64,
 }
 
 impl Candidate {
@@ -42,7 +41,6 @@ impl Candidate {
             text: text.to_string(),
             comment: comment.to_string(),
             preedit: String::new(),
-            quality: 0.0,
         }
     }
 }

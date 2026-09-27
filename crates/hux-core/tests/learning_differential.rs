@@ -5,16 +5,16 @@
 //!
 //! 金样由 `tools/generators/gen_learning_golden.lua` 生成（`goldens/learning.tsv.gz`）。
 
-use hashbrown::HashMap;
+use hux_core::collections::Map;
 use hux_core::learning::{self, DiffItem, DiffPathNode, Event, LearningIndex, RewardNode};
 use hux_test_support::{decode_bytes, decode_hex, open_golden, parse_bits};
 use std::io::BufRead;
 
 struct Harness {
-    corpora: HashMap<String, Vec<Event>>,
-    indexes: HashMap<String, LearningIndex>,
-    chains: HashMap<String, Vec<RewardNode>>,
-    diffcases: HashMap<String, DiffItem>,
+    corpora: Map<String, Vec<Event>>,
+    indexes: Map<String, LearningIndex>,
+    chains: Map<String, Vec<RewardNode>>,
+    diffcases: Map<String, DiffItem>,
     journal_values: Vec<(String, String)>,
     journal_events: Vec<Event>,
     records: usize,
@@ -23,10 +23,10 @@ struct Harness {
 impl Harness {
     fn new() -> Self {
         Self {
-            corpora: HashMap::new(),
-            indexes: HashMap::new(),
-            chains: HashMap::new(),
-            diffcases: HashMap::new(),
+            corpora: Map::new(),
+            indexes: Map::new(),
+            chains: Map::new(),
+            diffcases: Map::new(),
             journal_values: Vec::new(),
             journal_events: Vec::new(),
             records: 0,

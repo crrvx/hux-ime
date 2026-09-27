@@ -7,7 +7,7 @@
 //! 分工：`speller` 由**方案侧**处理器承担（`hux-scheme/tiger` 的 `interaction::processor`）；
 //! 本模块实现其余组件，不经方案（`punctuator` 用 core 的标点表 [`crate::punct`]）。
 //!
-//! 映射依据（pin `33e78140` / 参照 schema）：
+//! 映射依据（参照 schema）：
 //! - 菜单布局 `Horizontal | Stacked`（未设 `_vertical`/`_linear`/`_horizontal`）；
 //! - `menu/page_size: 5`（`page_down_cycle` 缺省 false）；页大小与翻页键可由 addon 经
 //!   [`HostOptions`] 配置（缺省取参照 schema 的键：`-` → Page_Up、`=` → Page_Down；**前置条件
@@ -191,9 +191,9 @@ pub enum PagingDir {
 ///
 /// 宿主绑定与方案处理器共用本判据（避免两处条件漂移）。方案侧在「菜单可见 + 可打印 ASCII 标点」
 /// 分支入口先问一次：被宿主判为翻页的键（如缺省 `=`/`-`，以及 schema 绑到翻页的 `[`/`]`）
-/// 不由该分支消费，让出被其遮蔽的翻页绑定——**本仓有意偏离上游 `abad411`**。
+/// 不由该分支消费，让出被其遮蔽的翻页绑定——**本仓有意偏离上游**。
 ///
-/// **上翻页的前置条件是本仓的语义强化（用户决定，2026-09）**：参照的 `-` 绑定带
+/// **上翻页与下翻页同前置，是本仓的语义强化**：参照的 `-` 绑定带
 /// `when: paging`（`key_binder.cc:248-266` 的 `kWhenPaging` **只看末段 `paging` 标签**，
 /// 先翻过页才吃该键），本仓改为与下翻页同前置「菜单可见即拦截」，不再看标签。
 /// **已知并接受的代价**：菜单可见时 `-`/`=`/`[`/`]` 不再能作为标点打出（被判为翻页而消费）。
@@ -206,9 +206,8 @@ pub fn paging_action(
     key_event: &KeyEvent,
 ) -> Option<PagingDir> {
     // 参照 `key_binder.cc` 的绑定查表（`map<KeyEvent,…>::find(key_event)`）是**精确**的
-    // `(keycode, modifier)` 比较；此前用 `repr()` 字符串比较（每次按键多一次分配，
-    // 且 `K_MODIFIER_MASK` 内的**无名位**（16-20/24/25）会让不同修饰状态的键在字符串上
-    // 碰撞）——。
+    // `(keycode, modifier)` 比较，而非 `repr()` 字符串比较：后者每次按键多一次分配，
+    // 且 `K_MODIFIER_MASK` 内的**无名位**（16-20/24/25）会让不同修饰状态的键在字符串上碰撞。
     let bound = |keys: &[KeyEvent]| {
         keys.iter()
             .any(|key| key.keycode == key_event.keycode && key.modifier == key_event.modifier)

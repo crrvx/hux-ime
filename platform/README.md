@@ -90,17 +90,17 @@ fcitx5 -r --verbose='hux=5'   # 前台运行：析构日志直接打在 stderr�
 fcitx5-remote -e              # 另开终端让它退出（等价于 Ctrl+C / kill <pid>）
 ```
 
-#### 实测结果（2026-09-22，fcitx5 5.1.22）
+#### 实测结果（2026-09-22，fcitx5 5.1.22；行号按当前 `hux.cpp`）
 
 用户实跑一次（先打字建立会话，再 `fcitx5-remote -e` 退出）：
 
 ```
-D 16:41:47.539570 hux.cpp:315] hux: ~HuxSession id=1
-D 16:41:47.539666 hux.cpp:315] hux: ~HuxSession id=2
-D 16:41:47.539687 hux.cpp:315] hux: ~HuxSession id=4
-D 16:41:47.539722 hux.cpp:315] hux: ~HuxSession id=3
+D 16:41:47.539570 hux.cpp:605] hux: ~HuxSession id=1
+D 16:41:47.539666 hux.cpp:605] hux: ~HuxSession id=2
+D 16:41:47.539687 hux.cpp:605] hux: ~HuxSession id=4
+D 16:41:47.539722 hux.cpp:605] hux: ~HuxSession id=3
 I 16:41:47.539734 addonmanager.cpp:306] Unloading addon hux
-D 16:41:47.539737 hux.cpp:404] hux: ~HuxEngine
+D 16:41:47.539737 hux.cpp:704] hux: ~HuxEngine
 ```
 
 判据通过：4 个会话**全部早于** `~HuxEngine`，且其后 `~HuxSession` 计数为 **0** ⇒ \

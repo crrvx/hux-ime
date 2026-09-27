@@ -42,9 +42,9 @@ pub struct HuxOptions {
     pub page_down: HuxKeyList,
     /// 数字直选（1–9；0=10）。
     pub digit_select: i32,
-    /// 候选排列：0 = 跟随全局（默认），1 = 横排，2 = 竖排。
+    /// 候选排列：见 `hux_abi.h` 的 `HUX_CANDIDATE_LAYOUT_*`。
     pub candidate_layout: i32,
-    /// 预编辑内容：0 = 候选分码（默认），1 = 原始输入，2 = 不显示。
+    /// 预编辑内容：见 `hux_abi.h` 的 `HUX_PREEDIT_MODE_*`。
     pub preedit_mode: i32,
     /// 翻页循环：1 = 开（默认 0 = 关）。
     pub page_cycle: i32,
@@ -56,26 +56,29 @@ pub struct HuxOptions {
     pub filter_non_han: i32,
 }
 
+/// 宿主「状态已更新」回调（`hux_abi.h` 里 `hux_host.update` 的签名）：UI 状态快照。
+///
+/// 参数依次为 `user`、预编辑文本、光标字节偏移、候选文本数组、候选注释数组、候选数、
+/// 当前高亮索引、两排辅助文本（上排 / 下排）；文本均为 NUL 结尾的 UTF-8。
+pub type HostUpdateFn = unsafe extern "C" fn(
+    *mut c_void,
+    *const c_char,
+    i32,
+    *const *const c_char,
+    *const *const c_char,
+    i32,
+    i32,
+    *const c_char,
+    *const c_char,
+);
+
 /// 宿主回调表（由 C++ 薄壳提供；函数指针可为空，便于测试）。
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub struct HostCallback {
     pub user: *mut c_void,
     pub commit: Option<unsafe extern "C" fn(*mut c_void, *const c_char)>,
-    #[allow(clippy::type_complexity)]
-    pub update: Option<
-        unsafe extern "C" fn(
-            *mut c_void,
-            *const c_char,
-            i32,
-            *const *const c_char,
-            *const *const c_char,
-            i32,
-            i32,
-            *const c_char,
-            *const c_char,
-        ),
-    >,
+    pub update: Option<HostUpdateFn>,
 }
 
 /// `hux_engine_key` 返回值位掩码：已消费（宿主不应再处理该键）。

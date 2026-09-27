@@ -90,11 +90,11 @@ impl Engine {
             preedit.insert_str(cursor.min(preedit.len()), &prompt);
         }
         // 字反查段不下发预编辑：避免应用端 marked text 锁住光标（←/→ 无法移动）。
-        let mut cursor = cursor;
-        if self.reverse_lookup_tagged(session) {
-            preedit.clear();
-            cursor = 0;
-        }
+        let (preedit, cursor) = if self.reverse_lookup_tagged(session) {
+            (String::new(), 0)
+        } else {
+            (preedit, cursor)
+        };
         let (mut texts, mut comments, selected) = match session.context.composition.back() {
             Some(segment) => (
                 segment

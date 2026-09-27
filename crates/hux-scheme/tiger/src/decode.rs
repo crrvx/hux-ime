@@ -164,6 +164,8 @@ struct Bucket {
     best: HashMap<String, usize>,
     mass: HashMap<String, f64>,
     order: Vec<String>,
+    /// 冻结标记：只由 `dedup_limit` 置位、也只被它的提前返回消费；`add_state` 的调用点
+    /// 都作用于尚未裁剪的桶（`new_states` 的全新桶 / `consumed_end` 恒大于当前展开位），故不会遇到冻结桶。
     frozen: bool,
     truncated: bool,
 }
@@ -914,10 +916,6 @@ impl Decoder {
     }
 
     fn add_state(&mut self, bucket: &mut Bucket, state: State) {
-        if bucket.frozen {
-            bucket.frozen = false;
-            self.ensure_aggregated(bucket);
-        }
         let index = self.arena.len();
         self.arena.push(state);
         if bucket.aggregated {

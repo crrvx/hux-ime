@@ -495,7 +495,8 @@ fn host_commit_direct_choice_records_no_learning() {
 /// 于是 schema 的 key_binder 翻页绑定（`-`/`=`，以及绑到翻页的 `[`/`]`）在这条路径上被遮蔽
 /// （`Page_Down`/`Page_Up`/`Tab` 不受影响）。本仓在标点分支入口先问**与宿主同一套**判据
 /// `hux_core::host::paging_action`：判为翻页的键不由标点分支消费，落回宿主链执行翻页。
-/// 最小复现：`j a equal`（见 `interaction::tests` 的同名用例）；
+/// 最小复现：`j a equal`；
+/// 见 `interaction::tests::processor_menu_paging_keys_bypass_the_punctuation_branch`。
 /// 受影响的上游金样用例在差分测试中按 `DEVIATIONS` 登记（金样字节保持原样）。
 ///
 /// **用户决定 B（语义强化）**：上翻页键与下翻页键**同前置**——只要菜单可见就判翻页，
@@ -2156,37 +2157,45 @@ fn runtime_role_tables_cover_the_declared_roles() {
 /// **调序**会让菜单文案与开关静默错位、`HUX_OPTION_DIGIT_SELECT` 取到别的选项键。
 /// C++ 侧只能守长度（`static_assert(std::size(kLabels) == HUX_OPTION_COUNT)`，见 `shell/hux.cpp`），
 /// 顺序由本用例从**头文件源码**解析后逐项比对——改名 / 加角色 / 调序都在此失败。
-#[test]
-fn option_role_order_matches_the_abi_header() {
+/// 从 `hux_abi.h` 源码解析某个具名枚举（`NAME = n, …`，含末尾计数哨兵）。
+///
+/// 头文件里有多个 `enum { … };`（取值枚举、角色枚举），故按**成员前缀**挑出目标枚举。
+fn abi_enum_members(prefix: &str) -> Vec<(String, i32)> {
     let header = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../crates/hux-ffi/include/hux_abi.h"
     ))
     .expect("read hux_abi.h");
-    // 解析 `enum { HUX_OPTION_X = n, … };` 的成员与被显式写出的下标（含末尾计数哨兵）。
-    let body = header
-        .split_once("enum {")
-        .expect("HUX_OPTION_* 枚举定义")
-        .1;
-    let body = body.split_once("};").expect("枚举结束").0;
-    let members: Vec<(&str, i32)> = body
-        .lines()
-        .filter_map(|line| {
-            let (name, value) = line.trim().split_once('=')?;
-            let name = name.trim();
-            if !name.starts_with("HUX_OPTION_") {
-                return None;
-            }
-            Some((
-                name,
-                value
-                    .trim()
-                    .trim_end_matches(',')
-                    .parse::<i32>()
-                    .expect("枚举下标应为整数"),
-            ))
-        })
-        .collect();
+    for body in header.split("enum {").skip(1) {
+        let body = body.split_once("};").expect("枚举结束").0;
+        let members: Vec<(String, i32)> = body
+            .lines()
+            .filter_map(|line| {
+                let (name, value) = line.trim().split_once('=')?;
+                let name = name.trim();
+                if !name.starts_with(&format!("{prefix}_")) {
+                    return None;
+                }
+                Some((
+                    name.to_string(),
+                    value
+                        .trim()
+                        .trim_end_matches(',')
+                        .parse::<i32>()
+                        .expect("枚举下标应为整数"),
+                ))
+            })
+            .collect();
+        if !members.is_empty() {
+            return members;
+        }
+    }
+    panic!("hux_abi.h 里没有 {prefix}_* 枚举");
+}
+
+#[test]
+fn option_role_order_matches_the_abi_header() {
+    let members = abi_enum_members("HUX_OPTION");
 
     let expected: Vec<String> = hux_cfg::roles::RUNTIME_OPTION_ROLES
         .iter()
@@ -2200,7 +2209,7 @@ fn option_role_order_matches_the_abi_header() {
     assert_eq!(
         members[..expected.len()]
             .iter()
-            .map(|(name, _)| *name)
+            .map(|(name, _)| name.as_str())
             .collect::<Vec<_>>(),
         expected.iter().map(String::as_str).collect::<Vec<_>>(),
         "hux_abi.h 的角色序（顺序 / 个数 / 名字）必须等于 RUNTIME_OPTION_ROLES"
@@ -2210,9 +2219,54 @@ fn option_role_order_matches_the_abi_header() {
         members.iter().map(|(_, value)| *value).collect::<Vec<_>>(),
         (0..=expected.len() as i32).collect::<Vec<_>>()
     );
-    let (sentinel, count) = members[expected.len()];
+    let (sentinel, count) = &members[expected.len()];
     assert_eq!(sentinel, "HUX_OPTION_COUNT");
-    assert_eq!(count as usize, hux_cfg::roles::RUNTIME_OPTION_ROLES.len());
+    assert_eq!(*count as usize, hux_cfg::roles::RUNTIME_OPTION_ROLES.len());
+}
+
+/// `hux_abi.h` 的 `HUX_CANDIDATE_LAYOUT_*` / `HUX_PREEDIT_MODE_*` ↔ `crate::abi` 常量（名字与取值）。
+///
+/// 两组取值是 **ABI**：壳侧 `shell/hux.cpp` 用同名宏填充（`static_assert` 守 C++ 枚举 ↔ 宏），
+/// Rust 侧 `abi.rs` 用具名常量读取（`hux_engine_apply_settings`）。头文件 ↔ Rust 常量的名字与
+/// 取值由本用例从**头文件源码**逐项比对——改名 / 改值都在此失败。
+#[test]
+fn option_value_enums_match_the_abi_header() {
+    let layout = abi_enum_members("HUX_CANDIDATE_LAYOUT");
+    assert_eq!(
+        layout,
+        vec![
+            // 默认档在 Rust 侧不具名：它是 `hux_engine_apply_settings` 里 `_` 分支的兜底。
+            ("HUX_CANDIDATE_LAYOUT_FOLLOW_GLOBAL".to_string(), 0),
+            (
+                "HUX_CANDIDATE_LAYOUT_HORIZONTAL".to_string(),
+                crate::abi::CANDIDATE_LAYOUT_HORIZONTAL
+            ),
+            (
+                "HUX_CANDIDATE_LAYOUT_VERTICAL".to_string(),
+                crate::abi::CANDIDATE_LAYOUT_VERTICAL
+            ),
+            ("HUX_CANDIDATE_LAYOUT_COUNT".to_string(), 3),
+        ]
+    );
+    let preedit = abi_enum_members("HUX_PREEDIT_MODE");
+    assert_eq!(
+        preedit,
+        vec![
+            ("HUX_PREEDIT_MODE_CANDIDATE_CODE".to_string(), 0),
+            (
+                "HUX_PREEDIT_MODE_RAW_INPUT".to_string(),
+                crate::abi::PREEDIT_MODE_RAW_INPUT
+            ),
+            (
+                "HUX_PREEDIT_MODE_HIDDEN".to_string(),
+                crate::abi::PREEDIT_MODE_HIDDEN
+            ),
+            ("HUX_PREEDIT_MODE_COUNT".to_string(), 3),
+        ]
+    );
+    // 哨兵 = 取值个数（壳侧 static_assert 守同一条不变式）。
+    assert_eq!(layout.last().unwrap().1 as usize, layout.len() - 1);
+    assert_eq!(preedit.last().unwrap().1 as usize, preedit.len() - 1);
 }
 
 /// 设置 → 角色袋必须覆盖 `hux-cfg` 声明的**全部**配置角色（漏一个即失败）。
@@ -2991,7 +3045,7 @@ fn tri_state_options_fold_to_engine_booleans() {
 
 /// 托盘（状态菜单）结构守卫（源码级）：全部条目平铺为状态区同级条目 + 两个三态**单选子菜单**。
 ///
-/// 覆盖用户确认的结构与五条语义（见 `docs/` 与提交信息）：
+/// 覆盖用户确认的结构与五条语义（见提交 `371baf88`、`0e2cbe29`）：
 ///   ① 两个子菜单各三项、文案 = 配置页显示名（逐字一致）、单选（恒一勾）；
 ///   ② 子菜单当前态取自 **schema**（不是引擎选项——「标点映射」尤其：引擎没有 `ascii_punct` 角色）；
 ///   ③ 选中即「写 schema → 落盘 → 推送」，推送口径与配置页**同一个** `applyConfig()`；

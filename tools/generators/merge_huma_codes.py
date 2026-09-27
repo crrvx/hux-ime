@@ -136,7 +136,6 @@ def main() -> int:
 
     chars = {text for text, _, _ in added}
     codes = {code for _, code, _ in added}
-    primary_chars = {text for text, _ in primary if len(text) == 1}
     new_chars = {text for text in chars if text not in primary_chars}
     print(f"源 {source.name}：version {version}，sha256 {digest[:12]}…，单字行 {len(rows)}")
     print(f"主表已有 {len(primary)} 对（{len(primary_chars)} 个字）；本表追加 {len(added)} 对：")

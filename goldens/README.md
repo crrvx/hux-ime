@@ -125,7 +125,7 @@ python3 tools/checks/verify_golden_shas.py
 python3 tools/checks/verify_golden_shas.py --reference _external/tiger-sentense-rime
 
 # 基准（ngram，真实模型 + 本地抽样金样）
-cargo run --release -q --example ngram_bench -- <model.bin> <transcript.tsv>
+cargo run --release -q -p hux-scheme-tiger --example ngram_bench -- <model.bin> <transcript.tsv>
 lua tools/probes/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <transcript.tsv>
 ```
 
@@ -179,7 +179,7 @@ gzip -9 -n -c /tmp/ngram_fixture.tsv > goldens/ngram_fixture.tsv.gz
 
 # ngram 真实模型抽样（本地）
 lua tools/generators/gen_ngram_golden.lua --reference "$REF" \
-  --model ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
+  --model ~/.local/share/fcitx5/hux/models/sentence-ngram-mobile.bin \
   --out goldens/local/ngram_sample.tsv --mode sample
 gzip -9 -n -c goldens/local/ngram_sample.tsv > goldens/local/ngram_sample.tsv.gz
 
@@ -374,7 +374,8 @@ gzip -9 -n -c /tmp/lexical.tsv > goldens/lexical.tsv.gz
 CI 以同一参照提交重生成全部 fixture 金样并与入库内容比对（见 `.github/workflows/ci.yml`）。 \
 四份探针金样（`key` / `key_sequence` / `key_sequence_tab` / \
 `sound_to_char_shape`）依赖具体 librime/librime-lua 版本，**CI 不重生成**， \
-改按上表校验 sha256——内联`sha256sum -c` 的三条与上面的校验器**互为独立来源**，两者都须通过。
+改按上表校验 sha256——内联 4 处 `sha256sum -c`（共 7 条）与上面的校验器 \
+**互为独立来源**，两者都须通过。
 
 ## 规则
 

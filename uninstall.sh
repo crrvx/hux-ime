@@ -309,7 +309,8 @@ print_plan() {
     printf '%s\n' "- $user_env_file"
     printf '%s\n' "? $sys_models_dir/*.bin" "? $user_models_dir/*.bin"
     printf '%s\n' "? $engine_hux_dir/tiger_sentence.options.yaml" "? $engine_hux_dir/user.yaml"
-    printf '%s\n' "? $engine_hux_dir/tiger_sentence_learning_*.userdb*"
+    # 学习库是目录 `<方案 id 哈希>.userdb/`（LevelDB）；上面的探测用同一模式。
+    printf '%s\n' "? $engine_hux_dir/tiger_sentence_learning_*.userdb"
     printf '%s\n' "? $engine_conf"
 }
 

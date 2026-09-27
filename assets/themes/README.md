@@ -12,25 +12,25 @@
 - **取用版本**： \
   虎符仓库 `LeafHW/hufu-ime-rust` 的 `54c0339`（`platform/linux/themes/` 全量 19 套）。
 - **主题一览**（目录名 → `theme.conf` 的 `Name`）：
-  - `canghai` 沧海
-  - `chenwu` 晨雾
-  - `default` 迷雾
-  - `huguang` 湖光
-  - `hupo` 琥珀
-  - `luoxia` 落霞
-  - `mocha` 抹茶
-  - `moyan` 墨岩（极简黑）
-  - `mushan` 暮山紫
-  - `ouhe` 藕荷
-  - `qingci` 青瓷
-  - `rongyan` 熔岩（炭黑焰橙）
-  - `shiyou` 柿柚
-  - `songyan` 松烟
-  - `sujian` 素笺
-  - `xingyu` 杏雨
-  - `xuanmo` 玄墨
-  - `yingxiong` 樱色（暖粉）
-  - `yuebai` 月白
+  - `hufu-canghai` 沧海
+  - `hufu-chenwu` 晨雾
+  - `hufu-default` 迷雾
+  - `hufu-huguang` 湖光
+  - `hufu-hupo` 琥珀
+  - `hufu-luoxia` 落霞
+  - `hufu-mocha` 抹茶
+  - `hufu-moyan` 墨岩（极简黑）
+  - `hufu-mushan` 暮山紫
+  - `hufu-ouhe` 藕荷
+  - `hufu-qingci` 青瓷
+  - `hufu-rongyan` 熔岩（炭黑焰橙）
+  - `hufu-shiyou` 柿柚
+  - `hufu-songyan` 松烟
+  - `hufu-sujian` 素笺
+  - `hufu-xingyu` 杏雨
+  - `hufu-xuanmo` 玄墨
+  - `hufu-yingxiong` 樱色（暖粉）
+  - `hufu-yuebai` 月白
 - **许可**：随虎符仓库根 `LICENSE`（GPL-3.0）；版权与许可标注见仓库根 `REUSE.toml`。
 - **取用指纹**（133 个文件的聚合 sha256，`tools/checks/check_themes.py` 在 CI 里核对）： \
   `7ad673c4c6df5330db8fc84566a65b93ab39c6686de12428f7caa208208c7a9d`

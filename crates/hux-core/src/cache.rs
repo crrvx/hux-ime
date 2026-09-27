@@ -61,12 +61,11 @@ impl<K: Clone + Eq + Hash, V> Fifo<K, V> {
     }
 
     /// Lua `#keys`：已占用槽位数（达到上限后恒为 limit）。
+    // 只按 Lua `#keys` 语义暴露长度：调用方（`ngram` 的统计）都只问长度，
+    // 因此不提供 `is_empty`，与 clippy 的 len/is_empty 配对约定有意不同。
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.keys.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.keys.is_empty()
     }
 
     pub fn values(&self) -> impl Iterator<Item = &V> {
@@ -125,18 +124,10 @@ impl<K: Clone + Eq + Hash> Columns<K> {
     }
 
     /// Lua `#keys`。
+    // 同 `Fifo::len`：只问长度，不提供 `is_empty`。
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.keys.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.keys.is_empty()
-    }
-
-    pub fn clear(&mut self) {
-        self.map.clear();
-        self.keys.clear();
-        self.next = 1;
     }
 }
 
