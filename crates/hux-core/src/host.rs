@@ -845,21 +845,7 @@ mod tests {
         KeyEvent::from_repr(repr).expect("key repr")
     }
 
-    #[test]
-    fn editor_commits_composition_on_uppercase_then_passes() {
-        // 组合中收到大写字母：先提交组合（保证上屏顺序），按键交宿主。
-        let mut context = context_with_menu(&["甲", "乙"], 0);
-        assert_eq!(press(&mut context, "A"), HostResult::Forward);
-        assert_eq!(context.last_commit_text(), "甲");
-        assert!(context.input().is_empty());
-    }
-
-    #[test]
-    fn editor_passes_uppercase_when_idle() {
-        let mut context = Context::new();
-        assert_eq!(press(&mut context, "A"), HostResult::Forward);
-        assert_eq!(context.last_commit_text(), "");
-    }
+    // ---------------------------------------------------------------- punctuator
 
     fn punct_table() -> PunctTable {
         PunctTable::parse(
@@ -868,55 +854,102 @@ mod tests {
         .expect("punct table")
     }
 
+    /// 标点宿主链的表驱动用例：原四条独立用例（独立提交 / 追加到组合 / 成对交替 /
+    /// 未映射键放行）合并于此——夹具与断言逐条等价；平台侧的端到端版本保留在
+    /// `platform/fcitx5/src/tests.rs`（跨层重复只留平台侧）。
+    ///
+    /// 原用例 → 本表行对照：
+    ///
+    /// | 原用例 | 本表行 | 逐次断言 |
+    /// | --- | --- | --- |
+    /// | `punctuator_commits_standalone_punct` | 1 | 空上下文 `comma` ⇒ `Consumed` + 上屏「，」 |
+    /// | `punctuator_appends_to_composition_text` | 2 | 组合中 `comma` ⇒ `Consumed` + 上屏「甲，」+ 输入清空 |
+    /// | `punctuator_pair_alternates` | 3 | 连按 `apostrophe` ⇒ `Consumed`/「‘」、`Consumed`/「’」 |
+    /// | `punctuator_passes_unmapped_key` | 4 | 空上下文 `space` ⇒ `Forward`（原用例不断言上屏） |
     #[test]
-    fn punctuator_commits_standalone_punct() {
-        let table = punct_table();
-        let mut context = Context::new();
-        assert_eq!(
-            process(&mut context, "comma", Some(&table), &HostOptions::default()),
-            HostResult::Consumed
-        );
-        assert_eq!(context.last_commit_text(), "，");
-    }
-
-    #[test]
-    fn punctuator_appends_to_composition_text() {
-        let table = punct_table();
-        let mut context = context_with_menu(&["甲", "乙"], 0);
-        assert_eq!(
-            process(&mut context, "comma", Some(&table), &HostOptions::default()),
-            HostResult::Consumed
-        );
-        assert_eq!(context.last_commit_text(), "甲，");
-        assert!(context.input().is_empty());
-    }
-
-    #[test]
-    fn punctuator_pair_alternates() {
-        let table = punct_table();
-        let mut context = Context::new();
-        for text in ["‘", "’"] {
-            assert_eq!(
-                process(
-                    &mut context,
-                    "apostrophe",
-                    Some(&table),
-                    &HostOptions::default()
-                ),
-                HostResult::Consumed
-            );
-            assert_eq!(context.last_commit_text(), text);
+    fn punctuator_commits_appends_pairs_and_passes_unmapped() {
+        // 一行 = 一条原用例。
+        struct Case {
+            // 原用例名（保留可检索性）。
+            name: &'static str,
+            // 初始上下文：`true` ⇒ 组合中带菜单（`context_with_menu`），`false` ⇒ 空上下文。
+            composing: bool,
+            // 按键（`KeyEvent::from_repr` 名称）。
+            key: &'static str,
+            // 逐次按下的（宿主链结果；`Some` 时断言该次按键后的 `last_commit_text`）。
+            steps: &'static [(HostResult, Option<&'static str>)],
+            // 末态是否断言输入已清空（仅原「追加」用例断言）。
+            input_empty: bool,
         }
-    }
 
-    #[test]
-    fn punctuator_passes_unmapped_key() {
         let table = punct_table();
-        let mut context = Context::new();
-        assert_eq!(
-            process(&mut context, "space", Some(&table), &HostOptions::default()),
-            HostResult::Forward
-        );
+        let cases = [
+            Case {
+                name: "punctuator_commits_standalone_punct",
+                composing: false,
+                key: "comma",
+                steps: &[(HostResult::Consumed, Some("，"))],
+                input_empty: false,
+            },
+            Case {
+                name: "punctuator_appends_to_composition_text",
+                composing: true,
+                key: "comma",
+                steps: &[(HostResult::Consumed, Some("甲，"))],
+                input_empty: true,
+            },
+            Case {
+                name: "punctuator_pair_alternates",
+                composing: false,
+                key: "apostrophe",
+                steps: &[
+                    (HostResult::Consumed, Some("‘")),
+                    (HostResult::Consumed, Some("’")),
+                ],
+                input_empty: false,
+            },
+            Case {
+                name: "punctuator_passes_unmapped_key",
+                composing: false,
+                key: "space",
+                steps: &[(HostResult::Forward, None)],
+                input_empty: false,
+            },
+        ];
+
+        for case in cases {
+            let mut context = if case.composing {
+                context_with_menu(&["甲", "乙"], 0)
+            } else {
+                Context::new()
+            };
+            for (index, (result, commit)) in case.steps.iter().enumerate() {
+                assert_eq!(
+                    process(
+                        &mut context,
+                        case.key,
+                        Some(&table),
+                        &HostOptions::default()
+                    ),
+                    *result,
+                    "{}：第 {} 次按键",
+                    case.name,
+                    index + 1
+                );
+                if let Some(commit) = commit {
+                    assert_eq!(
+                        context.last_commit_text(),
+                        *commit,
+                        "{}：第 {} 次按键后的上屏文本",
+                        case.name,
+                        index + 1
+                    );
+                }
+            }
+            if case.input_empty {
+                assert!(context.input().is_empty(), "{}：输入应清空", case.name);
+            }
+        }
     }
 
     #[test]
@@ -945,6 +978,26 @@ mod tests {
         assert!(context.input().is_empty());
         assert_eq!(context.caret(), 0);
     }
+
+    // ---------------------------------------------------------------- key_binder
+
+    #[test]
+    fn key_binder_tab_navigates_candidates() {
+        let mut context = context_with_menu(&["甲", "乙"], 0);
+        assert_eq!(press(&mut context, "Tab"), HostResult::Consumed);
+        assert_eq!(selected(&context), 1);
+        assert_eq!(press(&mut context, "Shift+Tab"), HostResult::Consumed);
+        assert_eq!(selected(&context), 0);
+    }
+
+    #[test]
+    fn key_binder_tab_passes_without_menu() {
+        let mut empty = Context::new();
+        empty.set_input(b"x");
+        assert_eq!(press(&mut empty, "Tab"), HostResult::Forward);
+    }
+
+    // ---------------------------------------------------------------- selector
 
     #[test]
     fn selector_moves_highlight_without_wrapping() {
@@ -1332,6 +1385,8 @@ mod tests {
         assert_eq!(press(&mut raw, "Down"), HostResult::Forward);
     }
 
+    // ---------------------------------------------------------------- navigator
+
     #[test]
     fn navigator_moves_caret_by_char() {
         let mut context = context_with_menu(&["甲", "乙"], 0);
@@ -1377,6 +1432,24 @@ mod tests {
         assert_eq!(context.caret(), 0);
     }
 
+    // ---------------------------------------------------------------- express_editor
+
+    #[test]
+    fn editor_commits_composition_on_uppercase_then_passes() {
+        // 组合中收到大写字母：先提交组合（保证上屏顺序），按键交宿主。
+        let mut context = context_with_menu(&["甲", "乙"], 0);
+        assert_eq!(press(&mut context, "A"), HostResult::Forward);
+        assert_eq!(context.last_commit_text(), "甲");
+        assert!(context.input().is_empty());
+    }
+
+    #[test]
+    fn editor_passes_uppercase_when_idle() {
+        let mut context = Context::new();
+        assert_eq!(press(&mut context, "A"), HostResult::Forward);
+        assert_eq!(context.last_commit_text(), "");
+    }
+
     #[test]
     fn editor_backspace_removes_char_before_caret() {
         let mut context = context_with_menu(&["甲", "乙"], 0);
@@ -1402,22 +1475,6 @@ mod tests {
         assert_eq!(press(&mut context, "BackSpace"), HostResult::Forward);
         assert_eq!(press(&mut context, "Delete"), HostResult::Forward);
         assert_eq!(press(&mut context, "Left"), HostResult::Forward);
-    }
-
-    #[test]
-    fn key_binder_tab_navigates_candidates() {
-        let mut context = context_with_menu(&["甲", "乙"], 0);
-        assert_eq!(press(&mut context, "Tab"), HostResult::Consumed);
-        assert_eq!(selected(&context), 1);
-        assert_eq!(press(&mut context, "Shift+Tab"), HostResult::Consumed);
-        assert_eq!(selected(&context), 0);
-    }
-
-    #[test]
-    fn key_binder_tab_passes_without_menu() {
-        let mut empty = Context::new();
-        empty.set_input(b"x");
-        assert_eq!(press(&mut empty, "Tab"), HostResult::Forward);
     }
 
     /// 直接构造键事件（绑定测试不依赖 repr 解析）。

@@ -57,18 +57,16 @@ pub fn rows(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     fn index() -> SoundToCharShapeIndex {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../goldens/sound_to_char_shape/tiger_sentence.pinyin.bin");
+        let path =
+            hux_test_support::repo_path("goldens/sound_to_char_shape/tiger_sentence.pinyin.bin");
         SoundToCharShapeIndex::load(&path).expect("fixture index")
     }
 
     fn fixture() -> (SoundToCharShapeIndex, Lexicon) {
         let lexicon = Lexicon::load(
-            &[PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../../goldens/sound_to_char_shape")],
+            &[hux_test_support::repo_path("goldens/sound_to_char_shape")],
             0,
         );
         (index(), lexicon)

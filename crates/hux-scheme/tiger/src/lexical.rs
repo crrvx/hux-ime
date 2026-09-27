@@ -268,8 +268,7 @@ mod tests {
 
     #[test]
     fn real_model_loads_when_present() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../data/tiger_sentence.lexical.bin");
+        let path = hux_test_support::repo_path("data/tiger_sentence.lexical.bin");
         let model = load(&path).expect("load real lexical model");
         assert_eq!(model.bit_count, 1_200_000);
         assert_eq!(model.hash_count, 10);

@@ -13,3 +13,6 @@ description = "虎虚（hux-ime）配置：设置项、选项存储与合并顺�
 anyhow.workspace = true
 hux-core = { path = "../hux-core" }
 yaml-rust2.workspace = true
+
+[dev-dependencies]
+hux-test-support = { path = "../hux-test-support" }

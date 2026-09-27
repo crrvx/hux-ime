@@ -418,12 +418,14 @@ impl Engine {
         Self::with_sources(host, true, data_dirs(), user_data_dir(), model_source)
     }
 
-    /// 测试用构造：目录 / 模型 / 选项目录全部显式注入（来源记为注入，故「重新部署」沿用它们）。
+    /// 按指定目录构造：目录 / 模型 / 选项目录全部显式注入，**不经 XDG 缺省**（来源记为注入，
+    /// 故「重新部署」沿用它们）。供测试与平台内装配使用；生产装配走 [`Engine::new`]。
     ///
     /// 模型传 `None` 即「未指定」⇒ 走默认查找（各数据目录里的方案模型资产）；夹具目录
     /// 里都没有模型文件，故与「不装模型」同效，而重新部署时按同一来源重新查找。
-    #[cfg(test)]
-    pub(crate) fn new_with_dirs(
+    // 非测试构建下平台装配尚未接入（ABI 侧只经 `Engine::new`）；接口本身是正式面，不作死码。
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn new_with_dirs(
         host: Option<HostCallback>,
         dirs: Vec<PathBuf>,
         model_path: Option<PathBuf>,

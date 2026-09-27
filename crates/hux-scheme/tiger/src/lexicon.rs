@@ -76,14 +76,6 @@ impl Default for LexiconOptions {
     }
 }
 
-/// 依次在各数据目录下探测相对路径（是否存在交由调用方的加载器处理）。
-///
-/// 目录本身由平台层解析（桌面/Android 各自构造），内核不读取环境变量。
-#[cfg(test)]
-fn candidate_paths(dirs: &[PathBuf], relative: &str) -> Vec<PathBuf> {
-    dirs.iter().map(|dir| dir.join(relative)).collect()
-}
-
 // ---------------------------------------------------------------- 文本工具
 
 /// Lua 模式类 `%s` 的 ASCII 空白集合（含垂直制表符，Rust `trim()` 不含）。
@@ -982,15 +974,6 @@ fn first_two_tokens_relaxed(line: &str) -> Option<(&str, &str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn candidate_paths_join_each_directory() {
-        let dirs = vec![PathBuf::from("/a/hux"), PathBuf::from("/b/hux")];
-        let paths = candidate_paths(&dirs, LEXICAL_FILE);
-        assert_eq!(paths[0], PathBuf::from("/a/hux").join(LEXICAL_FILE));
-        assert_eq!(paths[1], PathBuf::from("/b/hux").join(LEXICAL_FILE));
-        assert_eq!(paths.len(), dirs.len());
-    }
 
     #[test]
     fn parses_codes_with_dedup_and_lowercasing() {

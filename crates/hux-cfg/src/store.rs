@@ -218,13 +218,6 @@ impl OptionsStore {
 mod tests {
     use super::*;
 
-    fn temp_dir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("hux-options-{}-{tag}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(&dir).expect("temp dir");
-        dir
-    }
-
     fn drain_option_events(store: &mut OptionsStore, context: &mut Context) {
         for event in context.drain_events() {
             if let hux_core::session::Event::Option(name) = event {
@@ -235,7 +228,7 @@ mod tests {
 
     #[test]
     fn set_values_overwrites_the_persisted_value() {
-        let dir = temp_dir("set-values");
+        let dir = hux_test_support::temp_dir("set-values");
         std::fs::write(
             dir.join(OPTIONS_FILE),
             "options:\n  tiger_sentence_early_commit: false\ncustom: 1\n",
@@ -268,7 +261,7 @@ mod tests {
 
     #[test]
     fn set_values_reports_a_failed_save() {
-        let dir = temp_dir("set-values-error");
+        let dir = hux_test_support::temp_dir("set-values-error");
         // 目标路径是目录 → 写文件失败
         std::fs::create_dir_all(dir.join(OPTIONS_FILE)).expect("blocking dir");
         let mut store = OptionsStore::load(&dir, &crate::options::test_option_keys());
@@ -279,7 +272,7 @@ mod tests {
 
     #[test]
     fn load_applies_stored_options() {
-        let dir = temp_dir("load");
+        let dir = hux_test_support::temp_dir("load");
         std::fs::write(
             dir.join(OPTIONS_FILE),
             "options:\n  tiger_sentence_early_commit: false\n  some_other_option: true\ncustom: 1\n",
@@ -294,7 +287,7 @@ mod tests {
 
     #[test]
     fn observe_saves_user_change() {
-        let dir = temp_dir("observe");
+        let dir = hux_test_support::temp_dir("observe");
         std::fs::write(
             dir.join(OPTIONS_FILE),
             "options:\n  tiger_sentence_early_commit: false\n",
@@ -320,7 +313,7 @@ mod tests {
 
     #[test]
     fn save_preserves_unknown_keys() {
-        let dir = temp_dir("preserve");
+        let dir = hux_test_support::temp_dir("preserve");
         std::fs::write(
             dir.join(OPTIONS_FILE),
             "options:\n  some_other_option: true\ncustom: 1\n",
@@ -340,7 +333,7 @@ mod tests {
 
     #[test]
     fn legacy_user_yaml_is_read_only_fallback() {
-        let dir = temp_dir("legacy");
+        let dir = hux_test_support::temp_dir("legacy");
         std::fs::write(
             dir.join(LEGACY_FILE),
             "var:\n  option:\n    tiger_sentence_allow_duplicate_single: false\n",
@@ -362,7 +355,7 @@ mod tests {
 
     #[test]
     fn provided_defaults_fill_missing_keys() {
-        let dir = temp_dir("defaults");
+        let dir = hux_test_support::temp_dir("defaults");
         let defaults = Map::from([("tiger_sentence_early_commit".to_string(), false)]);
         let mut store = OptionsStore::load_with_defaults(&dir, defaults);
         let mut context = hux_core::session::Context::new();
@@ -376,7 +369,7 @@ mod tests {
 
     #[test]
     fn save_failure_sets_error_property() {
-        let dir = temp_dir("error");
+        let dir = hux_test_support::temp_dir("error");
         // 目标路径是目录 → 写文件失败
         std::fs::create_dir_all(dir.join(OPTIONS_FILE)).expect("blocking dir");
         let mut store = OptionsStore::load(&dir, &crate::options::test_option_keys());

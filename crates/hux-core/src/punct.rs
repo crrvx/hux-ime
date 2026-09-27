@@ -229,7 +229,7 @@ punctuator:
     #[test]
     fn shipped_default_symbols_override_slash() {
         // 发布默认（data/symbols.yaml）：half_shape 的 "/" 提交 "/"（非 、）；full_shape 仍为 ／。
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/symbols.yaml");
+        let path = hux_test_support::repo_path("data/symbols.yaml");
         let table = PunctTable::load(&path).expect("load data/symbols.yaml");
         let mut pairs = PairState::default();
         assert_eq!(table.resolve('/', false, &mut pairs), Some("/".to_string()));

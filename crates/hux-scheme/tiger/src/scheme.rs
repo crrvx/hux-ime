@@ -753,7 +753,7 @@ mod tests {
     use hux_core::scheme::Value;
 
     fn fixture_dirs() -> Vec<PathBuf> {
-        vec![PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../goldens/lexicon")]
+        vec![hux_test_support::repo_path("goldens/lexicon")]
     }
 
     /// 测试配置袋（角色名与 `hux-cfg` 的常量同值；迁移前逐字段的等价物）。
@@ -1103,35 +1103,38 @@ mod tests {
     fn apply_config_rebuilds_the_lexicon_for_a_new_high_freq_limit() {
         // 平台在装配方案**之后**才把配置页设置下发（`hux_engine_new` → 宿主 `applyConfig`），
         // 故上限只在 `load` 时生效等于「设置永不生效」；本用例钉住重新下发即重建。
-        // `jvn`：`华` 是主码、`仍`（rank 564）的非主码，上限 > 0 时被过滤。
-        let texts = |scheme: &TigerScheme, code: &str| -> Vec<String> {
+        //
+        // 跨层分工：平台侧 `platform/fcitx5/src/tests.rs` 的
+        // `apply_settings_rebuilds_the_lexicon_for_a_new_high_freq_limit` 负责引擎可见结果
+        // （候选列表里非主码条目消失/回来）；本用例只断言内核独有的**容量上界**：
+        // 上限决定码表里保留的 (码, 字) 槽位总数，收紧必须真的丢槽位、放开必须完整复原。
+        let capacity = |scheme: &TigerScheme| -> usize {
             scheme
                 .decoder
                 .lexicon()
-                .probe(code)
-                .expect("码存在")
+                .codes
                 .iter()
-                .map(|entry| entry.text.clone())
-                .collect()
+                .map(|(_, entries)| entries.len())
+                .sum()
         };
         let mut scheme = fixture_scheme(); // 夹具按上限 0（不过滤）装载
-        assert_eq!(
-            texts(&scheme, "jvn"),
-            vec!["华".to_string(), "仍".to_string()]
-        );
+        let full = capacity(&scheme);
+        assert!(full > 0, "夹具码表非空");
+        assert_eq!(scheme.decoder.lexicon().data_status().high_freq_limit, 0);
         scheme
             .apply_config(&full_bag(&[(role::HIGH_FREQ_LIMIT, Value::Count(1500))]))
             .expect("全角色袋");
-        assert_eq!(texts(&scheme, "jvn"), vec!["华".to_string()]);
+        let tightened = capacity(&scheme);
+        assert!(
+            tightened < full,
+            "收紧上限必须丢弃非主码槽位：{tightened} 应小于 {full}"
+        );
         assert_eq!(scheme.decoder.lexicon().data_status().high_freq_limit, 1500);
-        // 放开上限同样重建（不是「只收紧一次」）。
+        // 放开上限同样重建（不是「只收紧一次」）⇒ 容量回到原值。
         scheme
             .apply_config(&full_bag(&[(role::HIGH_FREQ_LIMIT, Value::Count(0))]))
             .expect("全角色袋");
-        assert_eq!(
-            texts(&scheme, "jvn"),
-            vec!["华".to_string(), "仍".to_string()]
-        );
+        assert_eq!(capacity(&scheme), full, "放开上限必须完整复原槽位");
         assert_eq!(scheme.decoder.lexicon().data_status().high_freq_limit, 0);
         assert_eq!(
             scheme.learning_mode(),

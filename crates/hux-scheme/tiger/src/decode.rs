@@ -2351,14 +2351,12 @@ mod tests {
     use super::*;
 
     fn fixture_lexicon() -> Lexicon {
-        let dir =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../goldens/lexicon");
+        let dir = hux_test_support::repo_path("goldens/lexicon");
         Lexicon::load(std::slice::from_ref(&dir), 1500)
     }
 
     fn fixture_decoder() -> Decoder {
-        let dir =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../goldens/lexicon");
+        let dir = hux_test_support::repo_path("goldens/lexicon");
         let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
         let supplement = Supplement::load_default(Some(&dir));
         Decoder::new(lexicon, supplement, None)
@@ -2492,8 +2490,7 @@ mod tests {
 
     #[test]
     fn locked_decode_rebuilds_confirmed_prefix() {
-        let dir =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../goldens/lexicon");
+        let dir = hux_test_support::repo_path("goldens/lexicon");
         let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
         let supplement = Supplement::load_default(Some(&dir));
         let mut decoder = Decoder::new(lexicon, supplement, None);
@@ -2532,8 +2529,7 @@ mod tests {
 
     #[test]
     fn locked_decode_honors_full_input_lock() {
-        let dir =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../goldens/lexicon");
+        let dir = hux_test_support::repo_path("goldens/lexicon");
         let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
         let supplement = Supplement::load_default(Some(&dir));
         let mut decoder = Decoder::new(lexicon, supplement, None);
@@ -2578,8 +2574,7 @@ mod tests {
 
     #[test]
     fn locked_decode_expands_after_partial_lock() {
-        let dir =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../goldens/lexicon");
+        let dir = hux_test_support::repo_path("goldens/lexicon");
         let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
         let supplement = Supplement::load_default(Some(&dir));
         let mut decoder = Decoder::new(lexicon, supplement, None);
@@ -2611,8 +2606,7 @@ mod tests {
 
     #[test]
     fn locked_decode_rejects_mismatches() {
-        let dir =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../goldens/lexicon");
+        let dir = hux_test_support::repo_path("goldens/lexicon");
         let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
         let supplement = Supplement::load_default(Some(&dir));
         let mut decoder = Decoder::new(lexicon, supplement, None);
@@ -2681,8 +2675,7 @@ mod tests {
 
     #[test]
     fn path_summary_orders_nodes_outermost_first() {
-        let dir =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../goldens/lexicon");
+        let dir = hux_test_support::repo_path("goldens/lexicon");
         let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
         let supplement = Supplement::load_default(Some(&dir));
         let mut decoder = Decoder::new(lexicon, supplement, None);
@@ -2877,10 +2870,9 @@ mod tests {
     fn lexical_model_setter_roundtrip() {
         let mut decoder = fixture_decoder();
         assert!(decoder.lexical_model().is_none());
-        let model = crate::lexical::load(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../../data/tiger_sentence.lexical.bin"),
-        )
+        let model = crate::lexical::load(&hux_test_support::repo_path(
+            "data/tiger_sentence.lexical.bin",
+        ))
         .expect("load lexical model");
         decoder.set_lexical_model(Some(model));
         assert!(decoder.lexical_model().is_some());
@@ -2888,8 +2880,7 @@ mod tests {
 
     #[test]
     fn locked_decode_replays_opaque_prefix_neutrally() {
-        let dir =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../goldens/lexicon");
+        let dir = hux_test_support::repo_path("goldens/lexicon");
         let lexicon = Lexicon::load(std::slice::from_ref(&dir), 1500);
         let supplement = Supplement::load_default(Some(&dir));
         let mut decoder = Decoder::new(lexicon, supplement, None);

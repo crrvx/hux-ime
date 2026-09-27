@@ -157,9 +157,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn fixture(name: &str) -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../goldens")
-            .join(name)
+        hux_test_support::repo_path("goldens").join(name)
     }
 
     #[test]

@@ -811,8 +811,7 @@ mod tests {
     /// 而不是在 `Fifo::new(0)` / `Columns::new(0)` 的 `assert!` 处 panic。
     #[test]
     fn load_rejects_invalid_cache_limits() {
-        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../goldens/ngram_fixture.bin");
+        let fixture = hux_test_support::repo_path("goldens/ngram_fixture.bin");
         for limits in [
             Limits {
                 page_bytes: 0,
@@ -847,8 +846,7 @@ mod tests {
     /// 静默截断成别的值（其余头部字段保持不变 ⇒ 仍能通过前面的布局/尺寸校验）。
     #[test]
     fn implausible_trigram_context_count_is_rejected() {
-        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../goldens/ngram_fixture.bin");
+        let fixture = hux_test_support::repo_path("goldens/ngram_fixture.bin");
         let mut corrupted = std::fs::read(&fixture).expect("read fixture model");
         corrupted[72..80].copy_from_slice(&u64::MAX.to_le_bytes());
         let path = std::env::temp_dir().join(format!("hux-tricount-{}.bin", std::process::id()));
@@ -868,8 +866,7 @@ mod tests {
     #[test]
     fn corrupt_index_queries_do_not_panic() {
         // 畸形模型：头部合法、trigram 索引区被填充异常值 → 查询必须返回错误而非 panic。
-        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../goldens/ngram_fixture.bin");
+        let fixture = hux_test_support::repo_path("goldens/ngram_fixture.bin");
         let source = std::fs::read(&fixture).expect("read fixture model");
         let directory = std::env::temp_dir();
         for (index, fill) in [0xffu8, 0x00].into_iter().enumerate() {

@@ -760,11 +760,10 @@ impl<'a> Reader<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     fn fixture_index() -> SoundToCharShapeIndex {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../goldens/sound_to_char_shape/tiger_sentence.pinyin.bin");
+        let path =
+            hux_test_support::repo_path("goldens/sound_to_char_shape/tiger_sentence.pinyin.bin");
         SoundToCharShapeIndex::load(&path).expect("fixture index")
     }
 
