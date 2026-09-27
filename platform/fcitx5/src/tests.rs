@@ -1467,6 +1467,34 @@ fn reverse_lookup_pronunciation_end_to_end() {
     let (preedit, _, candidates, _, _, _) = last_update();
     assert_eq!(candidates.first().map(String::as_str), Some("中国"));
     assert_eq!(preedit, "`zhong guo〔拼音〕");
+    // 音节分隔符在输入过程中**直接可见**：`zh' 当场显示 `zh'（不必等音节切分完成）。
+    engine.reset();
+    assert!(engine.key(0x60, 0, false));
+    for code in *b"zh'" {
+        assert!(engine.key(u32::from(code), 0, false));
+    }
+    let (preedit, _, candidates, _, _, _) = last_update();
+    assert_eq!(preedit, "`zh'〔拼音〕");
+    assert!(!candidates.is_empty());
+    // 连续撇号只保留第一个：多余的丢弃、不录入（输入串与预编辑都不出现 `''`）。
+    assert!(engine.key(u32::from(b'\''), 0, false));
+    let (preedit, _, _, _, _, _) = last_update();
+    assert_eq!(preedit, "`zh'〔拼音〕");
+    assert_eq!(engine.session().context.input(), &b"`zh'"[..]);
+    // 分隔符把音节切开：`zh'guo 的撇号原样保留（对照全拼 `zhong guo 由音节边界插空格）。
+    for code in *b"guo" {
+        assert!(engine.key(u32::from(code), 0, false));
+    }
+    let (preedit, _, candidates, _, _, _) = last_update();
+    assert_eq!(preedit, "`zh'guo〔拼音〕");
+    assert!(candidates.iter().any(|c| c == "中国"), "{candidates:?}");
+    // 尚无候选（空码）时也当场可见：回退预编辑直接显示原始输入。
+    engine.reset();
+    assert!(engine.key(0x60, 0, false));
+    assert!(engine.key(u32::from(b'\''), 0, false));
+    let (preedit, _, candidates, _, _, _) = last_update();
+    assert_eq!(preedit, "`'〔拼音〕");
+    assert!(candidates.is_empty(), "{candidates:?}");
 }
 
 /// 字反查：默认 `~` 进入组合（**单字符触发键 ⇒ 给默认可上屏候选**）；
