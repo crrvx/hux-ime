@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+//! 引擎与会话生命周期：学习库启用与生效、预编辑 / 候选、会话隔离与释放。
+//!
+//! 另有设置下发、候选点击与面板清理；夹具与 `serial()` 串行约定见父模块 `tests.rs`。
+
 use super::*;
 
 #[test]

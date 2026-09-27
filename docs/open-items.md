@@ -17,10 +17,10 @@
 > **非审计来源的未闭合项**：发行版打包（PKGBUILD，AUR `fcitx5-hux`）状态见 \
 > [`../platform/README.md`](../platform/README.md)；**待定配置项**（B/C 组）见 §4。 \
 > 本文把四份总账里**仍活着**的条目提到最前（其余均已 `[✅ 已修]`，本文即其归宿）； \
-> 共 **18 条**——`[待办]` 11 / `[已登记·不修+理由]` 5 / \
+> 共 **17 条**——`[待办]` 8 / `[已登记·不修+理由]` 7 / \
 > `[误报·已核实]` 2。
 
-## 1. `[待办]`（11 条）
+## 1. `[待办]`（8 条）
 
 | 编号 | 一句话问题 | 状态 | 归宿（提交 / 批次 · 不修理由 · 待办成本） |
 |---|---|---|---|
@@ -28,13 +28,10 @@
 | F16 | C++ 壳两处脆弱模式：`applyUpdate` 每次 UI 刷新都重建状态区；<br>`HuxCandidateWord::select` <br>内同步触发回调可能销毁候选对象自身 | [待办] | 未改（当前**无实测故障**，C++ 侧以 `session == nullptr` 早退规避）：<br>需真机 fcitx5 压力验证后再定是否投递到事件循环；本机无 fcitx5 运行环境。<br>**UAF 收尾批补充**：生命周期侧的悬垂风险已加固（候选词弱引用 + `~HuxEngine` <br>清状态区，见「历史纪要」第 6 批），<br>**重入 / 自毁结构未动** |
 | M8 | 依赖 / 版本未固定的位置（action 移动标签、`archlinux:latest`、<br>`librime-dev` 版本） | [待办] | **③④ 已实施 / 已注明**：`pacman -Sy` → `-Syu`；<br>`archlinux:latest` **有意不钉**（作业目的即「最新 Lua」）；<br>已在 `goldens/PROVENANCE.md` 注明该类探针金样依赖具体 librime 版本、<br>CI 不重生成（只按 sha 校验）；探针在 CI 只做语法检查。<br>（余见下方 M8 补记） |
 | T3.8b | `tools/generators/gen_ngram_golden.lua:74` 用 `("不存在"):sub(1, 3)` 造第 26 个 token | [待办] | 代码**是对的**：Lua `sub` 按字节截出 `不`（`e4b88d`）——金样 29617 行 = 26³+3·26²+10013、<br>`e4b88d` 恰 2104 次；但写法隐晦。改成显式 `"不"` 会改金样，<br>故留到下次重生成金样时一并改（属金样冻结范围，非本轮） |
-| T3.1b | `tools/checks/check_data_manifest.sh:32` 用 `sed` 去行尾空白，与 `data/MANIFEST` 的「行首尾不留空白」约定不一致 | [待办] | 这种行能过守卫、却会让 `install.sh` 的整行匹配直接 die ⇒ 应让守卫判错；<br>属行为变更（既有可能让现存清单变红，也牵动装/卸契约），留待下一批 |
 | K14b | 学习库 materialized 缓存可改为共享分区（原 `learning.rs` 注释里的优化设想） | [待办] | 第 8 批只删了那条未来笔记（原文留在台账）：<br>`Fifo<String, Rc<Materialized>>` 改共享需先有基准数据、<br>收益与风险未知，属性能批 |
 | T1.3 | pin/URL 常量硬编码 4+ 处且两套取 pin 机制（`git show` vs <br>`worktree add`） | [待办] | T2.2 / T2.4 已随第 11 批完成；<br>pin/URL 收敛牵动 `ci.yml` 与 4 个生成器，单独一批 |
-| `2+3 批残留` | `lexicon` / `sound_to_char_shape` 的文件名与资产常量仍 `pub`、<br>`model_status::format_label` 只被本文件单测用、夹具路径字面量两份、<br>`Engine` 的 `pub(crate)` 字段与 `scheme_config_with_runtime` 未收紧 | [待办] | 第 11 批已完成「`Engine` 装配置于一处」（`Assembly`/`Diagnostics`）；<br>余项需先确认无 crate 外消费者，留待结构批 |
-| `4 批残留` | `platform/fcitx5/src/tests.rs` 仍留 4 个只服务单一主题的助手<br>（`key_list`/`ffi_engine`/`reverse_lookup_character_dirs`/<br>`abi_enum_members`）；`key_routing`/`ffi_mapping`/`status` 各有机械归纳的存疑用例；<br>子文件未加 `//!`、`mod` 声明放父文件末尾 | [待办] | 注解子批（F13/F14）已在第 11 批收工，但本条未随其处理；<br>留待低成本清理批 |
-| `5 批未做部分` | 第 11 批按风险与文件域切开、留给后续批的项 ——<br>方案·数据：D7 `ReverseLookup`、D10 `trait RankKey`、<br>D11 `StateView`、D12 `expand_range`、D13 `has_complete_candidate`、<br>D16 `LexicalModel` 6 个 pub 字段（须先改集成测试契约）、<br>B10 的 decode 侧选重字节表、B20（10 参 `translate`）；<br>低成本项：`scheme.rs` 内联测试约 635 行、`punct_shape_comment`（46 行）、<br>测试体内两处「无时间衰减」字样、四处新旧语义对比叙事、<br>4 条 `paging_action` 用例仍留 `selector.rs` | [待办] | D7/D10–D13 触热路径排序与证据分配，须逐项带金样差分验证；<br>D16 受测试契约阻塞；<br>B10/B20/内联测试属低成本项，可随任一结构批顺带 |
-| `12 批残留` | 占位目录在删掉零信息 README 后只剩空目录：<br>`platform/{linux,windows,macos,ios}`、<br>`crates/hux-scheme/{quanpin,shuangpin,wubi,yuhao}`（VCS 不追踪，<br>新克隆中不存在）；`docs/design.md` 的树已按「计划」标注 | [待办] | 空目录无害、与「未建」等价；<br>若要清掉只需 `rmdir`（不入提交） |
+| `2+3 批残留` | 测试取夹具路径的写法不统一：`key_sequence_differential.rs` 内联 5 处<br>`join("../../..")`，而共享助手 `hux_test_support::repo_path` 已是单点实现 | [待办] | 第 13 批已收掉其余三项：可见性 26 项收紧、<br>`model_status::format_label` 转私有、<br>`scheme_config_with_runtime` 不再从 `crate::engine` 根再导出；<br>`Engine` 字段另见 §2。余项属测试整理，收益仅为一致性 |
+| `5 批未做部分` | 第 11 批按风险与文件域切开、留给后续批的项 ——<br>方案·数据：D7 `ReverseLookup`、D10 `trait RankKey`、<br>D11 `StateView`、D12 `expand_range`、D13 `has_complete_candidate`、<br>D16 `LexicalModel` 6 个 pub 字段（须先改集成测试契约）、<br>B10 的 decode 侧选重字节表、B20（10 参 `translate`） | [待办] | D7/D10–D13 触热路径排序与证据分配，须逐项带金样差分验证；<br>D16 受测试契约阻塞；B10/B20 属低成本项，可随任一结构批顺带。<br>**低成本项已随第 13 批收口**：`scheme.rs` 内联测试 635 行迁出、<br>4 条 `paging_action` 用例迁入 `key_binder`、<br>「无时间衰减」括注与新旧语义叙事清理；<br>`punct_shape_comment` 经评估不搬（见 §2） |
 
 - **M8 补记**：**② rust 工具链：有意不钉**（跟随 stable 最新版；CI 用 \
   `dtolnay/rust-toolchain@stable`）——代价是 stable 漂移可能让 `cargo fmt --all --check` / \
@@ -43,7 +40,7 @@
   无预警变红的实际风险。 \
   **⑤ `cargo-deny`（可选）未做**：属依赖清单 / 许可证 / 公告扫描，收益待评估。
 
-## 2. `[已登记·不修+理由]`（5 条：tiger `A7`/`C3`（跨 crate）/`C8`、文档工具CI `M12`/`M17`）
+## 2. `[已登记·不修+理由]`（7 条：tiger `A7`/`C3`/`C8`、CI `M12`/`M17`、其余见下表）
 
 | 编号 | 一句话问题 | 状态 | 归宿（提交 / 批次 · 不修理由 · 待办成本） |
 |---|---|---|---|
@@ -52,6 +49,9 @@
 | C8 | 信息项：NaN 语义（见 A7）、<br>`build_edges` 每位置线性扫全部拼写键（449 键 × 段长） | [已登记·不修+理由] | **非缺陷**：NaN 已按 A7 注明；449 键量级的线性扫经评估可接受，<br>报告本身判「仅记录」 |
 | M12 | `tools/cases/key_cases.txt` 有无害重复行（`+`、`Shift++a`） | [已登记·不修+理由] | 第 5 批：重复行**有意保留**——删行会改动入库 `key.tsv.gz` <br>的记录数（同一输入两次解析必须一致，金样里各出现两次）；<br>已就地加注释说明，避免后人误读为「覆盖两种解析」 |
 | M17 | 信息项：其余安装 / 卸载契约已核实一致 | [已登记·不修+理由] | **无需动作**：报告自述已逐项实测相符（CMake 3 文件、`--purge` 覆盖面、<br>帮助行 `sed` 范围、`data/README.md` 溯源、`docs/config.md` 14 + 3 项、<br>24 份文档 0 破链）；本轮只复跑了其中的金样 sha <br>部分（当时 `verify_golden_shas.py` 61 项通过），<br>未逐项重测 |
+
+| `5 批·punct_shape_comment` | `sound_to_char_shape.rs` 的 `punct_shape_comment` 47 行仍留在门面文件 | [已登记·不修+理由] | 第 13 批评估后不搬：唯一调用点在同文件（标点候选构造），<br>两个子模块（`index` 索引格式 / `graph` 图翻译）都不覆盖该主题，<br>搬动只会放宽可见性或为单函数新开模块 |
+| `4 批·Engine 字段` | `platform/fcitx5` 的 `Engine` 有 12 个 `pub(crate)` 字段未收紧 | [已登记·不修+理由] | 第 13 批复核后关闭：12 个字段无一「本可私有」——<br>`crate::abi` / `crate::ui` / `crate::tests` 都是 `crate::engine` 的兄弟，<br>任一使用点存在即不可能私有；收窄只能把 `pub(crate)` 搬到访问器<br>或搬动测试树，收益仅表述、成本为噪音 |
 
 ## 3. `[误报·已核实]`（2 条：tiger `B2·子断言`、第 11 批口径修正）
 

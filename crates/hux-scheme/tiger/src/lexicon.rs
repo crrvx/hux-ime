@@ -28,7 +28,7 @@ use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 /// 未知字符的字频回退（参照 `unknown_character_rank`）。
-pub const UNKNOWN_CHARACTER_RANK_FALLBACK: usize = 20001;
+const UNKNOWN_CHARACTER_RANK_FALLBACK: usize = 20001;
 
 // ---------------------------------------------------------------- 词库文件名
 //
@@ -46,13 +46,13 @@ pub(crate) const RANKS_FILE: &str = "tiger_sentence.char_ranks.txt";
 /// 全码白名单文件名。
 pub(crate) const WHITELIST_FILE: &str = "tiger_sentence.full_code_whitelist.txt";
 /// 补充词库文件名。
-pub const SUPPLEMENT_FILE: &str = "tiger_sentence.supplement.txt";
+pub(crate) const SUPPLEMENT_FILE: &str = "tiger_sentence.supplement.txt";
 /// 词先验位图文件名（参考 `tiger_sentence.lexical.bin`）。
-pub const LEXICAL_FILE: &str = "tiger_sentence.lexical.bin";
+pub(crate) const LEXICAL_FILE: &str = "tiger_sentence.lexical.bin";
 /// 语言模型相对路径（参考 `models/sentence-ngram-mobile.bin`）。
-pub const MODEL_PATH: &str = "models/sentence-ngram-mobile.bin";
+pub(crate) const MODEL_PATH: &str = "models/sentence-ngram-mobile.bin";
 
-/// 字集开关（[`Lexicon::load_with`] / [`Lexicon::apply_lexicon_options`] 的入参）。
+/// 字集开关（[`Lexicon::load_with`] / `Lexicon::apply_lexicon_options` 的入参）。
 ///
 /// 两者都只改**词库内容**（[`DataStatus`] 的字段不随之增减），故变更即重建索引。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -188,7 +188,7 @@ fn extra_codes_names(directory: &Path) -> Vec<String> {
 }
 
 /// 码注释（上游音反查件；当前 pin 的 main 未含，音反查接线用）：单字显示全部编码（源序），词组逐字 `字:码组`。
-pub fn code_comment(lexicon: &Lexicon, text: &str) -> Option<String> {
+pub(crate) fn code_comment(lexicon: &Lexicon, text: &str) -> Option<String> {
     if !lexicon.built {
         return None;
     }
@@ -216,7 +216,7 @@ pub fn code_comment(lexicon: &Lexicon, text: &str) -> Option<String> {
 }
 
 /// 码注释过滤器（同上；音反查接线用）：音反查段候选写入虎码注释。
-pub fn code_comment_filter(candidates: &mut [Candidate], active: bool, lexicon: &Lexicon) {
+pub(crate) fn code_comment_filter(candidates: &mut [Candidate], active: bool, lexicon: &Lexicon) {
     if !active {
         return;
     }
@@ -332,7 +332,7 @@ impl Lexicon {
     }
 
     /// 本次装载生效的字集开关。
-    pub fn options(&self) -> LexiconOptions {
+    pub(crate) fn options(&self) -> LexiconOptions {
         self.options
     }
 
@@ -345,7 +345,7 @@ impl Lexicon {
     /// 应用字集开关与高频上限：两者都改词库内容，故一并落位后**只重建一次**
     /// （只改开关的调用方传当前上限即可；差分重放走单参数的
     /// [`Lexicon::apply_high_freq_limit`]）。
-    pub fn apply_lexicon_options(&mut self, limit: usize, options: LexiconOptions) {
+    pub(crate) fn apply_lexicon_options(&mut self, limit: usize, options: LexiconOptions) {
         self.options = options;
         self.rebuild(limit);
     }
@@ -491,7 +491,7 @@ impl Lexicon {
 
     /// 数据装载摘要（`hux_engine_data_info`）：装了哪几张码表 + 条目数 / 单字数 +
     /// 两个字集开关的生效值。
-    pub fn data_info(&self) -> String {
+    pub(crate) fn data_info(&self) -> String {
         format!(
             "code_tables=[{}] entries={} chars={} full_charset={} filter_non_han={}",
             self.code_tables.join(","),
@@ -524,7 +524,7 @@ impl Lexicon {
     }
 
     /// 数据目录（参照 `lexicon_state.directories` 的用途：定位词先验位图等随包数据）。
-    pub fn dirs(&self) -> &[PathBuf] {
+    pub(crate) fn dirs(&self) -> &[PathBuf] {
         &self.dirs
     }
 }
@@ -775,10 +775,10 @@ fn build_lexicon_index(
 
 // ---------------------------------------------------------------- 补充短语
 
-pub const SUPPLEMENT_BASELINE_REWARD: f64 = 9.0;
-pub const SUPPLEMENT_WEIGHT_SCALE: f64 = 2.0;
-pub const SUPPLEMENT_BASELINE_WEIGHT: f64 = 1000.0;
-pub const SUPPLEMENT_MAXIMUM_REWARD: f64 = 16.0;
+const SUPPLEMENT_BASELINE_REWARD: f64 = 9.0;
+const SUPPLEMENT_WEIGHT_SCALE: f64 = 2.0;
+const SUPPLEMENT_BASELINE_WEIGHT: f64 = 1000.0;
+const SUPPLEMENT_MAXIMUM_REWARD: f64 = 16.0;
 
 /// 参照 `reward_for_weight`：重量 → 补充奖励。
 ///
@@ -833,7 +833,7 @@ impl Supplement {
         Self::load_file(&path)
     }
 
-    pub fn load_file(path: &Path) -> Self {
+    fn load_file(path: &Path) -> Self {
         let display = path.to_string_lossy().into_owned();
         // 与 `Lexicon::read_data_file` 一致：非法 UTF-8 视作空数据并记错误（有意偏离）。
         let content = match std::fs::read_to_string(path) {
@@ -843,7 +843,7 @@ impl Supplement {
         Self::build(&parse_supplement_content(&content), Some(display))
     }
 
-    pub fn build(entries: &Map<String, f64>, path: Option<String>) -> Self {
+    fn build(entries: &Map<String, f64>, path: Option<String>) -> Self {
         let mut nodes = vec![SupplementNode {
             transitions: HashMap::new(),
             failure: 0,
@@ -925,7 +925,7 @@ impl Supplement {
     }
 
     /// 参照 `supplement.advance`：返回 (状态, 奖励)；状态为 1 基（根 = 1）。
-    pub fn advance(&self, state: usize, character: char) -> (usize, f64) {
+    pub(crate) fn advance(&self, state: usize, character: char) -> (usize, f64) {
         if self.count == 0 {
             return (1, 0.0);
         }
@@ -966,7 +966,7 @@ impl SupplementStatus {
 }
 
 /// 参照 `supplement.load_file` 的行解析：`text [weight]`，非法权重丢弃该行。
-pub fn parse_supplement_content(content: &str) -> Map<String, f64> {
+fn parse_supplement_content(content: &str) -> Map<String, f64> {
     let mut entries = Map::new();
     let body = content.strip_prefix('\u{feff}').unwrap_or(content);
     // `(content .. "\n"):gmatch("(.-)\r?\n")`：按行切分，含空行。

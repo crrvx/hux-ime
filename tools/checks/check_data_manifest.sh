@@ -7,7 +7,8 @@
 #   bash tools/checks/check_data_manifest.sh
 #
 # 检查项（任一不符即 exit 1）：
-#   ① data/MANIFEST 存在、至少 1 条有效行、无重复、每行都在 data/ 下且文件存在；
+#   ① data/MANIFEST 存在、至少 1 条有效行、无重复、条目无行首 / 行尾空白、
+#      每行都在 data/ 下且文件存在；
 #   ② `data/` 里 `tiger_sentence.*` 与 `symbols.yaml`（= 旧 install.sh glob 的覆盖范围）全部在清单里；
 #   ③ install.sh 与 uninstall.sh 都引用 data/MANIFEST（不再各自维护名单）；
 #   ④ platform/fcitx5/CMakeLists.txt 引用 data/MANIFEST，且安装目标为 share/fcitx5/hux。
@@ -29,7 +30,10 @@ if [ ! -f "$manifest" ]; then
 fi
 
 # ① 清单自身
-entries=$(sed -e 's/[[:space:]]*$//' "$manifest" | grep -vE '^[[:space:]]*(#|$)' || true)
+# 解析口径与 tools/scripts/lib.sh 的 manifest_lines 对齐：只跳过空行与行首 `#` 注释。
+# **不修剪空白**——install.sh 按整行取路径、CMake `file(STRINGS …)` 也原样存入，
+# 条目带行首 / 行尾空白会被装成带空白的名字，故此处必须判错而非宽容。
+entries=$(grep -vE '^(#|$)' "$manifest" || true)
 count=$(printf '%s\n' "$entries" | grep -c . || true)
 if [ "$count" -lt 1 ]; then
     fail "$manifest 没有有效行"
@@ -40,6 +44,12 @@ if [ -n "$duplicates" ]; then
 fi
 while IFS= read -r entry; do
     [ -n "$entry" ] || continue
+    case "$entry" in
+        *[[:space:]] | [[:space:]]*)
+            fail "清单行带行首 / 行尾空白（装机会取到带空白的名字）：[$entry]"
+            continue
+            ;;
+    esac
     case "$entry" in
         data/*) ;;
         *) fail "清单行不在 data/ 下：$entry" ;;

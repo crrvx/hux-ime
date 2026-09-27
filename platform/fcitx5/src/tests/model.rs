@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+//! 模型解析与重新部署：菜单短名 / 路径三态、按来源解析、重装模型与数据文件。
+//!
+//! 重新部署同时核对选项存储与学习库句柄；夹具与 `serial()` 串行约定见父模块 `tests.rs`。
+
 use super::*;
 
 /// 模型**菜单短名**（`hux_engine_model_info`）的三种状态 + 空指针：已装载（格式名）/

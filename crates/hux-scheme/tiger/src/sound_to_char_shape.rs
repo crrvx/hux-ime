@@ -6,14 +6,14 @@
 //! 语义对齐 librime 1.17.0 的词典音反查（`reverse_lookup_translator` + `ReverseLookupFilter`）：
 //! - 输入（去掉前缀后）按**拼写表**分段：音节本体 + 缩写（PY_c.schema.yaml 的两条
 //!   `abbrev` 规则），缩写可信度罚 `log(0.5)`；
-//! - 段内的**音节分隔符**（见 [`SYLLABLE_DELIMITER`]）在匹配拼写键时透明跳过、但**强制**断音：
+//! - 段内的**音节分隔符**（见 `SYLLABLE_DELIMITER`）在匹配拼写键时透明跳过、但**强制**断音：
 //!   没有音节（含尾部补全）能跨过它，且它在预编辑里原样保留（含段首、段尾；只有音节边界插空格）；
 //! - 输入尾部无法由拼写键消耗时，对剩余部分做**补全**（拼写表子树展开；本体拼写再罚
 //!   `log(0.05)`，缩写保持自身罚）；
 //! - 分段路径的音节序列必须与词条的码**完全一致**；
 //! - 候选次序 = 「可信度 + ln(权重)」降序（权重序取自组内稳定排序），上限
 //!   [`crate::decode::CANDIDATE_LIMIT`]（与主候选一致）；
-//! - 注释（虎码）由 [`crate::lexicon::code_comment_filter`] 追加以复用现有码注释格式。
+//! - 注释（虎码）由 `crate::lexicon::code_comment_filter` 追加以复用现有码注释格式。
 //!
 //! `code_comment`/`code_comment_filter` 定义于 [`crate::lexicon`]（与主候选共用码注释格式）。
 //!
@@ -30,12 +30,12 @@ pub use graph::translate;
 pub use index::{SoundToCharShapeIndex, load_first};
 
 /// 索引文件名（发布为 `.gz`；fixture 常用未压缩）。
-pub const SOUND_TO_CHAR_SHAPE_FILE: &str = "tiger_sentence.pinyin.bin";
-pub const SOUND_TO_CHAR_SHAPE_FILE_GZ: &str = "tiger_sentence.pinyin.bin.gz";
+pub(crate) const SOUND_TO_CHAR_SHAPE_FILE: &str = "tiger_sentence.pinyin.bin";
+pub(crate) const SOUND_TO_CHAR_SHAPE_FILE_GZ: &str = "tiger_sentence.pinyin.bin.gz";
 /// 音反查段标签（参照 schema 的 `reverse_lookup`）。
-pub const SOUND_TO_CHAR_SHAPE_TAG: &str = "reverse_lookup";
+pub(crate) const SOUND_TO_CHAR_SHAPE_TAG: &str = "reverse_lookup";
 /// 音反查段提示（参照 schema `reverse_lookup/tips`）。
-pub const SOUND_TO_CHAR_SHAPE_TIPS: &str = "〔拼音〕";
+pub(crate) const SOUND_TO_CHAR_SHAPE_TIPS: &str = "〔拼音〕";
 
 /// 音节分隔符（方案 schema 的 `speller/delimiter` 的撇号；段内空格是上屏/选词键，撇号才是
 /// 唯一实际入口）：匹配拼写键时透明跳过，但**强制**在该处断音，并在预编辑里原样保留。
@@ -43,7 +43,7 @@ pub const SOUND_TO_CHAR_SHAPE_TIPS: &str = "〔拼音〕";
 ///
 /// 与选重后缀表**语义不同、不可合并**：撇号在此是断音，而 `;` / 数字是选重（字节表见
 /// [`crate::decode::has_selection_suffix`]，由 beam 侧与交互侧共用）。
-pub const SYLLABLE_DELIMITER: u8 = b'\'';
+pub(crate) const SYLLABLE_DELIMITER: u8 = b'\'';
 
 /// 追加 `ch` 是否只是重复音节分隔符：连续撇号只保留第一个，多余的**丢弃、不录入**
 /// （输入串与预编辑都不会出现 `''`，也不打断反查段）。
@@ -127,7 +127,7 @@ fn punct_shape_comment(punct: &str) -> String {
 /// 本仓按方案 schema 的意图实现该切分（见 [`translate`]）：撇号是音节分隔符 —— 匹配拼写键时
 /// 透明跳过，但**强制**断音；金样对照见 `key_sequence_differential` 的音反查重放。
 /// 撇号在 abc 段一侧的效果见 `interaction::translate::SEGMENTATION_DELIMITER`（追踪反查分支 pin 的 schema）。
-pub fn matches_pattern(input: &[u8], prefix: char) -> bool {
+pub(crate) fn matches_pattern(input: &[u8], prefix: char) -> bool {
     let prefix = prefix as u8;
     let Some(rest) = input.strip_prefix(&[prefix][..]) else {
         return false;

@@ -11,17 +11,6 @@ use super::*;
 use crate::abi::{CANDIDATE_LAYOUT_VERTICAL, PREEDIT_MODE_HIDDEN, hux_engine_apply_settings};
 use hux_ffi::HUX_OPTIONS_FIELDS;
 
-/// 键位表（`HUX_OPTIONS_FIELDS` 里四个 `hux_key_list` 字段的填充口径）。
-fn key_list(keys: &[(i32, i32)]) -> hux_ffi::HuxKeyList {
-    let mut list = hux_ffi::HuxKeyList::default();
-    for (index, (sym, states)) in keys.iter().enumerate().take(hux_ffi::HUX_MAX_KEYS) {
-        list.sym[index] = *sym;
-        list.states[index] = *states;
-    }
-    list.count = keys.len().min(hux_ffi::HUX_MAX_KEYS) as i32;
-    list
-}
-
 /// 键名经内核 `repr()` 规范化后的对照值（`Page_Down` 的规范名是 `Next`）。
 fn canonical(reprs: &[String]) -> Vec<String> {
     reprs

@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+//! 数字直选（`DigitSelect`）：菜单可见时数字键上屏当页候选、越页回落方案自身分支。
+//!
+//! 未启用时保留序号后缀；夹具与 `serial()` 串行约定见父模块 `tests.rs`。
+
 use super::*;
 
 /// 数字直选（`DigitSelect`）：菜单可见时 1–9 直接上屏当前页候选，0=第 10 个。

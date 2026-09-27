@@ -109,7 +109,7 @@ fn reset_empties_committed_and_locks() {
     assert!(state.committed_raw.is_empty());
     assert!(state.locks.is_empty());
     assert!(state.continuation_after_auto_commit);
-    // 属性层只剩缓冲前缀：重置后同步清空（不再有 committed/locks 快照）。
+    // 属性层只剩缓冲前缀：重置后同步清空。
     assert_eq!(buffered_text(&context), "");
     assert!(state.buffered_text.is_empty());
 }

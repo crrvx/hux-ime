@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+//! `hux_engine_apply_settings` 的字段搬运与既有会话的即时生效（布局 / 预编辑 / 查码键 / 翻页）。
+//!
+//! 另覆盖 data info 摘要与 C 边界生命周期冒烟；夹具与 `serial()` 串行约定见父模块 `tests.rs`。
+
 use super::*;
 
 #[test]
@@ -53,8 +57,8 @@ fn ffi_apply_settings_maps_new_options() {
         session.context.get_option("_vertical"),
         "竖排应写入 `_vertical`"
     );
-    // 最短保留码数属方案会话状态（见 `crates/hux-scheme/tiger`）：
-    // 平台侧只验证配置已按竖排 / 页大小等映射到方案。
+    // 最短保留码数：平台侧钉住「已搬进 `Settings`」（其方案侧效应见 `crates/hux-scheme/tiger`）。
+    assert_eq!(engine.settings.min_retained_input_length, 4);
     assert_eq!(engine.scheme.host_options().page_size, 7);
     // 越界钳制（0..=20）。
     let clamped = HuxOptions {
@@ -226,6 +230,17 @@ fn ffi_apply_settings_maps_page_options() {
         vec!["period", "bracketright"]
     );
     assert!(state.settings.digit_select);
+    // 负半：`digit_select = 0` 必须映射为 false。`Settings::default().digit_select` 本就是
+    // true，只验正半分不清「字段已搬」与「恰好与缺省同值」。
+    let digit_select_off = HuxOptions {
+        digit_select: 0,
+        ..ffi_options()
+    };
+    assert_eq!(
+        unsafe { hux_engine_apply_settings(state, &digit_select_off) },
+        1
+    );
+    assert!(!state.settings.digit_select);
     assert_eq!(state.scheme.host_options().page_size, 7);
     assert_eq!(
         state.scheme.host_options().page_up_keys,
@@ -241,10 +256,11 @@ fn ffi_apply_settings_maps_page_options() {
     unsafe { hux_engine_free(engine) };
 }
 
+/// C 边界生命周期冒烟：摘要可读、会话可建、按键被消费、会话与引擎可释放。
 #[test]
-fn ffi_roundtrip() {
+fn ffi_lifecycle_smoke() {
     let _guard = serial();
-    let engine = ffi_engine(temp_user_dir("ffi-roundtrip"));
+    let engine = ffi_engine(temp_user_dir("ffi-lifecycle"));
     assert!(!engine.is_null());
     let status = unsafe { hux_engine_status(engine) };
     assert!(!status.is_null());

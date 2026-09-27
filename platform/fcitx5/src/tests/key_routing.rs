@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+//! 按键路由：翻页键不被标点分支遮蔽、修饰键 / 释放 / 空闲态放行、组合内导航与标点。
+//!
+//! 大写早提交与粘滞 forward 亦在此核对；夹具与 `serial()` 串行约定见父模块 `tests.rs`。
+
 use super::*;
 
 /// 菜单可见时的翻页键不再被方案标点分支遮蔽（**本仓有意偏离上游 `abad411`**）。
@@ -20,17 +24,35 @@ use super::*;
 /// 覆盖：① `=` 下翻不提交；② 翻页后 `-` 上翻不提交；③ **首屏**（未翻页）`-` 同样上翻
 /// （回归场景，不再依赖任何标签）；④ `Page_Down` 始终翻页；⑤ 无菜单时 `=`/`-` 落标点；
 /// ⑥ **负向对照**：`ascii_mode` 打开时判据不成立 ⇒ `-` 不拦截、退回上游标点路径。
+///
+/// 页大小先显式设为 3（≠ 缺省 5）：翻页期望值必须来自**配置**；若沿用与实现同源的
+/// `hux_core::host::DEFAULT_PAGE_SIZE`（恰等于缺省配置），就分不清「读配置」与「硬编码 5」。
 #[test]
 fn menu_paging_keys_are_not_shadowed_by_the_punctuation_branch() {
     let _guard = serial();
+    // 本用例推送的页大小：与缺省 5 不同，故期望值只可能来自配置。
+    const PAGE_SIZE: usize = 3;
+    // 本用例的引擎统一在这里构造：一律先推送同一页大小，翻页期望值才只可能来自配置。
+    let new_engine = || {
+        let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
+        engine.apply_settings(Settings {
+            page_size: PAGE_SIZE,
+            ..Default::default()
+        });
+        engine
+    };
     COMMITS.lock().unwrap().clear();
     UPDATES.lock().unwrap().clear();
-    let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
+    let mut engine = new_engine();
     for code in *b"ja" {
         engine.key(u32::from(code), 0, false);
     }
     let first_page = last_update().2;
-    assert!(first_page.len() >= 2, "夹具 ja 应有可翻页的多页候选");
+    assert!(
+        first_page.len() > PAGE_SIZE,
+        "夹具 ja 应有超过一页（{PAGE_SIZE}）的候选：{}",
+        first_page.len()
+    );
 
     // ① 菜单可见按 `=`：下翻一页、不提交（上游会提交「…=」）。
     COMMITS.lock().unwrap().clear();
@@ -42,7 +64,7 @@ fn menu_paging_keys_are_not_shadowed_by_the_punctuation_branch() {
     );
     assert_eq!(
         last_update().3,
-        selected_before + hux_core::host::DEFAULT_PAGE_SIZE as i32,
+        selected_before + PAGE_SIZE as i32,
         "`=` 应下翻一页（高亮前进一页）"
     );
     assert_eq!(engine.session().context.input(), b"ja", "翻页不改动输入");
@@ -54,7 +76,7 @@ fn menu_paging_keys_are_not_shadowed_by_the_punctuation_branch() {
 
     // ③ **首屏**按 `-`：菜单可见即判上翻页（不再要求 `when: paging` 标签）——
     //    先把高亮挪到第 2 项，再按 `-` ⇒ 归零高亮（参照 `PreviousPage` 的三元式）、不提交。
-    let mut first_page_engine = TestEngine::new(host(), fixture_dirs(), None, None);
+    let mut first_page_engine = new_engine();
     for code in *b"ja" {
         first_page_engine.key(u32::from(code), 0, false);
     }
@@ -96,7 +118,7 @@ fn menu_paging_keys_are_not_shadowed_by_the_punctuation_branch() {
     );
 
     // ④ 显式 `Page_Down` 仍是翻页路径（不受本偏离影响）。
-    let mut page_engine = TestEngine::new(host(), fixture_dirs(), None, None);
+    let mut page_engine = new_engine();
     for code in *b"ja" {
         page_engine.key(u32::from(code), 0, false);
     }
@@ -106,12 +128,12 @@ fn menu_paging_keys_are_not_shadowed_by_the_punctuation_branch() {
     assert!(COMMITS.lock().unwrap().is_empty(), "Page_Down 不提交");
     assert_eq!(
         last_update().3,
-        page_start + hux_core::host::DEFAULT_PAGE_SIZE as i32,
+        page_start + PAGE_SIZE as i32,
         "Page_Down 翻到下一页"
     );
 
     // ⑤ 无菜单（空闲）时 `=`/`-` 仍落标点：不进任何翻页路径。
-    let mut idle_engine = TestEngine::new(host(), fixture_dirs(), None, None);
+    let mut idle_engine = new_engine();
     COMMITS.lock().unwrap().clear();
     assert!(idle_engine.key(0x3d, 0, false), "空闲 `=` 由标点表消费");
     assert_eq!(COMMITS.lock().unwrap().clone(), vec!["=".to_string()]);
@@ -123,11 +145,10 @@ fn menu_paging_keys_are_not_shadowed_by_the_punctuation_branch() {
     //    翻页键一律不拦截，`-` 退回上游标点路径（确认组合 + 落标点）。
     //    平台侧无 `ascii_mode` 设置项（它是宿主/rime 标准选项，真机由 fcitx5 的
     //    V 模式直接写入会话上下文），故与参照探针同为「直接设置会话选项」。
-    let mut ascii_engine = TestEngine::new(host(), fixture_dirs(), None, None);
+    let mut ascii_engine = new_engine();
     for code in *b"ja" {
         ascii_engine.key(u32::from(code), 0, false);
     }
-    let ascii_sentence = last_update().2.first().cloned().expect("ja 候选");
     let session = ascii_engine.session;
     ascii_engine
         .sessions
@@ -137,10 +158,14 @@ fn menu_paging_keys_are_not_shadowed_by_the_punctuation_branch() {
         .set_option("ascii_mode", true);
     COMMITS.lock().unwrap().clear();
     assert!(ascii_engine.key(0x2d, 0, false), "`-` 由标点表消费");
+    // 期望写成字面量：自指期望（取引擎自己的候选串）分不清「引擎选错字」与「期望跟着错」。
+    // 引擎对 `ja` 的首选是「丁」，而不是码表行首「一」——码表行序不是候选序：夹具里
+    // `一` 已有首选码 `cd`（`ja` 只是它的第二个码），`丁` 只有 `ja` 一个码，故「丁」排前
+    // （见 `goldens/key_sequence/tiger_sentence.codes.txt` 与 `data/tiger_sentence.codes.txt`）。
     assert_eq!(
         COMMITS.lock().unwrap().clone(),
-        vec![ascii_sentence, "-".to_string()],
-        "`ascii_mode` 下 `-` 不判为翻页：确认组合 + 落标点"
+        vec!["丁".to_string(), "-".to_string()],
+        "`ascii_mode` 下 `-` 不判为翻页：确认组合（提交首选「丁」）+ 落标点"
     );
 }
 
@@ -247,8 +272,10 @@ fn punctuation_commits_when_idle() {
     assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "。");
 }
 
+/// 组合中按标点：**先确认组合**（提交当前候选「甲」），标点随后**独立提交**（「，」）——
+/// 标点并不追加进组合（原名 `punctuation_appends_to_composition` 与断言相反）。
 #[test]
-fn punctuation_appends_to_composition() {
+fn punctuation_confirms_composition_then_commits() {
     let _guard = serial();
     COMMITS.lock().unwrap().clear();
     let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);

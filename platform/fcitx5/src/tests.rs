@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+//! 平台层单元测试子树：共享静态记录（提交 / UI 快照）、`serial()` 串行约定与主题子模块。
+//!
+//! 回调记录是进程级静态（`COMMITS` / `UPDATES`）：用到它们的用例先取 `serial()` 互斥锁，
+//! 避免并发串扰。引擎夹具（`TestEngine` / `fixture_dirs` / `temp_user_dir`）在父模块构建，
+//! 子模块经 `use super::*;` 取用；分工见文件头的 `mod` 声明。
+
 use crate::abi::*;
 use crate::engine::Engine;
 use crate::learning_store;
@@ -13,6 +19,21 @@ use hux_core::scheme::OptionDecl;
 use std::ffi::{CString, c_char, c_void};
 use std::path::PathBuf;
 use std::sync::Mutex;
+
+mod abi_entries;
+mod abi_options;
+mod digit_select;
+mod ffi_mapping;
+mod key_routing;
+mod learning;
+mod lifecycle;
+mod model;
+mod options;
+mod preedit;
+mod reverse_lookup;
+mod scheme_config;
+mod status;
+mod ui;
 
 static COMMITS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 type UpdateSnapshot = (String, i32, Vec<String>, i32, String, String);
@@ -151,6 +172,7 @@ impl std::ops::DerefMut for TestEngine {
     }
 }
 
+/// 键位表（`HUX_OPTIONS_FIELDS` 里四个 `hux_key_list` 字段的填充口径）。
 fn key_list(keys: &[(i32, i32)]) -> HuxKeyList {
     let mut list = HuxKeyList::default();
     for (index, (sym, states)) in keys.iter().enumerate().take(HUX_MAX_KEYS) {
@@ -175,7 +197,7 @@ fn ffi_options() -> HuxOptions {
         // 字反查：Shift+`（= `~`）。
         reverse_lookup_character: key_list(&[(0x60, 1)]),
         page_size: 7,
-        // 翻页：`.` 与 `]`。
+        // 翻页：`page_up` = `,`；`page_down` = `.` / `]`。
         page_up: key_list(&[(0x2c, 0)]),
         page_down: key_list(&[(0x2e, 0), (0x5d, 0)]),
         digit_select: 1,
@@ -202,66 +224,3 @@ fn ffi_engine(user_dir: PathBuf) -> *mut Engine {
         Some(user_dir),
     )))
 }
-
-/// 字反查夹具目录。
-fn reverse_lookup_character_dirs() -> Vec<PathBuf> {
-    vec![
-        hux_test_support::repo_path("goldens/sound_to_char_shape"),
-        hux_test_support::repo_path("data"),
-    ]
-}
-
-/// `hux_abi.h` 的 `HUX_OPTION_*` 枚举序 ↔ `hux_cfg::roles::RUNTIME_OPTION_ROLES`（顺序 / 个数 / 名字）。
-///
-/// 角色序在三处手工同步（角色表、头文件枚举、C++ 文案表 `kLabels[role]`）：
-/// **调序**会让菜单文案与开关静默错位、`HUX_OPTION_DIGIT_SELECT` 取到别的选项键。
-/// C++ 侧只能守长度（`static_assert(std::size(kLabels) == HUX_OPTION_COUNT)`，见 `shell/hux.cpp`），
-/// 顺序由本用例从**头文件源码**解析后逐项比对——改名 / 加角色 / 调序都在此失败。
-/// 从 `hux_abi.h` 源码解析某个具名枚举（`NAME = n, …`，含末尾计数哨兵）。
-///
-/// 头文件里有多个 `enum { … };`（取值枚举、角色枚举），故按**成员前缀**挑出目标枚举。
-fn abi_enum_members(prefix: &str) -> Vec<(String, i32)> {
-    let header = std::fs::read_to_string(hux_test_support::repo_path(
-        "crates/hux-ffi/include/hux_abi.h",
-    ))
-    .expect("read hux_abi.h");
-    for body in header.split("enum {").skip(1) {
-        let body = body.split_once("};").expect("枚举结束").0;
-        let members: Vec<(String, i32)> = body
-            .lines()
-            .filter_map(|line| {
-                let (name, value) = line.trim().split_once('=')?;
-                let name = name.trim();
-                if !name.starts_with(&format!("{prefix}_")) {
-                    return None;
-                }
-                Some((
-                    name.to_string(),
-                    value
-                        .trim()
-                        .trim_end_matches(',')
-                        .parse::<i32>()
-                        .expect("枚举下标应为整数"),
-                ))
-            })
-            .collect();
-        if !members.is_empty() {
-            return members;
-        }
-    }
-    panic!("hux_abi.h 里没有 {prefix}_* 枚举");
-}
-
-mod abi_entries;
-mod abi_options;
-mod digit_select;
-mod ffi_mapping;
-mod key_routing;
-mod learning;
-mod lifecycle;
-mod model;
-mod options;
-mod preedit;
-mod reverse_lookup;
-mod scheme_config;
-mod status;

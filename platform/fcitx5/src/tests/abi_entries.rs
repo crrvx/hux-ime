@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+//! C ABI 入口的健壮性：reset / 候选点击 / 周边文本（含空指针、越界索引、未知会话）。
+//!
+//! 夹具与串行约定见父模块 `tests.rs`：用例取 `serial()`，经 `TestEngine` 驱动。
+
 use super::*;
 
 /// `hux_engine_reset`（宿主 `deactivate`/`reset`）：清空组合与字反查态，会话 id 继续可用。

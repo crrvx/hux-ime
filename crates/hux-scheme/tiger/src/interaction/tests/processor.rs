@@ -241,7 +241,7 @@ fn processor_menu_punctuation_stages_learning_before_the_punctuator() {
 /// 上游对「菜单可见 + 可打印 ASCII 标点」一律「暂存学习 + 确认组合 + 交标点表」，于是
 /// `-/=`（以及 schema 绑到翻页的 `[/]`）的 key_binder 绑定被永久遮蔽（最小复现 `j a equal`）。
 /// 本仓在分支入口先问宿主同一套判据 `hux_core::host::paging_action`：
-/// `=`（下翻）与 `-`（上翻，**不再要求「已翻过页」**）都让给宿主翻页，
+/// `=`（下翻）与 `-`（上翻，判据同为「菜单可见」）都让给宿主翻页，
 /// 不确认组合、不暂存学习；`ascii_mode` 打开时判据不成立 ⇒ 回到上游路径。
 /// 代价：菜单可见时 `-`/`=`/`[`/`]` 不能作为标点打出；相关上游金样用例按 `DEVIATIONS` 登记。
 #[test]
@@ -260,7 +260,7 @@ fn processor_menu_paging_keys_bypass_the_punctuation_branch() {
     assert_eq!(h.context.input(), b"ab", "`=` 后组合原样保留（交宿主翻页）");
     assert!(h.context.has_menu(), "`=` 后菜单仍在（交宿主翻页）");
 
-    // `-`：菜单可见即判上翻页（新语义，不再看 `paging` 标签）⇒ 同样让给宿主。
+    // `-`：菜单可见即判上翻页 ⇒ 同样让给宿主。
     assert_eq!(h.press("minus"), ProcessorResult::Forward);
     assert_eq!(
         h.context.last_commit_text(),

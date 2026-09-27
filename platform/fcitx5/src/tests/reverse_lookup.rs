@@ -1,7 +1,19 @@
 // SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+//! 音 / 字反查：多项触发键、端到端候选与两排提示、周边文本不可用与恢复刷新。
+//!
+//! 字反查夹具（`reverse_lookup_character_dirs`）随本主题就近放置；`serial()` 约定见父模块。
+
 use super::*;
+
+/// 字反查夹具目录。
+fn reverse_lookup_character_dirs() -> Vec<PathBuf> {
+    vec![
+        hux_test_support::repo_path("goldens/sound_to_char_shape"),
+        hux_test_support::repo_path("data"),
+    ]
+}
 
 /// 多项触发键（`KeyList`）：两项均可进入音反查。
 #[test]

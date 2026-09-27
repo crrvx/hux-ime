@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+//! 运行时开关与设置下发：白名单往返与持久化、设置覆盖存储、词库按上限重建。
+//!
+//! 夹具与 `serial()` 串行约定见父模块 `tests.rs`。
+
 use super::*;
 
 /// 运行时开关（状态菜单）：白名单读写往返，未知选项拒绝。

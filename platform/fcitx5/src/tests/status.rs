@@ -1,49 +1,11 @@
 // SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+//! 状态串诊断：选项保存失败、热键解析失败、刷新后重取指针、装配诊断。
+//!
+//! 夹具与 `serial()` 串行约定见父模块 `tests.rs`。
+
 use super::*;
-
-/// 文本含 NUL 时剔除后送出，而不是整条丢空。
-#[test]
-fn nul_in_text_is_stripped_not_dropped() {
-    assert_eq!(
-        crate::ui::cstring_lossy("中\0文").to_str().expect("utf8"),
-        "中文"
-    );
-}
-
-/// 选项保存失败须在状态串可见：把 `options.yaml` 造成目录使其必然写失败。
-#[test]
-fn option_save_error_is_visible_in_status() {
-    let _guard = serial();
-    let dir = temp_user_dir("options-error");
-    std::fs::create_dir_all(dir.join(hux_cfg::OPTIONS_FILE))
-        .expect("make options path a directory");
-    let mut engine = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
-    assert!(
-        !engine
-            .engine
-            .diagnostics
-            .status
-            .to_str()
-            .unwrap_or("")
-            .contains("options:"),
-        "初始状态串不含选项错误"
-    );
-    assert!(engine.set_option_value("tiger_sentence_early_commit", false));
-    let status = engine
-        .engine
-        .diagnostics
-        .status
-        .to_str()
-        .unwrap_or("")
-        .to_string();
-    assert!(
-        status.contains("options: Unable to save"),
-        "保存失败应在状态串可见：{status}"
-    );
-    std::fs::remove_dir_all(&dir).ok();
-}
 
 /// 配置页绑到**无名字的 keysym**（媒体键）时该绑定会被丢弃 ⇒ 必须点名。
 ///
@@ -121,13 +83,13 @@ fn unparsable_hotkey_binding_reaches_the_status_string() {
     );
 }
 
-/// `hux_engine_status` 的指针契约：状态串在刷新时被**替换**，
-/// 契约是「每次调用取最新串，不得缓存指针」——故刷新后必须**重新调用**才能拿到新串。
+/// 状态串在刷新时被**替换**，契约是「每次调用取最新串，不得缓存指针」——
+/// 故刷新后必须**重新调用**才能拿到新串；无状态变更时重复读取应稳定（幂等）。
 ///
 /// 头文件此前写「随引擎存活」，与 `refresh_status` 换 `CString` 的实现不符；
 /// 现契约与实现一致，本用例把「重新调用即最新」钉住（旧指针按契约已失效，无法安全断言）。
 #[test]
-fn status_pointer_must_be_read_again_after_a_refresh() {
+fn status_string_is_refreshed_on_read() {
     let _guard = serial();
     let dir = temp_user_dir("status-pointer");
     std::fs::create_dir_all(dir.join(hux_cfg::OPTIONS_FILE))
@@ -150,7 +112,7 @@ fn status_pointer_must_be_read_again_after_a_refresh() {
         after.contains("options: Unable to save"),
         "刷新后重新调用必须读到新串：{after}"
     );
-    assert_ne!(before, after, "状态串内容应随刷新变化");
+    assert_eq!(read(&engine), after, "无状态变更时重复读取应稳定");
     std::fs::remove_dir_all(&dir).ok();
 }
 

@@ -27,9 +27,7 @@ mod assembly;
 mod config;
 mod diagnostics;
 
-pub(crate) use assembly::{
-    Assembled, Assembly, option_keys, scheme_config_with_runtime, wall_clock,
-};
+pub(crate) use assembly::{Assembled, Assembly, option_keys, wall_clock};
 pub(crate) use config::RuntimeOptions;
 // 测试在同一条 `crate::engine::*` 路径下设夹具与核对配置袋；生产路径用不到这三个名字。
 #[cfg(test)]
@@ -171,11 +169,11 @@ impl Engine {
         }
     }
 
-    /// 设置派生的角色 + 运行时开关的生效值（与 [`scheme_config_with_runtime`] 同一装袋口径）。
+    /// 设置派生的角色 + 运行时开关的生效值（与 [`assembly::scheme_config_with_runtime`] 同口径）。
     ///
     /// `pub(crate)`：`tests.rs` 用它核对「按键路径下发的配置袋」与构造期一致。
     pub(crate) fn scheme_config_with_runtime(&self) -> SchemeConfig {
-        scheme_config_with_runtime(&self.settings, self.runtime_option_values())
+        assembly::scheme_config_with_runtime(&self.settings, self.runtime_option_values())
     }
 
     /// 下发配置袋（设置派生的角色 + 运行时开关的生效值），方案据此自算学习 mode、重建词库。

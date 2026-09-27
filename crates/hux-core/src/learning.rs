@@ -1126,7 +1126,7 @@ mod tests {
         }
         let mut capped = LearningIndex::build(&repeated, 1000.0);
         assert_eq!(capped.score("test", "ab", "疒", "其他"), 24.0);
-        // 三次确认跨上下文达 L3 = 10；手工竞争纠错把旧选择等级归零（无时间衰减）。
+        // 三次确认跨上下文达 L3 = 10；手工竞争纠错把旧选择等级归零。
         let mut competing = vec![
             event("ab", "甲乙", "前"),
             event("ab", "甲乙", "后"),

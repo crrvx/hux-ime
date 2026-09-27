@@ -98,6 +98,7 @@ pub(super) fn key_binder(
 mod tests {
     use super::*;
     use crate::host::test_support::*;
+    use crate::punct::PunctTable;
 
     #[test]
     fn key_binder_tab_navigates_candidates() {
@@ -113,5 +114,184 @@ mod tests {
         let mut empty = Context::new();
         empty.set_input(b"x");
         assert_eq!(press(&mut empty, "Tab"), HostResult::Forward);
+    }
+
+    /// 回归场景：`Page_Up` 停在首页后，紧随的上翻页键
+    /// `-` 必须**翻页**（消费、不提交），不得落标点分支把组合提前上屏。
+    ///
+    /// 判据来源是「菜单可见」而非「翻页写入 `paging` 标签」
+    /// （[`paging_action`]），故用例在按 `Page_Up` **之前**就断言 `Some(Up)`——
+    /// 若有人把标签判据加回来（而标签已无人写），本用例立刻失败。
+    #[test]
+    fn page_up_key_holds_at_the_first_page() {
+        let options = HostOptions::default();
+        let mut context = context_with_menu(&["a", "b", "c", "d", "e", "f"], 0);
+        assert_eq!(
+            paging_action(&context, &options, &key_of("minus")),
+            Some(PagingDir::Up),
+            "菜单可见即判上翻页（不要求 `paging` 标签）"
+        );
+        assert_eq!(press(&mut context, "Page_Up"), HostResult::Consumed);
+        assert_eq!(
+            paging_action(&context, &options, &key_of("minus")),
+            Some(PagingDir::Up),
+            "首页上翻后判据不变（高亮仍 0，菜单仍在）"
+        );
+        // 宿主链：`-` 走翻页（消费、不提交、输入不变、高亮留在首页）。
+        assert_eq!(press(&mut context, "minus"), HostResult::Consumed);
+        assert_eq!(context.last_commit_text(), "");
+        assert_eq!(context.input(), b"ab");
+        assert_eq!(selected(&context), 0);
+    }
+
+    /// 上翻页键**只要菜单可见**就判为翻页并消费，不要求
+    /// 「已翻过页」（参照的 `when: paging` 标签在本仓已删）；菜单不可用（无菜单 / `ascii_mode`）时
+    /// 不消费——该键继续下落（无标点表时由 `editor` 的可打印字符路径提交组合，
+    /// 有标点表时落作标点）。
+    #[test]
+    fn selector_page_up_requires_a_visible_menu() {
+        let mut fresh = context_with_menu(&["a", "b", "c", "d", "e", "f"], 0);
+        assert_eq!(
+            press(&mut fresh, "minus"),
+            HostResult::Consumed,
+            "菜单可见时上翻页键生效（首屏亦然）"
+        );
+        assert_eq!(selected(&fresh), 0, "已在首页 ⇒ 归零高亮（不循环）");
+        assert_eq!(fresh.last_commit_text(), "");
+        assert_eq!(fresh.input(), b"ab", "翻页不改动输入");
+
+        // 无菜单：不消费（交宿主）。
+        let mut idle = Context::new();
+        assert_eq!(press(&mut idle, "minus"), HostResult::Forward);
+
+        // `ascii_mode`：两侧翻页键都不拦截（`menu_available` 前置）——键落回后续处理器，
+        // 而不是被 `key_binder` 吞成翻页（证据：组合被后续处理器提交，翻页从不提交）。
+        let options = HostOptions::default();
+        let mut ascii = context_with_menu(&["甲", "乙"], 0);
+        ascii.set_option("ascii_mode", true);
+        assert_eq!(paging_action(&ascii, &options, &key_of("minus")), None);
+        assert_eq!(paging_action(&ascii, &options, &key_of("equal")), None);
+        assert_eq!(
+            press(&mut ascii, "minus"),
+            HostResult::Forward,
+            "键交宿主的可打印字符路径（翻页会返回 Consumed）"
+        );
+        assert_eq!(
+            ascii.last_commit_text(),
+            "甲",
+            "键落回后续处理器（editor 提交组合）；翻页路径不提交"
+        );
+        assert!(ascii.input().is_empty());
+    }
+
+    /// 方案侧「菜单可见 + 标点」分支与宿主 `key_binder` 共用此判据：
+    /// 缺省绑定 `=` → Down、`-` → Up，**两侧同前置**（菜单可见；`ascii_mode` 关闭两侧）；
+    /// 判据不看 `paging` 标签（本仓语义强化，见函数文档）。
+    #[test]
+    fn paging_action_is_the_shared_key_binder_predicate() {
+        let options = HostOptions::default();
+        let mut menu = context_with_menu(&["a", "b", "c", "d", "e", "f"], 0);
+        assert_eq!(
+            paging_action(&menu, &options, &key_of("equal")),
+            Some(PagingDir::Down)
+        );
+        assert_eq!(
+            paging_action(&menu, &options, &key_of("minus")),
+            Some(PagingDir::Up),
+            "菜单可见即判上翻页（不要求先翻过页）"
+        );
+        assert_eq!(press(&mut menu, "equal"), HostResult::Consumed);
+        assert_eq!(
+            paging_action(&menu, &options, &key_of("minus")),
+            Some(PagingDir::Up),
+            "翻页后判据不变"
+        );
+
+        // 无菜单 / `ascii_mode`：两侧一律不成立。
+        let idle = Context::new();
+        assert_eq!(paging_action(&idle, &options, &key_of("equal")), None);
+        assert_eq!(paging_action(&idle, &options, &key_of("minus")), None);
+        let mut ascii = context_with_menu(&["a", "b"], 0);
+        ascii.set_option("ascii_mode", true);
+        assert_eq!(paging_action(&ascii, &options, &key_of("equal")), None);
+        assert_eq!(paging_action(&ascii, &options, &key_of("minus")), None);
+        // 标签不再参与判据：即便人为置位（本仓已无写入方），`ascii_mode` 下仍不判翻页。
+        ascii
+            .composition
+            .back_mut()
+            .expect("段")
+            .tags
+            .push("paging".to_string());
+        assert_eq!(
+            paging_action(&ascii, &options, &key_of("minus")),
+            None,
+            "`paging` 标签不是判据（判据是菜单可见）"
+        );
+
+        // schema 绑定的其它翻页键按 options 生效（`[`/`]`），未绑定的键不判翻页。
+        let custom = HostOptions {
+            page_size: 2,
+            page_up_keys: vec![key_of("bracketleft")],
+            page_down_keys: vec![key_of("bracketright")],
+            page_cycle: false,
+        };
+        let mut menu = context_with_menu(&["a", "b", "c", "d", "e", "f"], 0);
+        assert_eq!(
+            paging_action(&menu, &custom, &key_of("bracketright")),
+            Some(PagingDir::Down)
+        );
+        assert_eq!(
+            paging_action(&menu, &custom, &key_of("bracketleft")),
+            Some(PagingDir::Up),
+            "`[` 与 `-` 同前置（菜单可见即翻页）"
+        );
+        assert_eq!(
+            paging_action(&menu, &custom, &key_of("equal")),
+            None,
+            "未绑定为翻页键的 `=` 不判翻页（该配置下落标点）"
+        );
+        assert_eq!(
+            press_with(&mut menu, "bracketright", &custom),
+            HostResult::Consumed
+        );
+        assert_eq!(
+            paging_action(&menu, &custom, &key_of("bracketleft")),
+            Some(PagingDir::Up)
+        );
+    }
+
+    /// **负向对照（用户决定 B 的另一半）**：`ascii_mode` 打开时翻页键**不**被拦截，
+    /// 仍落标点路径（`punctuator` 消费并提交「组合 + 标点」）；同一上下文关掉 `ascii_mode`
+    /// 则判为翻页（消费、不提交、输入不变）。
+    #[test]
+    fn ascii_mode_paging_keys_fall_through_to_punctuation() {
+        let table = PunctTable::parse(
+            "punctuator:\n  half_shape:\n    \"-\": { commit: － }\n    \"=\": { commit: ＝ }\n",
+        )
+        .expect("punct table");
+        let options = HostOptions::default();
+        // `ascii_mode` 打开：`-`/`=` 都不判翻页。
+        let mut ascii = context_with_menu(&["甲", "乙"], 0);
+        ascii.set_option("ascii_mode", true);
+        assert_eq!(
+            paging_action(&ascii, &options, &key_of("minus")),
+            None,
+            "`ascii_mode` 下上翻页键不拦截"
+        );
+        assert_eq!(
+            process(&mut ascii, "minus", Some(&table), &options),
+            HostResult::Consumed,
+            "`-` 落标点分支"
+        );
+        assert_eq!(ascii.last_commit_text(), "甲－", "确认组合后落标点");
+        assert!(ascii.input().is_empty());
+        // 同一形态的上下文关掉 `ascii_mode`：判为翻页（不提交、输入不变）。
+        let mut menu = context_with_menu(&["甲", "乙"], 0);
+        assert_eq!(
+            process(&mut menu, "minus", Some(&table), &options),
+            HostResult::Consumed
+        );
+        assert_eq!(menu.last_commit_text(), "", "翻页不提交");
+        assert_eq!(menu.input(), b"ab", "翻页不改动输入");
     }
 }

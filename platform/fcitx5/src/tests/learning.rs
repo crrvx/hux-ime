@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+//! 学习库：坏帧跳过 + 诊断、Tab / 直选的学习记账、写失败进状态串。
+//!
+//! 用例各自用临时用户目录，并取 `serial()`；夹具见父模块 `tests.rs`。
+
 use super::*;
 
 /// 学习库里的**坏帧**：跳过该条记录、不禁用整库，并进既有诊断。

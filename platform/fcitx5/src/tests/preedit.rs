@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+//! 预编辑分码：按词分段的 preedit 文本，以及移动光标时的分段保持。
+//!
+//! 用共享 UI 快照（`last_update()`）核对；夹具与 `serial()` 串行约定见父模块 `tests.rs`。
+
 use super::*;
 
 /// 预编辑「按词分码」：使用高亮候选的 preedit（`ab cd`）。

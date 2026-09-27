@@ -78,7 +78,7 @@ fn learning_stage_pends_event_with_offsets() {
 
 /// 参照 `7b220ce`：删除「稳定确认」增量路线（`learning.reinforce`）——未按 Tab、
 /// 提交项即本菜单首个可见候选时，`learning_stage` 仍走 `diff`，而
-/// `before.text == selected.text` 使 `diff` 恒为空 ⇒ **不再产出学习事件**
+/// `before.text == selected.text` 使 `diff` 恒为空 ⇒ **不产出学习事件**
 /// （上游 `tools/test_sentence_learning.lua`：`ordinary learned first choice never reinforces`）。
 #[test]
 fn learning_stage_does_not_reinforce_stable_first_choice() {

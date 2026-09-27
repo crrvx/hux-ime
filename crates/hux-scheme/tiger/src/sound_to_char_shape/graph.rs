@@ -18,7 +18,7 @@ use hux_core::session::Candidate;
 
 /// 音反查翻译（参照 `ReverseLookupTranslator::Query`）：`input` 为段输入（含前缀）。
 ///
-/// 分隔符语义见 [`SYLLABLE_DELIMITER`]：先折成 [`DelimitedCode`]（紧凑码 + 边界掩码），
+/// 分隔符语义见 `SYLLABLE_DELIMITER`：先折成 [`DelimitedCode`]（紧凑码 + 边界掩码），
 /// 建图、补全、预编辑都按它定位与断句。
 #[allow(clippy::too_many_arguments)]
 pub fn translate(

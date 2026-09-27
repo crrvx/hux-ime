@@ -127,7 +127,7 @@ impl ModelStatus {
 ///
 /// 三阶 `TCSKNM02`、五阶 `TCSKNM03` 是上游的两种模型格式；其余（含过短/空文件头）
 /// 一律「未知格式」。判定取 [`crate::ngram::detect_format`]，本函数只管标签。
-pub fn format_label(magic: &[u8]) -> &'static str {
+fn format_label(magic: &[u8]) -> &'static str {
     match detect_format(magic) {
         ModelFormat::Mobile3 => "三阶 TCSKNM02",
         ModelFormat::Mobile5 => "五阶 TCSKNM03",
