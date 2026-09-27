@@ -59,12 +59,13 @@
 
 两处常见困惑：
 
-- **托盘显示 “文字「虍」” 而非 “图标「虍」”**： \
-  取消该勾选 fcitx5-configtool →「附加组件」→「经典界面」→「优先使用文字图标」
+- **托盘显示 “文字「虍」” 而非 “图标「虍」”**：取消该勾选
+  - 路径：fcitx5-configtool →「附加组件」→「经典界面」→「优先使用文字图标」
 - **重装后托盘仍是旧图标**：
   - 原因：Qt 系程序（面板、fcitx5）缓存像素图，替换不会重读
   - 需重启桌面面板：`kquitapp6 plasmashell && kstart plasmashell` 或注销重登
   - GTK 侧：必要时 `sudo gtk-update-icon-cache -f -t /usr/share/icons/hicolor`
-  - 可能未成功替换，请核对 sha256sum： \
-    落盘 `/usr/share/icons/hicolor/*/apps/hux.*` 与 `assets/branding/` 同名文件
+  - 可能未成功替换，请核对 sha256sum
+    - 落盘：`/usr/share/icons/hicolor/*/apps/hux.*`
+    - 与 `assets/branding/` 同名文件比对
   - `install.sh` 已尽力刷新 `icon-theme.cache`

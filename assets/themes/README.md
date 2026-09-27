@@ -3,14 +3,19 @@
 
 # assets/themes — 跨平台共享主题资源（fcitx5 主题形态）
 
-19 套主题，取自**虎符（hufu-ime-rust）官方皮肤**的 fcitx5 主题转换产物，**原样入库**：每套一目录， \
-含 `theme.conf` 与 `panel.png` / `highlight.png` / `prev.png` / `next.png` / `arrow.png`  \
-/`radio.png`。 \
-`theme.conf` 顶部的注释即其生成说明（由虎符仓库的皮肤 JSON 转换而来）——本仓不修改这些文件， \
-改动一律回到生成侧。
+19 套主题，取自虎符（hufu-ime-rust）官方皮肤的 fcitx5 主题转换产物。
 
-- **取用版本**： \
-  虎符仓库 `LeafHW/hufu-ime-rust` 的 `54c0339`（`platform/linux/themes/` 全量 19 套）。
+- 上游：**虎符（hufu-ime-rust）官方皮肤**
+- 产物形态：fcitx5 主题，**原样入库**
+- 每套一目录，含 `theme.conf` 与 6 张 PNG
+  - `panel.png` / `highlight.png` / `prev.png`
+  - `next.png` / `arrow.png` / `radio.png`
+- `theme.conf` 顶部的注释即其生成说明（由虎符仓库的皮肤 JSON 转换而来）
+- 本仓不修改这些文件，改动一律回到生成侧
+
+
+- **取用版本**：虎符仓库 `LeafHW/hufu-ime-rust` 的 `54c0339`
+- 取用范围：`platform/linux/themes/` 全量 19 套
 - **主题一览**（目录名 → `theme.conf` 的 `Name`）：
   - `hufu-canghai` 沧海
   - `hufu-chenwu` 晨雾
@@ -31,9 +36,11 @@
   - `hufu-xuanmo` 玄墨
   - `hufu-yingxiong` 樱色（暖粉）
   - `hufu-yuebai` 月白
-- **许可**：随虎符仓库根 `LICENSE`（GPL-3.0）；版权与许可标注见仓库根 `REUSE.toml`。
-- **取用指纹**（133 个文件的聚合 sha256，`tools/checks/check_themes.py` 在 CI 里核对）： \
-  `7ad673c4c6df5330db8fc84566a65b93ab39c6686de12428f7caa208208c7a9d`
+- **许可**：随虎符仓库根 `LICENSE`（GPL-3.0）
+- 版权与许可标注见仓库根 `REUSE.toml`
+- **取用指纹**：133 个文件的聚合 sha256
+- 由 `tools/checks/check_themes.py` 在 CI 里核对
+- 指纹值：`7ad673c4c6df5330db8fc84566a65b93ab39c6686de12428f7caa208208c7a9d`
 
   ```sh
   cd assets/themes && find hufu-* -type f | sort | xargs sha256sum | sha256sum
@@ -41,19 +48,26 @@
 
 ## 清单与安装（Linux）
 
-`MANIFEST` 是**单一来源**：`platform/fcitx5/CMakeLists.txt` 按它安装、`install.sh` 装后逐条核对、 \
-`uninstall.sh` 按它删除、`tools/checks/check_themes.py` 守护四者一致。 \
-新增 / 删除主题只改 `MANIFEST`（并同步指纹）。
+`MANIFEST` 是**单一来源**：
 
-安装落点：`<prefix>/share/fcitx5/themes/<主题目录>/`（系统级）。 \
-fcitx5 会合并系统级与用户级（`~/.local/share/fcitx5/themes/`）主题目录；选用： \
-`fcitx5-configtool` →「附加组件」→「经典界面」→ 主题， \
-或改 `~/.config/fcitx5/conf/classicui.conf` 的 `Theme=`。
+- `platform/fcitx5/CMakeLists.txt` 按它安装
+- `install.sh` 装后逐条核对
+- `uninstall.sh` 按它删除
+- `tools/checks/check_themes.py` 守护四者一致
+- 新增 / 删除主题只改 `MANIFEST`，并同步指纹
+
+安装落点：`<prefix>/share/fcitx5/themes/<主题目录>/`（系统级）。
+
+- fcitx5 会合并系统级与用户级（`~/.local/share/fcitx5/themes/`）主题目录
+- 选用：`fcitx5-configtool` →「附加组件」→「经典界面」→ 主题
+- 或改 `~/.config/fcitx5/conf/classicui.conf` 的 `Theme=`
 
 ## 其它平台
 
-本目录是**共享资源**（配色与图形），fcitx5 主题只是其中一种呈现形态。 \
-Windows / macOS / Android 若需要各自的皮肤形态，应从同一份源派生，而不是各自维护一套。
+本目录是**共享资源**（配色与图形），fcitx5 主题只是其中一种呈现形态。
+
+- Windows / macOS / Android 若需要各自的皮肤形态，应从同一份源派生
+- 不应各自维护一套
 
 ## 更新步骤
 

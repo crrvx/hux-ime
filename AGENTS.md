@@ -14,8 +14,10 @@
 
 ## 当前方案
 
-- **虎句**（`tiger_sentence`）：虎码体系（字 / 词 / 句）的整句输入方案，本轮唯一全量实现
-- 语义、数据与金样参照 tiger-sentense-rime；方案标识保持 `tiger_sentence`（与上游数据互通）
+- **虎句**（`tiger_sentence`）：虎码体系的整句输入方案，覆盖字 / 词 / 句
+- 本轮唯一全量实现的方案
+- 语义、数据与金样参照 tiger-sentense-rime
+- 方案标识保持 `tiger_sentence`，与上游数据互通
 - 其他方案（宇浩、五笔、双拼、全拼）仅留骨架，适配暂缓（见 `docs/design.md` §5）
 
 ## AI 风格
@@ -35,9 +37,11 @@
 ## 协作流程
 
 1. 修改开始前：在当前所在节点上，先执行 `jj new` 开新副本，再进行改动
-2. 修改过程中：可按需执行更多的 `jj new`，只落在 ai `jj new` 的副本内，不改动其他已有节点
+2. 修改过程中：可按需执行更多的 `jj new`
+   - 新副本只落在 AI 自己 `jj new` 的链上，不改动其他已有节点
 3. 修改过程中：尽量按功能拆成多条 jj commit
-4. 修改完成后：须同步对应文档，根据改动编辑 “jj commit” 消息（简短一句），并交由用户审阅确认
+4. 修改完成后：须同步对应文档，并按改动编辑 jj commit 消息（简短一句）
+   - 提交后交由用户审阅确认
 5. jj 历史整理, push/fetch，pr：除非用户直接要求，否则 AI 不代做
 
 ## 相关项目
@@ -61,8 +65,8 @@
   - 方案/数据/标识：「虎句」，tiger_sentence 等
 - Rust 约定：
   - 模块布局用 `foo.rs` + `foo/`，**切忌 `mod.rs`**
-  - 集成测试的共享助手 `crates/hux-test-support`，请以 `dev-dependencies` \
-    引入（不得使用 `tests/common/mod.rs`）
+  - 集成测试的共享助手 `crates/hux-test-support`，请以 `dev-dependencies` 引入
+  - 不得使用 `tests/common/mod.rs`
 - 参考实现：
   - tiger-sentense-rime 的 Lua 核心，仅作测试 oracle（不进运行时）
   - 检出不入库：本地由 `REF` 指定（生成器脚本读它），CI 自建临时检出后弃用
