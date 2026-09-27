@@ -44,7 +44,7 @@ use hux_scheme_tiger::decode::Decoder;
 use hux_scheme_tiger::interaction::{
     CompositionBuilder, K_SOUND_TO_CHAR_SHAPE_KEY, LiveLearning, OPTION_DIGIT_SELECT,
     OPTION_EARLY_COMMIT, OPTION_EARLY_COMMIT_TO_PREEDIT, ProcessorEnv, ProcessorResult,
-    SentenceState, processor, update_notifier,
+    SentenceState, process_key_event, update_notifier,
 };
 use hux_scheme_tiger::lexicon::{Lexicon, Supplement};
 
@@ -583,11 +583,11 @@ fn replay(
         let mut env = ProcessorEnv {
             now: 0.0,
             dot_armed: &mut dot_armed,
-            min_retained: None,
+            min_retained: 0,
             page_size,
             host_options: &host_options,
         };
-        let result = processor(
+        let result = process_key_event(
             &key,
             &mut context,
             &mut state,

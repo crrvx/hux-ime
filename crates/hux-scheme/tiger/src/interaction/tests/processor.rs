@@ -31,11 +31,11 @@ impl Harness {
         let mut env = ProcessorEnv {
             now: 0.0,
             dot_armed: &mut self.dot_armed,
-            min_retained: None,
+            min_retained: 0,
             page_size: self.page_size,
             host_options: &host_options,
         };
-        processor(
+        process_key_event(
             key,
             &mut self.context,
             &mut self.state,

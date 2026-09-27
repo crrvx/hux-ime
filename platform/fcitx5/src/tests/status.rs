@@ -23,6 +23,7 @@ fn option_save_error_is_visible_in_status() {
     assert!(
         !engine
             .engine
+            .diagnostics
             .status
             .to_str()
             .unwrap_or("")
@@ -30,7 +31,13 @@ fn option_save_error_is_visible_in_status() {
         "初始状态串不含选项错误"
     );
     assert!(engine.set_option_value("tiger_sentence_early_commit", false));
-    let status = engine.engine.status.to_str().unwrap_or("").to_string();
+    let status = engine
+        .engine
+        .diagnostics
+        .status
+        .to_str()
+        .unwrap_or("")
+        .to_string();
     assert!(
         status.contains("options: Unable to save"),
         "保存失败应在状态串可见：{status}"
@@ -50,6 +57,7 @@ fn unparsable_hotkey_binding_reaches_the_status_string() {
     assert!(
         !engine
             .engine
+            .diagnostics
             .status
             .to_str()
             .unwrap_or("")
@@ -64,6 +72,7 @@ fn unparsable_hotkey_binding_reaches_the_status_string() {
     assert!(
         !engine
             .engine
+            .diagnostics
             .status
             .to_str()
             .unwrap_or("")
@@ -76,7 +85,13 @@ fn unparsable_hotkey_binding_reaches_the_status_string() {
         reverse_lookup_character_keys: vec!["(unknown)".to_string()],
         ..Default::default()
     });
-    let status = engine.engine.status.to_str().unwrap_or("").to_string();
+    let status = engine
+        .engine
+        .diagnostics
+        .status
+        .to_str()
+        .unwrap_or("")
+        .to_string();
     assert!(
         status.contains("hotkeys: 忽略无法识别的绑定"),
         "无法识别的绑定必须点名：{status}"
@@ -97,6 +112,7 @@ fn unparsable_hotkey_binding_reaches_the_status_string() {
     assert!(
         !engine
             .engine
+            .diagnostics
             .status
             .to_str()
             .unwrap_or("")
@@ -146,7 +162,13 @@ fn status_pointer_must_be_read_again_after_a_refresh() {
 fn scheme_config_diagnostics_reach_the_status_string() {
     let _guard = serial();
     let mut engine = TestEngine::new(host(), fixture_dirs(), None, Some(temp_user_dir("cfgdiag")));
-    let status = engine.engine.status.to_str().unwrap_or("").to_string();
+    let status = engine
+        .engine
+        .diagnostics
+        .status
+        .to_str()
+        .unwrap_or("")
+        .to_string();
     assert!(
         !status.contains("config:"),
         "真实装配路径不应有配置诊断：{status}"
@@ -158,7 +180,13 @@ fn scheme_config_diagnostics_reach_the_status_string() {
         hux_core::scheme::Value::Count(1),
     );
     engine.engine.apply_scheme_config(bad);
-    let status = engine.engine.status.to_str().unwrap_or("").to_string();
+    let status = engine
+        .engine
+        .diagnostics
+        .status
+        .to_str()
+        .unwrap_or("")
+        .to_string();
     assert!(
         status.contains("config: 角色 tab_learning 类型不符（期望 开关，实际 计数）"),
         "类型不符必须可见：{status}"
@@ -179,7 +207,13 @@ fn scheme_config_diagnostics_reach_the_status_string() {
         partial.set(role, value);
     }
     engine.engine.apply_scheme_config(partial);
-    let status = engine.engine.status.to_str().unwrap_or("").to_string();
+    let status = engine
+        .engine
+        .diagnostics
+        .status
+        .to_str()
+        .unwrap_or("")
+        .to_string();
     assert!(
         status.contains("config: 缺少角色 page_size"),
         "漏装角色必须可见：{status}"
@@ -188,7 +222,13 @@ fn scheme_config_diagnostics_reach_the_status_string() {
     // 重新下发完整配置袋（设置派生的角色 + 运行时开关的生效值）：诊断清空（状态串回到基线）。
     let good = engine.engine.scheme_config_with_runtime();
     engine.engine.apply_scheme_config(good);
-    let status = engine.engine.status.to_str().unwrap_or("").to_string();
+    let status = engine
+        .engine
+        .diagnostics
+        .status
+        .to_str()
+        .unwrap_or("")
+        .to_string();
     assert!(
         !status.contains("config:"),
         "恢复完整配置袋后不应残留诊断：{status}"

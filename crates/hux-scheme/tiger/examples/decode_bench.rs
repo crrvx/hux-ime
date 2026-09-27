@@ -15,26 +15,21 @@ use hux_scheme_tiger::decode::Decoder;
 use hux_scheme_tiger::lexical;
 use hux_scheme_tiger::lexicon::{Lexicon, Supplement};
 use hux_scheme_tiger::ngram::MobileModel;
+use hux_test_support::bench::{flag, quantile_us};
 use hux_test_support::{decode_hex, open_golden, repo_path};
 use std::io::BufRead;
 use std::time::Instant;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let flag = |name: &str| -> Option<String> {
-        args.iter()
-            .position(|arg| arg == name)
-            .and_then(|index| args.get(index + 1))
-            .cloned()
-    };
-    let repeat: usize = flag("--repeat")
+    let repeat: usize = flag(&args, "--repeat")
         .map(|value| value.parse().expect("--repeat"))
         .unwrap_or(20);
 
     let data_dir = repo_path("goldens/lexicon");
     let lexicon = Lexicon::load(&[data_dir.clone(), repo_path("data")], 1500);
     let supplement = Supplement::load_default(Some(&data_dir));
-    let model = flag("--model").and_then(|path| match MobileModel::load(&path, None) {
+    let model = flag(&args, "--model").and_then(|path| match MobileModel::load(&path, None) {
         Ok(model) => Some(model),
         Err(error) => {
             eprintln!("model: {error}");
@@ -42,7 +37,7 @@ fn main() {
         }
     });
     let mut decoder = Decoder::new(lexicon, supplement, model);
-    if let Some(path) = flag("--lexical") {
+    if let Some(path) = flag(&args, "--lexical") {
         let (model, error) = lexical::load_first(&[std::path::PathBuf::from(path)]);
         decoder.set_lexical_model(model);
         if let Some(error) = error {
@@ -97,19 +92,15 @@ fn main() {
     }
     samples.sort_unstable();
     let total: u64 = samples.iter().sum();
-    let pick = |quantile: f64| -> f64 {
-        let index = ((samples.len() as f64 - 1.0) * quantile).round() as usize;
-        samples[index] as f64 / 1000.0
-    };
     println!(
         "{{\"corpus\":{},\"repeat\":{},\"lexical\":{},\"ops\":{},\"mean_us\":{:.2},\"p50_us\":{:.2},\"p95_us\":{:.2},\"max_us\":{:.2},\"checksum\":\"0x{:016x}\"}}",
         corpus.len(),
         repeat,
-        flag("--lexical").is_some(),
+        flag(&args, "--lexical").is_some(),
         samples.len(),
         total as f64 / samples.len() as f64 / 1000.0,
-        pick(0.50),
-        pick(0.95),
+        quantile_us(&samples, 0.50),
+        quantile_us(&samples, 0.95),
         samples[samples.len() - 1] as f64 / 1000.0,
         checksum,
     );
@@ -120,16 +111,12 @@ fn main() {
             continue;
         }
         bucket.sort_unstable();
-        let pick = |quantile: f64| -> f64 {
-            let position = ((bucket.len() as f64 - 1.0) * quantile).round() as usize;
-            bucket[position] as f64 / 1000.0
-        };
         println!(
             "  len {:<6} n={:<6} p50={:>8.2}us p95={:>9.2}us max={:>9.2}us",
             names[index],
             bucket.len(),
-            pick(0.50),
-            pick(0.95),
+            quantile_us(bucket, 0.50),
+            quantile_us(bucket, 0.95),
             bucket[bucket.len() - 1] as f64 / 1000.0
         );
     }

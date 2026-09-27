@@ -41,7 +41,13 @@ fn learning_store_skips_undecodable_records_with_diagnostic() {
         error.contains("skipped 1 undecodable record"),
         "坏帧必须计入既有诊断：{error}"
     );
-    let status = engine.status.to_str().unwrap_or("").to_string();
+    let status = engine
+        .engine
+        .diagnostics
+        .status
+        .to_str()
+        .unwrap_or("")
+        .to_string();
     assert!(
         status.contains("skipped 1 undecodable record"),
         "诊断随状态串对用户可见：{status}"
@@ -113,14 +119,26 @@ fn learning_write_failure_reaches_the_status_string() {
     let dir = temp_user_dir("learning-error");
     let mut engine = TestEngine::new(host(), fixture_dirs(), None, Some(dir.clone()));
     engine.key(u32::from(b'a'), 0, false);
-    let baseline = engine.engine.status.to_str().unwrap_or("").to_string();
+    let baseline = engine
+        .engine
+        .diagnostics
+        .status
+        .to_str()
+        .unwrap_or("")
+        .to_string();
     assert!(
         !baseline.contains("learning database write failed"),
         "初始状态串不含写入错误：{baseline}"
     );
     engine.engine.learning.error = Some("learning database write failed".to_string());
     engine.key(u32::from(b'b'), 0, false);
-    let status = engine.engine.status.to_str().unwrap_or("").to_string();
+    let status = engine
+        .engine
+        .diagnostics
+        .status
+        .to_str()
+        .unwrap_or("")
+        .to_string();
     assert!(
         status.contains("learning: learning database write failed"),
         "运行期落库失败应进状态串：{status}"

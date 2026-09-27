@@ -232,9 +232,13 @@ def main() -> int:
     declared_shas: dict[str, str] = dict(local)
     declared_shas.update({label: sha for label, (_, sha, _) in reference.items()})
 
-    # 1. 表 ↔ 文件
+    # 1. 表 ↔ 文件（金样改名/缺失时 resolve_local 抛 Failure：记为一条失败，不抛 traceback）
     for label, sha in sorted(local.items()):
-        path = resolve_local(root, label)
+        try:
+            path = resolve_local(root, label)
+        except Failure as error:
+            failures.append(str(error))
+            continue
         actual = sha256_stream(path)
         note(
             actual == sha,

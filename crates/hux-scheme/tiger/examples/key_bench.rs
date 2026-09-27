@@ -14,22 +14,17 @@ use hux_core::key::KeyEvent;
 use hux_core::scheme::{Scheme, SchemeConfig, Value};
 use hux_core::session::Context;
 use hux_scheme_tiger::scheme::TigerScheme;
+use hux_test_support::bench::{flag, quantile_us};
 use hux_test_support::{decode_hex, open_golden, repo_path};
 use std::io::BufRead;
 use std::time::Instant;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let flag = |name: &str| -> Option<String> {
-        args.iter()
-            .position(|arg| arg == name)
-            .and_then(|index| args.get(index + 1))
-            .cloned()
-    };
-    let limit: usize = flag("--codes")
+    let limit: usize = flag(&args, "--codes")
         .map(|value| value.parse().expect("--codes"))
         .unwrap_or(200);
-    let repeat: usize = flag("--repeat")
+    let repeat: usize = flag(&args, "--repeat")
         .map(|value| value.parse().expect("--repeat"))
         .unwrap_or(10);
     // 角色名与 `hux-cfg` 的角色常量同值（基准只经契约驱动，不依赖配置层）。
@@ -54,7 +49,7 @@ fn main() {
     }
     assert!(!codes.is_empty(), "语料为空");
 
-    let model_path = flag("--model");
+    let model_path = flag(&args, "--model");
     let mut keys = 0u64;
     let mut samples = Vec::new();
     for _ in 0..repeat {
@@ -89,10 +84,6 @@ fn main() {
     }
     samples.sort_unstable();
     let total: u64 = samples.iter().sum();
-    let pick = |quantile: f64| -> f64 {
-        let index = ((samples.len() as f64 - 1.0) * quantile).round() as usize;
-        samples[index] as f64 / 1000.0
-    };
     println!(
         "{{\"codes\":{},\"repeat\":{},\"keys\":{},\"model\":{},\"mean_us\":{:.2},\"p50_us\":{:.2},\"p95_us\":{:.2},\"max_us\":{:.2}}}",
         codes.len(),
@@ -100,8 +91,8 @@ fn main() {
         keys,
         model_path.is_some(),
         total as f64 / samples.len() as f64 / 1000.0,
-        pick(0.50),
-        pick(0.95),
+        quantile_us(&samples, 0.50),
+        quantile_us(&samples, 0.95),
         samples[samples.len() - 1] as f64 / 1000.0,
     );
 }

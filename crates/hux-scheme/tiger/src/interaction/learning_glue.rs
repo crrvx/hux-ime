@@ -359,7 +359,7 @@ impl LearningCommit<'_> {
         selected_text: &str,
         selected_raw_length: usize,
     ) {
-        context_commit(context, commit_text);
+        context.direct_commit(commit_text);
         learning_commit(
             self.decoder,
             context,

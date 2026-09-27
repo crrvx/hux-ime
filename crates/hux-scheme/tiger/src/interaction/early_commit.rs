@@ -19,6 +19,7 @@ pub fn reset_early_evidence(state: &mut SentenceState) {
 /// 参照 `has_selection_suffix`：显式选重后缀（分号/引号/数字）。
 ///
 /// 判定实现在 [`crate::decode::has_selection_suffix`]（beam 侧与交互侧共用一份）。
+/// 撇号在此是**选重**后缀，与断音 [`crate::sound_to_char_shape::SYLLABLE_DELIMITER`] 同名不同义。
 pub(crate) use crate::decode::has_selection_suffix;
 
 /// 参照 `common_text_prefix`：逐字符公共前缀。
@@ -419,11 +420,6 @@ pub fn try_commit_mature_prefix(
     true
 }
 
-/// 提交文本到上下文（组合外直接提交；供 `submit_early` 的非缓冲分支使用）。
-pub(crate) fn context_commit(context: &mut Context, text: &str) {
-    context.direct_commit(text);
-}
-
 /// 提前上屏的共用参数（避免 `too_many_arguments`）。
 #[derive(Clone, Copy, Debug)]
 pub struct EarlyCommitParams {
@@ -728,12 +724,4 @@ pub fn try_empty_code_commit(
     state.save(context);
     restore_composition_input(context, &retained_raw);
     Ok(true)
-}
-
-/// 参照 `get_min_retained_raw_length`：由配置提供的下限（缺失/非法为 0）。
-pub fn min_retained_raw_length(value: Option<i64>) -> usize {
-    match value {
-        Some(number) if number >= 0 => number as usize,
-        _ => 0,
-    }
 }

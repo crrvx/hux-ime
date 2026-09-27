@@ -212,52 +212,87 @@ impl Settings {
 mod tests {
     use super::*;
 
+    /// 缺省值是发布语义的一部分，改这里等于改用户的开箱行为，故逐项钉住。
     #[test]
     fn defaults_match_builtin_semantics() {
         let settings = Settings::default();
-        assert!(settings.early_commit);
-        assert!(!settings.early_commit_to_preedit);
-        assert!(settings.allow_duplicate_single);
-        assert!(!settings.full_shape);
-        assert!(!settings.ascii_punct);
-        assert!(settings.learning_on_tab);
-        assert_eq!(settings.high_freq_limit, DEFAULT_HIGH_FREQ_LIMIT);
-        assert_eq!(settings.page_size, DEFAULT_PAGE_SIZE);
+        assert!(settings.early_commit, "缺省应开启早提交");
+        assert!(
+            !settings.early_commit_to_preedit,
+            "缺省不得开启「上屏前先进预编辑」"
+        );
+        assert!(settings.allow_duplicate_single, "缺省应允许单字重码");
+        assert!(!settings.full_shape, "缺省不得是中文标点模式");
+        assert!(!settings.ascii_punct, "缺省不得是英文标点模式");
+        assert!(settings.learning_on_tab, "缺省应开启 Tab 学习");
+        assert_eq!(
+            settings.high_freq_limit, DEFAULT_HIGH_FREQ_LIMIT,
+            "高频字上限缺省应为 DEFAULT_HIGH_FREQ_LIMIT"
+        );
+        assert_eq!(
+            settings.page_size, DEFAULT_PAGE_SIZE,
+            "页大小缺省应为 DEFAULT_PAGE_SIZE"
+        );
         assert_eq!(
             settings.page_up_keys,
-            vec!["minus".to_string(), "bracketleft".to_string()]
+            vec!["minus".to_string(), "bracketleft".to_string()],
+            "翻页上键缺省应为 minus 与 bracketleft"
         );
         assert_eq!(
             settings.page_down_keys,
-            vec!["equal".to_string(), "bracketright".to_string()]
+            vec!["equal".to_string(), "bracketright".to_string()],
+            "翻页下键缺省应为 equal 与 bracketright"
         );
         assert_eq!(
             settings.reverse_lookup_pronunciation_keys,
-            vec!["grave".to_string()]
+            vec!["grave".to_string()],
+            "音反查键缺省应为 grave"
         );
         assert_eq!(
             settings.reverse_lookup_character_keys,
-            vec!["asciitilde".to_string()]
+            vec!["asciitilde".to_string()],
+            "字反查键缺省应为 asciitilde"
         );
-        assert!(settings.digit_select);
-        assert!(settings.full_charset);
-        assert!(settings.filter_non_han);
-        assert_eq!(settings.candidate_layout, CandidateLayout::FollowGlobal);
-        assert_eq!(settings.preedit_mode, PreeditMode::CandidateCode);
-        assert!(!settings.page_cycle);
-        assert_eq!(settings.min_retained_input_length, 0);
-        assert_eq!(settings.min_retained(), 0);
+        assert!(settings.digit_select, "缺省应开启数字选字");
+        assert!(settings.full_charset, "缺省应开启全字集");
+        assert!(settings.filter_non_han, "缺省应过滤非汉字");
+        assert_eq!(
+            settings.candidate_layout,
+            CandidateLayout::FollowGlobal,
+            "候选布局缺省跟随全局"
+        );
+        assert_eq!(
+            settings.preedit_mode,
+            PreeditMode::CandidateCode,
+            "预编辑缺省显示候选编码"
+        );
+        assert!(!settings.page_cycle, "缺省不得开启翻页循环");
+        assert_eq!(
+            settings.min_retained_input_length, 0,
+            "留存输入长度缺省为 0"
+        );
+        assert_eq!(
+            settings.min_retained(),
+            0,
+            "缺省设置下 min_retained() 应给 0"
+        );
     }
 
+    /// 超限配置必须夹到上限而不是原样透传，避免宿主拿到无法兑现的留存长度。
     #[test]
     fn min_retained_clamps_upper_bound() {
         let settings = Settings {
             min_retained_input_length: 999,
             ..Default::default()
         };
-        assert_eq!(settings.min_retained(), MAX_MIN_RETAINED_INPUT_LENGTH);
+        assert_eq!(
+            settings.min_retained(),
+            MAX_MIN_RETAINED_INPUT_LENGTH,
+            "超上限的留存长度必须夹到 MAX_MIN_RETAINED_INPUT_LENGTH"
+        );
     }
 
+    /// 页大小的 0 与超大值都必须在交给宿主前落进合法区间。
     #[test]
     fn host_options_clamp_page_size() {
         let low = Settings {
@@ -274,6 +309,7 @@ mod tests {
         assert_eq!(high.page_size, MAX_PAGE_SIZE, "页大小上限为 10");
     }
 
+    /// 配置里的键名是字符串，交给宿主前必须解析成键码；解析失败的项只丢自己，不牵连其余绑定。
     #[test]
     fn host_options_parse_keys_ignores_invalid() {
         let options = Settings {
@@ -284,7 +320,8 @@ mod tests {
         .host_options();
         assert_eq!(
             options.page_up_keys,
-            vec![KeyEvent::from_repr("comma").unwrap()]
+            vec![KeyEvent::from_repr("comma").unwrap()],
+            "非法键名必须丢弃，只留可解析的 comma"
         );
         // 契约：**显式给出即以此为准**（空列表 = 不绑定）。生产路径经配置袋把
         // 原始字符串交给方案（`hux-scheme/tiger` 的 `host_options_from`），
@@ -292,6 +329,7 @@ mod tests {
         assert!(options.page_down_keys.is_empty(), "空列表 = 不绑定翻页键");
     }
 
+    /// 缺省下发顺序是方案与宿主约定的写入序，顺序变化会让宿主状态栏与配置页错位。
     #[test]
     fn session_option_defaults_follow_settings() {
         let settings = Settings {
@@ -300,8 +338,14 @@ mod tests {
         };
         let keys = crate::options::test_option_keys();
         let defaults = settings.session_option_defaults(&keys);
-        assert!(defaults.contains(&("full_shape", true)));
-        assert!(defaults.contains(&(keys.key(ROLE_EARLY_COMMIT).unwrap(), true)));
+        assert!(
+            defaults.contains(&("full_shape", true)),
+            "full_shape 开启应作为会话选项缺省下发"
+        );
+        assert!(
+            defaults.contains(&(keys.key(ROLE_EARLY_COMMIT).unwrap(), true)),
+            "方案角色键经 OptionKeys 解析后同样要下发 true"
+        );
         // 顺序保持既有写入顺序（方案开关 → 宿主标准项 → 运行时开关按角色序）。
         assert_eq!(
             defaults.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
@@ -314,10 +358,12 @@ mod tests {
                 "tiger_sentence_digit_select",
                 "tiger_sentence_full_charset",
                 "tiger_sentence_filter_non_han",
-            ]
+            ],
+            "下发顺序固定为方案开关、宿主标准项、运行时开关按角色序"
         );
     }
 
+    /// options.yaml 的缺省集合必须覆盖全部核心开关，漏写会让配置页缺项。
     #[test]
     fn store_defaults_cover_core_switches() {
         let keys = crate::options::test_option_keys();
@@ -325,16 +371,34 @@ mod tests {
         let key = |role| keys.key(role).expect("测试表应完整");
         assert_eq!(
             store_defaults.get(key(ROLE_EARLY_COMMIT_TO_PREEDIT)),
-            Some(&false)
+            Some(&false),
+            "早提交到预编辑缺省 false 必须落进 store 缺省"
         );
-        assert_eq!(store_defaults.get("full_shape"), Some(&false));
-        assert_eq!(store_defaults.get(key(ROLE_DIGIT_SELECT)), Some(&true));
+        assert_eq!(
+            store_defaults.get("full_shape"),
+            Some(&false),
+            "宿主标准键 full_shape 的缺省必须落进 store 缺省"
+        );
+        assert_eq!(
+            store_defaults.get(key(ROLE_DIGIT_SELECT)),
+            Some(&true),
+            "数字选字缺省 true 必须落进 store 缺省"
+        );
         // 字集开关同样经 `apply_settings` 写回 `options.yaml`（缺省开）。
-        assert_eq!(store_defaults.get(key(ROLE_FULL_CHARSET)), Some(&true));
-        assert_eq!(store_defaults.get(key(ROLE_FILTER_NON_HAN)), Some(&true));
-        assert_eq!(store_defaults.len(), 7);
+        assert_eq!(
+            store_defaults.get(key(ROLE_FULL_CHARSET)),
+            Some(&true),
+            "全字集缺省 true 必须落进 store 缺省"
+        );
+        assert_eq!(
+            store_defaults.get(key(ROLE_FILTER_NON_HAN)),
+            Some(&true),
+            "过滤非汉字缺省 true 必须落进 store 缺省"
+        );
+        assert_eq!(store_defaults.len(), 7, "store 缺省应恰好覆盖 7 个开关");
     }
 
+    /// 方案没声明的角色不接线：不得回落成角色名字面量，否则会与真实方案键混淆。
     #[test]
     fn option_keys_absent_roles_are_skipped_not_faked() {
         // 方案未声明的角色**不接线**（不回落成角色名字面量，以免与方案键混淆）。
@@ -345,6 +409,10 @@ mod tests {
             vec!["full_shape", "ascii_punct"],
             "仅宿主标准项保留"
         );
-        assert_eq!(Settings::default().store_defaults(&empty).len(), 1);
+        assert_eq!(
+            Settings::default().store_defaults(&empty).len(),
+            1,
+            "无方案声明时 store 缺省只剩宿主标准项 1 条"
+        );
     }
 }

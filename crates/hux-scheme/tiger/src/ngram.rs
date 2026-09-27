@@ -18,6 +18,14 @@ use std::rc::Rc;
 
 const BOS: &str = "\u{2}";
 const EOS: &str = "\u{3}";
+/// 句首哨兵字符：与 `BOS` 同源，供需要字符/码点的调用方使用。
+pub const BOS_CHAR: char = '\u{2}';
+/// 句尾哨兵字符。
+pub const EOS_CHAR: char = '\u{3}';
+/// 句首哨兵码点值（`char` 到 `u32` 的常量派生）。
+pub const BOS_CODE: u32 = BOS_CHAR as u32;
+/// 句尾哨兵码点值。
+pub const EOS_CODE: u32 = EOS_CHAR as u32;
 /// 42-bit 三元组/二元组打包位移（2^21）。
 const SHIFT: u64 = 2_097_152;
 
@@ -83,10 +91,10 @@ fn scalar(token: &str) -> u32 {
         return 0;
     }
     if token == BOS {
-        return 2;
+        return BOS_CODE;
     }
     if token == EOS {
-        return 3;
+        return EOS_CODE;
     }
     token.chars().next().map(|c| c as u32).unwrap_or(0)
 }

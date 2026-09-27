@@ -253,6 +253,7 @@ fn abi_enum_members(prefix: &str) -> Vec<(String, i32)> {
 }
 
 mod abi_entries;
+mod abi_options;
 mod digit_select;
 mod ffi_mapping;
 mod key_routing;

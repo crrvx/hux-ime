@@ -9,8 +9,11 @@
 //! - 参照的 `env` 瞬态状态在 Rust 由调用方持有 [`SentenceState`]（每会话一份）；
 //! - 参照的 decode 增量缓存属性能优化，本移植的解码为无状态冷路径，
 //!   `invalidate_edit_state` 因此只处理锁与瞬态标记（语义一致）；
-//! - 上下文属性层只保留**宿主与内核共享**的缓冲前缀（`K_BUFFERED`：`select` /
-//!   `early_commit` / `learning_glue` 与 `Context::is_buffered` 都读它）。会话状态
+//! - 上下文属性层只保留缓冲前缀 `K_BUFFERED`：写侧只有 `state.rs` 的 `save`（与内核布尔标记
+//!   同处写出），读侧是方案自身的 `state.rs::buffered_text`（`select` / `translate` 与
+//!   `Scheme::buffered_text` 经它回读）。内核判据是同一处 `Context::set_buffered(…)` 的
+//!   `is_buffered()` 标记，**不读本属性**；`early_commit` / `learning_glue` / `processor` 读的是
+//!   状态字段 `SentenceState::buffered_text`——不写成属性。会话状态
 //!   （已确认 `raw`/`text`、锁帧）**不再**写成私有属性快照：参照每次入口从属性重读是因为
 //!   Lua `env` 无状态，本仓的会话状态由方案对象持有；`load`/`read_locks` 解析、旧属性迁移与
 //!   `committed`/`locks` 写侧无生产调用者，已删除。
@@ -62,7 +65,7 @@ pub(crate) const KIND_SENTENCE_BUFFERED_COMMIT: &str = "sentence_buffered_commit
 // 仅 crate 内可见（`platform/` 只依赖 `scheme::{…}`），故不再用 glob 把整层平铺出去。
 pub use keys::K_SOUND_TO_CHAR_SHAPE_KEY;
 pub use learning_glue::LiveLearning;
-pub use processor::{ProcessorEnv, ProcessorResult, processor};
+pub use processor::{ProcessorEnv, ProcessorResult, process_key_event};
 pub use state::SentenceState;
 pub use translate::{CompositionBuilder, update_notifier};
 

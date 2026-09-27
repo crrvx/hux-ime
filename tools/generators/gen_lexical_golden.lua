@@ -15,23 +15,12 @@
 -- 语料为确定性扫描/拼接（不依赖外部词表）：正例取自扫描命中，负例取自未命中，
 -- 另含词长越界与长串打分。
 
-local function parse_args(argv)
-    local opts = {}
-    local i = 1
-    while i <= #argv do
-        local key = argv[i]:match("^%-%-([%w_%-]+)$")
-        if not key then error("unexpected argument: " .. argv[i]) end
-        opts[key] = argv[i + 1]
-        i = i + 2
-    end
-    return opts
-end
-
-local opts = parse_args({ ... })
--- 默认参照检出：与仓库同级（相对脚本位置解析，不依赖调用时的 cwd）。
+-- 共享助手（parse_args / reference_dir / emitter / hex / bits / lcg）：见 lib/lua_util.lua 头注。
 local script_dir = (arg and arg[0] or ""):match("^(.*)[/\\]") or "."
-local reference = opts.reference or os.getenv("HUX_REFERENCE_REPO")
-    or (script_dir .. "/../../_external/tiger-sentense-rime")
+package.path = script_dir .. "/lib/?.lua;" .. package.path
+local util = require("lua_util")
+local opts = util.parse_args({ ... })
+local reference = util.reference_dir(opts, script_dir)
 assert(opts.model, "missing --model")
 assert(opts.out, "missing --out")
 
@@ -42,19 +31,8 @@ local model, load_error = lexical.load(opts.model)
 assert(model, load_error or "cannot load lexical model")
 
 local out = assert(io.open(opts.out, "w"))
-local emitted = 0
-local function emit(...)
-    out:write(table.concat({ ... }, "\t"), "\n")
-    emitted = emitted + 1
-end
-local function hex(text)
-    if text == "" or text == nil then return "-" end
-    return (text:gsub(".", function(c) return string.format("%02x", c:byte()) end))
-end
-local function bits(value)
-    local lo, hi = string.unpack("<I4I4", string.pack("<d", value))
-    return string.format("0x%08x%08x", hi, lo)
-end
+local emit, emitted = util.emitter(out)
+local hex, bits = util.hex, util.bits
 
 emit("# lexical transcript; magic=" .. lexical.magic)
 emit("header", "bytes=" .. model.bytes, "entries=" .. model.entry_count,
@@ -94,11 +72,7 @@ assert(#positives > 0, "code table has no positive entries; wrong model?")
 assert(#pool >= 5, "code table lacks single characters")
 
 -- 负例：单字池的确定性随机组合（码表词条几乎全部命中位图）。
-local state = 12345
-local function pick(limit)
-    state = (state * 1103515245 + 12345) % 2147483648
-    return state % limit + 1
-end
+local pick = util.lcg(12345)
 local negatives = {}
 local attempts = 0
 while #negatives < 512 and attempts < 200000 do
@@ -136,4 +110,4 @@ end
 
 out:close()
 print(string.format('{"lua":"%s","texts":%d,"positives":%d,"negatives":%d,"emitted":%d}',
-    _VERSION, #texts, #positives, #negatives, emitted))
+    _VERSION, #texts, #positives, #negatives, emitted()))

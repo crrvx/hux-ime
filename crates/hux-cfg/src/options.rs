@@ -137,6 +137,7 @@ impl Options {
 mod tests {
     use super::*;
 
+    /// sync 的职责是把缺省灌进上下文，true/false 两个方向都要落，不能只处理开启项。
     #[test]
 
     fn options_sync_applies_defaults() {
@@ -146,13 +147,23 @@ mod tests {
 
         options.sync(&mut context);
 
-        assert!(context.get_option("tiger_sentence_early_commit"));
+        assert!(
+            context.get_option("tiger_sentence_early_commit"),
+            "sync 必须把 schema 缺省 true 落进上下文"
+        );
 
-        assert!(context.get_option("tiger_sentence_allow_duplicate_single"));
+        assert!(
+            context.get_option("tiger_sentence_allow_duplicate_single"),
+            "缺省 true 的第二个开关同样要落进上下文"
+        );
 
-        assert!(!context.get_option("tiger_sentence_early_commit_to_preedit"));
+        assert!(
+            !context.get_option("tiger_sentence_early_commit_to_preedit"),
+            "缺省 false 的开关不得被 sync 写成 true"
+        );
     }
 
+    /// 钉住写入时抑制：sync 自身的事件必须当场丢弃，否则紧随其后的第一次真实用户改动会被吞掉。
     #[test]
 
     fn options_sync_discards_own_option_events() {
@@ -171,14 +182,18 @@ mod tests {
                 .any(|event| matches!(event, hux_core::session::Event::Option(_))),
             "sync 自身的事件不应留在队列中"
         );
-        assert_eq!(options.revision, 0);
+        assert_eq!(options.revision, 0, "sync 只写上下文，不算一次用户改动");
 
         // 随后的真实改动仍应被观察（对照参照：抑制只在写入那一次生效）。
         context.set_option("tiger_sentence_early_commit", false);
-        assert!(options.observe(&context, "tiger_sentence_early_commit"));
-        assert_eq!(options.revision, 1);
+        assert!(
+            options.observe(&context, "tiger_sentence_early_commit"),
+            "写入后 observe 必须报告有变化以请求持久化"
+        );
+        assert_eq!(options.revision, 1, "一次真实改动只推进一版");
     }
 
+    /// revision 是持久化的去重依据：同一值只记一次，未登记键直接忽略。
     #[test]
 
     fn options_observe_records_user_change_once() {
@@ -192,15 +207,25 @@ mod tests {
 
         context.set_option("tiger_sentence_early_commit_to_preedit", true);
 
-        assert!(options.observe(&context, "tiger_sentence_early_commit_to_preedit"));
+        assert!(
+            options.observe(&context, "tiger_sentence_early_commit_to_preedit"),
+            "用户改动必须被 observe 认领"
+        );
 
-        assert_eq!(options.revision, 1);
+        assert_eq!(options.revision, 1, "同一改动只计一次 revision");
 
-        assert!(!options.observe(&context, "tiger_sentence_early_commit_to_preedit"));
+        assert!(
+            !options.observe(&context, "tiger_sentence_early_commit_to_preedit"),
+            "已记录的改动重复 observe 不得再请求持久化"
+        );
 
-        assert!(!options.observe(&context, "other_option"));
+        assert!(
+            !options.observe(&context, "other_option"),
+            "未登记的选项不参与持久化"
+        );
     }
 
+    /// 磁盘持久化值优先于 schema 缺省，用户设置不能被默认值覆盖。
     #[test]
 
     fn options_sync_prefers_persisted_values() {
@@ -220,6 +245,9 @@ mod tests {
 
         options.sync(&mut context);
 
-        assert!(!context.get_option("tiger_sentence_early_commit"));
+        assert!(
+            !context.get_option("tiger_sentence_early_commit"),
+            "持久化值必须压过 schema 缺省：true 缺省被磁盘 false 覆盖"
+        );
     }
 }

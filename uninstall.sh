@@ -3,11 +3,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 # 虎虚（hux-ime）卸载：①探测安装 ②确认可选项 ③移除 ④结果清单。
-#   ./uninstall.sh [--dry-run]
-#   --dry-run  只打印将执行的命令与「计划删除清单」：不提问、不上色、不删除
-#   -h, --help 显示本帮助
+# 用法与选项的唯一出处是下面的 `usage()`（`--help` 打的就是它，不要再往这里抄一份）。
 # 全交互：先探测系统级与用户级两处安装，只对存在的项提问与操作；主题缺省卸载，
 # 模型（体积大、可复用）与用户数据缺省保留。卸载结束不自动重启 fcitx5。
+# 公共片段（颜色 / 输出 / 执行 / 清单解析）见 tools/scripts/lib.sh；需要 bash ≥ 4.4。
 #
 # `--dry-run` 的「计划删除清单」契约（机器可解析；守卫 tools/checks/check_uninstall_clean.py 按它解析）：
 #   每行 `<标记> <绝对路径>`，标记两种：`-` = 按缺省会删；`?` = 需交互确认（回答 y）后才删，
@@ -15,74 +14,19 @@
 #   路径为绝对路径，一行一条；整个目录以 `/` 结尾；通配用 `*`（如 multiarch 的 addon 目录）。
 #   清单按固定落点与两份清单静态给出、不按探测结果过滤：干净机器上也能取到完整的可卸载集合。
 #   其余人读信息照常打印，守卫只认上述两种前缀行。
+#   ——这一段是规范文本：`usage()` 与 `print_plan()` 只作面向用户的转述，要改契约就改这里。
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")" && pwd)
 cd "$root"
 
-# ---------------------------------------------------------------- 公共（颜色 / 输出 / 执行）
+# ---------------------------------------------------------------- 公共片段
 
-# 颜色只在终端上给出：非 TTY（重定向、管道、CI 日志）、设了 NO_COLOR，或 `--dry-run`
-# 时退化为纯文本——预览的「计划删除清单」要机器可解析（契约见文件头）。
-color=1
-if [ ! -t 1 ] || [ -n "${NO_COLOR:-}" ]; then color=0; fi
-for arg in "$@"; do
-    if [ "$arg" = --dry-run ]; then color=0; fi
-done
-if [ "$color" -eq 1 ]; then
-    c_orange=$'\033[38;5;208m' # 一般文字
-    c_green=$'\033[32m'        # 网址 / 命令
-    c_gray=$'\033[38;5;245m'   # 注释 / 次要说明
-    c_white=$'\033[97m'        # 建议 / 感谢
-    c_reset=$'\033[0m'
-else
-    c_orange='' c_green='' c_gray='' c_white='' c_reset=''
-fi
+# 颜色 / 输出 / 执行 / 清单解析由两个脚本共用（bash 版本守卫也在该文件里）。
+. tools/scripts/lib.sh
 
-info() { printf '%s%s%s\n' "$c_orange" "$*" "$c_reset"; } # 一般文字
-green() { printf '%s%s%s\n' "$c_green" "$*" "$c_reset"; } # 网址 / 命令
-note() { printf '%s%s%s\n' "$c_gray" "$*" "$c_reset"; }   # 注释 / 次要说明
-white() { printf '%s%s%s\n' "$c_white" "$*" "$c_reset"; } # 建议 / 感谢
-step() { printf '\n%s%s%s\n' "$c_orange" "$*" "$c_reset"; }
-die() {
-    printf '%s%s%s\n' "$c_orange" "$*" "$c_reset" >&2
-    exit 1
-}
-
-# 建议：白色正文 + 绿色网址（同一行）。
-white_url() {
-    printf '%s%s%s%s%s%s\n' "$c_white" "$1" "$c_reset" "$c_green" "$2" "$c_reset"
-}
-
-# 执行命令；--dry-run 只打印（绿色 `+` 前缀）。
-run() {
-    printf '%s+' "$c_green"
-    printf ' %q' "$@"
-    printf '%s\n' "$c_reset"
-    if [ "$dry_run" -eq 0 ]; then
-        "$@"
-    fi
-}
-
-# 询问（缺省答案标在 [Y/n] / [y/N] 里；标准输入读不到时按缺省处理）。
-ask() {
-    local prompt=$1 default=$2 hint='y/N' answer=''
-    if [ "$default" = y ]; then hint='Y/n'; fi
-    printf '%s%s [%s] %s' "$c_orange" "$prompt" "$hint" "$c_reset"
-    if ! read -r answer; then
-        printf '\n'
-        note "  （标准输入不可读，按缺省处理）"
-    fi
-    case "$answer" in
-    y | Y | yes | YES | Yes) return 0 ;;
-    n | N | no | NO | No) return 1 ;;
-    '') [ "$default" = y ] ;;
-    *)
-        note "  （无法识别，按否处理）"
-        return 1
-        ;;
-    esac
-}
+# 颜色先按终端与 NO_COLOR 落定：解析参数前就要定，未知参数的报错也得有色。
+setup_colors auto
 
 usage() {
     info "虎虚（hux-ime）卸载"
@@ -98,6 +42,7 @@ usage() {
     printf '%s\n' '  {addon,inputmethod}/hux.conf、图标、随包数据、-u 写的 environment.d）缺省都卸。'
     printf '%s\n' '  要连模型与用户数据一起清除，就在对应的两问回答 y。'
     printf '\n'
+    # 契约的规范文本在文件头；这里只是给人看的转述（改契约时以文件头为准）。
     printf '%s\n' '  --dry-run 的「计划删除清单」契约：每行 `<标记> <绝对路径>`，标记 - 表示按缺省'
     printf '%s\n' '  会删、? 表示回答 y 才删（模型 / 用户数据）；绝对路径一行一条，整个目录以 / 结尾，'
     printf '%s\n' '  通配用 *（如 multiarch 的 addon 目录）。'
@@ -109,7 +54,12 @@ dry_run=0
 
 for arg in "$@"; do
     case "$arg" in
-    --dry-run) dry_run=1 ;;
+    --dry-run)
+        dry_run=1
+        # 预览的「计划删除清单」要机器可解析（守卫按行首两字符解析）：解析到这一步就落定
+        # 纯文本（不再事先预扫一遍 "$@"），后面的帮助与报错台词也跟着变纯文本。
+        setup_colors plain
+        ;;
     -h | --help)
         usage
         exit 0
@@ -131,59 +81,70 @@ engine_data_home="${XDG_DATA_HOME:-$user_share}"
 engine_hux_dir="$engine_data_home/fcitx5/hux"
 engine_conf="${XDG_CONFIG_HOME:-$HOME/.config}/fcitx5/conf/hux.conf"
 
-# 系统级插件库：兼容 lib、lib64 与 multiarch（Debian/Ubuntu：lib/<triplet>/fcitx5）。
-sys_lib_patterns=(/usr/lib/fcitx5/libhux.so /usr/lib64/fcitx5/libhux.so '/usr/lib/*/fcitx5/libhux.so')
-sys_conf_files=(/usr/share/fcitx5/addon/hux.conf /usr/share/fcitx5/inputmethod/hux.conf)
-sys_icon_files=(
-    /usr/share/icons/hicolor/scalable/apps/hux.svg
-    /usr/share/icons/hicolor/48x48/apps/hux.png
-    /usr/share/icons/hicolor/22x22/apps/hux.png
-)
+# 两级的目录落点；插件库 / 配置 / 图标 / 随包数据 / 模型的具体路径都在下面的落点表里。
 sys_themes_dir=/usr/share/fcitx5/themes
 sys_hux_dir=/usr/share/fcitx5/hux
 sys_models_dir="$sys_hux_dir/models"
-
-user_lib="$user_prefix/lib/fcitx5/libhux.so"
-user_conf_files=("$user_share/fcitx5/addon/hux.conf" "$user_share/fcitx5/inputmethod/hux.conf")
-user_icon_files=(
-    "$user_share/icons/hicolor/scalable/apps/hux.svg"
-    "$user_share/icons/hicolor/48x48/apps/hux.png"
-    "$user_share/icons/hicolor/22x22/apps/hux.png"
-)
 user_themes_dir="$user_share/fcitx5/themes"
 user_hux_dir="$user_share/fcitx5/hux"
 user_models_dir="$user_hux_dir/models"
 
-# 随包数据与共享主题的名单来自两份清单（与 CMake / install.sh 同源）。
-manifest_lines() {
-    local line
-    while IFS= read -r line; do
-        case "$line" in '' | '#'*) continue ;; esac
-        printf '%s\n' "$line"
-    done <"$1"
-}
+# ---------------------------------------------------------------- 清单（与 CMake / install.sh 同源）
 
-if [ ! -f data/MANIFEST ]; then die "缺少 data/MANIFEST（随包数据清单）"; fi
-if [ ! -f assets/themes/MANIFEST ]; then die "缺少 assets/themes/MANIFEST（共享主题清单）"; fi
+manifest_require data/MANIFEST 随包数据清单
+manifest_require assets/themes/MANIFEST 共享主题清单
 data_names=()
 while IFS= read -r entry; do data_names+=("$(basename "$entry")"); done < <(manifest_lines data/MANIFEST)
-if [ "${#data_names[@]}" -eq 0 ]; then die "data/MANIFEST 没有有效行（随包数据清单缺失或为空）"; fi
+manifest_require_lines data/MANIFEST 随包数据清单 "${#data_names[@]}"
 theme_names=()
 while IFS= read -r entry; do theme_names+=("$entry"); done < <(manifest_lines assets/themes/MANIFEST)
-if [ "${#theme_names[@]}" -eq 0 ]; then die "assets/themes/MANIFEST 没有有效行（共享主题清单缺失或为空）"; fi
+manifest_require_lines assets/themes/MANIFEST 共享主题清单 "${#theme_names[@]}"
 
-sys_data=()
-user_data=()
-sys_themes=()
-user_themes=()
-for name in "${data_names[@]}"; do
-    sys_data+=("$sys_hux_dir/$name")
-    user_data+=("$user_hux_dir/$name")
-done
-for name in "${theme_names[@]}"; do
-    sys_themes+=("$sys_themes_dir/$name")
-    user_themes+=("$user_themes_dir/$name")
-done
+# <前缀> <名字…> → `;` 分隔的绝对路径串（落点表的「来源」字段用；路径里不会出现 `;`）。
+absolute_list() {
+    local prefix=$1 name out=''
+    shift
+    for name in "$@"; do
+        if [ -n "$out" ]; then out="$out;"; fi
+        out="$out$prefix/$name"
+    done
+    printf '%s' "$out"
+}
+
+sys_data_src=$(absolute_list "$sys_hux_dir" "${data_names[@]}")
+user_data_src=$(absolute_list "$user_hux_dir" "${data_names[@]}")
+sys_theme_src=$(absolute_list "$sys_themes_dir" "${theme_names[@]}")
+user_theme_src=$(absolute_list "$user_themes_dir" "${theme_names[@]}")
+
+# ---------------------------------------------------------------- 落点表
+
+# 卸载涉及的每一项落点，一行一项、`|` 分九列：
+#   ① 作用域 sys|user   ② 键（探测与结果按 `作用域/键` 索引）
+#   ③ 来源：`;` 分隔的路径 / 通配模式（探测取存在的；计划清单逐条原样打印）
+#   ④ 量词（结果行的 N 项 / 个 / 套）   ⑤ 探测概览里的短名
+#   ⑥ 结果行标签   ⑦ 取值方式 list|count_dir|count_list   ⑧ 取值参数（count_dir 的父目录）
+#   ⑨ 分组：core / themes 按缺省删，models / userdata 缺省保留（由问答决定，见 group_selected）
+# 行的顺序 = ①探测概览、④结果清单、--dry-run 计划清单的行序，改顺序就是改用户可见行序。
+targets=(
+    # 系统级插件库兼容 lib、lib64 与 multiarch（Debian/Ubuntu：lib/<triplet>/fcitx5）。
+    "sys|lib|/usr/lib/fcitx5/libhux.so;/usr/lib64/fcitx5/libhux.so;/usr/lib/*/fcitx5/libhux.so|项|插件库|系统级插件库|list||core"
+    "sys|conf|/usr/share/fcitx5/addon/hux.conf;/usr/share/fcitx5/inputmethod/hux.conf|项|配置|系统级配置|list||core"
+    "sys|icon|/usr/share/icons/hicolor/scalable/apps/hux.svg;/usr/share/icons/hicolor/48x48/apps/hux.png;/usr/share/icons/hicolor/22x22/apps/hux.png|个|图标|系统级图标|count_dir|/usr/share/icons/hicolor|core"
+    "sys|data|$sys_data_src|项|随包数据|系统级随包数据|count_dir|$sys_hux_dir|core"
+    "sys|theme|$sys_theme_src|套|主题|系统级主题|count_dir|$sys_themes_dir|themes"
+    "sys|model|$sys_models_dir/*.bin|个|模型|系统级模型|count_list||models"
+    "user|lib|$user_prefix/lib/fcitx5/libhux.so|项|插件库|用户级插件库|list||core"
+    "user|conf|$user_share/fcitx5/addon/hux.conf;$user_share/fcitx5/inputmethod/hux.conf|项|配置|用户级配置|list||core"
+    "user|icon|$user_share/icons/hicolor/scalable/apps/hux.svg;$user_share/icons/hicolor/48x48/apps/hux.png;$user_share/icons/hicolor/22x22/apps/hux.png|个|图标|用户级图标|count_dir|$user_share/icons/hicolor|core"
+    "user|data|$user_data_src|项|随包数据|用户级随包数据|count_dir|$user_hux_dir|core"
+    "user|theme|$user_theme_src|套|主题|用户级主题|count_dir|$user_themes_dir|themes"
+    "user|model|$user_models_dir/*.bin|个|模型|用户级模型|count_list||models"
+    "user|env|$user_env_file|项|environment.d|用户级环境变量文件|list||core"
+    # 学习库是目录 `<方案 id 哈希>.userdb/`（LevelDB）；探测用同一模式。
+    "user|option|$engine_hux_dir/tiger_sentence.options.yaml;$engine_hux_dir/user.yaml|||用户数据（选项）|list||userdata"
+    "user|learning|$engine_hux_dir/tiger_sentence_learning_*.userdb|||用户数据（学习库）|list||userdata"
+    "user|conf_file|$engine_conf|||用户数据（配置页设置）|list||userdata"
+)
 
 # ---------------------------------------------------------------- 探测 / 删除
 
@@ -251,82 +212,172 @@ cleanup_empty_dirs() {
     done
 }
 
+# 已存在路径的连续存放区：present_paths 按落点表顺序连续放着各项探测到的路径，
+# present_start / present_count 记每项在其中的切片（关联数组，键为 `作用域/键`）。
+present_paths=()
+declare -A present_start=()
+declare -A present_count=()
+
 # 探测存在的项（交互问答、结果清单与真正的删除都基于它；--dry-run 的计划清单是静态的）。
 probe() {
-    mapfile -t sys_lib_present < <(expand_existing "${sys_lib_patterns[@]}" | dedupe_paths)
-    mapfile -t sys_conf_present < <(expand_existing "${sys_conf_files[@]}" | dedupe_paths)
-    mapfile -t sys_icon_present < <(expand_existing "${sys_icon_files[@]}" | dedupe_paths)
-    mapfile -t sys_data_present < <(expand_existing "${sys_data[@]}" | dedupe_paths)
-    mapfile -t sys_theme_present < <(expand_existing "${sys_themes[@]}" | dedupe_paths)
-    mapfile -t sys_model_present < <(expand_existing "$sys_models_dir/*.bin" | dedupe_paths)
-    mapfile -t user_lib_present < <(expand_existing "$user_lib" | dedupe_paths)
-    mapfile -t user_conf_present < <(expand_existing "${user_conf_files[@]}" | dedupe_paths)
-    mapfile -t user_icon_present < <(expand_existing "${user_icon_files[@]}" | dedupe_paths)
-    mapfile -t user_data_present < <(expand_existing "${user_data[@]}" | dedupe_paths)
-    mapfile -t user_theme_present < <(expand_existing "${user_themes[@]}" | dedupe_paths)
-    mapfile -t user_model_present < <(expand_existing "$user_models_dir/*.bin" | dedupe_paths)
-    mapfile -t user_env_present < <(expand_existing "$user_env_file" | dedupe_paths)
-    mapfile -t user_option_present < <(expand_existing "$engine_hux_dir/tiger_sentence.options.yaml" "$engine_hux_dir/user.yaml" | dedupe_paths)
-    mapfile -t user_learning_present < <(expand_existing "$engine_hux_dir"/tiger_sentence_learning_*.userdb | dedupe_paths)
-    mapfile -t user_conf_file_present < <(expand_existing "$engine_conf" | dedupe_paths)
+    local record s key sources rest group start=0
+    local -a patterns present
+    present_paths=()
+    present_start=()
+    present_count=()
+    for record in "${targets[@]}"; do
+        IFS='|' read -r s key sources _ _ _ _ _ group <<<"$record"
+        IFS=';' read -r -a patterns <<<"$sources"
+        mapfile -t present < <(expand_existing "${patterns[@]}" | dedupe_paths)
+        present_start["$s/$key"]=$start
+        present_count["$s/$key"]=${#present[@]}
+        present_paths+=("${present[@]}")
+        start=$((start + ${#present[@]}))
+    done
 }
 
-sys_found() {
-    [ "${#sys_lib_present[@]}" -gt 0 ] || [ "${#sys_conf_present[@]}" -gt 0 ] ||
-        [ "${#sys_icon_present[@]}" -gt 0 ] || [ "${#sys_data_present[@]}" -gt 0 ] ||
-        [ "${#sys_theme_present[@]}" -gt 0 ] || [ "${#sys_model_present[@]}" -gt 0 ]
+# 某落点是否探测到路径（键为 `作用域/键`）。
+present_any() {
+    [ "${present_count[$1]}" -gt 0 ]
 }
 
-user_found() {
-    [ "${#user_lib_present[@]}" -gt 0 ] || [ "${#user_conf_present[@]}" -gt 0 ] ||
-        [ "${#user_icon_present[@]}" -gt 0 ] || [ "${#user_data_present[@]}" -gt 0 ] ||
-        [ "${#user_theme_present[@]}" -gt 0 ] || [ "${#user_model_present[@]}" -gt 0 ] ||
-        [ "${#user_env_present[@]}" -gt 0 ] || [ "${#user_option_present[@]}" -gt 0 ] ||
-        [ "${#user_learning_present[@]}" -gt 0 ] || [ "${#user_conf_file_present[@]}" -gt 0 ]
+# 某落点已存在的路径（每行一条）；没有时什么都不输出——直接展开空数组会多出一个空行。
+present_list() {
+    local -a p=("${present_paths[@]:${present_start[$1]}:${present_count[$1]}}")
+    if [ "${#p[@]}" -gt 0 ]; then printf '%s\n' "${p[@]}"; fi
 }
 
-user_data_found() {
-    [ "${#user_option_present[@]}" -gt 0 ] || [ "${#user_learning_present[@]}" -gt 0 ] ||
-        [ "${#user_conf_file_present[@]}" -gt 0 ]
+# 某作用域是否探测到任何项（可限定分组：`userdata` 只问用户数据那三项）。
+scope_found() {
+    local record s key rest group
+    for record in "${targets[@]}"; do
+        IFS='|' read -r s key _ _ _ _ _ _ group <<<"$record"
+        if [ "$s" != "$1" ]; then continue; fi
+        if [ -n "${2:-}" ] && [ "$group" != "$2" ]; then continue; fi
+        if present_any "$s/$key"; then return 0; fi
+    done
+    return 1
+}
+
+# 作用域的中文名（探测概览与「未发现」行）。
+scope_label() {
+    case "$1" in
+    sys) printf '%s' 系统级 ;;
+    user) printf '%s' 用户级 ;;
+    esac
+}
+
+# 该分组此刻是否要删：核心项总是删；主题 / 模型 / 用户数据看问答结果（缺省：主题删，
+# 模型与用户数据留——它们在计划清单里因此是 `?` 行）。
+group_selected() {
+    case "$1" in
+    core) ;;
+    themes) [ "$remove_themes" -eq 1 ] || return 1 ;;
+    models) [ "$remove_models" -eq 1 ] || return 1 ;;
+    userdata) [ "$remove_user_data" -eq 1 ] || return 1 ;;
+    *) return 1 ;;
+    esac
+    return 0
+}
+
+# 删除某作用域：按分组各合成一次 rm（分组内的路径顺序 = 落点表顺序）。
+remove_scope() {
+    local scope=$1 g record s key rest group
+    local -a paths
+    for g in core themes models userdata; do
+        if ! group_selected "$g"; then continue; fi
+        paths=()
+        for record in "${targets[@]}"; do
+            IFS='|' read -r s key _ _ _ _ _ _ group <<<"$record"
+            if [ "$s" = "$scope" ] && [ "$group" = "$g" ]; then
+                paths+=("${present_paths[@]:${present_start[$s/$key]}:${present_count[$s/$key]}}")
+            fi
+        done
+        remove_abs "${paths[@]}"
+    done
+}
+
+remove_system() {
+    if ! scope_found sys; then return 0; fi
+    note "  系统级（需要 sudo）："
+    need_sudo=1
+    remove_scope sys
+    cleanup_empty_dirs "$sys_themes_dir" "$sys_models_dir" "$sys_hux_dir"
+}
+
+remove_user() {
+    if ! scope_found user; then return 0; fi
+    note "  用户级："
+    need_sudo=0
+    remove_scope user
+    if [ "$remove_user_data" -eq 1 ] && [ "$remove_models" -eq 1 ] && [ -d "$engine_hux_dir" ]; then
+        # 模型也删：用户数据目录整棵端掉（含未被清单覆盖的残留）。
+        remove_abs "$engine_hux_dir"
+    fi
+    cleanup_empty_dirs "$user_themes_dir" "$user_models_dir" "$engine_hux_dir" "$(dirname "$user_env_file")"
 }
 
 # ---------------------------------------------------------------- 计划删除清单（--dry-run）
 
-# 逐行打印「计划删除清单」（契约见文件头）。清单是静态的：按固定落点与两份清单给出，不按探测
-# 结果过滤——干净机器上也要能取到完整的可卸载集合，守卫拿它比对安装集合。
+# 计划清单的两种行首标记（契约见文件头）：`-` 按缺省就删、`?` 回答 y 才删。
+marker_delete='-'
+marker_keep='?'
+
+# 该分组在计划清单里的标记：模型 / 用户数据缺省保留，故回答 y 才删。
+plan_marker() {
+    case "$1" in
+    models | userdata) printf '%s' "$marker_keep" ;;
+    *) printf '%s' "$marker_delete" ;;
+    esac
+}
+
+# 取该标记的行（来源逐条原样打印：清单是静态的，不按探测结果过滤；整目录以 `/` 结尾）。
+plan_lines() {
+    local wanted=$1 record s key sources rest group suffix p marker
+    local -a patterns
+    for record in "${targets[@]}"; do
+        IFS='|' read -r s key sources _ _ _ _ _ group <<<"$record"
+        marker=$(plan_marker "$group")
+        if [ "$marker" != "$wanted" ]; then continue; fi
+        suffix=''
+        if [ "$key" = theme ]; then suffix='/'; fi
+        IFS=';' read -r -a patterns <<<"$sources"
+        for p in "${patterns[@]}"; do
+            printf '%s\n' "$marker $p$suffix"
+        done
+    done
+}
+
+# 逐行打印「计划删除清单」（契约见文件头）：先 `-` 行、再 `?` 行。
 print_plan() {
-    local p
-    for p in "${sys_lib_patterns[@]}" "${sys_conf_files[@]}" "${sys_icon_files[@]}"; do
-        printf '%s\n' "- $p"
-    done
-    for p in "${sys_data[@]}"; do printf '%s\n' "- $p"; done
-    for p in "${sys_themes[@]}"; do printf '%s\n' "- $p/"; done
-    for p in "$user_lib" "${user_conf_files[@]}" "${user_icon_files[@]}"; do
-        printf '%s\n' "- $p"
-    done
-    for p in "${user_data[@]}"; do printf '%s\n' "- $p"; done
-    for p in "${user_themes[@]}"; do printf '%s\n' "- $p/"; done
-    printf '%s\n' "- $user_env_file"
-    printf '%s\n' "? $sys_models_dir/*.bin" "? $user_models_dir/*.bin"
-    printf '%s\n' "? $engine_hux_dir/tiger_sentence.options.yaml" "? $engine_hux_dir/user.yaml"
-    # 学习库是目录 `<方案 id 哈希>.userdb/`（LevelDB）；上面的探测用同一模式。
-    printf '%s\n' "? $engine_hux_dir/tiger_sentence_learning_*.userdb"
-    printf '%s\n' "? $engine_conf"
+    note "计划删除清单（每行「<标记> <绝对路径>」：- 按缺省会删；? 回答 y 才删）："
+    plan_lines "$marker_delete"
+    plan_lines "$marker_keep"
 }
 
 # ---------------------------------------------------------------- ① 探测安装
 
+# 探测概览的一行内容：「插件库 1 项、配置 2 项、…」；用户数据不是安装产物，不计入。
+scope_summary() {
+    local record s key rest noun short label group out=''
+    for record in "${targets[@]}"; do
+        IFS='|' read -r s key _ noun short _ _ _ group <<<"$record"
+        if [ "$s" != "$1" ] || [ "$group" = userdata ]; then continue; fi
+        if [ -n "$out" ]; then out="$out、"; fi
+        out="$out$short ${present_count[$s/$key]} $noun"
+    done
+    printf '%s' "$out"
+}
+
 report_probe() {
-    if sys_found; then
-        info "  系统级：插件库 ${#sys_lib_present[@]} 项、配置 ${#sys_conf_present[@]} 项、图标 ${#sys_icon_present[@]} 个、随包数据 ${#sys_data_present[@]} 项、主题 ${#sys_theme_present[@]} 套、模型 ${#sys_model_present[@]} 个"
-    else
-        note "  系统级：未发现安装（跳过）"
-    fi
-    if user_found; then
-        info "  用户级：插件库 ${#user_lib_present[@]} 项、配置 ${#user_conf_present[@]} 项、图标 ${#user_icon_present[@]} 个、随包数据 ${#user_data_present[@]} 项、主题 ${#user_theme_present[@]} 套、模型 ${#user_model_present[@]} 个、environment.d ${#user_env_present[@]} 项"
-    else
-        note "  用户级：未发现安装（跳过）"
-    fi
+    local scope
+    for scope in sys user; do
+        if scope_found "$scope"; then
+            info "  $(scope_label "$scope")：$(scope_summary "$scope")"
+        else
+            note "  $(scope_label "$scope")：未发现安装（跳过）"
+        fi
+    done
 }
 
 # ---------------------------------------------------------------- ② 确认可选项
@@ -337,51 +388,17 @@ ask_optional() {
         note "  （--dry-run 不提问：主题删，模型与用户数据按缺省保留）"
         return 0
     fi
-    if [ "${#sys_theme_present[@]}" -gt 0 ] || [ "${#user_theme_present[@]}" -gt 0 ]; then
-        if ask "是否卸载共享主题（$(( ${#sys_theme_present[@]} + ${#user_theme_present[@]} )) 套）？" y; then remove_themes=1; else remove_themes=0; fi
+    local themes=$((present_count[sys/theme] + present_count[user/theme]))
+    local models=$((present_count[sys/model] + present_count[user/model]))
+    if [ "$themes" -gt 0 ]; then
+        if ask "是否卸载共享主题（$themes 套）？" y; then remove_themes=1; else remove_themes=0; fi
     fi
-    if [ "${#sys_model_present[@]}" -gt 0 ] || [ "${#user_model_present[@]}" -gt 0 ]; then
-        if ask "是否卸载模型（$(( ${#sys_model_present[@]} + ${#user_model_present[@]} )) 个 .bin，体积大、可复用）？" n; then remove_models=1; else remove_models=0; fi
+    if [ "$models" -gt 0 ]; then
+        if ask "是否卸载模型（$models 个 .bin，体积大、可复用）？" n; then remove_models=1; else remove_models=0; fi
     fi
-    if user_data_found; then
+    if scope_found user userdata; then
         if ask "是否删除用户数据（选项 / 学习库 / conf/hux.conf）？" n; then remove_user_data=1; else remove_user_data=0; fi
     fi
-}
-
-# ---------------------------------------------------------------- ③ 移除
-
-remove_system() {
-    if ! sys_found; then return 0; fi
-    local -a themes=() models=()
-    if [ "$remove_themes" -eq 1 ]; then themes=("${sys_theme_present[@]}"); fi
-    if [ "$remove_models" -eq 1 ]; then models=("${sys_model_present[@]}"); fi
-    note "  系统级（需要 sudo）："
-    need_sudo=1
-    remove_abs "${sys_lib_present[@]}" "${sys_conf_present[@]}" "${sys_icon_present[@]}" "${sys_data_present[@]}"
-    remove_abs "${themes[@]}"
-    remove_abs "${models[@]}"
-    cleanup_empty_dirs "$sys_themes_dir" "$sys_models_dir" "$sys_hux_dir"
-}
-
-remove_user() {
-    if ! user_found; then return 0; fi
-    local -a themes=() models=()
-    if [ "$remove_themes" -eq 1 ]; then themes=("${user_theme_present[@]}"); fi
-    if [ "$remove_models" -eq 1 ]; then models=("${user_model_present[@]}"); fi
-    note "  用户级："
-    need_sudo=0
-    remove_abs "${user_lib_present[@]}" "${user_conf_present[@]}" "${user_icon_present[@]}" \
-        "${user_data_present[@]}" "${user_env_present[@]}"
-    remove_abs "${themes[@]}"
-    remove_abs "${models[@]}"
-    if [ "$remove_user_data" -eq 1 ]; then
-        remove_abs "${user_option_present[@]}" "${user_learning_present[@]}" "${user_conf_file_present[@]}"
-        if [ "$remove_models" -eq 1 ] && [ -d "$engine_hux_dir" ]; then
-            # 模型也删：用户数据目录整棵端掉（含未被清单覆盖的残留）。
-            remove_abs "$engine_hux_dir"
-        fi
-    fi
-    cleanup_empty_dirs "$user_themes_dir" "$user_models_dir" "$engine_hux_dir" "$(dirname "$user_env_file")"
 }
 
 # ---------------------------------------------------------------- ④ 结果清单
@@ -392,11 +409,71 @@ report_leftover() {
     fi
 }
 
+# 已卸载 / 将卸载：按落点表顺序逐项给出（作用域 → 表序；没轮到的分组不计入）。
+report_removed() {
+    local scope record s key rest noun short label show arg group line
+    local -a paths
+    for scope in sys user; do
+        if ! scope_found "$scope"; then
+            absent+=("$(scope_label "$scope")安装（未发现，跳过）")
+            continue
+        fi
+        for record in "${targets[@]}"; do
+            IFS='|' read -r s key _ noun short label show arg group <<<"$record"
+            if [ "$s" != "$scope" ]; then continue; fi
+            if ! group_selected "$group"; then continue; fi
+            if ! present_any "$s/$key"; then continue; fi
+            mapfile -t paths < <(present_list "$s/$key")
+            case "$show" in
+            list) line=$(show_paths "${paths[@]}") ;;
+            count_dir) line="${#paths[@]} $noun（$(show_paths "$arg")/）" ;;
+            count_list) line="${#paths[@]} $noun（$(show_paths "${paths[@]}")）" ;;
+            *) die "落点表的取值方式无法识别：$show" ;;
+            esac
+            removed+=("$label：$line")
+        done
+    done
+}
+
+# 「用户数据」保留行只列实际存在的落点：选项 / 学习库在引擎数据目录、配置页设置在 conf 文件，
+# 只存在一部分时不再把两个目录都列出来。
+userdata_dirs() {
+    if present_any user/option || present_any user/learning; then
+        printf '%s\n' "$engine_hux_dir"
+    fi
+    if present_any user/conf_file; then
+        printf '%s\n' "$engine_conf"
+    fi
+}
+
+# 未卸载项：逐条给出原因（只有缺省保留的三类会有：共享主题 / 模型 / 用户数据）。
+report_kept() {
+    local scope n
+    local -a paths dirs
+    if ! group_selected themes; then
+        n=$((present_count[sys/theme] + present_count[user/theme]))
+        if [ "$n" -gt 0 ]; then
+            kept+=("共享主题（$n 套）：按确认结果保留（要删请重跑并在「是否卸载共享主题」一问回答 y）")
+        fi
+    fi
+    if ! group_selected models; then
+        for scope in sys user; do
+            if ! present_any "$scope/model"; then continue; fi
+            mapfile -t paths < <(present_list "$scope/model")
+            kept+=("$(scope_label "$scope")模型：$(show_paths "${paths[@]}")（体积大、可复用；要删请重跑并在「是否卸载模型」一问回答 y）")
+        done
+    fi
+    if ! group_selected userdata && scope_found user userdata; then
+        mapfile -t dirs < <(userdata_dirs)
+        kept+=("用户数据：$(show_paths "${dirs[@]}")（选项 / 学习库 / 配置页设置；要删请重跑并在「是否删除用户数据」一问回答 y）")
+    fi
+}
+
 report_result() {
     removed=()
     kept=()
     absent=()
-    local line
+    local line verb_removed verb_kept
     if [ "$dry_run" -eq 0 ]; then
         verb_removed="已卸载"
         verb_kept="未卸载"
@@ -404,57 +481,8 @@ report_result() {
         verb_removed="将卸载"
         verb_kept="将保留"
     fi
-    if sys_found; then
-        if [ "${#sys_lib_present[@]}" -gt 0 ]; then removed+=("系统级插件库：$(show_paths "${sys_lib_present[@]}")"); fi
-        if [ "${#sys_conf_present[@]}" -gt 0 ]; then removed+=("系统级配置：$(show_paths "${sys_conf_present[@]}")"); fi
-        if [ "${#sys_icon_present[@]}" -gt 0 ]; then removed+=("系统级图标：${#sys_icon_present[@]} 个（/usr/share/icons/hicolor/）"); fi
-        if [ "${#sys_data_present[@]}" -gt 0 ]; then removed+=("系统级随包数据：${#sys_data_present[@]} 项（$sys_hux_dir/）"); fi
-        if [ "$remove_themes" -eq 1 ] && [ "${#sys_theme_present[@]}" -gt 0 ]; then
-            removed+=("系统级主题：${#sys_theme_present[@]} 套（$sys_themes_dir/）")
-        fi
-        if [ "$remove_models" -eq 1 ] && [ "${#sys_model_present[@]}" -gt 0 ]; then
-            removed+=("系统级模型：${#sys_model_present[@]} 个（$(show_paths "${sys_model_present[@]}")）")
-        fi
-    else
-        absent+=("系统级安装（未发现，跳过）")
-    fi
-    if user_found; then
-        if [ "${#user_lib_present[@]}" -gt 0 ]; then removed+=("用户级插件库：$(show_paths "${user_lib_present[@]}")"); fi
-        if [ "${#user_conf_present[@]}" -gt 0 ]; then removed+=("用户级配置：$(show_paths "${user_conf_present[@]}")"); fi
-        if [ "${#user_icon_present[@]}" -gt 0 ]; then removed+=("用户级图标：${#user_icon_present[@]} 个（$(show_paths "$user_share/icons/hicolor")/）"); fi
-        if [ "${#user_data_present[@]}" -gt 0 ]; then removed+=("用户级随包数据：${#user_data_present[@]} 项（$(show_paths "$user_hux_dir")/）"); fi
-        if [ "$remove_themes" -eq 1 ] && [ "${#user_theme_present[@]}" -gt 0 ]; then
-            removed+=("用户级主题：${#user_theme_present[@]} 套（$(show_paths "$user_themes_dir")/）")
-        fi
-        if [ "$remove_models" -eq 1 ] && [ "${#user_model_present[@]}" -gt 0 ]; then
-            removed+=("用户级模型：${#user_model_present[@]} 个（$(show_paths "${user_model_present[@]}")）")
-        fi
-        if [ "${#user_env_present[@]}" -gt 0 ]; then removed+=("用户级环境变量文件：$(show_paths "${user_env_present[@]}")"); fi
-        if [ "$remove_user_data" -eq 1 ]; then
-            if [ "${#user_option_present[@]}" -gt 0 ]; then removed+=("用户数据（选项）：$(show_paths "${user_option_present[@]}")"); fi
-            if [ "${#user_learning_present[@]}" -gt 0 ]; then removed+=("用户数据（学习库）：$(show_paths "${user_learning_present[@]}")"); fi
-            if [ "${#user_conf_file_present[@]}" -gt 0 ]; then removed+=("用户数据（配置页设置）：$(show_paths "${user_conf_file_present[@]}")"); fi
-        fi
-    else
-        absent+=("用户级安装（未发现，跳过）")
-    fi
-    # 未卸载项：逐条给出原因。
-    if [ "$remove_themes" -eq 0 ]; then
-        if [ "${#sys_theme_present[@]}" -gt 0 ] || [ "${#user_theme_present[@]}" -gt 0 ]; then
-            kept+=("共享主题（$(( ${#sys_theme_present[@]} + ${#user_theme_present[@]} )) 套）：按确认结果保留（要删请重跑并在「是否卸载共享主题」一问回答 y）")
-        fi
-    fi
-    if [ "$remove_models" -eq 0 ]; then
-        if [ "${#sys_model_present[@]}" -gt 0 ]; then
-            kept+=("系统级模型：$(show_paths "${sys_model_present[@]}")（体积大、可复用；要删请重跑并在「是否卸载模型」一问回答 y）")
-        fi
-        if [ "${#user_model_present[@]}" -gt 0 ]; then
-            kept+=("用户级模型：$(show_paths "${user_model_present[@]}")（体积大、可复用；要删请重跑并在「是否卸载模型」一问回答 y）")
-        fi
-    fi
-    if [ "$remove_user_data" -eq 0 ] && user_data_found; then
-        kept+=("用户数据：$(show_paths "$engine_hux_dir" "$engine_conf")（选项 / 学习库 / 配置页设置；要删请重跑并在「是否删除用户数据」一问回答 y）")
-    fi
+    report_removed
+    report_kept
     if [ "$dry_run" -eq 0 ]; then
         report_leftover "$sys_hux_dir"
         report_leftover "$engine_hux_dir"
@@ -497,12 +525,7 @@ if [ "$(id -u)" -eq 0 ]; then die "请以普通用户运行（脚本会在需要
 remove_themes=1
 remove_models=0
 remove_user_data=0
-
-sys_lib_present=() sys_conf_present=() sys_icon_present=() sys_data_present=()
-sys_theme_present=() sys_model_present=()
-user_lib_present=() user_conf_present=() user_icon_present=() user_data_present=()
-user_theme_present=() user_model_present=() user_env_present=()
-user_option_present=() user_learning_present=() user_conf_file_present=()
+# need_sudo 由 remove_system / remove_user 在使用前设定；这里给初值，免得 set -u 下漏读。
 need_sudo=0
 
 step "①探测安装"
@@ -517,7 +540,6 @@ step "④结果清单"
 report_result
 if [ "$dry_run" -eq 1 ]; then
     printf '\n'
-    note "计划删除清单（每行「<标记> <绝对路径>」：- 按缺省会删；? 回答 y 才删）："
     print_plan
 fi
 print_tail

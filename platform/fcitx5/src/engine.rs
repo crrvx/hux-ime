@@ -2,63 +2,142 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! 引擎：共享数据（词库/解码/选项/学习库）+ 按输入上下文隔离的多会话。
+//!
+//! 拆成三块：本文件 = 会话管理与按键路径；[`assembly`] = 装配输入与装载（构造 / 重新部署
+//! 共用）；[`diagnostics`] = 状态串与诊断；[`config`] = 配置袋与角色解析。
 
 use std::collections::HashMap;
 use std::ffi::CString;
-use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::path::PathBuf;
 
-use crate::abi::{HostCallback, core_modifiers};
-use crate::learning_store::{self, LearningStore};
-use crate::paths::{data_dirs, default_model_path, user_data_dir};
-use crate::session::{ReverseLookupState, Session};
 use hux_cfg::roles::{
     OptionKeys, ROLE_ALLOW_DUPLICATE_SINGLE, ROLE_FILTER_NON_HAN, ROLE_FULL_CHARSET,
-    ROLE_HIGH_FREQ_LIMIT, ROLE_LEARNING_ON_TAB, ROLE_MIN_RETAINED_INPUT_LENGTH, ROLE_PAGE_CYCLE,
-    ROLE_PAGE_DOWN_KEYS, ROLE_PAGE_SIZE, ROLE_PAGE_UP_KEYS, ROLE_REVERSE_LOOKUP_CHARACTER_KEYS,
-    ROLE_REVERSE_LOOKUP_PRONUNCIATION_KEYS, RUNTIME_OPTION_ROLES,
+    RUNTIME_OPTION_ROLES,
 };
 use hux_cfg::{CandidateLayout, OptionsStore, Settings};
-
 use hux_core::key::KeyEvent;
-use hux_core::scheme::{KeyOutcome, OptionDecl, Scheme, SchemeConfig, Value};
+use hux_core::scheme::{KeyOutcome, Scheme, SchemeConfig};
 use hux_core::session::{Context, Event, set_property_if_changed};
-use hux_scheme_tiger::scheme::{ASSETS, TigerScheme};
 
-pub(crate) fn wall_clock() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|value| value.as_secs() as f64)
-        .unwrap_or(0.0)
+use crate::abi::{HostCallback, core_modifiers};
+use crate::learning_store::LearningStore;
+use crate::session::{ReverseLookupState, Session};
+
+mod assembly;
+mod config;
+mod diagnostics;
+
+pub(crate) use assembly::{
+    Assembled, Assembly, option_keys, scheme_config_with_runtime, wall_clock,
+};
+pub(crate) use config::RuntimeOptions;
+// 测试在同一条 `crate::engine::*` 路径下设夹具与核对配置袋；生产路径用不到这三个名字。
+#[cfg(test)]
+pub(crate) use assembly::ModelSource;
+#[cfg(test)]
+pub(crate) use config::{resolve_option_roles, scheme_config};
+pub(crate) use diagnostics::Diagnostics;
+
+/// 事件泵每轮按键的最大轮数（选项事件可能触发确认，进而产生新事件）。
+const EVENT_PUMP_ROUNDS: usize = 4;
+
+pub struct Engine {
+    pub(crate) host: Option<HostCallback>,
+    /// 方案（平台经 `dyn Scheme` 驱动，不直接引用方案模块；共享资源与会话态都在方案内）。
+    pub(crate) scheme: Box<dyn Scheme>,
+    pub(crate) sessions: HashMap<u64, Session>,
+    next_session: u64,
+    /// 选项存储（用户目录不可用时为 `None`，此时仅用内建缺省）。
+    pub(crate) options: Option<OptionsStore>,
+    /// 外部配置（fcitx5 配置界面 / 测试；默认 = 内建缺省）。
+    pub(crate) settings: Settings,
+    /// 学习库（用户目录不可用时为禁用占位）。
+    pub(crate) learning: LearningStore,
+    /// 角色 → 选项键（装配处由方案声明解析；缺角色即报错，见 [`Engine::new_with_dirs`]）。
+    pub(crate) option_roles: OptionKeys,
+    /// 角色序（= [`RUNTIME_OPTION_ROLES`]）的选项键 C 字符串；缺失角色为 `None`
+    /// （`hux_engine_option_key` 返回 NULL，宿主跳过该项）。
+    pub(crate) option_keys: Vec<Option<CString>>,
+    /// 设置派生的配置袋是否需要重下发（`apply_settings` 置位）。
+    config_dirty: bool,
+    /// 上次下发的运行时开关生效值（`None` = 尚未下发）。
+    applied_runtime: Option<RuntimeOptions>,
+    /// 本次按键「已提交且未消费」：宿主层应消费该键并以 `forwardKey` 重发，
+    /// 保证「提交 → 按键」送达顺序（对齐 fcitx5 核心 `KeyEventOrderFix` 修法）。
+    pub(crate) forward_after_commit: bool,
+    /// 装配输入（目录 / 模型来源；构造与「重新部署」共用一份）。
+    assembly: Assembly,
+    /// 状态与诊断（状态串 / 配置诊断 / 选项保存错误 / 学习库 / 热键诊断 / 装载摘要）。
+    pub(crate) diagnostics: Diagnostics,
+    /// 模型摘要（`hux_engine_model_info` 的指针来源）：**重新部署后替换**，
+    /// 此前返回的指针随即失效（同 `status` 的契约）。
+    pub(crate) model_info: CString,
+    /// 模型文件路径（`hux_engine_model_path` 的指针来源）：与 `model_info` 同一替换时机。
+    /// 解析到了就是该文件；没解析到（无模型）是**该放的位置**（文件可以不存在）；
+    /// 任何路径都给不出时为 `None`（ABI 返回 NULL）。
+    pub(crate) model_path: Option<CString>,
 }
+impl Engine {
+    pub(crate) fn new(host: Option<HostCallback>) -> Self {
+        // `HUX_MODEL` 显式覆盖（此时路径固定）；未设置则按数据目录查找
+        // （`Auto` ⇒「重新部署」会重新查找，新装入的模型随之生效）。
+        let model_source = Assembly::model_source(std::env::var_os("HUX_MODEL").map(PathBuf::from));
+        Self::with_assembly(host, Assembly::from_env(model_source))
+    }
 
-/// 运行时开关的**生效值**（会话 → 存储 → 设置缺省；角色无键时按出厂缺省计）。
-///
-/// 这些开关都随会话/存储变化，装配处（构造 / 重新部署 / 每次按键）必须按同一口径取一次：
-/// 配置袋里的值与上下文选项值不一致时，方案的词库 / 学习 mode 会与会话选项脱节。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct RuntimeOptions {
-    /// 单字重码参与组句（学习 mode 的 `dup` 位）。
-    duplicate: bool,
-    /// 启用全字集（装载追加码表）。
-    full_charset: bool,
-    /// 过滤追加码表里的非汉字。
-    filter_non_han: bool,
-}
+    /// 按指定目录构造：目录 / 模型 / 选项目录全部显式注入，**不经 XDG 缺省**（来源记为注入，
+    /// 故「重新部署」沿用它们）。供测试与平台内装配使用；生产装配走 [`Engine::new`]。
+    ///
+    /// 模型传 `None` 即「未指定」⇒ 走默认查找（各数据目录里的方案模型资产）；夹具目录
+    /// 里都没有模型文件，故与「不装模型」同效，而重新部署时按同一来源重新查找。
+    // 非测试构建下平台装配尚未接入（ABI 侧只经 `Engine::new`）；接口本身是正式面，不作死码。
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn new_with_dirs(
+        host: Option<HostCallback>,
+        dirs: Vec<PathBuf>,
+        model_path: Option<PathBuf>,
+        options_dir: Option<PathBuf>,
+    ) -> Self {
+        Self::with_assembly(host, Assembly::injected(dirs, model_path, options_dir))
+    }
 
-impl RuntimeOptions {
-    /// 设置缺省（构造期：尚无会话与存储，运行时开关的初始值即设置值）。
-    fn from_settings(settings: &Settings) -> Self {
+    /// 构造本体：把一份装配输入装成引擎（「重新部署」按同一路径重装，见 [`Engine::redeploy`]）。
+    fn with_assembly(host: Option<HostCallback>, assembly: Assembly) -> Self {
+        let settings = Settings::default();
+        // 构造方案前先按设置装配配置袋；运行时开关的初始值取设置缺省（尚无会话与存储）。
+        let applied_runtime = RuntimeOptions::from_settings(&settings);
+        let assembled = assembly.load(&settings, applied_runtime);
+        let Assembled {
+            scheme,
+            option_roles,
+            options,
+            learning,
+            learning_error,
+            model_path,
+            model_info,
+            notes,
+        } = assembled;
+        let option_keys = option_keys(&option_roles);
         Self {
-            duplicate: settings.allow_duplicate_single,
-            full_charset: settings.full_charset,
-            filter_non_han: settings.filter_non_han,
+            host,
+            scheme: Box::new(scheme),
+            sessions: HashMap::new(),
+            next_session: 1,
+            options,
+            settings,
+            learning,
+            option_roles,
+            option_keys,
+            config_dirty: false,
+            applied_runtime: Some(applied_runtime),
+            forward_after_commit: false,
+            assembly,
+            diagnostics: Diagnostics::new(notes, learning_error),
+            model_info,
+            model_path,
         }
     }
-}
 
-impl Engine {
     /// 状态菜单可切换的运行时开关（顺序即菜单顺序 = C ABI 的 `HUX_OPTION_*` 角色序）：
     /// 方案声明的角色 + 宿主标准的 `full_shape`。方案未声明的角色**不出现在菜单里**。
     pub(crate) fn runtime_options(&self) -> Vec<&'static str> {
@@ -116,18 +195,16 @@ impl Engine {
     /// 数据装载摘要（`hux_engine_data_info`）：首次调用按方案算一次并缓存
     /// （`&self` 入口，故用 `OnceLock`）；配置下发 / 重新部署时置空失效（旧指针随之失效）。
     pub(crate) fn data_info(&self) -> &CString {
-        self.data_info
-            .get_or_init(|| crate::ui::cstring_lossy(&self.scheme.data_info()))
+        self.diagnostics.data_info(self.scheme.as_ref())
     }
 
     /// 下发一个配置袋并收录诊断。
     ///
     /// 方案的 `apply_config` 返回逐角色诊断（角色缺失 / 类型不符）：方案已按缺省值回退，
     /// 平台把诊断并入状态串（与装配期 `config:` 诊断同风格），避免运行期静默降级。
+    /// 方案可能已按新的高频上限 / 字集开关重建词库 ⇒ 装载摘要同时失效。
     pub(crate) fn apply_scheme_config(&mut self, config: SchemeConfig) {
         let result = self.scheme.apply_config(&config);
-        // 方案可能已按新的高频上限 / 字集开关重建词库 ⇒ 装载摘要失效，下次按需重算。
-        self.data_info = OnceLock::new();
         let notes: Vec<String> = match result {
             Ok(()) => Vec::new(),
             Err(errors) => errors
@@ -135,364 +212,8 @@ impl Engine {
                 .map(|error| format!("config: {error}"))
                 .collect(),
         };
-        if notes != self.config_notes {
-            self.config_notes = notes;
-            self.refresh_status();
-        }
-    }
-}
-
-/// 事件泵每轮按键的最大轮数（选项事件可能触发确认，进而产生新事件）。
-const EVENT_PUMP_ROUNDS: usize = 4;
-
-/// 解析方案的选项声明：返回（角色 → 键表, 可选错误诊断）。
-///
-/// **全有或全无**：`OptionKeys::resolve` 只要发现任一问题（缺角色 / 重复 / 空声明）即 `Err`，
-/// 本函数随之返回 `OptionKeys::default()`——**所有**角色都不接线（诊断进状态串，列出问题清单），
-/// 而不是「只让出问题的那个角色不接线」。宿主菜单与持久化于是跳过全部角色选项，
-/// 绝不静默落到别的键上。
-pub(crate) fn resolve_option_roles(declarations: &[OptionDecl]) -> (OptionKeys, Option<String>) {
-    match OptionKeys::resolve(declarations) {
-        Ok(roles) => (roles, None),
-        Err(error) => (OptionKeys::default(), Some(error.to_string())),
-    }
-}
-
-/// 配置页热键绑定里**无法解析为 rime 键名**的项（返回 `角色=键名` 列表）。
-///
-/// 反向路径：ABI 把 fcitx5 的 `keysym + 状态位` 经 `KeyEvent::repr()` 转成键名交给本层，
-/// 而配置页可以绑到**没有名字的 keysym**（媒体键 / 厂商扩展键）：`repr()` 只能输出
-/// `0x1008ff14` / `(unknown)` 这类形式，`KeyEvent::from_repr` 不认 ⇒ 该绑定在
-/// `Settings::host_options` 与方案 `host_options_from` 的 `filter_map` 处**静默消失**。
-/// 这里点名，进 `hux_engine_status`（`hotkeys:` 前缀；C++ 壳在应用设置后落日志）。
-pub(crate) fn unparsable_key_bindings(settings: &Settings) -> Vec<String> {
-    let mut notes = Vec::new();
-    for (role, reprs) in [
-        (
-            ROLE_REVERSE_LOOKUP_PRONUNCIATION_KEYS,
-            &settings.reverse_lookup_pronunciation_keys,
-        ),
-        (
-            ROLE_REVERSE_LOOKUP_CHARACTER_KEYS,
-            &settings.reverse_lookup_character_keys,
-        ),
-        (ROLE_PAGE_UP_KEYS, &settings.page_up_keys),
-        (ROLE_PAGE_DOWN_KEYS, &settings.page_down_keys),
-    ] {
-        for repr in reprs
-            .iter()
-            .filter(|repr| KeyEvent::from_repr(repr).is_none())
-        {
-            notes.push(format!("{role}={repr}"));
-        }
-    }
-    notes
-}
-
-/// hux 自身设置 + 运行时开关的生效值 → 完整配置袋。
-///
-/// 设置派生的角色见 [`scheme_config`]；运行时开关（单字重码 / 全字集 / 过滤非汉字）
-/// 由调用方按[会话 → 存储 → 设置缺省]取好（构造期尚无会话与存储，取设置值）。
-pub(crate) fn scheme_config_with_runtime(
-    settings: &Settings,
-    runtime: RuntimeOptions,
-) -> SchemeConfig {
-    scheme_config(settings)
-        .with(ROLE_ALLOW_DUPLICATE_SINGLE, Value::Bool(runtime.duplicate))
-        .with(ROLE_FULL_CHARSET, Value::Bool(runtime.full_charset))
-        .with(ROLE_FILTER_NON_HAN, Value::Bool(runtime.filter_non_han))
-}
-
-/// hux 自身设置 → 方案配置袋（平台是装配根：只有这里知道「设置 → 角色」的对应关系）。
-///
-/// 角色词汇归 `hux-cfg`；本函数只搬运设置值。
-pub(crate) fn scheme_config(settings: &Settings) -> SchemeConfig {
-    let host = settings.host_options();
-    SchemeConfig::new()
-        .with(ROLE_HIGH_FREQ_LIMIT, Value::Count(settings.high_freq_limit))
-        .with(
-            ROLE_MIN_RETAINED_INPUT_LENGTH,
-            Value::Count(settings.min_retained()),
-        )
-        .with(ROLE_PAGE_SIZE, Value::Count(host.page_size))
-        .with(ROLE_PAGE_CYCLE, Value::Bool(host.page_cycle))
-        .with(
-            ROLE_PAGE_UP_KEYS,
-            Value::Texts(settings.page_up_keys.clone()),
-        )
-        .with(
-            ROLE_PAGE_DOWN_KEYS,
-            Value::Texts(settings.page_down_keys.clone()),
-        )
-        .with(
-            ROLE_REVERSE_LOOKUP_PRONUNCIATION_KEYS,
-            Value::Texts(settings.reverse_lookup_pronunciation_keys.clone()),
-        )
-        .with(
-            ROLE_REVERSE_LOOKUP_CHARACTER_KEYS,
-            Value::Texts(settings.reverse_lookup_character_keys.clone()),
-        )
-        .with(ROLE_LEARNING_ON_TAB, Value::Bool(settings.learning_on_tab))
-}
-
-/// 模型路径的**来源**：构造与「重新部署」按同一来源重新解析。
-///
-/// 「重新部署」要能拿到新装入的模型，故默认查找（[`ModelSource::Auto`]）在重新部署时
-/// 重新查找；而显式指定的路径（`HUX_MODEL` / 调用方传入）保持权威，不会退化成默认查找。
-#[derive(Clone, Debug)]
-pub(crate) enum ModelSource {
-    /// 显式指定的模型路径（`HUX_MODEL` 或调用方传入）：重新部署沿用。
-    Fixed(PathBuf),
-    /// 未指定：在各数据目录里查找方案声明的模型资产（重新部署时重新查找）。
-    Auto,
-}
-
-impl ModelSource {
-    /// 解析出模型路径（`None` = 不装载模型）。
-    pub(crate) fn resolve(&self, dirs: &[PathBuf]) -> Option<PathBuf> {
-        match self {
-            Self::Fixed(path) => Some(path.clone()),
-            Self::Auto => default_model_path(dirs, ASSETS),
-        }
-    }
-}
-
-/// 「打开模型目录」入口用的路径（UTF-8 串，`None` = 给不出任何路径 ⇒ ABI 返回 NULL）。
-///
-/// 解析到的模型文件优先（已装载 / 装载失败都是它）；没有模型时用
-/// [`paths::intended_model_path`] 给出**该放的位置**——文件可以不存在，其父目录正是
-/// 「模型该放的地方」，宿主的首项据此把用户带到正确目录。
-fn menu_model_path(model: Option<PathBuf>, dirs: &[PathBuf]) -> Option<CString> {
-    model
-        .or_else(|| crate::paths::intended_model_path(dirs, ASSETS))
-        .map(|path| crate::ui::cstring_lossy(&path.to_string_lossy()))
-}
-
-/// 装配方案（数据 + 模型）并解析选项角色：构造与「重新部署」共用同一条路径
-/// （两处各拼一份时漏一项即成为「重新部署后配置没下发」这类哑失败）。
-///
-/// `notes` 是装配诊断基线（数据目录 + 装载说明 + 角色解析错误），进状态串。
-pub(crate) fn assemble_scheme(
-    dirs: &[PathBuf],
-    model: Option<PathBuf>,
-    config: &SchemeConfig,
-) -> (TigerScheme, OptionKeys, Vec<String>) {
-    let mut notes = vec![format!(
-        "dirs: {}",
-        dirs.iter()
-            .map(|dir| dir.display().to_string())
-            .collect::<Vec<_>>()
-            .join(":")
-    )];
-    let (scheme, scheme_notes) = TigerScheme::load(dirs, model, config);
-    notes.extend(scheme_notes);
-    // 模型装载诊断：菜单只显示短名（`hux_engine_model_info`），格式标签 / 失败原因在这里补全，
-    // 随状态串落日志（构造期与每次重新部署各一行）。
-    notes.push(format!("model: {}", scheme.model_detail()));
-    // 选项键的唯一来源 = 方案的声明；**缺角色即报错**（状态串可见），缺的角色不参与
-    // 选项接线（无键 → 宿主跳过该项），不静默落到别的键上。
-    let (option_roles, roles_error) = resolve_option_roles(scheme.option_declarations());
-    if let Some(error) = roles_error {
-        notes.push(format!("options: {error}"));
-    }
-    (scheme, option_roles, notes)
-}
-
-/// 角色序（= [`RUNTIME_OPTION_ROLES`]）的选项键 C 字符串。
-///
-/// 角色顺序与 `hux_abi.h` 的 `HUX_OPTION_*` 一致（ABI 边界用角色，不暴露方案键名）；
-/// 缺失角色为 `None`（宿主跳过该项）。构造与「重新部署」共用这一份实现。
-fn option_keys(roles: &OptionKeys) -> Vec<Option<CString>> {
-    RUNTIME_OPTION_ROLES
-        .iter()
-        .map(|role| roles.key(role).map(crate::ui::cstring_lossy))
-        .collect()
-}
-
-/// 选项存储的装配（构造与「重新部署」共用）：用户目录不可用时为 `None`（此时仅用内建缺省）。
-fn options_store(
-    options_dir: Option<&Path>,
-    settings: &Settings,
-    roles: &OptionKeys,
-) -> Option<OptionsStore> {
-    options_dir.map(|dir| OptionsStore::load_with_defaults(dir, settings.store_defaults(roles)))
-}
-
-/// 打开学习库并把它并入装配说明（构造与「重新部署」共用同一口径）。
-///
-/// 库在 `<user dir>/<方案 id 哈希>.userdb/`；用户目录不可用时为禁用占位。
-/// 诊断统一拼成 `learning: <错误|库名>`，并把「存储是否可写」告诉方案。
-/// 调用方须保证旧句柄已释放——同一路径二次打开会撞上 LevelDB 的独占锁
-/// （rusty-leveldb 的 `LOCK`）；库名依赖方案 id，故按传入方案的 id 打开。
-fn open_learning(
-    options_dir: Option<&Path>,
-    scheme: &mut TigerScheme,
-    notes: &mut Vec<String>,
-) -> LearningStore {
-    let learning = match options_dir {
-        Some(dir) => {
-            LearningStore::open(dir, &learning_store::store_name(scheme.id()), wall_clock())
-        }
-        None => LearningStore::disabled("user data directory unavailable"),
-    };
-    if let Some(error) = &learning.error {
-        notes.push(format!("learning: {error}"));
-    } else {
-        notes.push(format!("learning: {}", learning.name));
-    }
-    scheme.set_store_ready(learning.store_ready());
-    learning
-}
-
-pub struct Engine {
-    pub(crate) host: Option<HostCallback>,
-    /// 方案（平台经 `dyn Scheme` 驱动，不直接引用方案模块；共享资源与会话态都在方案内）。
-    pub(crate) scheme: Box<dyn Scheme>,
-    pub(crate) sessions: HashMap<u64, Session>,
-    next_session: u64,
-    /// 选项存储（用户目录不可用时为 `None`，此时仅用内建缺省）。
-    pub(crate) options: Option<OptionsStore>,
-    /// 外部配置（fcitx5 配置界面 / 测试；默认 = 内建缺省）。
-    pub(crate) settings: Settings,
-    /// 学习库（用户目录不可用时为禁用占位）。
-    pub(crate) learning: LearningStore,
-    /// 角色 → 选项键（装配处由方案声明解析；缺角色即报错，见 [`Engine::new_with_dirs`]）。
-    pub(crate) option_roles: OptionKeys,
-    /// 角色序（= [`RUNTIME_OPTION_ROLES`]）的选项键 C 字符串；缺失角色为 `None`
-    /// （`hux_engine_option_key` 返回 NULL，宿主跳过该项）。
-    pub(crate) option_keys: Vec<Option<CString>>,
-    /// 设置派生的配置袋是否需要重下发（`apply_settings` 置位）。
-    config_dirty: bool,
-    /// 上次下发的运行时开关生效值（`None` = 尚未下发）。
-    applied_runtime: Option<RuntimeOptions>,
-    /// 本次按键「已提交且未消费」：宿主层应消费该键并以 `forwardKey` 重发，
-    /// 保证「提交 → 按键」送达顺序（对齐 fcitx5 核心 `KeyEventOrderFix` 修法）。
-    pub(crate) forward_after_commit: bool,
-    pub(crate) status: CString,
-    /// 状态串基线（构造时的加载说明；选项保存出错时拼在其后）。
-    status_base: String,
-    /// 选项保存失败的最近一条诊断（来自 [`hux_cfg::OPTIONS_ERROR_PROPERTY`]）。
-    option_error: Option<String>,
-    /// 学习库的**当前**诊断（构造 / 重新部署时读一次，运行期落库失败由
-    /// [`Engine::observe_learning_error`] 跟进）。
-    learning_error: Option<String>,
-    /// 构造 / 重新部署时已并入 `status_base` 的那条学习诊断（避免与运行期条目重复拼接）。
-    learning_error_baseline: Option<String>,
-    /// 配置页热键绑定里无法解析的项（`角色=键名`，见 [`unparsable_key_bindings`]）。
-    hotkey_notes: Vec<String>,
-    /// 最近一次配置下发的逐角色诊断（角色缺失 / 类型不符，`config:` 前缀）。
-    /// 方案已按缺省值回退，此串只是把「设置没生效」的原因暴露到状态里。
-    config_notes: Vec<String>,
-    /// 「重新部署」是否按进程环境重算目录（生产 `true`；测试注入固定目录时为 `false`）。
-    ///
-    /// 生产路径按 [`data_dirs`] / [`user_data_dir`] 解析（`HUX_DATA_DIRS` 覆盖、否则 XDG 规则）；
-    /// 这些环境变量都是进程级的、在同一进程内不会变，故重新部署重算得到的仍是同一组路径——
-    /// 重算的意义是**重新走一遍构造期的读取**，而不是换一组值。测试注入的目录固定不变，
-    /// 但其**内容**同样会重读（「替换数据文件后重新部署」据此可测）。
-    dirs_from_env: bool,
-    /// 当前只读数据目录（构造解析；注入来源时保持不变）。
-    dirs: Vec<PathBuf>,
-    /// 当前选项目录（同上；`None` = 无用户目录：仅用内建缺省、学习库禁用）。
-    options_dir: Option<PathBuf>,
-    /// 模型路径来源（见 [`ModelSource`]）。
-    model_source: ModelSource,
-    /// 模型摘要（`hux_engine_model_info` 的指针来源）：**重新部署后替换**，
-    /// 此前返回的指针随即失效（同 `status` 的契约）。
-    pub(crate) model_info: CString,
-    /// 模型文件路径（`hux_engine_model_path` 的指针来源）：与 `model_info` 同一替换时机。
-    /// 解析到了就是该文件；没解析到（无模型）是**该放的位置**（文件可以不存在）；
-    /// 任何路径都给不出时为 `None`（ABI 返回 NULL）。
-    pub(crate) model_path: Option<CString>,
-    /// 数据装载摘要（`hux_engine_data_info` 的指针来源）：**首次调用时算一次**并缓存；
-    /// 配置下发 / 重新部署时置空（此前返回的指针随即失效，同 `status` 的契约）。
-    pub(crate) data_info: OnceLock<CString>,
-}
-impl Engine {
-    pub(crate) fn new(host: Option<HostCallback>) -> Self {
-        // `HUX_MODEL` 显式覆盖（此时路径固定）；未设置则按数据目录查找
-        // （`Auto` ⇒「重新部署」会重新查找，新装入的模型随之生效）。
-        let model_source = match std::env::var_os("HUX_MODEL") {
-            Some(path) => ModelSource::Fixed(PathBuf::from(path)),
-            None => ModelSource::Auto,
-        };
-        Self::with_sources(host, true, data_dirs(), user_data_dir(), model_source)
-    }
-
-    /// 按指定目录构造：目录 / 模型 / 选项目录全部显式注入，**不经 XDG 缺省**（来源记为注入，
-    /// 故「重新部署」沿用它们）。供测试与平台内装配使用；生产装配走 [`Engine::new`]。
-    ///
-    /// 模型传 `None` 即「未指定」⇒ 走默认查找（各数据目录里的方案模型资产）；夹具目录
-    /// 里都没有模型文件，故与「不装模型」同效，而重新部署时按同一来源重新查找。
-    // 非测试构建下平台装配尚未接入（ABI 侧只经 `Engine::new`）；接口本身是正式面，不作死码。
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub fn new_with_dirs(
-        host: Option<HostCallback>,
-        dirs: Vec<PathBuf>,
-        model_path: Option<PathBuf>,
-        options_dir: Option<PathBuf>,
-    ) -> Self {
-        let model_source = match model_path {
-            Some(path) => ModelSource::Fixed(path),
-            None => ModelSource::Auto,
-        };
-        Self::with_sources(host, false, dirs, options_dir, model_source)
-    }
-
-    /// 构造本体：目录 / 模型都在此解析一次（「重新部署」按同一规则重放，见 [`Engine::redeploy`]）。
-    fn with_sources(
-        host: Option<HostCallback>,
-        dirs_from_env: bool,
-        dirs: Vec<PathBuf>,
-        options_dir: Option<PathBuf>,
-        model_source: ModelSource,
-    ) -> Self {
-        let settings = Settings::default();
-        // 构造方案前先按设置装配配置袋；运行时开关的初始值取设置缺省（尚无会话与存储）。
-        let applied_runtime = RuntimeOptions::from_settings(&settings);
-        let initial = scheme_config_with_runtime(&settings, applied_runtime);
-        // 模型解析一次、两处用：装配（决定装载哪个文件）与「打开模型目录」入口的路径。
-        let model = model_source.resolve(&dirs);
-        let menu_path = menu_model_path(model.clone(), &dirs);
-        let (mut scheme, option_roles, mut notes) = assemble_scheme(&dirs, model, &initial);
-        // 选项：有存储则同步（参照 `M.options.sync`，同步写入由核心抑制观察）；
-        // 无存储时直接用内建缺省。会话创建时逐个同步（见 `session_new`）。
-        let options = options_store(options_dir.as_deref(), &settings, &option_roles);
-        // 学习库的打开与诊断口径见 `open_learning`（与「重新部署」共用一份实现）。
-        // 构造期诊断进 `status_base`；运行期变化由 `observe_learning_error` 补进状态串
-        // （此处留一份基线快照，避免同一条错误被拼两次）。
-        let learning = open_learning(options_dir.as_deref(), &mut scheme, &mut notes);
-        let learning_error = learning.error.clone();
-        let status_base = notes.join("; ");
-        let option_keys = option_keys(&option_roles);
-        let model_info = crate::ui::cstring_lossy(scheme.model_info());
-        Self {
-            host,
-            scheme: Box::new(scheme),
-            sessions: HashMap::new(),
-            next_session: 1,
-            options,
-            settings,
-            learning,
-            option_roles,
-            option_keys,
-            model_path: menu_path,
-            config_dirty: false,
-            applied_runtime: Some(applied_runtime),
-            forward_after_commit: false,
-            status: crate::ui::cstring_lossy(&status_base),
-            status_base,
-            option_error: None,
-            learning_error_baseline: learning_error.clone(),
-            learning_error,
-            hotkey_notes: Vec::new(),
-            config_notes: Vec::new(),
-            dirs_from_env,
-            dirs,
-            options_dir,
-            model_source,
-            model_info,
-            data_info: OnceLock::new(),
-        }
+        self.diagnostics.invalidate_data_info();
+        self.diagnostics.observe_config_notes(notes);
     }
 
     /// 新建会话（一个输入上下文注册/激活时创建）；选项/触发键/学习模式按共享状态初始化。
@@ -792,36 +513,7 @@ impl Engine {
     /// 属性是唯一来源（[`Engine::observe_option`] 从上下文属性读，[`Engine::apply_settings`]
     /// 的批量写回直接把结果交到这里），故两处共用本入口。
     fn set_option_error(&mut self, error: Option<String>) {
-        if error != self.option_error {
-            self.option_error = error;
-            self.refresh_status();
-        }
-    }
-
-    /// 重建状态串（基线 + 配置诊断 + 选项保存错误 + 运行期学习库错误 + 热键绑定诊断，若有）。
-    fn refresh_status(&mut self) {
-        let mut status = self.status_base.clone();
-        if !self.config_notes.is_empty() {
-            status.push_str("; ");
-            status.push_str(&self.config_notes.join("; "));
-        }
-        if let Some(error) = &self.option_error {
-            status.push_str("; options: ");
-            status.push_str(error);
-        }
-        // 学习库：构造期那条已在基线里，只有**运行期新增/变化**的诊断在此拼接。
-        if let Some(error) = &self.learning_error
-            && Some(error) != self.learning_error_baseline.as_ref()
-        {
-            status.push_str("; learning: ");
-            status.push_str(error);
-        }
-        // 配置页绑到无名字 keysym（媒体键等）时该绑定会被丢弃，此处点名。
-        if !self.hotkey_notes.is_empty() {
-            status.push_str("; hotkeys: 忽略无法识别的绑定 ");
-            status.push_str(&self.hotkey_notes.join(", "));
-        }
-        self.status = crate::ui::cstring_lossy(&status);
+        self.diagnostics.observe_option_error(error);
     }
 
     /// 学习库诊断变化 → 并入状态串。
@@ -830,11 +522,8 @@ impl Engine {
     /// （LevelDB `put` 返回错误）既无日志也不进 `hux_engine_status`。这里在落库路径上调一次，
     /// 诊断变化即刷新状态串（与 `*_options_error` 同风格）。
     fn observe_learning_error(&mut self) {
-        let current = self.learning.error.clone();
-        if current != self.learning_error {
-            self.learning_error = current;
-            self.refresh_status();
-        }
+        self.diagnostics
+            .observe_learning_error(self.learning.error.clone());
     }
 
     /// 运行时开关当前值（状态菜单；全局）：任一会话的生效值，无会话时回退存储/设置缺省。
@@ -894,11 +583,8 @@ impl Engine {
         self.settings = settings;
         self.config_dirty = true;
         // 配置页热键绑定里无法解析的项：点名（此前在 `filter_map` 处静默消失）。
-        let hotkey_notes = unparsable_key_bindings(&self.settings);
-        if hotkey_notes != self.hotkey_notes {
-            self.hotkey_notes = hotkey_notes;
-            self.refresh_status();
-        }
+        let hotkey_notes = config::unparsable_key_bindings(&self.settings);
+        self.diagnostics.observe_hotkey_notes(hotkey_notes);
         let option_defaults = self.settings.session_option_defaults(&self.option_roles);
         let store_defaults = self.settings.store_defaults(&self.option_roles);
         // 先登记缺省（决定哪些角色由存储管理），再把设置值写成持久化值（一次落盘）。
@@ -958,43 +644,41 @@ impl Engine {
 
     /// 重新部署：**重走一遍构造期的读取**并重置全部现有会话状态。
     ///
-    /// 重做的读取（与 [`Engine::with_sources`] 同源、同顺序）：
-    /// 目录（数据目录 / 选项目录）→ 模型路径 → 方案数据（词库 / 词先验 / 标点 / 模型）
-    /// → 选项存储（重读 `options.yaml`，重放到全部会话）→ 学习库（重开，重读 `e/` 事件）。
-    /// 进程级环境变量（`HUX_DATA_DIRS` / `HUX_MODEL`）在同一进程内无法改变：目录按同一规则重算
-    /// （结果与构造时相同），模型仍由 [`ModelSource`] 定源（显式路径沿用、默认查找重查）。
+    /// 重做的读取（与构造同源、同顺序，见 [`Assembly::load`]）：目录（数据目录 / 选项目录）
+    /// → 模型路径 → 方案数据（词库 / 词先验 / 标点 / 模型）→ 选项存储（重读 `options.yaml`，
+    /// 重放到全部会话）→ 学习库（重开，重读 `e/` 事件）。进程级环境变量（`HUX_DATA_DIRS` /
+    /// `HUX_MODEL`）在同一进程内无法改变：目录按同一规则重算（结果与构造时相同），
+    /// 模型仍由 [`ModelSource`] 定源（显式路径沿用、默认查找重查）。
     ///
     /// 平台侧会话 id 不变（宿主的输入上下文与 id 的对应关系保持，IC 不需要重建），
     /// 方案侧会话全部重建 ⇒ 组合、候选、学习暂存、反查态一并作废（宿主负责清面板）。
     /// 返回 `true` = 已重新装配。
     pub fn redeploy(&mut self) -> bool {
-        // 目录与模型：与构造同一规则（见 [`Engine::dirs_from_env`] / [`ModelSource`]）。
-        if self.dirs_from_env {
-            self.dirs = data_dirs();
-            self.options_dir = user_data_dir();
-        }
-        let dirs = self.dirs.clone();
-        let options_dir = self.options_dir.clone();
-        let model = self.model_source.resolve(&dirs);
+        // 目录与模型：与构造同一规则（见 [`Assembly::resolve_dirs`] / [`ModelSource`]）。
+        self.assembly.resolve_dirs();
         // 配置袋与构造同源：设置派生的角色 + 运行时开关的生效值（单字重码 / 字集开关）。
-        let config = self.scheme_config_with_runtime();
-        let menu_path = menu_model_path(model.clone(), &dirs);
-        let (mut scheme, option_roles, mut notes) = assemble_scheme(&dirs, model, &config);
+        let runtime = self.runtime_option_values();
         // 学习库：重开（重读库文件）。必须先释放旧句柄——同一路径二次打开会撞上 LevelDB 的
-        // 独占锁（rusty-leveldb 的 `LOCK`）；库名依赖方案 id，故按**新**方案的 id 打开。
-        if options_dir.is_some() {
+        // 独占锁（rusty-leveldb 的 `LOCK`）；库名依赖方案 id，故 `load` 已按**新**方案的 id 打开。
+        if self.assembly.has_options_dir() {
             self.learning = LearningStore::disabled("reloading");
         }
-        // 与构造同口径（见 `open_learning`）：诊断进状态串基线，并留一份基线快照
-        // （避免运行期条目重复拼接）。
-        let learning = open_learning(options_dir.as_deref(), &mut scheme, &mut notes);
-        let learning_error = learning.error.clone();
-        self.learning_error = learning_error.clone();
-        self.learning_error_baseline = learning_error;
+        let assembled = self.assembly.load(&self.settings, runtime);
+        let Assembled {
+            scheme,
+            option_roles,
+            options,
+            learning,
+            learning_error,
+            model_path,
+            model_info,
+            notes,
+        } = assembled;
+        // 学习库：换上刚打开的那一份（旧句柄已在 `load` 之前释放，见上）。
         self.learning = learning;
         // 选项存储：重开（重读 `options.yaml`）；缺省仍取当前设置（与构造同一口径）。
         // 会话上下文在下面的逐会话重置里由 `sync` 重放。
-        self.options = options_store(options_dir.as_deref(), &self.settings, &option_roles);
+        self.options = options;
         // 释放旧方案的会话（平台侧 id 与宿主输入上下文不受影响），再换上重新装配的方案。
         let old_sessions: Vec<_> = self
             .sessions
@@ -1008,10 +692,8 @@ impl Engine {
         // 角色表随方案重新解析（角色缺失时宿主菜单跳过该项，诊断进状态串）。
         self.option_roles = option_roles;
         self.option_keys = option_keys(&self.option_roles);
-        self.status_base = notes.join("; ");
-        // 逐角色诊断由随后的配置下发重新产出，先清掉旧方案的（避免拼出过期诊断）。
-        self.config_notes.clear();
-        self.refresh_status();
+        // 状态串换上新装配说明（逐角色诊断由随后的配置下发重新产出）。
+        self.diagnostics.reset(notes, learning_error);
         // 逐会话重置：平台 id 保留，方案侧会话重建（触发键 / 最小保留量随新方案刷新，
         // 选项按重读后的存储重放）。
         let ids: Vec<u64> = self.sessions.keys().copied().collect();
@@ -1024,9 +706,9 @@ impl Engine {
         self.push_scheme_config();
         // 模型摘要 / 模型路径 / 数据装载摘要：指针在此替换（此前返回的指针随即失效，
         // 见 `hux_abi.h`）。
-        self.model_info = crate::ui::cstring_lossy(self.scheme.model_info());
-        self.model_path = menu_path;
-        self.data_info = OnceLock::new();
+        self.model_info = model_info;
+        self.model_path = model_path;
+        self.diagnostics.invalidate_data_info();
         true
     }
 

@@ -102,11 +102,11 @@ impl FusionHarness {
         let mut env = ProcessorEnv {
             now: 0.0,
             dot_armed: &mut self.dot_armed,
-            min_retained: None,
+            min_retained: 0,
             page_size: 5,
             host_options: &host_options,
         };
-        let result = processor(
+        let result = process_key_event(
             &key,
             &mut self.context,
             &mut self.state,

@@ -4,12 +4,14 @@
 //! 虎虚（hux-ime）测试助手（克制版）：只放**与业务无关**的共性工具。
 //!
 //! 约定：本 crate 仅承载
-//! ① 金样 / 夹具路径定位、② transcript 编解码、③ 临时目录；
+//! ① 金样 / 夹具路径定位、② transcript 编解码、③ 临时目录、④ 基准样板（`bench`）；
 //! **不放业务逻辑**（如具体方案的夹具装配、引擎/宿主包装）——那些留在各 crate 的
 //! 单元测试或各自 `tests/` 内，避免测试助手长成第二个实现。
 //!
 //! 各 crate 以 `dev-dependencies` 引入：`hux-test-support = { path = "../hux-test-support" }`。
 //! 本 crate 不依赖任何 hux crate（避免测试期成环）。
+
+pub mod bench;
 
 use flate2::read::GzDecoder;
 use std::fs::File;

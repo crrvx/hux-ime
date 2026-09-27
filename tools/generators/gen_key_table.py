@@ -5,9 +5,10 @@
 """从 librime `src/rime/key_table.cc` 生成 Rust 键名表。
 
     python3 tools/generators/gen_key_table.py --source <librime>/src/rime/key_table.cc \
-        --out crates/hux-core/src/key_table.rs [--keyvals-out <path>]
+        --out crates/hux-core/src/key_table.rs [--keyvals-out <path>] [--provenance <name>]
 
 --keyvals-out 输出全部键值（每行一个十进制数），供键金样探针使用。
+--provenance 写进生成物头的「来源」字段（默认 librime）。
 """
 import argparse
 import os

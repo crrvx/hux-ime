@@ -24,7 +24,7 @@ fail() {
 }
 
 if [ ! -f "$manifest" ]; then
-    echo "FAIL 缺少 $manifest" >&2
+    fail "缺少 $manifest"
     exit 1
 fi
 

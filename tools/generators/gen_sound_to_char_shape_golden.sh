@@ -27,6 +27,8 @@ OUT="${1:-$ROOT/goldens/sound_to_char_shape.tsv.gz}"
 CASES="${CASES:-$ROOT/tools/cases/sound_to_char_shape_cases.txt}"
 FIXTURE="$ROOT/goldens/sound_to_char_shape"
 KEYSEQ_FIXTURE="$ROOT/goldens/key_sequence"
+# shellcheck source=tools/generators/lib/golden_fixture.sh
+source "$ROOT/tools/generators/lib/golden_fixture.sh"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/tiger-pinyin-XXXXXX")"
 WT="$WORK/ref"
@@ -35,28 +37,6 @@ user="$WORK/user"
 shared="$WORK/shared"
 stage="$WORK/stage"
 mkdir -p "$user/lua" "$shared" "$stage"
-
-# 夹具护栏：入库夹具不得被生成器当副作用重写。
-# 只做「逐字节比对」这一件事（不删传入文件——它可能是 pin 工作区里的真实文件）：
-# 一致才继续，入库文件保持原样不落盘；不一致即失败，并区分两种成因：
-# 上游 pin 变化（须同步更新金样与夹具）或夹具漂移（应还原）。
-# 用法：guard_fixture <本次生成的临时产物> <入库文件> <说明>
-guard_fixture() {
-    local staged="$1" committed="$2" what="$3"
-    if [ ! -f "$committed" ]; then
-        echo "生成失败：入库夹具缺失：$committed（$what）" >&2
-        exit 1
-    fi
-    if ! cmp -s "$staged" "$committed"; then
-        echo "生成失败：$what 与入库夹具不一致（护栏拦下，未写入任何入库文件）" >&2
-        echo "  入库：$committed  sha256 $(sha256sum "$committed" | cut -d' ' -f1)" >&2
-        echo "  本次：$staged  sha256 $(sha256sum "$staged" | cut -d' ' -f1)" >&2
-        echo "  成因二选一：①参照 pin $PIN 的对应源文件已变（上游推进）——须同步更新金样与夹具，" >&2
-        echo "  不能由生成器静默覆盖；②入库夹具被本地改动（夹具漂移）——应还原夹具。" >&2
-        exit 1
-    fi
-    echo "夹具一致（入库文件未改写）：$what -> $committed" >&2
-}
 
 # pin 树（detached worktree，不触碰参照仓库的分支/引用）。
 git -C "$REF" worktree add --detach --force "$WT" "$PIN" >/dev/null
@@ -69,10 +49,7 @@ if [ "$(git -C "$WT" rev-parse HEAD)" != "$PIN" ] ||
     exit 1
 fi
 
-for name in tiger_sentence.lua tiger_sentence_learning.lua tiger_sentence_ngram.lua \
-    tiger_sentence_cache.lua tiger_sentence_lexical.lua; do
-    cp "$WT/lua/$name" "$user/lua/$name"
-done
+copy_lua_modules "$user" "$WT"
 cp "$WT/rime.lua" "$user/rime.lua"
 cp "$WT/tiger_sentence.schema.yaml" "$user/tiger_sentence.schema.yaml"
 cp "$WT/symbols.yaml" "$user/symbols.yaml"
@@ -99,28 +76,12 @@ guard_fixture "$stage/tiger_sentence.pinyin.bin" "$FIXTURE/tiger_sentence.pinyin
 
 # 选项：与键序列夹具同构；页大小用 schema 默认（5，与 core host::DEFAULT_PAGE_SIZE 一致），
 # 翻页用例据此覆盖第 2/3 页候选。
-cat > "$user/tiger_sentence.custom.yaml" <<'YAML'
-patch:
-  tiger_sentence/high_freq_limit: 0
-  tiger_sentence/tab_learning: false
-YAML
+custom_yaml "$user" false
 
-cat > "$shared/default.yaml" <<'YAML'
-config_version: "1.0"
-schema_list:
-  - schema: tiger_sentence
-menu:
-  page_size: 5
-recognizer:
-  patterns: {}
-YAML
+default_yaml "$shared/default.yaml"
 
-# 插件缺失时显式报错：`set -e` 下裸 `test -f` 会静默退出，无从诊断。
-plugin="${LUA_PLUGIN:-/usr/lib/rime-plugins/librime-lua.so}"
-if [ ! -f "$plugin" ]; then
-    echo "生成失败：缺少 librime-lua 插件：$plugin（可用 LUA_PLUGIN 覆盖）" >&2
-    exit 1
-fi
+# 探针（系统 librime；librime-lua 插件显式加载）。
+plugin="$(require_lua_plugin)"
 g++ -std=c++17 -O2 "$ROOT/tools/probes/rime_sequence_probe.cpp" -lrime -ldl -o "$WORK/probe"
 
 lua_sha="$(sha256sum "$WT/lua/tiger_sentence.lua" | cut -d' ' -f1)"
@@ -134,14 +95,10 @@ librime_version="$(pkg-config --modversion rime 2>/dev/null || true)"
     printf '# librime: %s; plugin: %s\n' "${librime_version:-unknown}" "$plugin"
     LD_LIBRARY_PATH="$WORK${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
         "$WORK/probe" "$user" "$shared" "$plugin" "$CASES"
-} | gzip -9 > "$OUT.tmp.$$"
+} > "$WORK/golden.tsv"
 
-# 写库前断言：至少产出 1 个用例，避免空/全注释 CASES 把入库金样静默覆盖成只剩头部。
-if ! gzip -cd "$OUT.tmp.$$" | grep -q '^case'; then
-    rm -f "$OUT.tmp.$$"
-    echo "生成失败：$OUT 不含任何用例（检查 CASES 是否为空或全为注释）" >&2
-    exit 1
-fi
-mv "$OUT.tmp.$$" "$OUT"
+# 写库前断言 + 原子写库：至少 1 个用例，避免空/全注释 CASES 把入库金样静默覆盖成只剩头部。
+golden_require "$WORK/golden.tsv" '^case' "金样不含任何用例"
+write_golden "$WORK/golden.tsv" "$OUT"
 
 echo "wrote $OUT ($(gzip -cd "$OUT" | wc -l) lines)"

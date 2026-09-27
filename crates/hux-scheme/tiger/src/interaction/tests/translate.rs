@@ -4,6 +4,7 @@
 //! 翻译与分段（`interaction/translate.rs`）的用例。
 
 use super::*;
+use crate::lexicon::code_comment;
 
 #[test]
 fn ends_with_digit_detects_digit_tail() {
@@ -85,7 +86,8 @@ fn translate_produces_sentence_candidates() {
     let context = Context::new();
     let state = SentenceState::fresh(1);
     let mut out = Vec::new();
-    translate(&mut decoder, &context, &state, b"ab", 0, 2, &mut out).expect("translate");
+    translate_composition(&mut decoder, &context, &state, b"ab", 0, 2, &mut out)
+        .expect("translate");
     assert!(!out.is_empty());
     assert!(out.iter().all(|candidate| candidate.kind == "sentence"));
     assert!(out.iter().all(|candidate| !candidate.text.is_empty()));
@@ -109,7 +111,7 @@ fn translate_emits_buffered_candidate() {
         boundaries: "2,3;".to_string(),
     });
     let mut out = Vec::new();
-    translate(
+    translate_composition(
         &mut decoder,
         &context,
         &buffered_state,
@@ -134,7 +136,8 @@ fn translate_skips_lookup_segments() {
     let state = SentenceState::fresh(1);
     // 音反查段（` 前缀）由 `sound_to_char_shape` 模块处理，translator 不产出候选。
     let mut out = Vec::new();
-    translate(&mut decoder, &context, &state, b"`ni", 0, 3, &mut out).expect("translate");
+    translate_composition(&mut decoder, &context, &state, b"`ni", 0, 3, &mut out)
+        .expect("translate");
     assert!(out.is_empty());
 }
 
@@ -149,7 +152,7 @@ fn translate_requires_buffer_marker() {
     buffered_state.buffered_text = "甲".to_string();
     // 缓冲态下非零起点（后续段）不翻译。
     let mut out = Vec::new();
-    translate(
+    translate_composition(
         &mut decoder,
         &context,
         &buffered_state,
@@ -162,7 +165,7 @@ fn translate_requires_buffer_marker() {
     assert!(out.is_empty());
     // 缓冲态缺少 `~` 标记同样不翻译。
     let mut out = Vec::new();
-    translate(
+    translate_composition(
         &mut decoder,
         &context,
         &buffered_state,
@@ -182,13 +185,15 @@ fn translate_applies_duplicate_single_option() {
     let state = SentenceState::fresh(1);
     context.set_option(OPTION_ALLOW_DUPLICATE_SINGLE, false);
     let mut out = Vec::new();
-    translate(&mut decoder, &context, &state, b"abab", 0, 4, &mut out).expect("translate");
+    translate_composition(&mut decoder, &context, &state, b"abab", 0, 4, &mut out)
+        .expect("translate");
     let texts: Vec<String> = out.iter().map(|candidate| candidate.text.clone()).collect();
     assert!(!texts.is_empty());
     assert!(!texts.iter().any(|text| text.contains('疒')), "{texts:?}");
     context.set_option(OPTION_ALLOW_DUPLICATE_SINGLE, true);
     let mut out = Vec::new();
-    translate(&mut decoder, &context, &state, b"abab", 0, 4, &mut out).expect("translate");
+    translate_composition(&mut decoder, &context, &state, b"abab", 0, 4, &mut out)
+        .expect("translate");
     let texts: Vec<String> = out.iter().map(|candidate| candidate.text.clone()).collect();
     assert!(texts.iter().any(|text| text.contains('疒')), "{texts:?}");
 }

@@ -87,36 +87,38 @@ pub const HUX_KEY_CONSUMED: i32 = 0x1;
 /// 重发（保证客户端先收到提交、后收到按键；对齐 fcitx5 核心 `KeyEventOrderFix` 修法）。
 pub const HUX_KEY_FORWARD_AFTER_COMMIT: i32 = 0x2;
 
+/// `hux_options` 的字段名序列（Rust ↔ `include/hux_abi.h` ↔ C++ 壳三处的唯一对照）。
+///
+/// 每个名字都在本 crate 的布局用例里被 `offset_of!` 逐字段引用 ⇒ 改 Rust 字段名即**编译
+/// 失败**；本表与头文件的声明序再由头文件解析结果校对。平台侧据此逐项核对
+/// `hux_cfg::Settings` ↔ 本结构的映射（见平台测试的 `settings_options_field_by_field`）：
+/// 两边都引同一张表，任一处的字段增删 / 换序都会让守卫失败。
+pub const HUX_OPTIONS_FIELDS: &[&str] = &[
+    "early_commit",
+    "early_commit_to_preedit",
+    "allow_duplicate_single",
+    "full_shape",
+    "ascii_punct",
+    "learning_on_tab",
+    "high_freq_limit",
+    "reverse_lookup_pronunciation",
+    "reverse_lookup_character",
+    "page_size",
+    "page_up",
+    "page_down",
+    "digit_select",
+    "candidate_layout",
+    "preedit_mode",
+    "page_cycle",
+    "min_retained_input_length",
+    "full_charset",
+    "filter_non_han",
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::mem::{offset_of, size_of};
-
-    /// `hux_options` 的字段名序列（Rust ↔ `include/hux_abi.h` ↔ C++ 壳三处的唯一对照）。
-    ///
-    /// 每个名字都在 [`c_layout_matches_header`] 里被 `offset_of!` 逐字段引用 ⇒ 改 Rust 字段名
-    /// 即**编译失败**；本表与 [`HUX_OPTIONS_FIELDS`] 的顺序再由 `hux_abi.h` 的解析结果校对。
-    const HUX_OPTIONS_FIELDS: &[&str] = &[
-        "early_commit",
-        "early_commit_to_preedit",
-        "allow_duplicate_single",
-        "full_shape",
-        "ascii_punct",
-        "learning_on_tab",
-        "high_freq_limit",
-        "reverse_lookup_pronunciation",
-        "reverse_lookup_character",
-        "page_size",
-        "page_up",
-        "page_down",
-        "digit_select",
-        "candidate_layout",
-        "preedit_mode",
-        "page_cycle",
-        "min_retained_input_length",
-        "full_charset",
-        "filter_non_han",
-    ];
 
     /// 头文件 `typedef struct hux_options { … } hux_options;` 的成员名（声明序，去注释）。
     fn header_options_fields() -> Vec<String> {

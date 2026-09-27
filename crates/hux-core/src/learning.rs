@@ -9,7 +9,7 @@
 //! 持久化（LevelDB `open`/`confirm`）在平台层实现：见 `platform/fcitx5/src/learning_store.rs`。
 //!
 //! **人工纠错等级**：事件只累加**离散等级**（每次确认 +1，上限 10），
-//! 分数按等级取整（same-context `7+2L`、跨上下文 `4+2L`）；**不再按时间衰减**，
+//! 分数按等级取整（same-context `7+2L`、跨上下文 `4+2L`）；**不按时间衰减**，
 //! 时间戳只作持久化元数据。故浮点求和只发生在 `weight`（各上下文的整数等级之和）
 //! 累加上，跨进程哈希序不改变结果。
 
@@ -114,8 +114,8 @@ pub struct LearningIndex {
     /// 构建索引的时刻（平台用作 epoch；参照 `M.*` 的 `now` 元数据）。
     pub now: f64,
     /// **参照遗留元数据**：`M.runtime_index` 记录的「最大事件时间」，
-    /// `update_index` 原样带过；删掉时间衰减后本仓无消费者（
-    /// 保留以维持与参照 `runtime_index` 的字段同构，便于后续差分核对）。
+    /// `update_index` 原样带过，本仓无消费者（保留以维持与参照 `runtime_index`
+    /// 的字段同构，便于后续差分核对；时间语义见模块文档）。
     pub future: f64,
     partitions: Option<HashMap<String, HashMap<String, Group>>>,
     exact: Option<HashMap<String, Summary>>,
@@ -388,11 +388,11 @@ fn context_valid(context: &str) -> bool {
     if context.is_empty() {
         return true;
     }
-    // 一次解码复用（此前对同一串调了两次 `chars`）。
+    // 只解码一次：非空与长度判定复用同一结果。
     chars(context).is_some_and(|list| !list.is_empty() && list.len() <= 2)
 }
 
-/// 参照 `M.build` / `M.runtime_index` 的共用事件过滤（`build_valid` 曾是其同义包装，已删除）。
+/// 参照 `M.build` / `M.runtime_index` 的共用事件过滤。
 fn event_valid(e: &Event) -> bool {
     mode_valid(&e.mode)
         && code_valid(&e.code)
@@ -468,8 +468,7 @@ impl LearningIndex {
 
     /// 参照 `M.build`：独立的全量重放 oracle。
     ///
-    /// `now` 只写入 `index.now`（参照字段仍在，但学习不再随时间衰减；`M.build`
-    /// 的同名参数如今也不再参与计算）。
+    /// `now` 只写入 `index.now`，不参与分数计算（时间语义见模块文档）。
     pub fn build(events: &[Event], now: f64) -> Self {
         let mut groups: HashMap<String, Group> = HashMap::new();
         for e in events {
@@ -563,8 +562,8 @@ impl LearningIndex {
 
     /// 参照 `M.runtime_index`。
     ///
-    /// `now` 与 `future` 仍按参照写入（`future` 记录过最大事件时间），但学习
-    /// 不再随「当前时间相对事件时间」衰减，故二者只作元数据。
+    /// `now` 与 `future` 按参照写入（`future` 记录最大事件时间），二者只作元数据
+    /// （时间语义见模块文档）。
     pub fn runtime(events: &[Event], now: f64) -> Self {
         let mut index = Self::empty();
         index.now = now;
@@ -589,8 +588,8 @@ impl LearningIndex {
 
     /// 参照 `update_index`：重建受影响的 code 分区。
     ///
-    /// 学习不随「当前时间相对事件时间」衰减，故本仓无「时钟回退 / 未来事件 ⇒ 全量重放」的判据，
-    /// 接受的事件也不参与 `future` 更新（`future` 只作元数据，原样带过）。
+    /// 本仓无「时钟回退 / 未来事件 ⇒ 全量重放」的判据，接受的事件也不参与 `future` 更新
+    /// （`future` 只作元数据，原样带过；时间语义见模块文档）。
     /// 注意：`partitions.clone()` 为整体深拷贝（参照的 `copy` 只复制外层表），
     /// 单次确认代价 O(历史规模)。
     pub fn update(&self, accepted: &[Event], all_events: &[Event], now: f64) -> Self {
@@ -790,8 +789,8 @@ fn summary_code(summary_key: &str) -> String {
 
 /// 参照 `M.early_commit_maturity`：把纠错等级分映射到 `0..1` 的成熟度。
 ///
-/// 等级是离散的：`9`（L1，首次同上下文纠错）→ 0、
-/// `11`（L2）→ 0.5、`13`（L3 及以上）→ 1；不再是 `exp` 连续曲线。
+/// `9`（L1，首次同上下文纠错）→ 0、`11`（L2）→ 0.5、`13`（L3 及以上）→ 1
+/// （等级语义见模块文档）。
 pub fn early_commit_maturity(score: f64) -> f64 {
     ((score - 9.0) / 4.0).clamp(0.0, 1.0)
 }

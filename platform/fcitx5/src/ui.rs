@@ -44,8 +44,11 @@ impl Engine {
             .map(|candidate| candidate.preedit.clone())
             .unwrap_or_default();
         // 预编辑内容（`PreeditMode`）：候选分码（默认，历史行为）/ 原始输入 / 不显示。
+        // 字反查段不下发预编辑：避免应用端 marked text 锁住光标（←/→ 无法移动），
+        // 故与「不显示」同路，在这里一次算出终值——不在末尾覆盖已算好的 `preedit` / `cursor`。
         let preedit_mode = self.settings.preedit_mode;
-        let (mut preedit, cursor) = if preedit_mode == PreeditMode::Hidden {
+        let tagged = self.reverse_lookup_tagged(session);
+        let (mut preedit, cursor) = if tagged || preedit_mode == PreeditMode::Hidden {
             (String::new(), 0)
         } else if preedit_mode == PreeditMode::CandidateCode && !highlighted.is_empty() {
             let cursor = highlighted.len();
@@ -86,15 +89,9 @@ impl Engine {
             .back()
             .map(|segment| segment.prompt.clone())
             .unwrap_or_default();
-        if preedit_mode == PreeditMode::CandidateCode && !prompt.is_empty() {
+        if !tagged && preedit_mode == PreeditMode::CandidateCode && !prompt.is_empty() {
             preedit.insert_str(cursor.min(preedit.len()), &prompt);
         }
-        // 字反查段不下发预编辑：避免应用端 marked text 锁住光标（←/→ 无法移动）。
-        let (preedit, cursor) = if self.reverse_lookup_tagged(session) {
-            (String::new(), 0)
-        } else {
-            (preedit, cursor)
-        };
         let (mut texts, mut comments, selected) = match session.context.composition.back() {
             Some(segment) => (
                 segment

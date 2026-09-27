@@ -3,59 +3,21 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 # 虎虚（hux-ime）一键安装：①依赖检查 ②构建 ③安装 ④校验 ⑤提示。
-#   ./install.sh [-s|--system] [-u|--user] [--dry-run]
-#   -s, --system  装到系统级 /usr（缺省；需要 sudo）
-#   -u, --user    装到用户级 $HOME/.local，并写 environment.d 让 fcitx5 找到插件
-#   --dry-run     只打印将执行的命令，不安装
+# 用法与选项的唯一出处是下面的 `usage()`（`--help` 打的就是它，不要再往这里抄一份）。
 # 两种级别互斥。装完不自动重启 fcitx5：按结尾提示自行重启。
+# 公共片段（颜色 / 输出 / 执行 / 清单解析）见 tools/scripts/lib.sh；需要 bash ≥ 4.4。
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")" && pwd)
 cd "$root"
 
-# ---------------------------------------------------------------- 公共（颜色 / 输出 / 执行）
+# ---------------------------------------------------------------- 公共片段
 
-# 颜色只在终端上给出：非 TTY（重定向、管道、CI 日志）或设了 NO_COLOR 时退化为纯文本。
-if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
-    c_orange=$'\033[38;5;208m' # 一般文字
-    c_green=$'\033[32m'        # 网址 / 命令
-    c_gray=$'\033[38;5;245m'   # 注释 / 次要说明
-    c_white=$'\033[97m'        # 建议 / 声明 / 感谢
-    c_cyan=$'\033[36m'         # 许可证名（GPL-3.0-or-later）
-    c_reset=$'\033[0m'
-else
-    c_orange='' c_green='' c_gray='' c_white='' c_cyan='' c_reset=''
-fi
+# 颜色 / 输出 / 执行 / 清单解析由两个脚本共用（bash 版本守卫也在该文件里）。
+. tools/scripts/lib.sh
 
-info() { printf '%s%s%s\n' "$c_orange" "$*" "$c_reset"; } # 一般文字
-green() { printf '%s%s%s\n' "$c_green" "$*" "$c_reset"; } # 网址 / 命令
-note() { printf '%s%s%s\n' "$c_gray" "$*" "$c_reset"; }   # 注释 / 次要说明
-white() { printf '%s%s%s\n' "$c_white" "$*" "$c_reset"; } # 建议 / 声明 / 感谢
-step() { printf '\n%s%s%s\n' "$c_orange" "$*" "$c_reset"; }
-die() {
-    printf '%s%s%s\n' "$c_orange" "$*" "$c_reset" >&2
-    exit 1
-}
-
-# 白色正文 + 绿色网址（建议 / 声明的同一行）。
-white_url() {
-    printf '%s%s%s%s%s%s\n' "$c_white" "$1" "$c_reset" "$c_green" "$2" "$c_reset"
-}
-
-# 白色正文 + 青色许可证名 + 白色续文（声明行内混色）。
-white_license() {
-    printf '%s%s%s%s%s%s%s\n' "$c_white" "$1" "$c_cyan" "$2" "$c_white" "$3" "$c_reset"
-}
-
-# 执行命令；--dry-run 只打印（绿色 `+` 前缀）。
-run() {
-    printf '%s+' "$c_green"
-    printf ' %q' "$@"
-    printf '%s\n' "$c_reset"
-    if [ "$dry_run" -eq 0 ]; then
-        "$@"
-    fi
-}
+# 颜色先按终端与 NO_COLOR 落定：解析参数前就要定，未知参数的报错也得有色。
+setup_colors auto
 
 usage() {
     info "虎虚（hux-ime）一键安装"
@@ -213,38 +175,33 @@ report_addon_dir_env() {
 
 # 两份清单（data/MANIFEST、assets/themes/MANIFEST）逐条核对：装出的布局必须与清单一致，
 # 缺任一即失败——只走 CMake 安装时「无词库引擎」的缺口在此暴露。
+# 逐条核对落盘：--dry-run 只报告应有的路径，否则缺文件即 die（报错台词由调用方给，两条清单各一句）。
+require_installed() {
+    if [ "$dry_run" -eq 1 ]; then
+        note "  （dry-run）应有 $1"
+        return 0
+    fi
+    if [ ! -f "$1" ]; then die "$2"; fi
+}
+
 verify_files() {
     local count=0 entry dest
-    if [ ! -f data/MANIFEST ]; then die "缺少 data/MANIFEST（随包数据清单）"; fi
-    if [ ! -f assets/themes/MANIFEST ]; then die "缺少 assets/themes/MANIFEST（共享主题清单）"; fi
+    manifest_require data/MANIFEST 随包数据清单
+    manifest_require assets/themes/MANIFEST 共享主题清单
     while IFS= read -r entry; do
-        case "$entry" in '' | '#'*) continue ;; esac
         dest="$data_root/$(basename "$entry")"
         count=$((count + 1))
-        if [ "$dry_run" -eq 1 ]; then
-            note "  （dry-run）应有 $dest"
-            continue
-        fi
-        if [ ! -f "$dest" ]; then
-            die "缺少随包数据 $dest（CMake 安装规则应与 data/MANIFEST 一致：platform/fcitx5/CMakeLists.txt；自检 bash tools/checks/check_data_manifest.sh）"
-        fi
-    done <data/MANIFEST
-    if [ "$count" -eq 0 ]; then die "data/MANIFEST 没有有效行（随包数据清单缺失或为空）"; fi
+        require_installed "$dest" "缺少随包数据 $dest（CMake 安装规则应与 data/MANIFEST 一致：platform/fcitx5/CMakeLists.txt；自检 bash tools/checks/check_data_manifest.sh）"
+    done < <(manifest_lines data/MANIFEST)
+    manifest_require_lines data/MANIFEST 随包数据清单 "$count"
     note "  随包数据 $count 项 → $data_root/"
     count=0
     while IFS= read -r entry; do
-        case "$entry" in '' | '#'*) continue ;; esac
         dest="$theme_root/$entry/theme.conf"
         count=$((count + 1))
-        if [ "$dry_run" -eq 1 ]; then
-            note "  （dry-run）应有 $dest"
-            continue
-        fi
-        if [ ! -f "$dest" ]; then
-            die "缺少主题 $dest（CMake 安装规则应与 assets/themes/MANIFEST 一致：platform/fcitx5/CMakeLists.txt）"
-        fi
-    done <assets/themes/MANIFEST
-    if [ "$count" -eq 0 ]; then die "assets/themes/MANIFEST 没有有效行（共享主题清单缺失或为空）"; fi
+        require_installed "$dest" "缺少主题 $dest（CMake 安装规则应与 assets/themes/MANIFEST 一致：platform/fcitx5/CMakeLists.txt）"
+    done < <(manifest_lines assets/themes/MANIFEST)
+    manifest_require_lines assets/themes/MANIFEST 共享主题清单 "$count"
     note "  共享主题 $count 套 → $theme_root/"
 }
 

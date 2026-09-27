@@ -28,36 +28,8 @@ pub fn trim_segmented_after_raw_prefix(segmented: &str, raw_prefix_length: usize
     }
 }
 
-/// 码注释（上游音反查件；当前 pin 的 main 未含，音反查接线用）：单字显示全部编码（源序），词组逐字 `字:码组`。
-pub fn code_comment(lexicon: &Lexicon, text: &str) -> Option<String> {
-    if !lexicon.built {
-        return None;
-    }
-    let chars: Vec<char> = text.chars().collect();
-    if chars.is_empty() {
-        return None;
-    }
-    if chars.len() == 1 {
-        let codes = lexicon.character_codes.get(&chars[0].to_string())?;
-        if codes.is_empty() {
-            return None;
-        }
-        return Some(format!(" {}", codes.join(" / ")));
-    }
-    let mut parts = Vec::with_capacity(chars.len());
-    for ch in &chars {
-        match lexicon.character_codes.get(&ch.to_string()) {
-            Some(codes) if !codes.is_empty() => {
-                parts.push(format!("{}:{}", ch, codes.join("/")));
-            }
-            _ => parts.push(format!("{}:?", ch)),
-        }
-    }
-    Some(format!(" {}", parts.join(" ")))
-}
-
 /// 参照 `translator(input, seg, env)`：解码产出候选（冷路径，无增量缓存；有锁时按锁播种）。
-pub fn translate(
+pub fn translate_composition(
     decoder: &mut Decoder,
     context: &Context,
     state: &SentenceState,
@@ -162,14 +134,13 @@ pub fn translate(
 /// 分段常量（参照 schema `speller/alphabet|initials|delimiter`；`finals` 未设置）。
 ///
 /// `delimiter` 追踪**反查分支尖端 `92a0b54`** 的 `" '"`（主干 pin `abad411` 为 `" "`）：
-/// 撇号按音节分隔符处理 ⇒ 段内 `'` 之后必须是首字母，数字/`;` 在此断开
-/// （本仓 `speller/finals` 未设置，故只有「断段」效果，不做真正的音节重拼）。
+/// 撇号即 [`crate::sound_to_char_shape::SYLLABLE_DELIMITER`]（**断音**）⇒ 段内 `'` 之后必须是
+/// 首字母，数字/`;` 在此断开（本仓 `speller/finals` 未设置，故只有「断段」效果，不做音节重拼）。
 ///
 /// 该口径与主干 pin 的 `key_sequence` 金样在「`'` + 数字/`;`」序列上**确有可见差异**：
 /// 本仓末段是 raw 段（无菜单）⇒ `Up`/`Down`/`Page_*` 不被消费，上游主干单段 abc ⇒ 消费。
 /// 已按期望值登记在 `tests/key_sequence_differential.rs` 的 `DEVIATIONS`
-/// （种类 `BranchPinDelimiter`，用例 `apostrophe_digit_page`/`apostrophe_semicolon_page`），
-/// 该常量追踪反查分支 pin `92a0b54` 的 schema（`speller/delimiter: " '"`），金样主干 pin 为 `" "`。
+/// （种类 `BranchPinDelimiter`，用例 `apostrophe_digit_page`/`apostrophe_semicolon_page`）。
 pub(crate) const SEGMENTATION_ALPHABET: &str = "zyxwvutsrqponmlkjihgfedcba;';0123456789~";
 pub(crate) const SEGMENTATION_INITIALS: &str = "abcdefghijklmnopqrstuvwxyz~";
 pub(crate) const SEGMENTATION_DELIMITER: &str = " '";
@@ -529,7 +500,7 @@ pub(crate) fn translate_segments(
             continue;
         }
         let mut candidates = Vec::new();
-        translate(
+        translate_composition(
             decoder,
             context,
             state,
@@ -566,19 +537,11 @@ pub fn update_notifier(context: &mut Context, state: &mut SentenceState, live: &
     }
 }
 
-/// 码注释过滤器（同上；音反查接线用）：音反查段候选写入虎码注释。
-pub fn code_comment_filter(candidates: &mut [Candidate], active: bool, lexicon: &Lexicon) {
-    if !active {
-        return;
-    }
-    for candidate in candidates {
-        if let Some(comment) = code_comment(lexicon, &candidate.text) {
-            candidate.comment = comment;
-        }
-    }
-}
-
-/// 参照 `ends_with_digit`。
+/// 参照 `ends_with_digit`：**选重数字表**（半角 + 全角数字）判定提交文本末字符。
+///
+/// 与断音（[`crate::sound_to_char_shape::SYLLABLE_DELIMITER`]）、以及 raw 输入里的选重后缀
+/// （[`crate::decode::has_selection_suffix`]：分号/撇号/半角数字，判定对象是原始字节）都不合并：
+/// 三者判定的对象与字符集均不同。
 pub fn ends_with_digit(text: &str) -> bool {
     let Some(last) = text.chars().last() else {
         return false;

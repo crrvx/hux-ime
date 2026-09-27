@@ -10,13 +10,12 @@
 use hashbrown::HashMap;
 use std::path::{Path, PathBuf};
 
-use hux_core::host::{self, HostOptions, MAX_PAGE_SIZE};
+use hux_core::host::{self, HostOptions};
 use hux_core::key::KeyEvent;
 use hux_core::learning::{Event, LearningIndex};
 use hux_core::punct::PunctTable;
 use hux_core::scheme::{
-    Asset, AssetKind, ConfigError, KeyOutcome, OptionDecl, Scheme, SchemeConfig, SessionId,
-    asset_paths, find_asset,
+    ConfigError, KeyOutcome, OptionDecl, Scheme, SchemeConfig, SessionId, asset_paths, find_asset,
 };
 use hux_core::session::Context;
 
@@ -24,295 +23,26 @@ use crate::char_to_sound_shape;
 use crate::decode::Decoder;
 use crate::interaction::{
     CompositionBuilder, HostCommitObserver, K_CHAR_TO_SOUND_SHAPE_KEY, K_SOUND_TO_CHAR_SHAPE_KEY,
-    LiveLearning, OPTION_ALLOW_DUPLICATE_SINGLE, OPTION_DIGIT_SELECT, OPTION_EARLY_COMMIT,
-    OPTION_EARLY_COMMIT_TO_PREEDIT, OPTION_FILTER_NON_HAN, OPTION_FULL_CHARSET, ProcessorEnv,
-    ProcessorResult, SentenceState, buffered_text, processor, reset_early_evidence,
-    select_candidate_at, update_notifier,
+    LiveLearning, ProcessorEnv, ProcessorResult, SentenceState, buffered_text, process_key_event,
+    reset_early_evidence, select_candidate_at, update_notifier,
 };
 use crate::lexical;
-use crate::lexicon::{
-    CODES_FILE, LEXICAL_FILE, Lexicon, LexiconOptions, MODEL_PATH, RANKS_FILE, SUPPLEMENT_FILE,
-    Supplement, WHITELIST_FILE,
-};
+use crate::lexicon::{LEXICAL_FILE, Lexicon, SUPPLEMENT_FILE, Supplement};
 use crate::ngram::MobileModel;
 
-/// 方案标识（与上游数据互通；学习库命名沿用）。
-pub const SCHEME_ID: &str = "tiger_sentence";
-/// 反查索引 / 标点表的文件名（平台记日志与打包用）；词库与语言模型文件名取自 `lexicon`。
-const PINYIN_FILE: &str = "tiger_sentence.pinyin.bin.gz";
-const SYMBOLS_FILE: &str = "symbols.yaml";
+mod assets;
+mod config;
 
-/// 数据资产清单（相对数据目录）。
-pub const ASSETS: &[Asset] = &[
-    Asset {
-        kind: AssetKind::Model,
-        file: MODEL_PATH,
-    },
-    Asset {
-        kind: AssetKind::Data,
-        file: CODES_FILE,
-    },
-    Asset {
-        kind: AssetKind::Data,
-        file: RANKS_FILE,
-    },
-    Asset {
-        kind: AssetKind::Data,
-        file: WHITELIST_FILE,
-    },
-    Asset {
-        kind: AssetKind::Data,
-        file: SUPPLEMENT_FILE,
-    },
-    Asset {
-        kind: AssetKind::Data,
-        file: LEXICAL_FILE,
-    },
-    Asset {
-        kind: AssetKind::Data,
-        file: PINYIN_FILE,
-    },
-    Asset {
-        kind: AssetKind::Data,
-        file: SYMBOLS_FILE,
-    },
-];
-
-/// 角色名：与 `hux-cfg` 的角色常量**同值**。
-///
-/// 方案不依赖 `hux-cfg`（依赖方向 `hux-scheme/* → hux-core`），故以字面量声明；
-/// 一致性由平台装配处的测试守护（每个角色都必须被方案声明）。
-mod role {
-    pub const EARLY_COMMIT: &str = "early_commit";
-    pub const EARLY_COMMIT_TO_PREEDIT: &str = "early_commit_to_preedit";
-    pub const ALLOW_DUPLICATE_SINGLE: &str = "allow_duplicate_single";
-    pub const DIGIT_SELECT: &str = "digit_select";
-    pub const FULL_CHARSET: &str = "full_charset";
-    pub const FILTER_NON_HAN: &str = "filter_non_han";
-    pub const HIGH_FREQ_LIMIT: &str = "high_freq_limit";
-    pub const MIN_RETAINED_INPUT_LENGTH: &str = "min_retained_raw_length";
-    pub const PAGE_SIZE: &str = "page_size";
-    pub const PAGE_CYCLE: &str = "page_cycle";
-    pub const PAGE_UP_KEYS: &str = "page_up_keys";
-    pub const PAGE_DOWN_KEYS: &str = "page_down_keys";
-    pub const REVERSE_LOOKUP_PRONUNCIATION_KEYS: &str = "sound_to_char_shape_keys";
-    pub const REVERSE_LOOKUP_CHARACTER_KEYS: &str = "char_to_sound_shape_keys";
-    pub const LEARNING_ON_TAB: &str = "tab_learning";
-}
-
-/// 本方案的运行时选项声明（角色 → 键；键即 `interaction::OPTION_*` 的持久化键）。
-const OPTION_DECLARATIONS: &[OptionDecl] = &[
-    OptionDecl {
-        role: role::EARLY_COMMIT,
-        key: OPTION_EARLY_COMMIT,
-    },
-    OptionDecl {
-        role: role::EARLY_COMMIT_TO_PREEDIT,
-        key: OPTION_EARLY_COMMIT_TO_PREEDIT,
-    },
-    OptionDecl {
-        role: role::ALLOW_DUPLICATE_SINGLE,
-        key: OPTION_ALLOW_DUPLICATE_SINGLE,
-    },
-    OptionDecl {
-        role: role::DIGIT_SELECT,
-        key: OPTION_DIGIT_SELECT,
-    },
-    OptionDecl {
-        role: role::FULL_CHARSET,
-        key: OPTION_FULL_CHARSET,
-    },
-    OptionDecl {
-        role: role::FILTER_NON_HAN,
-        key: OPTION_FILTER_NON_HAN,
-    },
-];
-
-/// 本方案从配置袋读取的**引擎设置角色**（顺序即 [`Config`] 的字段序）。
-///
-/// 与 `hux_cfg::roles::SCHEME_CONFIG_ROLES` **同值同序**：方案不依赖 `hux-cfg`
-/// （依赖方向 `hux-scheme/* → hux-core`），故以同名字面量声明；一致性由平台用例
-/// `scheme_config_roles_match_the_scheme` 逐项比对，任一侧改名即失败。
-pub const SCHEME_CONFIG_ROLES: &[&str] = &[
-    role::HIGH_FREQ_LIMIT,
-    role::MIN_RETAINED_INPUT_LENGTH,
-    role::PAGE_SIZE,
-    role::PAGE_CYCLE,
-    role::PAGE_UP_KEYS,
-    role::PAGE_DOWN_KEYS,
-    role::REVERSE_LOOKUP_PRONUNCIATION_KEYS,
-    role::REVERSE_LOOKUP_CHARACTER_KEYS,
-    role::LEARNING_ON_TAB,
-];
-
-/// 配置袋中本方案还会读取的**运行时选项角色**（平台在装配处追加；键由本方案声明）。
-///
-/// 字集开关经配置袋下发（配置层角色 → 键在平台侧解析）：方案在 [`Config::parse`] 里
-/// 据此重建词库，故它们虽在上下文里也有选项值，读袋仍是唯一入口。
-const RUNTIME_CONFIG_ROLES: &[&str] = &[
-    role::ALLOW_DUPLICATE_SINGLE,
-    role::FULL_CHARSET,
-    role::FILTER_NON_HAN,
-];
-
-/// 配置袋**角色集合**层面的诊断：装配处（平台）按 `hux-cfg` 的角色名装袋，本方案按
-/// 自己的角色名读袋；装出了本方案不认识的名字（单侧改名）在此点名。
-///
-/// 逐角色的「缺失 / 类型不符」由 [`Config::parse`] 的 [`ConfigError`] 给出（见
-/// [`config_diagnostics`]）——两者都进状态串，用户侧不再是「设置没生效」的哑失败
-/// 。
-fn config_role_notes(bag: &SchemeConfig) -> Vec<String> {
-    let recognized =
-        |role: &str| SCHEME_CONFIG_ROLES.contains(&role) || RUNTIME_CONFIG_ROLES.contains(&role);
-    let unknown: Vec<&str> = bag.roles().filter(|role| !recognized(role)).collect();
-    if unknown.is_empty() {
-        Vec::new()
-    } else {
-        vec![format!("config: 未识别的角色 {}", unknown.join(", "))]
-    }
-}
-
-/// 装配诊断汇总：角色集合（[`config_role_notes`]）+ 逐角色（[`ConfigError`]），
-/// 文案统一带 `config:` 前缀（与既有状态串诊断同风格）。
-fn config_diagnostics(bag: &SchemeConfig, errors: &[ConfigError]) -> Vec<String> {
-    let mut notes = config_role_notes(bag);
-    notes.extend(errors.iter().map(|error| format!("config: {error}")));
-    notes
-}
-
-/// 虎码口径的方案配置：由契约的键值袋 [`SchemeConfig`] 解析而来。
-///
-/// 键值袋是**通用容器**（内核不认识角色）；虎码语义（早提交最短保留、反查键、Tab 学习…）
-/// 全在本类型与其消费方。缺角色的回退与迁移前的逐字段默认值一致
-/// （`0` / `false` / 空列表，`allow_duplicate_single` 同为 `false`）——可观测行为不变。
-#[derive(Clone, Debug, Default)]
-struct Config {
-    high_freq_limit: usize,
-    min_retained_input_length: usize,
-    page_size: usize,
-    page_cycle: bool,
-    /// 翻页键：`None` = 角色缺失（用 core 缺省绑定）；`Some([])` = **显式给出空列表**
-    /// ⇒ 不绑定。`Vec<String>` 无法区分两者（配置页清空翻页键会退回 core 缺省的 `-`/`=`），
-    /// 故用 `Option`。
-    page_up_keys: Option<Vec<String>>,
-    page_down_keys: Option<Vec<String>>,
-    reverse_lookup_pronunciation_keys: Vec<String>,
-    reverse_lookup_character_keys: Vec<String>,
-    learning_on_tab: bool,
-    allow_duplicate_single: bool,
-    /// 启用全字集（追加码表）。
-    full_charset: bool,
-    /// 过滤追加码表里的非汉字。
-    filter_non_han: bool,
-}
-
-/// 取计数角色；失败时记诊断并按缺省 `0` 回退（迁移前 `unwrap_or(0)` 的同值回退）。
-fn require_count(
-    config: &SchemeConfig,
-    role: &'static str,
-    errors: &mut Vec<ConfigError>,
-) -> usize {
-    config.require_count(role).unwrap_or_else(|error| {
-        errors.push(error);
-        0
-    })
-}
-
-/// 取开关角色；失败时记诊断并按 `fallback` 回退。
-fn require_bool_or(
-    config: &SchemeConfig,
-    role: &'static str,
-    fallback: bool,
-    errors: &mut Vec<ConfigError>,
-) -> bool {
-    config.require_bool(role).unwrap_or_else(|error| {
-        errors.push(error);
-        fallback
-    })
-}
-
-/// 取开关角色；失败时记诊断并按缺省 `false` 回退。
-fn require_bool(config: &SchemeConfig, role: &'static str, errors: &mut Vec<ConfigError>) -> bool {
-    require_bool_or(config, role, false, errors)
-}
-
-/// 取可选的文本列表角色：区分「角色缺失」与「显式空列表」（配置袋契约的基础）。
-///
-/// `require_texts` 把两者都化成空 `Vec`；本函数的 `None` 只表示**角色缺失 / 类型不符**。
-fn optional_texts(
-    config: &SchemeConfig,
-    role: &'static str,
-    errors: &mut Vec<ConfigError>,
-) -> Option<Vec<String>> {
-    match config.require_texts(role) {
-        Ok(values) => Some(values.to_vec()),
-        Err(error) => {
-            errors.push(error);
-            None
-        }
-    }
-}
-
-/// 取文本列表角色；失败时记诊断并按缺省空列表回退。
-fn require_texts(
-    config: &SchemeConfig,
-    role: &'static str,
-    errors: &mut Vec<ConfigError>,
-) -> Vec<String> {
-    config
-        .require_texts(role)
-        .unwrap_or_else(|error| {
-            errors.push(error);
-            &[]
-        })
-        .to_vec()
-}
-
-impl Config {
-    /// 解析配置袋；同时返回逐角色诊断（缺角色 / 类型不符）。
-    ///
-    /// 取值失败时按缺省值回退（与迁移前的 `unwrap_or` 同值），但**不再静默**：
-    /// 诊断由 [`TigerScheme::load`] / [`TigerScheme::apply_config`] 回给平台进状态串。
-    fn parse(config: &SchemeConfig) -> (Self, Vec<ConfigError>) {
-        let mut errors = Vec::new();
-        let parsed = Self {
-            high_freq_limit: require_count(config, role::HIGH_FREQ_LIMIT, &mut errors),
-            min_retained_input_length: require_count(
-                config,
-                role::MIN_RETAINED_INPUT_LENGTH,
-                &mut errors,
-            ),
-            page_size: require_count(config, role::PAGE_SIZE, &mut errors),
-            page_cycle: require_bool(config, role::PAGE_CYCLE, &mut errors),
-            page_up_keys: optional_texts(config, role::PAGE_UP_KEYS, &mut errors),
-            page_down_keys: optional_texts(config, role::PAGE_DOWN_KEYS, &mut errors),
-            reverse_lookup_pronunciation_keys: require_texts(
-                config,
-                role::REVERSE_LOOKUP_PRONUNCIATION_KEYS,
-                &mut errors,
-            ),
-            reverse_lookup_character_keys: require_texts(
-                config,
-                role::REVERSE_LOOKUP_CHARACTER_KEYS,
-                &mut errors,
-            ),
-            learning_on_tab: require_bool(config, role::LEARNING_ON_TAB, &mut errors),
-            allow_duplicate_single: require_bool(config, role::ALLOW_DUPLICATE_SINGLE, &mut errors),
-            // 字集开关的缺省是**开**（出厂口径：全字集 + 过滤）：缺角色（装配方漏装）时
-            // 按缺省回退，而不是静默退化成「只装主表 / 不过滤」；诊断照旧点名。
-            full_charset: require_bool_or(config, role::FULL_CHARSET, true, &mut errors),
-            filter_non_han: require_bool_or(config, role::FILTER_NON_HAN, true, &mut errors),
-        };
-        (parsed, errors)
-    }
-}
+pub use assets::{ASSETS, SCHEME_CONFIG_ROLES, SCHEME_ID};
+use assets::{OPTION_DECLARATIONS, SYMBOLS_FILE};
+use config::{Config, config_diagnostics};
 
 /// 每会话状态（原先由平台 `Session` 持有）。
 struct TigerSession {
     state: SentenceState,
     live: LiveLearning,
     dot_armed: bool,
-    min_retained: Option<i64>,
+    min_retained: usize,
     builder: CompositionBuilder,
 }
 
@@ -349,7 +79,7 @@ impl TigerScheme {
         let (parsed, config_errors) = Config::parse(config);
         let mut notes = config_diagnostics(config, &config_errors);
         let config = parsed;
-        let lexicon = Lexicon::load_with(dirs, config.high_freq_limit, lexicon_options(&config));
+        let lexicon = Lexicon::load_with(dirs, config.high_freq_limit, config.lexicon_options());
         notes.push(format!("lexicon: {}", lexicon.data_status().canonical()));
         let learning_rules = lexicon.learning_rules.clone();
         let supplement = Supplement::load_default(supplement_dir(dirs).as_deref());
@@ -378,7 +108,7 @@ impl TigerScheme {
         {
             notes.push(format!("punct: {error}"));
         }
-        let host_options = host_options_from(&config);
+        let host_options = config.host_options();
         let mut scheme = Self {
             decoder,
             punct,
@@ -418,49 +148,12 @@ impl TigerScheme {
     }
 }
 
-/// 词库的字集开关（角色 → [`LexiconOptions`]）：缺角色已在 [`Config::parse`] 回退为出厂口径。
-fn lexicon_options(config: &Config) -> LexiconOptions {
-    LexiconOptions {
-        extra_code_tables: config.full_charset,
-        filter_non_han: config.filter_non_han,
-    }
-}
-
-/// 页大小归一（契约调用方可能传任意值；与配置层 `Settings::host_options` 同钳制）。
-fn page_size_of(config: &Config) -> usize {
-    config.page_size.clamp(1, MAX_PAGE_SIZE)
-}
-
 /// 补充短语所在目录：在**全部**数据目录中取首个存在该文件者。
 ///
 /// 与 lexical / symbols 一致走资产查找——若只读 `dirs.first()`（用户目录恒排第一），
 /// 一键安装把数据装到系统级目录时该文件会永不生效。
 fn supplement_dir(dirs: &[PathBuf]) -> Option<PathBuf> {
     find_asset(dirs, SUPPLEMENT_FILE).and_then(|path| path.parent().map(Path::to_path_buf))
-}
-
-/// 由方案配置派生宿主链选项（键名解析失败项忽略）。
-fn host_options_from(config: &Config) -> HostOptions {
-    let parse = |reprs: &[String]| -> Vec<KeyEvent> {
-        reprs
-            .iter()
-            .filter_map(|repr| KeyEvent::from_repr(repr))
-            .collect()
-    };
-    let mut options = HostOptions {
-        page_size: page_size_of(config),
-        page_cycle: config.page_cycle,
-        ..HostOptions::default()
-    };
-    // 契约：**角色显式给出即以此为准**（`Some([])` = 不绑定，与 `hux-cfg` 的
-    // `Settings::host_options()` 同语义）；只有角色**缺失**时才保留 core 缺省绑定。
-    if let Some(reprs) = &config.page_up_keys {
-        options.page_up_keys = parse(reprs);
-    }
-    if let Some(reprs) = &config.page_down_keys {
-        options.page_down_keys = parse(reprs);
-    }
-    options
 }
 
 /// 触发键（属性）：把两项触发键的 rime 键名列表（逗号分隔）交给 core 解析 / 匹配。
@@ -478,14 +171,6 @@ fn sync_trigger_keys(context: &mut Context, config: &Config) {
     ] {
         hux_core::session::set_property_if_changed(context, property, &value);
     }
-}
-
-/// 当前组合末段是否为字反查段。
-fn char_to_sound_shape_tagged(context: &Context) -> bool {
-    context
-        .composition
-        .back()
-        .is_some_and(|segment| segment.has_tag(char_to_sound_shape::TAG))
 }
 
 impl Scheme for TigerScheme {
@@ -516,12 +201,12 @@ impl Scheme for TigerScheme {
     fn apply_config(&mut self, config: &SchemeConfig) -> Result<(), Vec<ConfigError>> {
         let (parsed, errors) = Config::parse(config);
         self.config = parsed;
-        self.host_options = host_options_from(&self.config);
+        self.host_options = self.config.host_options();
         // 高频字上限 / 字集开关改变 ⇒ 重建词库索引（参照 `M.apply_high_freq_limit`）。
         // 平台在装配方案**之后**才下发配置页设置，故这里必须能重建；只在真的变化时重建
         // （每次按键路径都会经 `push_scheme_config` 走到本函数）。
         let limit = self.config.high_freq_limit;
-        let options = lexicon_options(&self.config);
+        let options = self.config.lexicon_options();
         let lexicon = self.decoder.lexicon();
         if lexicon.high_freq_limit != limit || lexicon.options() != options {
             self.decoder.apply_lexicon_options(limit, options);
@@ -534,7 +219,7 @@ impl Scheme for TigerScheme {
             self.learning_mode = mode;
             self.applied_learning = None;
         }
-        let min_retained = Some(self.config.min_retained_input_length as i64);
+        let min_retained = self.config.min_retained_input_length;
         for session in self.sessions.values_mut() {
             session.min_retained = min_retained;
             if changed {
@@ -589,7 +274,7 @@ impl Scheme for TigerScheme {
                     ..LiveLearning::default()
                 },
                 dot_armed: false,
-                min_retained: Some(self.config.min_retained_input_length as i64),
+                min_retained: self.config.min_retained_input_length,
                 builder: CompositionBuilder::default(),
             },
         );
@@ -620,10 +305,7 @@ impl Scheme for TigerScheme {
         now: f64,
     ) -> Result<KeyOutcome, String> {
         // 字反查段：←/→/↑/↓ **交应用处理**（应用光标随动），本层不消费也不改动输入。
-        if !key.release()
-            && char_to_sound_shape_tagged(context)
-            && matches!(key.repr().as_str(), "Left" | "Right" | "Up" | "Down")
-        {
+        if char_to_sound_shape::navigation_forwarded(key, context) {
             return Ok(KeyOutcome::Forward);
         }
         sync_trigger_keys(context, &self.config);
@@ -642,11 +324,11 @@ impl Scheme for TigerScheme {
             now,
             dot_armed: &mut state.dot_armed,
             min_retained: state.min_retained,
-            page_size: page_size_of(config),
+            page_size: config.page_size(),
             // 与紧随其后的宿主链共用同一份翻页键绑定（有意偏离上游，见 `ProcessorEnv`）。
             host_options: &*host_options,
         };
-        let result = processor(
+        let result = process_key_event(
             key,
             context,
             &mut state.state,
@@ -736,7 +418,7 @@ impl Scheme for TigerScheme {
     }
 
     fn auxiliary_lookup_active(&self, context: &Context) -> bool {
-        char_to_sound_shape_tagged(context)
+        char_to_sound_shape::tagged(context)
     }
 
     fn auxiliary_rows(&mut self, text: &str, cursor_chars: usize) -> (String, String) {
@@ -748,6 +430,8 @@ impl Scheme for TigerScheme {
 
 #[cfg(test)]
 mod tests {
+    use super::assets::role;
+    use super::config::config_role_notes;
     use super::*;
     use hux_core::learning::LearningIndex;
     use hux_core::scheme::Value;
@@ -1290,7 +974,7 @@ mod tests {
             ),
         ]);
         scheme.apply_config(&config).expect("全角色袋");
-        assert_eq!(scheme.sessions[&session.0].min_retained, Some(4));
+        assert_eq!(scheme.sessions[&session.0].min_retained, 4);
         assert_eq!(scheme.host_options.page_size, 7);
         assert!(scheme.host_options.page_cycle);
         sync_trigger_keys(&mut context, &scheme.config);

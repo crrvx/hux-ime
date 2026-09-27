@@ -21,6 +21,7 @@ fn every_configured_role_is_declared_by_the_scheme() {
     assert!(
         !engine
             .engine
+            .diagnostics
             .status
             .to_str()
             .unwrap_or("")
@@ -63,7 +64,13 @@ fn scheme_config_roles_match_the_scheme() {
     );
     // 正例：真实装配路径（配置层装袋 → 方案读袋）无角色漂移诊断。
     let engine = TestEngine::new(host(), fixture_dirs(), None, Some(temp_user_dir("roles")));
-    let status = engine.engine.status.to_str().unwrap_or("").to_string();
+    let status = engine
+        .engine
+        .diagnostics
+        .status
+        .to_str()
+        .unwrap_or("")
+        .to_string();
     assert!(
         !status.contains("config:"),
         "角色一致时状态串不应有配置诊断：{status}"

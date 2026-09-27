@@ -23,6 +23,7 @@
 
 use hashbrown::{HashMap, HashSet};
 use hux_core::collections::{Map, Set};
+use hux_core::session::Candidate;
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
@@ -184,6 +185,46 @@ fn extra_codes_names(directory: &Path) -> Vec<String> {
         .collect();
     names.sort();
     names
+}
+
+/// 码注释（上游音反查件；当前 pin 的 main 未含，音反查接线用）：单字显示全部编码（源序），词组逐字 `字:码组`。
+pub fn code_comment(lexicon: &Lexicon, text: &str) -> Option<String> {
+    if !lexicon.built {
+        return None;
+    }
+    let chars: Vec<char> = text.chars().collect();
+    if chars.is_empty() {
+        return None;
+    }
+    if chars.len() == 1 {
+        let codes = lexicon.character_codes.get(&chars[0].to_string())?;
+        if codes.is_empty() {
+            return None;
+        }
+        return Some(format!(" {}", codes.join(" / ")));
+    }
+    let mut parts = Vec::with_capacity(chars.len());
+    for ch in &chars {
+        match lexicon.character_codes.get(&ch.to_string()) {
+            Some(codes) if !codes.is_empty() => {
+                parts.push(format!("{}:{}", ch, codes.join("/")));
+            }
+            _ => parts.push(format!("{}:?", ch)),
+        }
+    }
+    Some(format!(" {}", parts.join(" ")))
+}
+
+/// 码注释过滤器（同上；音反查接线用）：音反查段候选写入虎码注释。
+pub fn code_comment_filter(candidates: &mut [Candidate], active: bool, lexicon: &Lexicon) {
+    if !active {
+        return;
+    }
+    for candidate in candidates {
+        if let Some(comment) = code_comment(lexicon, &candidate.text) {
+            candidate.comment = comment;
+        }
+    }
 }
 
 // ---------------------------------------------------------------- 数据结构

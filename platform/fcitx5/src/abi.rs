@@ -128,7 +128,7 @@ pub unsafe extern "C" fn hux_engine_reset(engine: *mut Engine, session: u64) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hux_engine_status(engine: *const Engine) -> *const c_char {
     match unsafe { engine.as_ref() } {
-        Some(engine) => engine.status.as_ptr(),
+        Some(engine) => engine.diagnostics.status.as_ptr(),
         None => std::ptr::null(),
     }
 }

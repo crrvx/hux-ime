@@ -28,69 +28,41 @@ PIN="${PIN:-abad411750f79cfca750985fa266689b5d9b865f}"
 OUT="${1:-$ROOT/goldens/key_sequence_tab.tsv.gz}"
 CASES="${CASES:-$ROOT/tools/cases/key_sequence_tab_cases.txt}"
 FIXTURE="$ROOT/goldens/key_sequence_tab"
+# shellcheck source=tools/generators/lib/golden_fixture.sh
+source "$ROOT/tools/generators/lib/golden_fixture.sh"
 
 [ -f "$CASES" ] || { echo "缺少用例文件 $CASES" >&2; exit 1; }
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/tiger-keyseq-tab-XXXXXX")"
-trap 'rm -rf "$WORK"' EXIT
+trap 'rm -f "$OUT.tmp.$$"; rm -rf "$WORK"' EXIT
 user="$WORK/user"
 shared="$WORK/shared"
-mkdir -p "$user/lua" "$shared"
+mkdir -p "$shared"
 
 # pin 版 Lua 核心与 schema（保证与已入库金样同一参照修订）。
-for name in tiger_sentence.lua tiger_sentence_learning.lua tiger_sentence_ngram.lua \
-    tiger_sentence_cache.lua tiger_sentence_lexical.lua; do
-    git -C "$REF" show "$PIN:lua/$name" > "$user/lua/$name"
-done
-git -C "$REF" show "$PIN:rime.lua" > "$user/rime.lua"
-git -C "$REF" show "$PIN:tiger_sentence.schema.yaml" > "$user/tiger_sentence.schema.yaml"
-git -C "$REF" show "$PIN:tiger_sentence_ascii.schema.yaml" > "$user/tiger_sentence_ascii.schema.yaml"
+copy_lua_modules "$user"
+pin_show rime.lua "$user/rime.lua"
+pin_show tiger_sentence.schema.yaml "$user/tiger_sentence.schema.yaml"
+pin_show tiger_sentence_ascii.schema.yaml "$user/tiger_sentence_ascii.schema.yaml"
 
 # ---- 夹具：入库内容为唯一来源（漂移即失败，不静默重写）--------------------------
-mkdir -p "$FIXTURE"
-git -C "$REF" show "$PIN:symbols.yaml" > "$WORK/symbols.yaml"
-python3 - "$WORK" <<'PY'
-import pathlib
-import sys
-work = pathlib.Path(sys.argv[1])
-table = ["刘\tvp", "甲\tab", "乙\tab", "一\tcd", "第7\tz"]
-table += [f"{chr(0x4E00 + i)}\tja" for i in range(22)]
-(work / "tiger_sentence.codes.txt").write_text("\n".join(table) + "\n", encoding="utf-8")
-(work / "tiger_sentence.custom.yaml").write_text(
-    "patch:\n  tiger_sentence/high_freq_limit: 0\n"
-    "  tiger_sentence/tab_learning: true\n", encoding="utf-8")
-PY
-for name in symbols.yaml tiger_sentence.codes.txt tiger_sentence.custom.yaml; do
-    if [ ! -f "$FIXTURE/$name" ]; then
-        echo "缺少入库夹具 $FIXTURE/$name（首次生成时请先放入再提交）" >&2
-        exit 1
-    fi
-    if ! cmp -s "$WORK/$name" "$FIXTURE/$name"; then
-        echo "夹具与 pin/补丁不符：$FIXTURE/$name" >&2
-        echo "  —— 若确为上游 pin 变化，请人工确认后更新该文件；夹具内容不得由生成器静默改写。" >&2
-        exit 1
-    fi
-done
+pin_show symbols.yaml "$WORK/symbols.yaml"
+synth_code_table "$WORK" "$WORK" true
+guard_fixture "$WORK/symbols.yaml" "$FIXTURE/symbols.yaml" "标点表 symbols.yaml（pin $PIN）"
+guard_fixture "$WORK/tiger_sentence.codes.txt" "$FIXTURE/tiger_sentence.codes.txt" \
+    "合成码表 tiger_sentence.codes.txt"
+guard_fixture "$WORK/tiger_sentence.custom.yaml" "$FIXTURE/tiger_sentence.custom.yaml" \
+    "方案补丁 tiger_sentence.custom.yaml（tab_learning: true）"
 grep -q 'tiger_sentence/tab_learning: true' "$FIXTURE/tiger_sentence.custom.yaml" \
-    || { echo "夹具未开启 tab_learning: true（本金样失去意义）" >&2; exit 1; }
+    || { echo "生成失败：夹具未开启 tab_learning: true（本金样失去意义）" >&2; exit 1; }
 
 cp "$FIXTURE/symbols.yaml" "$user/symbols.yaml"
 cp "$FIXTURE/tiger_sentence.codes.txt" "$user/tiger_sentence.codes.txt"
 cp "$FIXTURE/tiger_sentence.custom.yaml" "$user/tiger_sentence.custom.yaml"
 
-# 最小共享数据（与参照集成测试同构；页大小与重放侧 `DEFAULT_PAGE_SIZE` 一致）。
-cat > "$shared/default.yaml" <<'YAML'
-config_version: "1.0"
-schema_list:
-  - schema: tiger_sentence
-menu:
-  page_size: 5
-recognizer:
-  patterns: {}
-YAML
+default_yaml "$shared/default.yaml"
 
-plugin="${LUA_PLUGIN:-/usr/lib/rime-plugins/librime-lua.so}"
-[ -f "$plugin" ] || { echo "缺少 librime-lua 插件：$plugin（可用 LUA_PLUGIN 覆盖）" >&2; exit 1; }
+plugin="$(require_lua_plugin)"
 g++ -std=c++17 -O2 "$ROOT/tools/probes/rime_sequence_probe.cpp" -lrime -ldl -o "$WORK/probe"
 
 lua_sha="$(git -C "$REF" show "$PIN:lua/tiger_sentence.lua" | sha256sum | cut -d' ' -f1)"
@@ -103,19 +75,12 @@ librime_version="$(pkg-config --modversion rime 2>/dev/null || true)"
     printf '# fixture: goldens/key_sequence_tab/tiger_sentence.custom.yaml (tab_learning: true)\n'
     LD_LIBRARY_PATH="$WORK${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
         "$WORK/probe" "$user" "$shared" "$plugin" "$CASES"
-} | gzip -9 > "$OUT.tmp.$$"
+} > "$WORK/golden.tsv"
 
-# 写库前断言：至少 1 个用例，且至少一步 `Tab` 被消费（夹具没生效就会失败）。
-if ! gzip -cd "$OUT.tmp.$$" | grep -q '^case'; then
-    rm -f "$OUT.tmp.$$"
-    echo "生成失败：$OUT 不含任何用例（检查 CASES 是否为空或全为注释）" >&2
-    exit 1
-fi
-if ! gzip -cd "$OUT.tmp.$$" | awk -F'\t' '$1=="step" && $4=="Tab" && $5=="1"{found=1} END{exit !found}'; then
-    rm -f "$OUT.tmp.$$"
-    echo "生成失败：$OUT 里没有任何被消费的 Tab 步（夹具 tab_learning 未生效？）" >&2
-    exit 1
-fi
-mv "$OUT.tmp.$$" "$OUT"
+# 写库前断言 + 原子写库：至少 1 个用例，且至少一步 `Tab` 被消费（夹具没生效就会失败）。
+golden_require "$WORK/golden.tsv" '^case' "金样不含任何用例"
+awk -F'\t' '$1=="step" && $4=="Tab" && $5=="1"{found=1} END{exit !found}' "$WORK/golden.tsv" \
+    || { echo "生成失败：金样里没有任何被消费的 Tab 步（夹具 tab_learning 未生效？）" >&2; exit 1; }
+write_golden "$WORK/golden.tsv" "$OUT"
 
 echo "wrote $OUT ($(gzip -cd "$OUT" | grep -c '^step') steps)"

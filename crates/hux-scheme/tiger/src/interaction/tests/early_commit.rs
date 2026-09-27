@@ -6,13 +6,6 @@
 use super::*;
 
 #[test]
-fn min_retained_raw_length_clamps() {
-    assert_eq!(min_retained_raw_length(Some(3)), 3);
-    assert_eq!(min_retained_raw_length(Some(-1)), 0);
-    assert_eq!(min_retained_raw_length(None), 0);
-}
-
-#[test]
 fn common_text_prefix_returns_shared_prefix() {
     assert_eq!(common_text_prefix("甲乙丙", "甲乙丁"), "甲乙");
     assert_eq!(common_text_prefix("甲", "乙"), "");

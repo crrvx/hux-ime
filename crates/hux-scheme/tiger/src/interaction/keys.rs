@@ -57,6 +57,20 @@ pub(crate) fn trigger_chars(keys: &[KeyEvent]) -> Vec<char> {
     chars
 }
 
+/// 无 Ctrl/Alt/Super 的按键（Shift 不参与，由字符归一各自处理）。
+pub(crate) fn modifier_free(key_event: &KeyEvent) -> bool {
+    !(key_event.ctrl() || key_event.alt() || key_event.super_modifier())
+}
+
+/// 可打印 ASCII（`0x20 < code < 0x7f`）对应的字符。
+fn ascii_char(code: i32) -> Option<char> {
+    if code > 0x20 && code < 0x7f {
+        char::from_u32(code as u32)
+    } else {
+        None
+    }
+}
+
 /// 按键「实际产生的字符」（字符归一；供触发键匹配与单字符判定）。
 /// 兼容前端上报 `grave+Shift` 或 `asciitilde`（US 布局的 `~`）。
 pub fn key_char(key_event: &KeyEvent) -> Option<char> {
@@ -67,11 +81,7 @@ pub fn key_char(key_event: &KeyEvent) -> Option<char> {
     if code == 0x7e {
         return Some('~');
     }
-    if code > 0x20 && code < 0x7f {
-        char::from_u32(code as u32)
-    } else {
-        None
-    }
+    ascii_char(code)
 }
 
 /// 输入恰为单个字符时取其字符。
@@ -94,7 +104,7 @@ pub fn key_matches(key_event: &KeyEvent, configured: &KeyEvent) -> bool {
 /// 单字符触发键（无 Ctrl/Alt/Super）产生的字符；带修饰时返回 None
 /// ——「只有单字符快捷键才提供默认可上屏候选」。
 pub fn single_char_trigger(key: &KeyEvent) -> Option<char> {
-    if key.ctrl() || key.alt() || key.super_modifier() {
+    if !modifier_free(key) {
         return None;
     }
     key_char(key)
@@ -115,7 +125,7 @@ pub fn is_modifier_repr(repr: &str) -> bool {
 
 /// 参照 `is_plain_char_key`：只接受无 Ctrl/Alt/Super 的字符输入。
 pub fn is_plain_char_key(key_event: &KeyEvent, repr: &str) -> Option<char> {
-    if key_event.ctrl() || key_event.alt() || key_event.super_modifier() {
+    if !modifier_free(key_event) {
         return None;
     }
     if repr.len() == 1
@@ -148,13 +158,8 @@ pub fn is_plain_char_key(key_event: &KeyEvent, repr: &str) -> Option<char> {
 /// 参照 `Recognizer::ProcessKeyEvent`：可被音反查模式接受的字符（`ch > 0x20 && ch < 0x80`，
 /// 排除 Ctrl/Alt/Super；空格由 `use_space=false` 排除）。
 pub(crate) fn recognizer_char(key_event: &KeyEvent) -> Option<char> {
-    if key_event.ctrl() || key_event.alt() || key_event.super_modifier() {
+    if !modifier_free(key_event) {
         return None;
     }
-    let code = key_event.keycode;
-    if code > 0x20 && code < 0x7f {
-        char::from_u32(code as u32)
-    } else {
-        None
-    }
+    ascii_char(key_event.keycode)
 }
