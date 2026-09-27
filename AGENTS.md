@@ -38,25 +38,25 @@
 
 1. 修改开始前：在当前所在节点上，先执行 `jj new` 开新副本，再进行改动
 2. 修改过程中：可按需执行更多的 `jj new`
-   - 新副本只落在 AI 自己 `jj new` 的链上，不改动其他已有节点
+    - 新副本只落在 AI 自己 `jj new` 的链上，不改动其他已有节点
 3. 修改过程中：尽量按功能拆成多条 jj commit
 4. 修改完成后：须同步对应文档，并按改动编辑 jj commit 消息（简短一句）
-   - 提交后交由用户审阅确认
+    - 提交后交由用户审阅确认
 5. jj 历史整理, push/fetch，pr：除非用户直接要求，否则 AI 不代做
 
 ## 相关项目
 
 1. 上游项目
 
-- `虎爪` [tigerclaw](https://github.com/lvyww/tigerclaw)（win 原生）
-- `虎整句` [tiger-sentense-rime](https://github.com/lvyww/tiger-sentense-rime)（即「虎爪-rime」）
+    - `虎爪` [tigerclaw](https://github.com/lvyww/tigerclaw)（win 原生）
+    - `虎整句` [tiger-sentense-rime](https://github.com/lvyww/tiger-sentense-rime)（即「虎爪-rime」）
 
 2. 参考实现
 
-- [tigirl](https://github.com/lvyww/tigirl)
-- [tigerclaw](https://github.com/lvyww/tigerclaw)
-- [tiger-sentense-rime](https://github.com/lvyww/tiger-sentense-rime)
-- [hufu-ime-rust](https://github.com/LeafHW/hufu-ime-rust)
+    - [tigirl](https://github.com/lvyww/tigirl)
+    - [tigerclaw](https://github.com/lvyww/tigerclaw)
+    - [tiger-sentense-rime](https://github.com/lvyww/tiger-sentense-rime)
+    - [hufu-ime-rust](https://github.com/LeafHW/hufu-ime-rust)
 
 ## 背景与约定
 

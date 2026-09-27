@@ -3,9 +3,9 @@
 
 # 参考：模块映射与数据布局
 
-- 查表式参考（从 [`design.md`](design.md) 拆出，规则叙述见该文）。
-- §1 参照实现 → Rust 的模块映射（含各模块差分手段）。
-- §2 数据与目录的解析顺序。
+- 查表式参考（从 [`design.md`](design.md) 拆出，规则叙述见该文）
+  - §1 参照实现 → Rust 的模块映射（含各模块差分手段）
+  - §2 数据与目录的解析顺序
 
 ## 1. 模块映射（参照 → Rust）
 
@@ -23,15 +23,14 @@
 
 ## 2. 数据与目录
 
-- 目录解析在平台层（`platform/fcitx5/src/paths.rs`；内核不读环境变量）。
+- 目录解析在平台层：`platform/fcitx5/src/paths.rs`（内核不读环境变量）
 - 只读目录查找顺序：
-  - `HUX_DATA_DIRS`（覆盖，冒号分隔）。
-  - `$XDG_DATA_HOME/fcitx5/hux`，缺省 `~/.local/share/fcitx5/hux`。
-  - `$XDG_DATA_DIRS/*/fcitx5/hux`，缺省 `/usr/local/share`、`/usr/share`。
-  - 末级 `/usr/share/fcitx5/hux`。
-- 开发可用 `HUX_DATA_DIRS`（冒号分隔）与 `HUX_MODEL` 覆盖。
-- 安装去向见 [`resources.md`](resources.md)「落点与查找顺序」（§0.2）。
-- 运行数据（码表四件套 + 追加码表、模型、`symbols.yaml`）：
-  - 另有词先验、音反查索引、选项与学习库。
-  - 文件名 / 格式 / 来源见 [`../data/README.md`](../data/README.md)。
-  - 一并见 [`resources.md`](resources.md)。
+  - `HUX_DATA_DIRS`（覆盖，冒号分隔）
+  - `$XDG_DATA_HOME/fcitx5/hux`，缺省 `~/.local/share/fcitx5/hux`
+  - `$XDG_DATA_DIRS/*/fcitx5/hux`，缺省 `/usr/local/share`、`/usr/share`
+  - 末级 `/usr/share/fcitx5/hux`
+- 开发可用 `HUX_DATA_DIRS`（冒号分隔）与 `HUX_MODEL` 覆盖
+- 安装去向见 [`resources.md`](resources.md)「落点与查找顺序」（§0.2）
+- 运行数据：码表四件套 + 追加码表、模型、`symbols.yaml`，另有词先验、音反查索引、选项与学习库
+  - 文件名 / 格式 / 来源见 [`../data/README.md`](../data/README.md)
+  - 一并见 [`resources.md`](resources.md)

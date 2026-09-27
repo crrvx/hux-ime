@@ -95,13 +95,9 @@ git clone https://github.com/crrvx/hux-ime && cd hux-ime
 
 - 虎码官网：[tiger-code.com](https://www.tiger-code.com)
 - 虎码资源：[huma.ysepan.com](https://huma.ysepan.com)
-- 虎句方案（官方）：
-  - [虎娘](https://github.com/lvyww/tigirl)
-  - [虎爪](https://github.com/lvyww/tigerclaw)
-  - [虎爪-rime](https://github.com/lvyww/tiger-sentense-rime)（上游）
-- 虎句方案（社区）：
-  - [虎符](https://github.com/LeafHW/hufu-ime-rust)
-  - [虎虚 hux](https://github.com/crrvx/hux-ime)（本方案）
+- 虎句方案：
+  - 官方·[虎娘](https://github.com/lvyww/tigirl) [虎爪](https://github.com/lvyww/tigerclaw) [虎爪-rime](https://github.com/lvyww/tiger-sentense-rime)（上游）
+  - 社区·[虎符 hufu](https://github.com/LeafHW/hufu-ime-rust) [虎虚 hux](https://github.com/crrvx/hux-ime)（本方案）
 
 ## 致谢
 

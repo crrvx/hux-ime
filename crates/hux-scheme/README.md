@@ -3,8 +3,7 @@
 
 # crates/hux-scheme：输入方案区
 
-输入方案（码表 + 解码 + 学习规则）实现区。
-
+- 输入方案（码表 + 解码 + 学习规则）实现区
 - 依赖方向：`hux-scheme/* → hux-core`
 - 内核不依赖任何方案，方案只在装配处由平台构造
 
@@ -38,8 +37,7 @@
 测试与参照：
 
 - 差分测试在 `tests/`，随 `cargo test --workspace` 运行
-- 语义、数据与金样参照上游仓库
-- 上游：[tiger-sentense-rime](https://github.com/lvyww/tiger-sentense-rime)
+- 语义、数据与金样参照上游仓库：[tiger-sentense-rime](https://github.com/lvyww/tiger-sentense-rime)
 - 方案标识保持 `tiger_sentence`
 - 活规则见 [`design.md`](../../docs/design.md)
 - 历史见 [`review-ledger.md`](../../docs/review-ledger.md)
@@ -48,10 +46,8 @@
 
 族共性：
 
-- 形码族（`yuhao/`、`wubi/`）预期复用虎句的 beam 解码
-- 并复用其词先验 / 早提交 / 学习框架
-- 拼音族为音节切分 + 拼音词典 + 候选排序（独立 translator）
-- 拼音族仅共享会话 / 宿主链 / 学习机制
+- 形码族（`yuhao/`、`wubi/`）预期复用虎句的 beam 解码、词先验 / 早提交 / 学习框架
+- 拼音族为音节切分 + 拼音词典 + 候选排序（独立 translator），仅共享会话 / 宿主链 / 学习机制
 
 数据需求：
 
@@ -65,20 +61,13 @@
 契约需求（`hux_core::scheme`）：
 
 - 实现 `Scheme`，方法清单见 [`design.md`](../../docs/design.md) §2「落地形态」
-- 本区自报 `id`
-- 本区自报 `option_declarations()`
-- 该声明须覆盖 `SCHEME_OPTION_ROLES` 全量，共 **6 个**角色：
-    - `early_commit`
-    - `early_commit_to_preedit`
-    - `allow_duplicate_single`
-    - `digit_select`
-    - `full_charset`
-    - `filter_non_han`
-  - 键自持，缺任一即装配报错
-- 本区自报 `learning_mode()`：据配置袋自算的不透明 mode 串
-- 本区自报 `apply_config`：逐角色回报诊断
-- 本区自报 `host_options`
+- 自报面：`id` / `option_declarations()` / `learning_mode()` / `apply_config` / `host_options`
+  - `learning_mode()`：据配置袋自算的不透明 mode 串
+  - `apply_config`：逐角色回报诊断
+- `option_declarations()` 须覆盖 `SCHEME_OPTION_ROLES` 全量，共 **6 个**角色 \
+  （`early_commit` / `early_commit_to_preedit` / `allow_duplicate_single` / `digit_select` /
+  `full_charset` / `filter_non_han`）；键自持，缺任一即装配报错
 - 资产目录由平台解析后传入
-- 依赖方向与守卫：`hux-scheme/<方案> → hux-core`，内核零方案依赖，CI 守卫见
+- 依赖方向：`hux-scheme/<方案> → hux-core`，内核零方案依赖，CI 守卫见 \
   [`design.md`](../../docs/design.md) §4
-- `hux-cfg` 只提供角色词汇与设置，装配由平台构造，方案不反向依赖二者
+- `hux-cfg` 只提供角色词汇与设置；装配由平台构造，方案不反向依赖二者

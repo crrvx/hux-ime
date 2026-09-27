@@ -3,27 +3,18 @@
 
 # 复核台账：历史与逐批记录（review ledger）
 
-> **本文是历史留档**：§1「历史纪要」把迁移映射 / 批次 / 上游追平 / 逐批整改 /
-
-> 四份审计总账压成逐批一行（结论 + 提交号）；
-
-> 只记「做过什么 / 结论是什么」，不承载规则本身。
-
-> **未完事项是活口**（`[待办]` / `[已登记·不修+理由]` / `[误报·已核实]` /
-
-> 待定配置项）已拆到 [`open-items.md`](open-items.md)——本文不再列未闭合项。
-
-> 活规则见 [`design.md`](design.md)，
-
-> 有意偏离见 [`upstream-deviations.md`](upstream-deviations.md)。
-
----
+- **本文是历史留档**：§1「历史纪要」把迁移映射 / 批次 / 上游追平 / 逐批整改 / \
+  四份审计总账压成逐批一行（结论 + 提交号）
+- 只记「做过什么 / 结论是什么」，不承载规则本身
+- **未完事项是活口**（`[待办]` / `[已登记·不修+理由]` / `[误报·已核实]` / 待定配置项）已拆到 \
+  [`open-items.md`](open-items.md)——本文不再列未闭合项
+- 活规则见 [`design.md`](design.md)
+- 有意偏离见 [`upstream-deviations.md`](upstream-deviations.md)
 
 ## 1. 历史纪要（逐批一行）
 
-> 本节把原 §1 迁移映射 / §2 批次 / §3 上游追平 / §4 逐批整改 / §5 四份审计总账
-
-> 五节压成下表（逐批一行）。
+- 本节把原 §1 迁移映射 / §2 批次 / §3 上游追平 / §4 逐批整改 / §5 四份审计总账 \
+  压成下表，逐批一行
 
 | 批次 / 主题 | 结论 | 提交 / pin |
 | --- | --- | --- |
@@ -54,6 +45,7 @@
 | 音反查撇号线真机试用（2026-09-27） | 重装 `libhux.so` + 重启 fcitx5 后，<br>在真机观察字反查与撇号（`'`）行为：**已由用户验证通过** | `730c196b` + <br>`5dbdd9c1`（PR #22） |
 | 第 12 批复审（三路只读审查：文档层 / 金样链 / 平台与台账） | 三路共 38 条，<br>逐条复核后全修：**无误** —— `goldens/PROVENANCE.md` 夹具来源失实<br>（实测上游同名文件 82 万行、与本仓 27 条夹具无交集，改注「本仓自建探针小词典」）<br>、复验命令改从 pin blob 取源（默认检出无该文件）、`docs/install.md` 插件库落点<br>（系统级跟随发行版 addon 目录）、`install.sh` 的 `--dry-run` / `-h` 补进册、<br>`review-ledger.md` §0 与 `design.md` §6/§7 二手指针改指`open-items.md` / <br>`reference.md`、`ci.yml` 去易腐章节号、`open-items.md` 行号 / 项数（`:99` → <br>`:74`、61 项加「当时」）、台账五处行数；**精简** —— 根 `README.md` 键位表 9 → 4 <br>条、`AGENTS.md` 文档分工去重、`platform/README.md` 环境变量段改指针、<br>`open-items.md` §5 移入本册；**易读** —— 第 12 批行 11 段超宽单元重排、<br>真机析构核对六类做法回填（代码锚点 / 级别 / 启动期读入 / 临时看法 / 判据）、<br>`REGENERATE.md` 补一键入口与位置参数警告（`OUT=` 会被忽略）；<br>宽度 / 死链 / 62 项 sha 复检归零，15 条基线复跑全绿 | 并入 `6db5679c` |
 | 第 13 批（低成本清理批）：可见性收紧 + 测试归位 + 工具守卫收紧 | 已修：<br>**方案层** —— 26 项 `pub` 收紧（`lexicon.rs` 18 / `sound_to_char_shape.rs` 6 /<br>`model_status::format_label`）、`scheme.rs` 1068 → 432 行（内联测试 635 行迁 <br>`scheme/tests.rs`）、陈旧注释 4 处、rustdoc 链接 4 处；**内核层** —— 4 条 <br>`paging_action` 用例迁入 `host/key_binder.rs` 既有测试模块（<br>`selector.rs` 569 → 388），`paging` 标签叙事清理；**平台层** —— 4 个测试助手归位<br>（`key_list` 去重、`ffi_engine` 留多主题父模块）、13 个子文件补 `//!`、<br>`mod` 声明上移、`scheme_config_with_runtime` 停止从 `crate::engine` 根再导出；<br>**8 条断言加固** —— `digit_select` 补负半、翻页期望改推送 `page_size = 3`、<br>自指期望改字面量、`status` 去重改幂等断言、NUL 用例拆 `tests/ui.rs`、<br>两处名实不符改名、补 `min_retained_input_length`；**工具** —— <br>`check_data_manifest.sh` 行首尾空白改判错（去 `sed`，与 `manifest_lines` <br>口径对齐，负向对照实测失败）、8 个空占位目录清掉；**转登记** —— <br>`punct_shape_comment` 不搬、`Engine` 字段不收紧（见 <br>[`open-items.md`](open-items.md) §2）；`#[test]` 172=172 / 断言 842=842（tiger）<br>、551=551（平台，去重 −3 +3）；15 条基线复跑 392 passed / 0 failed / 1 <br>ignored | `9532b8c7` |
-
 | 第 14 批（代码拆分）：全仓文件 ≤400 行、函数 ≤60 行 | 已修：**第一波**<br>（4 路并行，先提交） ——内核 `learning.rs` 1169 → 262 + `learning/` 8 册、<br>`session.rs` 1053 → 28 + `session/` 2 册 + 2 测试册、`host/selector.rs` 388 → <br>196、`host/express_editor.rs` 535 → 230、`scheme.rs` 461 → 368；平台 <br>`engine.rs` 740 → 215 + `engine/` 4 册、`ui.rs` 142 → 152、`abi.rs` 411 → 374 + <br>`abi/mapping.rs` 50、`learning_store.rs` 300 → 318；方案·数据 <br>`decode/beam.rs` 1349 → 32 + 10 册、`evidence.rs` 320 → 62 + 3 册、<br>`tests.rs` 716 → 24 + 5 册、`lexicon.rs` 1254 → 216 + 6 册、<br>`ngram.rs` 893 → 389 + 5 册、`sound_to_char_shape/` 的 `index.rs` 与 <br>`tests.rs` 分册。**第二波**（7 路） ——`interaction/processor.rs` 804 → 155 + 6 <br>册、`early_commit.rs` 727 → 35 + 6 册、`translate.rs` 550 → 164 + 3 册、<br>`learning_glue.rs` 409 → 38 + 3 册、`scheme.rs` 432 → 385 + <br>`scheme/wiring.rs` 85；平台测试 `tests/host_contract.rs` 1090 → 79 + 7 册（<br>`#[path]` 显式路径）、`src/tests/key_routing.rs` 490 → 29 + 6 册、<br>`scheme_config.rs` 413 → 55 + 3 册；集成测试 8 个扁平文件 → 26 册；内核 <br>`tests/processor.rs` 681 → 87 + 6 册、`scheme/tests.rs` 640 → 67 + 3 册；<br>`crates/hux-cfg` 的 `store.rs` / `settings.rs` 422 / 418 → 47 / 99 + 子模块；<br>`crates/hux-ffi` 与两个基准 example 的 `main` 拆助手。**规模与判据** ——<br> 99 → 221 个 .rs、33,734 → 37,201 行；最大非豁免文件 389 行（`ngram.rs`）；<br>`crates/hux-core/src/key_table.rs` 2664 行是生成数据表，生成器 <br>`tools/generators/gen_key_table.py`，**永久豁免**；全仓 0 个 >60 行函数<br>（最长 60 = `decode/beam/bucket.rs` 的 `dedup_limit`）；零行为变化：各 crate 的 <br>`#[test]` 与含 `assert` 行数逐个相等，（tiger 172 / 842、core 91 / 462、<br>platform 102 / 638、cfg 22 / 82、ffi 2 / 9、test-support 4 / 12），<br>测试名集合逐字相同，`cargo clippy --workspace -D warnings` 与 <br>`cargo test --workspace` 复跑392 passed / 0 failed / 1 ignored；全仓无 <br>`mod.rs`、无 `tests/common/`、.rs 全 644。**过程** —— 3 <br>路子代理中途崩溃且零落盘，改按文件切小任务后全部收口（任务书加<br>「先写一行开工日志」）；等价改写（借用 / `?` / 枚举派发 / 参数化）<br>逐条登记在各流报告。遗留：`crates/hux-cfg` 有 2 条改动前既有的 rustdoc <br>unresolved link，仓库无 doc 门禁 | `c091d8f0` |
-| 第 15 批（文档重整）：全仓 md 逐行合规（≤80 列）<br>已修：**20 册全部重整** —— 违规 518 → **0**；<br>范围：根 `README.md`、`AGENTS.md`、`crates/hux-scheme/README.md`、<br>`assets/{branding,themes}/README.md`、`data/README.md`、`docs/` 十册、<br>`goldens/` 三册、`platform/` 两册；总行数 2389 → 3136；<br>fidelity（`jj file show -r @-` 真基线）20 册全部 **0 token 丢失**；<br>**做法** —— 长段落拆 bullet / 子条、行尾 `\` 续行拆开、<br>宽表改短表 + `<br>` 分段（单元格内逐段 ≤80）、<br>超宽 inline token 单独进 ``` 围栏；<br>**口径** —— (a) 无可折点的超宽标题：改写标题文字、括注下沉为节首说明<br>（改写前三处为 `docs/open-items.md:71` 84 列、`docs/review-ledger.md:22` 98 列、<br>`docs/upstream-deviations.md:178` 98 列）；<br>(b) 引用块保留 `>`、按完整分句拆行、行间加空行（标点零改动）；<br>**检查器**（`_tmp/audit/style_docs3.py`，不入库）逐轮修补：<br>HTML 注释块豁免、`\` 续行合并计违规、<br>整段反引号 span 视作不可断 token、表格改按「单元格 × `<br>` 段」判定；<br>**守卫回归** —— `verify_golden_shas.py` 62 项通过 / 0 失败<br>（`goldens/PROVENANCE.md` 的三张 sha256 表一度被改成「标签 + sha」分条，<br>守卫报 19 条未登记；已转回表格并补回 `data/tiger_sentence.codes.huma.txt`）；<br>`mdlinks.py` 死链 0；`w12.py` 散文 / ASCII / 单元超宽全 0；<br>`check_resources.py` / `check_branding_assets.py` /<br>`check_themes.py`（19 套 / 133）/ `check_code_tables.py`（117701 条）/<br>`check_data_manifest.sh`（8 条）/ `reuse lint`（482 / 482）全 exit 0；<br>**过程** —— 8 路并行（一路崩溃后补派收尾）；captain 自修复原两处越界：<br>`goldens/README.md` 措辞被弱化、`docs/upstream-deviations.md` ③ 节标题被误缩；<br>提交：本行提交（文档重整）；收尾把 `main` 之上的 39 个提交按批次压成 8 个 | — |
+| 第 15 批（文档重整）：全仓 md 逐行合规（≤80 列） | 已修：**20 册全部重整** —— 违规 518 → **0**；<br>范围：根 `README.md`、`AGENTS.md`、`crates/hux-scheme/README.md`、<br>`assets/{branding,themes}/README.md`、`data/README.md`、`docs/` 十册、<br>`goldens/` 三册、`platform/` 两册；总行数 2389 → 3136；<br>fidelity（`jj file show -r @-` 真基线）20 册全部 **0 token 丢失**；<br>**做法** —— 长段落拆 bullet / 子条、行尾 `\` 续行拆开、<br>宽表改短表 + `<br>` 分段（单元格内逐段 ≤80）、<br>超宽 inline token 单独进 ``` 围栏；<br>**口径** —— (a) 无可折点的超宽标题：改写标题文字、括注下沉为节首说明<br>（改写前三处为 `docs/open-items.md:71` 84 列、`docs/review-ledger.md:22` 98 列、<br>`docs/upstream-deviations.md:178` 98 列）；<br>(b) 引用块保留 `>`、按完整分句拆行、行间加空行（标点零改动）；<br>**检查器**（`_tmp/audit/style_docs3.py`，不入库）逐轮修补：<br>HTML 注释块豁免、`\` 续行合并计违规、<br>整段反引号 span 视作不可断 token、表格改按「单元格 × `<br>` 段」判定；<br>**守卫回归** —— `verify_golden_shas.py` 62 项通过 / 0 失败<br>（`goldens/PROVENANCE.md` 的三张 sha256 表一度被改成「标签 + sha」分条，<br>守卫报 19 条未登记；已转回表格并补回 `data/tiger_sentence.codes.huma.txt`）；<br>`mdlinks.py` 死链 0；`w12.py` 散文 / ASCII / 单元超宽全 0；<br>`check_resources.py` / `check_branding_assets.py` /<br>`check_themes.py`（19 套 / 133）/ `check_code_tables.py`（117701 条）/<br>`check_data_manifest.sh`（8 条）/ `reuse lint`（482 / 482）全 exit 0；<br>**过程** —— 8 路并行（一路崩溃后补派收尾）；captain 自修复原两处越界：<br>`goldens/README.md` 措辞被弱化、`docs/upstream-deviations.md` ③ 节标题被误缩；<br>提交：本行提交（文档重整）；收尾把 `main` 之上的 39 个提交按批次压成 8 个 | — |
+| 第 16 批（平台层）：代码拆成共用层 + 两个落点 | 已修：`platform/fcitx5` 只留共用构建（无 `install()`，单配置报错并指路）<br>新增 `platform/linux/CMakeLists.txt` 承接全部安装规则<br>新增 `platform/android/CMakeLists.txt`：目标 `aarch64-linux-android`<br>库 `-llog -ldl -lm -lunwind`<br>根 `install.sh` / `uninstall.sh` 改 9 行转发到 `platform/linux/`<br>同步 CI 与两个守卫、两个 `MANIFEST`<br>验证：构建 + 安装布局（1 库 + 2 conf + 8 数据 + 19 主题 + 3 图标）<br>`nm -D` 18 符号与 `hux_abi.h` 一致、卸载覆盖 147 / 147、全量基线 fail=0 | `c4fcbff4` / <br>`bb70fec9` |
+| 第 17 批（文档格式）：16 册按样例格式精简 | 已修：`docs/design.md` 439 → 285、`docs/install.md` 205 → 165<br>`docs/upstream-deviations.md` 277 → 197、`docs/resources.md` 267 → 236<br>`goldens/README.md` 244 → 197、`goldens/PROVENANCE.md` 203 → 182<br>`goldens/REGENERATE.md` 160 → 154、`data/README.md` 152 → 108<br>`docs/open-items.md` 159 → 122、`docs/review-ledger.md` 59 → 49<br>`assets/themes/README.md` 78 → 66、`crates/hux-scheme/README.md` 84 → 73<br>`assets/branding/README.md` 62 → 48、`docs/reference.md` 37 → 36<br>`platform/fcitx5/README.md` 111 → 114、`platform/android/README.md` 103<br>口径：顶层 `-` + 缩进 2 空格子条、按意思分层、去句末 `。`<br>并列枚举改表格、`>` 引述块转条目、续行只在真需断行处<br>保真：14 册 `doc_fidelity.py` 0 token 丢失、`w12.py` 22 册 0 超宽<br>`mdlinks.py` 死链 0、`verify_golden_shas.py` 62 / 0<br>`check_resources.py` exit 0、全量基线 16 步 fail=0<br>用例 392 passed / 0 failed / 1 ignored | `d5eadc05` / <br>`de1c0833` |

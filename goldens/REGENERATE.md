@@ -3,25 +3,22 @@
 
 # goldens：重新生成
 
-- 本页＝生成命令与实操踩坑。
-- 清单 / 格式见 [`README.md`](README.md)。
-- 来源 pin 与 sha256 表见 [`PROVENANCE.md`](PROVENANCE.md)。
+- 本页＝生成命令与实操踩坑
+- 清单 / 格式见 [`README.md`](README.md)；来源 pin 与 sha256 表见 [`PROVENANCE.md`](PROVENANCE.md)
 
-- **一键入口**：重跑全部 Lua 金样并逐字节比对。
-- 该入口与 CI 的 `golden` / `golden-lua-latest` 两作业共用。
-- 下面是逐条命令与踩坑。
+## 一键入口
+
+- 重跑全部 Lua 金样并逐字节比对，与 CI 的 `golden` / `golden-lua-latest` 两作业共用
+- 位置参数依次为参考检出 / 金样目录 / 临时目录：
 
 `bash tools/generators/regen_goldens.sh [<参考检出>] [<金样目录>] [<临时目录>]`
 
-- **先决条件（实测踩坑）**
-- 夹具类生成器**不认 pin**。
-- 它们通过 `package.path = <reference>/lua/?.lua` 读参照仓库**工作区**。
-- 这些生成器是 `gen_ngram_/lexicon_/decode_/learning_/lexical_golden.lua`。
-- 故命令块第一件事就是检出主干 pin。
-- 否则会静默读到更靠后的核心版本、产出与目标 pin 无关的差异。
-- 参照检出**只读**时（发行版打包目录 / 只读挂载）在仓库之外另放可写克隆。
-- 该克隆要取全两个 pin。
-- 可写克隆的命令如下。
+## 先决条件（实测踩坑）
+
+- 夹具类生成器**不认 pin**：走 `package.path = <reference>/lua/?.lua` 读参照仓库**工作区**
+  - 这些生成器是 `gen_ngram_/lexicon_/decode_/learning_/lexical_golden.lua`
+  - 故命令块第一件事就是检出主干 pin；否则会静默读到更靠后的核心版本、产出与目标 pin 无关的差异
+- 参照检出**只读**时（发行版打包目录 / 只读挂载）在仓库之外另放可写克隆，该克隆要取全两个 pin：
 
     ```sh
     git clone https://github.com/lvyww/tiger-sentense-rime "$HOME/ref/tiger-sentense-rime"  # 或 cp -r 已有检出
@@ -30,25 +27,22 @@
     git -C "$RW" fetch origin 92a0b54b53114e7e5aa6a1ff48efa95db0e21f9c
     ```
 
-- **不要用 `--depth 1` / `--shallow`**：浅克隆只带个别 tip。
-- 浅克隆下，`git show <pin>:` 与 `git worktree add --detach <pin>` 都会失败。
-- CI 的 `golden` 作业逐个 pin 取，不合并。
-- 它先 `git init`。
-- 再逐个 pin 执行 `git fetch --depth 1 origin <sha>`。
-- 然后 `checkout --detach FETCH_HEAD`。
-- 故 CI 可用浅克隆。
-- 探针脚本自建临时工作区，与上面的 checkout 无关。
-- 它们用 `git show PIN:` 或 `git worktree add --detach PIN`。
-- 这些探针脚本如下。
+- **不要用 `--depth 1` / `--shallow`**：浅克隆只带个别 tip
+  - 此时 `git show <pin>:` 与 `git worktree add --detach <pin>` 都会失败
+- CI 的 `golden` 作业逐个 pin 取、不合并：先 `git init`，再逐个 pin \
+  执行 `git fetch --depth 1 origin <sha>`，然后 `checkout --detach FETCH_HEAD`
+  - 故 CI 可用浅克隆
+- 探针脚本自建临时工作区（`git show PIN:` 或 `git worktree add --detach PIN`），与上面的 \
+  checkout 无关；这类工作区 pin 精确，不需要先 checkout：
   - `gen_key_sequence_golden.sh`
   - `gen_key_sequence_tab_golden.sh`
   - `gen_sound_to_char_shape_golden.sh`
-- 这类工作区 pin 精确，**不需要**上面的 checkout。
-- 三者另有护栏：HEAD 不是 `PIN` 或工作区不干净时**显式失败**。
-- 三者输出都**只认位置参数**：设 `OUT=` 会被忽略、直接写回入库金样。
-- 要写到别处就传第一个位置参数（`bash <脚本> /tmp/x.tsv.gz`）。
-- `gen_key_golden.sh` 只依赖系统 librime 与 pin 版 `key_table.cc`。
-- 它与参照检出无关。
+- 三者另有护栏：HEAD 不是 `PIN` 或工作区不干净时**显式失败**
+- 三者输出都**只认位置参数**：设 `OUT=` 会被忽略，直接写回入库金样
+  - 要写到别处就传第一个位置参数：`bash <脚本> /tmp/x.tsv.gz`
+- `gen_key_golden.sh` 只依赖系统 librime 与 pin 版 `key_table.cc`，与参照检出无关
+
+## 逐条命令
 
 ```sh
 # 参照仓库：https://github.com/lvyww/tiger-sentense-rime

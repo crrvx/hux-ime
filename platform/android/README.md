@@ -4,9 +4,8 @@
 # Android：fcitx5-android 插件（待启动）
 
 - 本册是 Android 落点的**计划与事实**（活文档，只写现状与做法）
-- 状态见 [`../README.md`](../README.md)「状态总览」，里程碑从 M0 起
-- 宿主层契约（装配、按键与提交、反查）见 \
-  [`../fcitx5/README.md`](../fcitx5/README.md)，与桌面共用
+- 状态见 [`../README.md`](../README.md)「状态总览」；里程碑从 M0 起（见下）
+- 宿主层契约（装配、按键与提交、反查）见 [`../fcitx5/README.md`](../fcitx5/README.md)，与桌面共用
 
 ## 目标
 
@@ -30,11 +29,11 @@
   - `usr/lib/fcitx5/libhux.so`
   - `usr/share/fcitx5/addon/hux.conf`
   - `usr/share/fcitx5/inputmethod/hux.conf`（`COMPONENT config`）
-  - `usr/share/fcitx5/hux/…`（`COMPONENT prebuilt-assets`，由 \
-    `fcitxComponent { installPrebuiltAssets = true }` 声明）
+  - `usr/share/fcitx5/hux/…`：`COMPONENT prebuilt-assets`，由 \
+    `fcitxComponent { installPrebuiltAssets = true }` 声明
 - 运行时环境在 `native-lib.cpp` 里先于 fcitx5 设置：
-  - `XDG_DATA_HOME=<外部 files>/data`（可写，放选项 / 学习库 / 模型）
-  - `XDG_DATA_DIRS=<appData>/usr/share`（插件数据安装位置）
+  - `XDG_DATA_HOME=<外部 files>/data`：可写，放选项 / 学习库 / 模型
+  - `XDG_DATA_DIRS=<appData>/usr/share`：插件数据安装位置
   - `FCITX_ADDON_DIRS` 由核心处理
 - 候选点击走 `CandidateWord::select()`（`androidfrontend.cpp`）
 - Rust 侧出 staticlib 供 `libhux.so` 链接
@@ -42,24 +41,25 @@
 ## 与桌面共用的部分
 
 - **装配层直接复用** `platform/fcitx5/` 的 C++ 薄壳 + Rust 组装：addon 契约（选项角色、 \
-  按键与提交语义、反查）不变，差异只在数据目录来源与 `__ANDROID__` 分支
-- 本仓为此只改一处：平台层的数据目录查找支持 **`XDG_DATA_DIRS`**——落点 \
-  `fcitx5/src/paths.rs`，内核仍不读环境变量，桌面行为不变；顺序见 \
-  [`../../docs/reference.md`](../../docs/reference.md) §2
-- `__ANDROID__` 下的差异（配置 schema、状态区子菜单）与 `install.md` 的 \
-  Android 安装 / 模型、`REUSE` 头都**待验收决定 / 待补**
+  按键与提交语义、反查）不变
+- 两端差异只在数据目录来源与 `__ANDROID__` 分支：
+  - 本仓只改一处——平台层的数据目录查找支持 **`XDG_DATA_DIRS`**，落点 `fcitx5/src/paths.rs`
+  - 内核仍不读环境变量，桌面行为不变；顺序见 \
+    [`../../docs/reference.md`](../../docs/reference.md) §2
+- `__ANDROID__` 下的差异（配置 schema、状态区子菜单）、`install.md` 的 Android 安装 / 模型、 \
+  `REUSE` 头都**待验收决定 / 待补**
 
 ## 构建计划（fork 侧 `plugin/hux`，未开始）
 
 - 构建环境：NDK `28.0.13004108`、CMake `3.31.6` 与 AGP
-- 插件模块用五个约定插件：app / plugin-app / native-app，另加 \
-  data-descriptor / fcitx-component
+- 插件模块用五个约定插件：app / plugin-app / native-app，另加 data-descriptor / fcitx-component
 - 仓库接线两条：
   - `settings.gradle.kts` 加 `include(":plugin:hux")`
   - `.gitmodules` 加 `hux-ime` 子模块
-- 模块脚本 `plugin/hux/build.gradle.kts` 负责约定插件、`packaging.jniLibs.excludes` \
-  （`libc++_shared`、`libFcitx5*` 等）、`AndroidManifest.xml` 与 `res/xml/plugin.xml` \
-  （插件清单 domain 为 `fcitx5-hux`），以及图标文案与 `plugin_resources_keep.xml`
+- 模块脚本 `plugin/hux/build.gradle.kts` 负责：
+  - 约定插件、`packaging.jniLibs.excludes`（`libc++_shared`、`libFcitx5*` 等）
+  - `AndroidManifest.xml` 与 `res/xml/plugin.xml`（插件清单 domain 为 `fcitx5-hux`）
+  - 图标文案与 `plugin_resources_keep.xml`
 - 原生构建 `src/main/cpp/CMakeLists.txt`：
   - `find_package(fcitx5 CONFIG)` 与 `find_package(Fcitx5Core MODULE)`
   - 按 `ANDROID_ABI=arm64-v8a → aarch64-linux-android` 调 \
@@ -73,7 +73,7 @@
 - 模型插件模块另有 `plugin.xml`，资产为 \
   `assets/usr/share/fcitx5/hux/models/sentence-ngram-mobile.bin`，用 \
   `./gradlew :plugin:hux:assembleRelease` 构建
-  > 前置是 Android SDK/NDK 与 `rustup target add aarch64-linux-android`
+  - 前置是 Android SDK/NDK 与 `rustup target add aarch64-linux-android`
 
 ## 风险与备选
 
@@ -86,12 +86,12 @@
 
 ## 验收（真机）
 
-1. 装好主程序 + 插件后，输入法列表出现「虎虚」
-2. 打字出候选、点击上屏、翻页、数字直选
-3. 音反查 / 字反查可用（软键盘触发键可另配；硬件键盘默认 `` ` `` / `~`）
-4. 配置页「行为 / 快捷键」可读写并即时生效
-5. 选项与学习库落在 `Android/data/<pkg>/files/data/fcitx5/hux/`
-6. 装模型 APK 后整句质量提升，logcat 可见 `hux: dirs… model…`
+- 装好主程序 + 插件后，输入法列表出现「虎虚」
+- 打字出候选、点击上屏、翻页、数字直选
+- 音反查 / 字反查可用（软键盘触发键可另配；硬件键盘默认 `` ` `` / `~`）
+- 配置页「行为 / 快捷键」可读写并即时生效
+- 选项与学习库落在 `Android/data/<pkg>/files/data/fcitx5/hux/`
+- 装模型 APK 后整句质量提升，logcat 可见 `hux: dirs… model…`
 
 ## 里程碑
 

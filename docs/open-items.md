@@ -3,49 +3,24 @@
 
 # 未完事项 / 待办（open items）
 
-> **本文是活口**：未完事项都落在这里——
-
-> `[待办]` / `[已登记·不修+理由]` / `[误报·已核实]` 三张表
-
-> 与**待定配置项**（B/C 组）都落在这里。
-
-> **维护者 = 每批收尾的当班人**（维护者 / AI）：每批收尾勾对一次，
-
-> 不留「文档说未做、代码已做」的条目；
-
-> 新想法先落本文，实施后移出并同步相关文档。
-
-> 分工：做过什么 / 结论是什么（历史与逐批记录）
-
-> 见 [`review-ledger.md`](review-ledger.md)；
-
-> 活规则见 [`design.md`](design.md)，
-
-> 有意偏离上游见 [`upstream-deviations.md`](upstream-deviations.md)。
-
-> 2026-09-21 全仓复核（5 路并行审计 + 人工核实）的已修项见提交
-
-> `chore(review)` 三批与 `fix(review)`。
-
-> **状态前缀**（第 4 批 D1–D6）：`[✅ 已修]` ＝ 已落地且有守护；
-
-> `[待办]` ＝ 仍未做（含成本估计）；
-
-> `[已登记·不修+理由]` ＝ 有意不改（理由随条目）；
-
-> `[误报·已核实]` ＝ 审计结论被实测否掉（见 §3）。
-
-> **非审计来源的未闭合项**：发行版打包（PKGBUILD，AUR `fcitx5-hux`）状态见
-
-> [`../platform/README.md`](../platform/README.md)；
-
-> **待定配置项**（B/C 组）见 §4。
-
-> 本文把四份总账里**仍活着**的条目提到最前
-
-> （其余均已 `[✅ 已修]`，本文即其归宿）；
-
-> 共 **17 条**——`[待办]` 8 / `[已登记·不修+理由]` 7 / `[误报·已核实]` 2。
+- 本文是**活口**：未完事项都落这里——`[待办]` / `[已登记·不修+理由]` / `[误报·已核实]` 三张表
+- **待定配置项**（B/C 组）也落本文，见 §4
+- **维护者 = 每批收尾的当班人**（维护者 / AI）：每批收尾勾对一次，不留「文档说未做、代码已做」的条目
+- 新想法先落本文，实施后移出并同步相关文档
+- **状态前缀**（第 4 批 D1–D6）：
+  - `[✅ 已修]` ＝ 已落地且有守护
+  - `[待办]` ＝ 仍未做（含成本估计）
+  - `[已登记·不修+理由]` ＝ 有意不改（理由随条目）
+  - `[误报·已核实]` ＝ 审计结论被实测否掉（见 §3）
+- 本文把四份总账里**仍活着**的条目提到最前（其余均已 `[✅ 已修]`，本文即其归宿）
+- 共 **17 条**——`[待办]` 8 / `[已登记·不修+理由]` 7 / `[误报·已核实]` 2
+- 2026-09-21 全仓复核（5 路并行审计 + 人工核实）的已修项见提交 `chore(review)` 三批与 `fix(review)`
+- **非审计来源的未闭合项**：发行版打包（PKGBUILD，AUR `fcitx5-hux`）状态见 \
+  [`../platform/README.md`](../platform/README.md)
+- 分工：
+  - 历史与逐批记录（做过什么 / 结论是什么）见 [`review-ledger.md`](review-ledger.md)
+  - 活规则见 [`design.md`](design.md)
+  - 有意偏离上游见 [`upstream-deviations.md`](upstream-deviations.md)
 
 ## 1. `[待办]`（8 条）
 
@@ -60,17 +35,17 @@
 | `2+3 批残留` | 测试取夹具路径的写法不统一：内联 `join("../../..")` 剩 5 处（<br>`key_sequence_differential.rs` 4 处 +`key_sequence_differential/dump.rs` 1 处）<br>，而共享助手 `hux_test_support::repo_path` 已是单点实现 | [待办] | 第 13 <br>批已收掉其余三项：可见性 26 项收紧、`model_status::format_label` 转私有、<br>`scheme_config_with_runtime` 不再从 `crate::engine` 根再导出；<br>`Engine` 字段另见 §2。余项属测试整理，收益仅为一致性 |
 | `5 批未做部分` | 第 11 批按风险与文件域切开、留给后续批的项 ——方案·数据：D7 <br>`ReverseLookup`、D10 `trait RankKey`、D11 `StateView`、D12 `expand_range`、D13 <br>`has_complete_candidate`、D16 `LexicalModel` 6 个 pub 字段（须先改集成测试契约）<br>、B10 的 decode 侧选重字节表、B20（10 参 `translate`） | [待办] | D7/D10–D13 <br>触热路径排序与证据分配，须逐项带金样差分验证；D16 受测试契约阻塞；<br>B10/B20 属低成本项，可随任一结构批顺带。**低成本项已随第 13 批收口**：<br>`scheme.rs` 内联测试 635 行迁出、4 条 `paging_action` 用例迁入 `key_binder`、<br>「无时间衰减」括注与新旧语义叙事清理；`punct_shape_comment` 经评估不搬<br>（见 §2） |
 
-- **M8 补记**：**② rust 工具链：有意不钉**（跟随 stable 最新版；CI 用
-- `dtolnay/rust-toolchain@stable`）——代价是 stable 漂移可能让
-- `cargo fmt --all --check` / clippy `-D warnings`
-- 无预警变红，届时按当时的稳定版修正即可。
-- **① action 钉 commit sha 仍待办**：离线无法验证 GitHub 侧可用性，
-- 擅自钉死有让 CI 无预警变红的实际风险。
-- **⑤ `cargo-deny`（可选）未做**：属依赖清单 / 许可证 / 公告扫描，收益待评估。
+- **M8 补记**：
+  - **① action 钉 commit sha 仍待办**：离线无法验证 GitHub 侧可用性， \
+    擅自钉死有让 CI 无预警变红的实际风险
+  - **② rust 工具链：有意不钉**：跟随 stable 最新版，CI 用 `dtolnay/rust-toolchain@stable`； \
+    代价是 stable 漂移可能让 `cargo fmt --all --check` / clippy `-D warnings` 无预警变红， \
+    届时按当时的稳定版修正即可
+  - **⑤ `cargo-deny`（可选）未做**：属依赖清单 / 许可证 / 公告扫描，收益待评估
 
 ## 2. `[已登记·不修+理由]`（7 条）
 
-> 含 tiger `A7`/`C3`/`C8` 与 CI `M12`/`M17`，逐条见下表；不修理由随条目。
+- 含 tiger `A7`/`C3`/`C8` 与 CI `M12`/`M17`，逐条见下表；不修理由随条目
 
 | 编号 | 一句话问题 | 状态 | 归宿（提交 / 批次 · 不修理由 · 待办成本） |
 |---|---|---|---|
@@ -79,7 +54,6 @@
 | C8 | 信息项：NaN 语义（见 A7）、`build_edges` 每位置线性扫全部拼写键<br>（449 键 × 段长） | [已登记·不修+理由] | **非缺陷**：NaN 已按 A7 注明；<br>449 键量级的线性扫经评估可接受，报告本身判「仅记录」 |
 | M12 | `tools/cases/key_cases.txt` 有无害重复行（`+`、<br>`Shift++a`） | [已登记·不修+理由] | 第 5 批：重复行**有意保留**——删行会改动入库 <br>`key.tsv.gz` 的记录数（同一输入两次解析必须一致，金样里各出现两次）；<br>已就地加注释说明，避免后人误读为「覆盖两种解析」 |
 | M17 | 信息项：其余安装 / 卸载契约已核实一致 | [已登记·不修+<br>理由] | **无需动作**：报告自述已逐项实测相符（CMake 3 文件、`--purge` 覆盖面、<br>帮助行 `sed` 范围、`data/README.md` 溯源、`docs/config.md` 14 + 3 项、<br>24 份文档 0 破链）；本轮只复跑了其中的金样 sha 部分（当时 <br>`verify_golden_shas.py` 61 项通过），未逐项重测 |
-
 | `5 批·punct_shape_comment` | `sound_to_char_shape.rs` 的 <br>`punct_shape_comment` 47 行仍留在门面文件 | [已登记·不修+理由] | 第 13 <br>批评估后不搬：唯一调用点在同文件（标点候选构造），两个子模块（<br>`index` 索引格式 / `graph` 图翻译）都不覆盖该主题，<br>搬动只会放宽可见性或为单函数新开模块 |
 | `4 批·Engine 字段` | `platform/fcitx5` 的 `Engine` 有 12 个 <br>`pub(crate)` 字段未收紧 | [已登记·不修+理由] | 第 13 批复核后关闭：12 个字段无一<br>「本可私有」——`crate::abi` / `crate::ui` / `crate::tests` 都是 <br>`crate::engine` 的兄弟，任一使用点存在即不可能私有；收窄只能把 <br>`pub(crate)` 搬到访问器或搬动测试树，收益仅表述、成本为噪音 |
 
@@ -92,15 +66,9 @@
 
 ## 4. 待定配置项（B/C 组）
 
-> 原 `docs/config.md`「待扩展（B/C 组）」
-
-> （2026-09 由旧 `config-options` 文档迁入）；
-
-> A 组四项（候选排列、预编辑内容、翻页循环、最短保留码数）已实施。
-
-> 新想法先落本表（价值 / 现状 / 实现点 / 成本），
-
-> 转入规则见 [`config.md`](config.md)。
+- 原 `docs/config.md`「待扩展（B/C 组）」，2026-09 由旧 `config-options` 文档迁入
+- A 组四项（候选排列、预编辑内容、翻页循环、最短保留码数）已实施
+- 新想法先落本表（价值 / 现状 / 实现点 / 成本）；转入规则见 [`config.md`](config.md)
 
 **低成本余项（现管线只差暴露）**
 
@@ -113,47 +81,42 @@
 **B 组（中等成本，可排期）**
 
 - **B1 模型路径**：
-  - 自定义 / 禁用 n-gram 模型（Android 分发依赖该能力，模型 APK 走默认目录）；
-  - 现仅 `HUX_MODEL` 环境变量、创建时加载（改动需重启）；
-  - 做法 = schema `String` → ABI 传路径（空串语义待定）+ 与 `HUX_MODEL` 优先级；
-  - 成本 / 风险 = 中 / 低。
+  - 目标：自定义 / 禁用 n-gram 模型；Android 分发依赖该能力（模型 APK 走默认目录）
+  - 现状：仅 `HUX_MODEL` 环境变量、创建时加载，改动需重启
+  - 做法：schema `String` → ABI 传路径（空串语义待定）+ 与 `HUX_MODEL` 优先级
+  - 成本 / 风险 = 中 / 低
 - **B2 候选选择键可配置**：
-  - 除 Tab/Shift+Tab、Up/Down 外可自定义选字键；
-  - 现 host `key_binder` 固定 Tab/Shift+Tab、
-  - `selector` 固定 Up/Down（横排）/ ←→（竖排）；
-  - 做法 = `HostOptions` 增 `prev/next_candidate_keys`
-  - （rime 键名，`KeyList` 可多项）、
-  - `selector` 按列表匹配，理清与翻页键 / 导航键优先级；
-  - 成本 / 风险 = 中 / 低。
+  - 目标：除 Tab/Shift+Tab、Up/Down 外，选字键可自定义
+  - 现状：host `key_binder` 固定 Tab/Shift+Tab；`selector` 固定 Up/Down（横排）/ ←→（竖排）
+  - 做法：`HostOptions` 增 `prev/next_candidate_keys`（rime 键名，`KeyList` 可多项）； \
+    `selector` 按列表匹配，并理清与翻页键 / 导航键的优先级
+  - 成本 / 风险 = 中 / 低
 - **B3 普通候选显示虎码注释**：
-  - 学码友好；
-  - 现普通解码候选 `comment` 为空、音反查候选为虎码；
-  - 做法 = 注释来源（候选路径编码 / 词条虎码）、格式与宽度，
-  - **仅展示层换算，不进入排序**；
-  - 成本 / 风险 = 中 / 中。
+  - 目标：学码友好
+  - 现状：普通解码候选 `comment` 为空，音反查候选为虎码
+  - 做法：定注释来源（候选路径编码 / 词条虎码）、格式与宽度；**仅展示层换算，不进入排序**
+  - 成本 / 风险 = 中 / 中
 - **B4 码表 / 标点表自定义**：
-  - **用户目录同名文件覆盖已可用**（
-  - `$XDG_DATA_HOME/fcitx5/hux/` = `~/.local/share/fcitx5/hux/`，
-  - 放 `tiger_sentence.*.txt` 或 `symbols.yaml` 即生效），无需代码；
-  - 路线 = 先补文档（`install.md` / `data/README.md`），
-  - UI 指定路径（`String` + 重启）再排期；
-  - 成本 = 文档小 / UI 中。
+  - **已可用（无需代码）**：用户目录同名文件覆盖——`$XDG_DATA_HOME/fcitx5/hux/` \
+    = `~/.local/share/fcitx5/hux/`；放 `tiger_sentence.*.txt` 或 `symbols.yaml` 即生效
+  - 路线：先补文档（`install.md` / `data/README.md`），UI 指定路径（`String` + 重启）再排期
+  - 成本 = 文档小 / UI 中
 
 **C 组（高成本，暂缓）**
 
 - **C1 简繁转换**：
-  - 输出简 / 繁切换（参照未带，属扩展）；
-  - 前置 = OpenCC 级转换表（体积 / 许可 / 来源）、
-  - 转换挂点（提交文本与候选文本）、与学习库 / 反查展示的契约；
-  - 成本 / 风险 = 高（数据 + 全链路）。
+  - 输出简 / 繁切换；参照未带，属扩展
+  - 前置：OpenCC 级转换表（体积 / 许可 / 来源）、转换挂点（提交文本与候选文本）、 \
+    与学习库 / 反查展示的契约
+  - 成本 / 风险 = 高（数据 + 全链路）
 - **C2 用户词 / 自造词**：
-  - 词典导入导出与编辑、学习过程可见化；
-  - 现只有打分式学习库（LevelDB 同构）、无用户词层；
-  - 前置 = 数据结构与迁移、与解码排序 / 学习的关系、两端 UI；
-  - 成本 / 风险 = 高。
+  - 目标：词典导入导出与编辑、学习过程可见化
+  - 现状：只有打分式学习库（LevelDB 同构），无用户词层
+  - 前置：数据结构与迁移、与解码排序 / 学习的关系、两端 UI
+  - 成本 / 风险 = 高
 
 **明确不做**（登记在案、不再讨论）：
 
-- 早提交概率阈值（share / 证据数）—— 调参危险，参照实现亦未暴露为 UI；
-- `memory_profile`（compact / balanced）—— 本实现仅支持 TCSKNM02 mobile 模型；
-- `ascii_composer` 系列（Caps / Shift）—— 本实现无内置英文模式。
+- 早提交概率阈值（share / 证据数）—— 调参危险，参照实现亦未暴露为 UI
+- `memory_profile`（compact / balanced）—— 本实现仅支持 TCSKNM02 mobile 模型
+- `ascii_composer` 系列（Caps / Shift）—— 本实现无内置英文模式
