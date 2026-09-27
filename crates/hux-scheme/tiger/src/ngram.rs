@@ -16,17 +16,46 @@ use std::fs::File;
 use std::path::Path;
 use std::rc::Rc;
 
-pub const BOS: &str = "\u{2}";
-pub const EOS: &str = "\u{3}";
+const BOS: &str = "\u{2}";
+const EOS: &str = "\u{3}";
 /// 42-bit 三元组/二元组打包位移（2^21）。
-pub const SHIFT: u64 = 2_097_152;
+const SHIFT: u64 = 2_097_152;
 
 const MOBILE_HEADER_SIZE: usize = 104;
-pub const MOBILE_CACHE_BYTES: usize = 8 * 1024 * 1024;
-pub const CONTEXT_CACHE_ENTRIES: usize = 16384;
+const MOBILE_CACHE_BYTES: usize = 8 * 1024 * 1024;
+const CONTEXT_CACHE_ENTRIES: usize = 16384;
 const INDEX_PAGE_RECORDS: usize = 256; // 每页 4 KiB 稀疏索引
-pub const INDEX_CACHE_PAGES: usize = 64;
+const INDEX_CACHE_PAGES: usize = 64;
 const DEFAULT_BIGRAM_ENTRIES: usize = 8192;
+
+/// 模型文件头 magic 的长度（三阶 `TCSKNM02` / 五阶 `TCSKNM03`）。
+pub(crate) const MAGIC_LEN: usize = 8;
+/// 三阶文件头 magic：本读取器**唯一**接受的格式。
+const MOBILE_MAGIC_3: [u8; MAGIC_LEN] = *b"TCSKNM02";
+/// 五阶文件头 magic：读取器尚不支持装载，仅供格式标签辨识。
+const MOBILE_MAGIC_5: [u8; MAGIC_LEN] = *b"TCSKNM03";
+
+/// 模型文件头格式（按 magic 判定，与读取器是否支持装载无关）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ModelFormat {
+    /// 三阶 `TCSKNM02`。
+    Mobile3,
+    /// 五阶 `TCSKNM03`。
+    Mobile5,
+    /// 认不出的文件头（含过短 / 空文件头）。
+    Unknown,
+}
+
+/// 按文件头 magic 判格式：**判定单点**，装载校验与状态展示标签共用它。
+pub(crate) fn detect_format(magic: &[u8]) -> ModelFormat {
+    if magic.starts_with(&MOBILE_MAGIC_3) {
+        ModelFormat::Mobile3
+    } else if magic.starts_with(&MOBILE_MAGIC_5) {
+        ModelFormat::Mobile5
+    } else {
+        ModelFormat::Unknown
+    }
+}
 
 /// 模型缓存上限；对应 Lua `load(path, limits)` 的 limits 表。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,7 +78,7 @@ impl Default for Limits {
 }
 
 /// 参照 `scalar`：空串→0，BOS/EOS→2/3，其余取首个码位。
-pub fn scalar(token: &str) -> u32 {
+fn scalar(token: &str) -> u32 {
     if token.is_empty() {
         return 0;
     }
@@ -63,7 +92,7 @@ pub fn scalar(token: &str) -> u32 {
 }
 
 /// 参照 `pack2`：`first * SHIFT + second % SHIFT`。
-pub fn pack2(first: u32, second: u32) -> u64 {
+fn pack2(first: u32, second: u32) -> u64 {
     first as u64 * SHIFT + second as u64 % SHIFT
 }
 
@@ -541,8 +570,8 @@ impl MobileModel {
         let map =
             unsafe { Mmap::map(&file) }.with_context(|| format!("cannot map n-gram: {display}"))?;
 
-        match map.get(..8) {
-            Some(b"TCSKNM02") => {}
+        match detect_format(&map) {
+            ModelFormat::Mobile3 => {}
             _ => bail!("not a mobile TCSKNM02 model: {display}"),
         }
         if map.len() < MOBILE_HEADER_SIZE {

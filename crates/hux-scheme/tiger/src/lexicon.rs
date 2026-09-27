@@ -29,15 +29,23 @@ use std::path::{Path, PathBuf};
 /// 未知字符的字频回退（参照 `unknown_character_rank`）。
 pub const UNKNOWN_CHARACTER_RANK_FALLBACK: usize = 20001;
 
-const CODES_FILE: &str = "tiger_sentence.codes.txt";
+// ---------------------------------------------------------------- 词库文件名
+//
+// 词库与语言模型文件名的单一来源：本模块的加载路径与产物清单（`scheme::ASSETS`）都取自这里。
+
+/// 主码表文件名（**必需**）。
+pub(crate) const CODES_FILE: &str = "tiger_sentence.codes.txt";
 /// 追加码表的前后缀：`tiger_sentence.codes.<name>.txt`（`<name>` 至少一个字符）。
-/// 主表与全部追加表按确定顺序拼接后一起解析（见 [`Lexicon::read_code_tables`]）。
+/// 主表与全部追加表按确定顺序拼接后一起解析（见 [`Lexicon::read_code_tables`]）；
+/// 追加表是可选项（内核按文件名字典序拼在主表之后，见 `data/README.md`），不进 `scheme::ASSETS`。
 const CODES_EXTRA_PREFIX: &str = "tiger_sentence.codes.";
 const CODES_EXTRA_SUFFIX: &str = ".txt";
-const RANKS_FILE: &str = "tiger_sentence.char_ranks.txt";
-const WHITELIST_FILE: &str = "tiger_sentence.full_code_whitelist.txt";
+/// 字频表文件名。
+pub(crate) const RANKS_FILE: &str = "tiger_sentence.char_ranks.txt";
+/// 全码白名单文件名。
+pub(crate) const WHITELIST_FILE: &str = "tiger_sentence.full_code_whitelist.txt";
+/// 补充词库文件名。
 pub const SUPPLEMENT_FILE: &str = "tiger_sentence.supplement.txt";
-
 /// 词先验位图文件名（参考 `tiger_sentence.lexical.bin`）。
 pub const LEXICAL_FILE: &str = "tiger_sentence.lexical.bin";
 /// 语言模型相对路径（参考 `models/sentence-ngram-mobile.bin`）。
@@ -309,7 +317,8 @@ impl Lexicon {
         self.rebuild(limit);
     }
 
-    pub fn rebuild(&mut self, limit: usize) {
+    /// 重建索引（装载码表 / 字频 / 白名单 / 补充词库后调用）。
+    fn rebuild(&mut self, limit: usize) {
         let mut errors = Vec::new();
 
         let tables = self.read_code_tables();
@@ -744,7 +753,7 @@ pub const SUPPLEMENT_MAXIMUM_REWARD: f64 = 16.0;
 /// Rust 的 `clamp` 对 NaN 返回 NaN ⇒ 两端相反。此处**保持 Rust 语义**：正常数据不可达
 /// （`parse_supplement_content` 的 `weight > 0.0` 已排除 NaN），唯一可达面是
 /// [`Supplement::build`] 的公开入参（畸形输入、无金样支撑），故只注明差异、不改行为。
-pub fn reward_for_weight(weight: f64) -> f64 {
+fn reward_for_weight(weight: f64) -> f64 {
     let bounded = weight.clamp(1.0, 1_000_000_000.0);
     let reward = SUPPLEMENT_BASELINE_REWARD
         + SUPPLEMENT_WEIGHT_SCALE * (bounded / SUPPLEMENT_BASELINE_WEIGHT).ln();

@@ -97,8 +97,9 @@ platform/                     # 平台适配
   键」（`&'static [OptionDecl]`），**角色词汇与默认值归 `hux-cfg`**（`hux_cfg::roles` 常量； \
   宿主标准项 `full_shape` / `ascii_punct` 由配置层自持）。 \
   平台装配处解析为`OptionKeys`角色表（**缺角色即报错**，不静默接线）， \
-  `Settings::{option_defaults, store_defaults, option_default}`、`options::option_defaults`、 \
-  `OptionsStore::load` 与状态菜单白名单（角色序 = C ABI `HUX_OPTION_*` 序）均按该表工作。 \
+  `Settings::{session_option_defaults, store_defaults, session_option_default}`、 \
+  `options::builtin_option_defaults`、`OptionsStore::load` 与状态菜单白名单 \
+  （角色序 = C ABI `HUX_OPTION_*` 序）均按该表工作。 \
   键的**持久化兼容**由方案测试 `option_declarations_are_stable_persisted_keys` 钉住， \
   「每个角色都必须被方案声明」由平台测试 `every_configured_role_is_declared_by_the_scheme`钉住， \
   YAML 读写由 `hux-cfg` store 测试（含历史键字面量）守护。

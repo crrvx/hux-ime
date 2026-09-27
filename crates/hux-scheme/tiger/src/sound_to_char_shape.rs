@@ -12,7 +12,7 @@
 //!   `log(0.05)`，缩写保持自身罚）；
 //! - 分段路径的音节序列必须与词条的码**完全一致**；
 //! - 候选次序 = 「可信度 + ln(权重)」降序（权重序取自组内稳定排序），上限
-//!   [`CANDIDATE_LIMIT`]（与主候选一致）；
+//!   [`crate::decode::CANDIDATE_LIMIT`]（与主候选一致）；
 //! - 注释（虎码）由 [`code_comment_filter`] 追加以复用现有码注释格式。
 //!
 //! `code_comment`/`code_comment_filter` 定义于同 crate 的 `interaction`（与主候选共用码注释格式）。
@@ -27,8 +27,6 @@ use std::path::{Path, PathBuf};
 /// 索引文件名（发布为 `.gz`；fixture 常用未压缩）。
 pub const SOUND_TO_CHAR_SHAPE_FILE: &str = "tiger_sentence.pinyin.bin";
 pub const SOUND_TO_CHAR_SHAPE_FILE_GZ: &str = "tiger_sentence.pinyin.bin.gz";
-/// 音反查候选上限（与主候选一致；单一来源 [`crate::decode::CANDIDATE_LIMIT`]）。
-pub use crate::decode::CANDIDATE_LIMIT;
 /// 音反查段标签（参照 schema 的 `reverse_lookup`）。
 pub const SOUND_TO_CHAR_SHAPE_TAG: &str = "reverse_lookup";
 /// 音反查段提示（参照 schema `reverse_lookup/tips`）。
@@ -820,7 +818,7 @@ mod tests {
                 None,
                 &mut PairState::default(),
                 false,
-                CANDIDATE_LIMIT,
+                crate::decode::CANDIDATE_LIMIT,
             )
             .into_iter()
             .map(|candidate| candidate.text)
@@ -852,7 +850,7 @@ mod tests {
                 None,
                 &mut PairState::default(),
                 false,
-                CANDIDATE_LIMIT,
+                crate::decode::CANDIDATE_LIMIT,
             )
             .into_iter()
             .map(|candidate| candidate.preedit)
@@ -920,7 +918,7 @@ mod tests {
             None,
             &mut PairState::default(),
             false,
-            CANDIDATE_LIMIT,
+            crate::decode::CANDIDATE_LIMIT,
         )
     }
 

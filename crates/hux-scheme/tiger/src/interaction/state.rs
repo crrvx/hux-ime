@@ -99,7 +99,11 @@ impl SentenceState {
     /// 只写不读的 `tiger_sentence_committed` / `tiger_sentence_locks` 快照与旧属性清理已随
     /// `load`/`read_locks` 一并删除（无 FFI / 平台 / C++ 侧读取方）。
     pub fn save(&mut self, context: &mut Context) {
-        set_property_if_changed(context, K_BUFFERED, &self.buffered_text.clone());
+        hux_core::session::set_property_if_changed(
+            context,
+            K_BUFFERED,
+            &self.buffered_text.clone(),
+        );
         context.set_buffered(!self.buffered_text.is_empty());
     }
 
@@ -113,9 +117,6 @@ impl SentenceState {
         self.save(context);
     }
 }
-
-/// 参照 `set_property_if_changed`（通用属性助手，定义在 core `session`）。
-pub use hux_core::session::set_property_if_changed;
 
 /// 参照 `buffered_text`。
 pub fn buffered_text(context: &Context) -> String {
@@ -168,7 +169,10 @@ pub fn cycle_candidate_highlight(context: &mut Context, step: i64) -> bool {
         let Some(segment) = context.composition.back() else {
             return false;
         };
-        (segment.selected_index, segment.prepare(CANDIDATE_LIMIT))
+        (
+            segment.selected_index,
+            segment.prepare(crate::decode::CANDIDATE_LIMIT),
+        )
     };
     if count == 0 {
         return false;

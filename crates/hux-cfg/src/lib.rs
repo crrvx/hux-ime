@@ -15,7 +15,7 @@ mod options;
 mod settings;
 mod store;
 
-pub use options::{Options, option_defaults};
+pub use options::{Options, builtin_option_defaults};
 pub use settings::{
     CandidateLayout, DEFAULT_HIGH_FREQ_LIMIT, MAX_MIN_RETAINED_INPUT_LENGTH, PreeditMode, Settings,
 };

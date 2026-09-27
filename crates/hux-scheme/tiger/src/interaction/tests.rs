@@ -21,7 +21,7 @@ fn state_with_lock(raw: &str, text: &str) -> SentenceState {
 #[test]
 fn buffered_property_derives_live_input_and_caret() {
     let mut context = Context::new();
-    set_property_if_changed(&mut context, K_BUFFERED, "甲");
+    hux_core::session::set_property_if_changed(&mut context, K_BUFFERED, "甲");
     context.set_input(b"~ab");
     context.set_caret(2);
     assert_eq!(buffered_text(&context), "甲");
@@ -1672,7 +1672,7 @@ fn confirm_selection_honors_auto_commit() {
 fn confirm_selection_merges_buffered_prefix() {
     let mut context = Context::new();
     context.set_option("_auto_commit", true);
-    set_property_if_changed(&mut context, K_BUFFERED, "乙");
+    hux_core::session::set_property_if_changed(&mut context, K_BUFFERED, "乙");
     context.set_input(b"~c");
     context
         .composition

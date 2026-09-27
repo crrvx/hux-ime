@@ -2127,7 +2127,7 @@ fn runtime_role_tables_cover_the_declared_roles() {
     assert_eq!(runtime.len(), hux_cfg::roles::RUNTIME_OPTION_ROLES.len());
     let settings = Settings::default();
     let store = settings.store_defaults(roles);
-    let defaults = settings.option_defaults(roles);
+    let defaults = settings.session_option_defaults(roles);
     assert_eq!(store.len(), hux_cfg::roles::RUNTIME_OPTION_ROLES.len());
     for role in hux_cfg::roles::RUNTIME_OPTION_ROLES {
         let key = roles

@@ -27,21 +27,18 @@ use crate::interaction::{
     LiveLearning, OPTION_ALLOW_DUPLICATE_SINGLE, OPTION_DIGIT_SELECT, OPTION_EARLY_COMMIT,
     OPTION_EARLY_COMMIT_TO_PREEDIT, OPTION_FILTER_NON_HAN, OPTION_FULL_CHARSET, ProcessorEnv,
     ProcessorResult, SentenceState, buffered_text, processor, reset_early_evidence,
-    select_candidate_at, set_property_if_changed, update_notifier,
+    select_candidate_at, update_notifier,
 };
 use crate::lexical;
-use crate::lexicon::{LEXICAL_FILE, Lexicon, LexiconOptions, MODEL_PATH, Supplement};
+use crate::lexicon::{
+    CODES_FILE, LEXICAL_FILE, Lexicon, LexiconOptions, MODEL_PATH, RANKS_FILE, SUPPLEMENT_FILE,
+    Supplement, WHITELIST_FILE,
+};
 use crate::ngram::MobileModel;
 
 /// 方案标识（与上游数据互通；学习库命名沿用）。
 pub const SCHEME_ID: &str = "tiger_sentence";
-/// 码表 / 字频 / 白名单 / 补充 / 反查索引 / 标点表的文件名（平台记日志与打包用）。
-/// `CODES_FILE` 是**必需**的主表；同目录的 `tiger_sentence.codes.<name>.txt` 是可选追加表
-/// （内核按文件名字典序拼在主表之后，见 `data/README.md`），不进 `ASSETS`。
-const CODES_FILE: &str = "tiger_sentence.codes.txt";
-const RANKS_FILE: &str = "tiger_sentence.char_ranks.txt";
-const WHITELIST_FILE: &str = "tiger_sentence.full_code_whitelist.txt";
-const SUPPLEMENT_FILE: &str = "tiger_sentence.supplement.txt";
+/// 反查索引 / 标点表的文件名（平台记日志与打包用）；词库与语言模型文件名取自 `lexicon`。
 const PINYIN_FILE: &str = "tiger_sentence.pinyin.bin.gz";
 const SYMBOLS_FILE: &str = "symbols.yaml";
 
@@ -479,7 +476,7 @@ fn sync_trigger_keys(context: &mut Context, config: &Config) {
             config.reverse_lookup_character_keys.join(","),
         ),
     ] {
-        set_property_if_changed(context, property, &value);
+        hux_core::session::set_property_if_changed(context, property, &value);
     }
 }
 

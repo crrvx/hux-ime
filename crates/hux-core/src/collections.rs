@@ -199,6 +199,15 @@ impl<T: fmt::Debug> fmt::Debug for Set<T> {
     }
 }
 
+// 相等性转发底层实现：只比**内容**（键值对集合），迭代序由按实例取的随机种子决定，不参与判定。
+impl<K: Hash + Eq, V: PartialEq> PartialEq for Map<K, V> {
+    fn eq(&self, other: &Self) -> bool {
+        self.entries == other.entries
+    }
+}
+
+impl<K: Hash + Eq, V: Eq> Eq for Map<K, V> {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,6 +269,26 @@ mod tests {
         set.insert("甲".to_string());
         raw_set.insert("甲".to_string());
         assert_eq!(format!("{set:?}"), format!("{raw_set:?}"));
+    }
+
+    /// 相等性只看内容：与底层容器同义（插入序与迭代序都不参与判定）。
+    #[test]
+    fn map_equality_follows_the_wrapped_container() {
+        let left: Map<String, bool> = [("甲".to_string(), true), ("乙".to_string(), false)]
+            .into_iter()
+            .collect();
+        // 插入序不同、内容相同 ⇒ 相等（底层容器的相等性即如此）。
+        let reordered: Map<String, bool> = [("乙".to_string(), false), ("甲".to_string(), true)]
+            .into_iter()
+            .collect();
+        assert_eq!(left, reordered);
+
+        let changed: Map<String, bool> = [("甲".to_string(), false), ("乙".to_string(), false)]
+            .into_iter()
+            .collect();
+        assert_ne!(left, changed, "同键不同值不等");
+        let shorter: Map<String, bool> = [("甲".to_string(), true)].into_iter().collect();
+        assert_ne!(left, shorter, "键数不同不等");
     }
 
     #[test]

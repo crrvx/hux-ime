@@ -11,7 +11,7 @@
 //! 路径下标生命周期绑定（改动语义边界），不符合「金样不变 + 按需」的前提。
 
 use crate::lexical::{self, LexicalModel};
-use crate::lexicon::{CodeEntry, Lexicon, LexiconOptions, Supplement};
+use crate::lexicon::{CodeEntry, LEXICAL_FILE, Lexicon, LexiconOptions, Supplement};
 use crate::ngram::MobileModel;
 use anyhow::Result;
 use hashbrown::{HashMap, HashSet};
@@ -21,8 +21,8 @@ use hux_core::punct::{PairState, PunctTable};
 use hux_core::session::Candidate;
 use std::path::PathBuf;
 
-pub const BOS: char = '\u{2}';
-pub const EOS: char = '\u{3}';
+const BOS: char = '\u{2}';
+const EOS: char = '\u{3}';
 
 const BEAM_WIDTH: usize = 200;
 const LONG_INPUT_FULL_BEAM_LENGTH: usize = 24;
@@ -35,9 +35,15 @@ const WHOLE_INPUT_SINGLE_CHARACTER_REWARD: f64 = 5.0;
 const ISOLATION_THRESHOLD: usize = 3000;
 const ISOLATION_LAMBDA: f64 = 2.0;
 const AGGREGATE_DURING_EXPANSION_THRESHOLD: usize = 128;
+/// 学习候选补充上限：截断时在已选结果外最多补入这么多个有学习潜力的候选。
+const TRUNCATED_LEARNING_ADDITION_LIMIT: usize = 4;
 /// 早提交最低份额（参照 `early_commit_minimum_share`）：**唯一来源**，
 /// 交互层（`interaction::early_commit`）引用它。
 pub(crate) const EARLY_COMMIT_MINIMUM_SHARE: f64 = 0.99;
+/// 已闭合边界的早提交份额阈值（参照 `early_commit_closed_boundary_share`）。
+///
+/// 与 [`RankingPriorParameters::empty_code_strong_share`]（同为 `0.99999`）**语义不同**：
+/// 这里判「单字边界是否已闭合」，那里判「空码候选是否强置信」；同值属巧合，改值即改行为。
 const EARLY_COMMIT_CLOSED_BOUNDARY_SHARE: f64 = 0.99999;
 
 /// 来源标记（参照 `learning.source_direct` / `learning.source_composed`）。
@@ -87,6 +93,9 @@ pub struct RankingPriorParameters {
     /// 个性化早提交置信度的总上限（`personalized_early_commit_cap`）。
     pub personalized_early_commit_cap: f64,
     /// 空码自动上屏的强置信阈值（`empty_code_strong_share`；比普通强阈值更严）。
+    ///
+    /// 与 `EARLY_COMMIT_CLOSED_BOUNDARY_SHARE`（同为 `0.99999`）**语义不同**：本项由
+    /// `interaction::early_commit` 读取，判「空码候选是否强置信」；同值属巧合，改值即改行为。
     pub empty_code_strong_share: f64,
 }
 
@@ -337,7 +346,7 @@ impl Decoder {
             let paths: Vec<PathBuf> = lexicon
                 .dirs()
                 .iter()
-                .map(|directory| directory.join("tiger_sentence.lexical.bin"))
+                .map(|directory| directory.join(LEXICAL_FILE))
                 .collect();
             lexical::load_first(&paths)
         };
@@ -391,7 +400,7 @@ impl Decoder {
         ))
     }
 
-    /// 音反查候选（含虎码注释过滤；上限 [`crate::sound_to_char_shape::CANDIDATE_LIMIT`]）。
+    /// 音反查候选（含虎码注释过滤；上限 [`CANDIDATE_LIMIT`]）。
     ///
     /// 参数较多是因为要透传「索引 / 区间 / 标点表 / 会话态 / 形状」——与
     /// [`crate::sound_to_char_shape::translate`] 同源，故与同文件既有先例一致地豁免。
@@ -420,7 +429,7 @@ impl Decoder {
             punct,
             pairs,
             full_shape,
-            crate::sound_to_char_shape::CANDIDATE_LIMIT,
+            CANDIDATE_LIMIT,
         )
     }
 
@@ -1011,7 +1020,7 @@ impl Decoder {
             let kept: HashSet<usize> = result.iter().copied().collect();
             let mut added = 0usize;
             for index in reserved {
-                if added == 4 {
+                if added == TRUNCATED_LEARNING_ADDITION_LIMIT {
                     break;
                 }
                 if !kept.contains(&index) {
@@ -2111,7 +2120,11 @@ fn advance_required_prefix(required: &str, matched: usize, candidate: &str) -> O
     Some(required.len().min(matched + candidate_bytes.len()))
 }
 
-fn has_selection_suffix_bytes(raw: &[u8]) -> bool {
+/// 参照 `has_selection_suffix` / `has_selection_suffix_bytes`：显式选重后缀（分号/引号/数字）。
+///
+/// beam 侧与交互侧（`interaction::early_commit`）共用这一份判定；同语法的 `parse_selector`
+/// 还要返回消费长度，故保持独立、不合并。
+pub(crate) fn has_selection_suffix(raw: &[u8]) -> bool {
     raw.iter()
         .any(|byte| *byte == b';' || *byte == b'\'' || byte.is_ascii_digit())
 }
@@ -2169,7 +2182,7 @@ pub fn has_complete_candidate(
         return reachable[raw.len()];
     }
 
-    let first_ranks_only = group_eligible_only && !has_selection_suffix_bytes(&raw);
+    let first_ranks_only = group_eligible_only && !has_selection_suffix(&raw);
     let stride = excluded_text.map(|text| text.len() + 2).unwrap_or(1);
     let mut states: Vec<HashSet<usize>> = (0..=raw.len()).map(|_| HashSet::new()).collect();
     let mut start = 0usize;

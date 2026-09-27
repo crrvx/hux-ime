@@ -125,10 +125,12 @@ impl Default for Settings {
 }
 
 impl Settings {
-    /// 会话初始选项（写入 context；`options.yaml` 的同名项随后覆盖）。
+    /// 会话初始选项（写入 context；`options.yaml` 的同名项随后覆盖）：返回值**有序**，
+    /// 顺序即写入顺序。与内建缺省表 [`crate::builtin_option_defaults`]（按名查询的 `Map`）
+    /// 同名易混，故各按来源命名。
     /// `keys` 由平台在装配处从方案声明解析（见 [`crate::roles::OptionKeys`]）；
     /// 方案未声明的角色不参与接线。
-    pub fn option_defaults(&self, keys: &OptionKeys) -> Vec<(&'static str, bool)> {
+    pub fn session_option_defaults(&self, keys: &OptionKeys) -> Vec<(&'static str, bool)> {
         let mut defaults = Vec::new();
         // 顺序即写入顺序（保持既有顺序：三个方案开关 → 宿主标准项 → 运行时开关
         // 按 `RUNTIME_OPTION_ROLES` 的先后：数字直选 → 全字集 → 过滤非汉字）。
@@ -155,9 +157,9 @@ impl Settings {
         defaults
     }
 
-    /// 单项设置缺省（[`Settings::option_defaults`] 的查询形式）。
-    pub fn option_default(&self, keys: &OptionKeys, name: &str) -> Option<bool> {
-        self.option_defaults(keys)
+    /// 单项设置缺省（[`Settings::session_option_defaults`] 的查询形式）。
+    pub fn session_option_default(&self, keys: &OptionKeys, name: &str) -> Option<bool> {
+        self.session_option_defaults(keys)
             .into_iter()
             .find(|(key, _)| *key == name)
             .map(|(_, value)| value)
@@ -291,13 +293,13 @@ mod tests {
     }
 
     #[test]
-    fn option_defaults_follow_settings() {
+    fn session_option_defaults_follow_settings() {
         let settings = Settings {
             full_shape: true,
             ..Default::default()
         };
         let keys = crate::options::test_option_keys();
-        let defaults = settings.option_defaults(&keys);
+        let defaults = settings.session_option_defaults(&keys);
         assert!(defaults.contains(&("full_shape", true)));
         assert!(defaults.contains(&(keys.key(ROLE_EARLY_COMMIT).unwrap(), true)));
         // 顺序保持既有写入顺序（方案开关 → 宿主标准项 → 运行时开关按角色序）。
@@ -337,7 +339,7 @@ mod tests {
     fn option_keys_absent_roles_are_skipped_not_faked() {
         // 方案未声明的角色**不接线**（不回落成角色名字面量，以免与方案键混淆）。
         let empty = OptionKeys::default();
-        let defaults = Settings::default().option_defaults(&empty);
+        let defaults = Settings::default().session_option_defaults(&empty);
         assert_eq!(
             defaults.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
             vec!["full_shape", "ascii_punct"],

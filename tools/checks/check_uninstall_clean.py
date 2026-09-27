@@ -37,7 +37,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+from _common import fail_for, repo_root
+
+ROOT = repo_root()
 
 # `uninstall.sh --dry-run` 计划清单的两种行首标记（契约见该脚本头注释）：
 # `-` 按缺省就删、`?` 交互回答 y 才删；两者都算可卸载。
@@ -50,9 +52,8 @@ MARKERS: dict[str, str] = {"-": "按缺省删", "?": "交互回答 y 才删"}
 RETAINED: tuple[tuple[str, str], ...] = ()
 
 
-def fail(message: str) -> None:
-    print(f"卸载守卫失败：{message}", file=sys.stderr)
-    raise SystemExit(1)
+# 失败出口：`check_uninstall_clean: <消息>` 写 stderr 后立即退出（共享实现见 `_common.py`）。
+fail = fail_for("check_uninstall_clean")
 
 
 def read_manifest(path: Path, stage: str) -> list[str]:

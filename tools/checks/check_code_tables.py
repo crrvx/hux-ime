@@ -26,7 +26,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+from _common import fail_for, repo_root
+
+ROOT = repo_root()
 DATA = ROOT / "data"
 PRIMARY = DATA / "tiger_sentence.codes.txt"
 EXTRA_PREFIX = "tiger_sentence.codes."
@@ -34,9 +36,8 @@ EXTRA_SUFFIX = ".txt"
 BOM = "\ufeff"
 
 
-def fail(message: str) -> None:
-    print(f"check_code_tables: {message}", file=sys.stderr)
-    raise SystemExit(1)
+# 失败出口：`check_code_tables: <消息>` 写 stderr 后立即退出（共享实现见 `_common.py`）。
+fail = fail_for("check_code_tables")
 
 
 def has_surrogate(name: str) -> bool:

@@ -87,7 +87,7 @@ pub fn translate(
         && lock.raw == committed_raw
         && lock.text == committed_text
     {
-        let mut candidate = Candidate::new("sentence_buffered", seg_start, seg_end, "", "");
+        let mut candidate = Candidate::new(KIND_SENTENCE_BUFFERED, seg_start, seg_end, "", "");
         candidate.preedit = buffered;
         out.push(candidate);
         return Ok(());
@@ -129,7 +129,7 @@ pub fn translate(
         let kind = if buffered.is_empty() {
             "sentence"
         } else {
-            "sentence_buffered"
+            KIND_SENTENCE_BUFFERED
         };
         let mut candidate = Candidate::new(kind, seg_start, seg_end, &text, "");
         let separator = if !buffered.is_empty() && !preedit.is_empty() {
@@ -140,13 +140,13 @@ pub fn translate(
         candidate.preedit = format!("{buffered}{separator}{preedit}");
         out.push(candidate);
         yielded += 1;
-        if yielded >= CANDIDATE_LIMIT {
+        if yielded >= crate::decode::CANDIDATE_LIMIT {
             return Ok(());
         }
     }
     if yielded == 0 && !buffered.is_empty() {
         let mut candidate = Candidate::new(
-            "sentence_buffered",
+            KIND_SENTENCE_BUFFERED,
             seg_start,
             seg_end,
             &String::from_utf8_lossy(input),

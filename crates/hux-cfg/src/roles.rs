@@ -18,7 +18,7 @@
 //!
 //! [`SchemeConfig`]: hux_core::scheme::SchemeConfig
 
-use hashbrown::HashMap;
+use hux_core::collections::Map;
 use hux_core::scheme::OptionDecl;
 use std::fmt;
 
@@ -124,14 +124,14 @@ impl fmt::Display for DeclError {
 /// [`Scheme::option_declarations`]: hux_core::scheme::Scheme::option_declarations
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct OptionKeys {
-    keys: HashMap<&'static str, &'static str>,
+    keys: Map<&'static str, &'static str>,
 }
 
 impl OptionKeys {
     /// 由方案的声明解析：先铺宿主标准键，再逐个收方案声明；
     /// **缺任一 [`SCHEME_OPTION_ROLES`] 即 `Err`**（换方案漏声明会在装配处暴露，不会静默失效）。
     pub fn resolve(declarations: &[OptionDecl]) -> Result<Self, DeclError> {
-        let mut keys = HashMap::new();
+        let mut keys = Map::new();
         for role in HOST_OPTION_ROLES {
             keys.insert(*role, *role);
         }

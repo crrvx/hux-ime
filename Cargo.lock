@@ -186,7 +186,6 @@ name = "hux-cfg"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "hashbrown 0.15.5",
  "hux-core",
  "yaml-rust2",
 ]

@@ -13,7 +13,10 @@ use hux_core::scheme::OptionDecl;
 use hux_core::session::Context;
 
 /// 参照 `M.options` 的内建缺省表（键 = 方案声明的选项键；本层不硬编码方案选项名）。
-pub fn option_defaults(keys: &OptionKeys) -> Map<String, bool> {
+///
+/// 按**名查询**，供存储层回退缺失项；设置派生的会话初始选项（有序 `Vec`）见
+/// [`crate::Settings::session_option_defaults`]——两者同名易混，故各按来源命名。
+pub fn builtin_option_defaults(keys: &OptionKeys) -> Map<String, bool> {
     let mut defaults = Map::new();
     for (role, value) in [
         (ROLE_EARLY_COMMIT, true),
@@ -63,7 +66,7 @@ pub(crate) fn test_option_keys() -> OptionKeys {
 /// 参照 `M.options` 的选项状态（文件读写与错误属性由 [`crate::OptionsStore`] 承担）。
 #[derive(Clone, Debug, Default)]
 pub struct Options {
-    /// 设置缺省（平台经 [`OptionsStore::set_defaults`] 传入；缺省表见 [`option_defaults`]）。
+    /// 设置缺省（平台经 [`OptionsStore::set_defaults`] 传入；缺省表见 [`builtin_option_defaults`]）。
     pub defaults: Map<String, bool>,
     /// 持久化值（`options/<name>`；缺失时回退设置缺省，读时还可回退 `user.yaml` 的 `var/option/<name>`）。
     pub values: Map<String, bool>,
@@ -139,7 +142,7 @@ mod tests {
     fn options_sync_applies_defaults() {
         let mut context = Context::new();
 
-        let mut options = Options::new(option_defaults(&test_option_keys()));
+        let mut options = Options::new(builtin_option_defaults(&test_option_keys()));
 
         options.sync(&mut context);
 
@@ -155,7 +158,7 @@ mod tests {
     fn options_sync_discards_own_option_events() {
         let mut context = Context::new();
 
-        let mut options = Options::new(option_defaults(&test_option_keys()));
+        let mut options = Options::new(builtin_option_defaults(&test_option_keys()));
 
         options.sync(&mut context);
 
@@ -181,7 +184,7 @@ mod tests {
     fn options_observe_records_user_change_once() {
         let mut context = Context::new();
 
-        let mut options = Options::new(option_defaults(&test_option_keys()));
+        let mut options = Options::new(builtin_option_defaults(&test_option_keys()));
 
         options.sync(&mut context);
 
@@ -203,7 +206,7 @@ mod tests {
     fn options_sync_prefers_persisted_values() {
         let mut context = Context::new();
 
-        let mut options = Options::new(option_defaults(&test_option_keys()));
+        let mut options = Options::new(builtin_option_defaults(&test_option_keys()));
 
         options.sync(&mut context);
 

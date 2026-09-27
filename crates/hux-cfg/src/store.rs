@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use crate::Options;
 #[cfg(test)]
-use crate::option_defaults;
+use crate::builtin_option_defaults;
 #[cfg(test)]
 use crate::roles::OptionKeys;
 use hux_core::session::{Context, set_property_if_changed};
@@ -68,7 +68,7 @@ impl OptionsStore {
     /// 测试用便捷入口（生产路径由 addon 传入 `Settings` 缺省）。
     #[cfg(test)]
     pub fn load(user_dir: &Path, keys: &OptionKeys) -> Self {
-        Self::load_with_defaults(user_dir, option_defaults(keys))
+        Self::load_with_defaults(user_dir, builtin_option_defaults(keys))
     }
 
     /// 同 [`OptionsStore::load`]，但以给定缺省回退缺失项

@@ -23,11 +23,13 @@ from __future__ import annotations
 
 import argparse
 import gzip
-import hashlib
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+from _common import repo_root
+from _hashutil import sha256_bytes, sha256_stream
 
 # sha 表与 pin 声明所在文档。
 SHA_DOC = Path("goldens/README.md")
@@ -63,14 +65,6 @@ PROBE_HEADERS: dict[str, dict[str, object]] = {
 
 class Failure(Exception):
     """一条校验失败（汇总后统一打印）。"""
-
-
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def parse_tables(text: str) -> tuple[dict[str, str], dict[str, tuple[str, str, str]]]:
@@ -184,7 +178,7 @@ def check_reference_file(repo: Path, pin: str, path: str) -> str:
                 f"本地检出请 `git fetch origin {pin}`）"
             )
         raise Failure(f"取不到 {path} @ {pin}：{message}{hint}")
-    return hashlib.sha256(result.stdout).hexdigest()
+    return sha256_bytes(result.stdout)
 
 
 def main() -> int:
@@ -192,7 +186,7 @@ def main() -> int:
     parser.add_argument(
         "--root",
         type=Path,
-        default=Path(__file__).resolve().parents[2],
+        default=repo_root(),
         help="仓库根（默认按脚本位置推断）",
     )
     parser.add_argument(
@@ -241,7 +235,7 @@ def main() -> int:
     # 1. 表 ↔ 文件
     for label, sha in sorted(local.items()):
         path = resolve_local(root, label)
-        actual = sha256_file(path)
+        actual = sha256_stream(path)
         note(
             actual == sha,
             f"{path.relative_to(root)} sha256 与 {SHA_DOC} 表一致",

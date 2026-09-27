@@ -37,12 +37,9 @@ mod state;
 mod translate;
 
 /// 选项名（对应参照 `allow_duplicate_single_option`）。
-pub const OPTION_ALLOW_DUPLICATE_SINGLE: &str = "tiger_sentence_allow_duplicate_single";
-/// 候选上限（参照 `candidate_limit`）：单一来源在 [`crate::decode::CANDIDATE_LIMIT`]。
-pub use crate::decode::CANDIDATE_LIMIT;
-
+pub(crate) const OPTION_ALLOW_DUPLICATE_SINGLE: &str = "tiger_sentence_allow_duplicate_single";
 /// 参照 `max_raw_length`：实时输入上限（超出则不接收普通字符）。
-pub const MAX_RAW_LENGTH: usize = 128;
+pub(crate) const MAX_RAW_LENGTH: usize = 128;
 /// 提前上屏到预编辑的选项（参照同名字符串）。
 pub const OPTION_EARLY_COMMIT_TO_PREEDIT: &str = "tiger_sentence_early_commit_to_preedit";
 /// 提前上屏总开关。
@@ -50,17 +47,32 @@ pub const OPTION_EARLY_COMMIT: &str = "tiger_sentence_early_commit";
 /// 数字直选（addon 扩展）：菜单可见时数字直接上屏当前页候选（1–9；0=10）。
 pub const OPTION_DIGIT_SELECT: &str = "tiger_sentence_digit_select";
 /// 启用全字集（addon 扩展）：关掉只装主表码表，不装追加码表（`tiger_sentence.codes.<name>.txt`）。
-pub const OPTION_FULL_CHARSET: &str = "tiger_sentence_full_charset";
+pub(crate) const OPTION_FULL_CHARSET: &str = "tiger_sentence_full_charset";
 /// 过滤非汉字（addon 扩展）：追加码表里的部首/笔画/注音/假名等不入词库（主表行不受影响）。
-pub const OPTION_FILTER_NON_HAN: &str = "tiger_sentence_filter_non_han";
+pub(crate) const OPTION_FILTER_NON_HAN: &str = "tiger_sentence_filter_non_han";
 
-pub use early_commit::*;
-pub use keys::*;
-pub use learning_glue::*;
-pub use processor::*;
-pub use select::*;
-pub use state::*;
-pub use translate::*;
+/// 候选类型：缓冲态整句候选（`translate` 产出、`select` 识别）。
+pub(crate) const KIND_SENTENCE_BUFFERED: &str = "sentence_buffered";
+/// 候选类型：缓冲候选上屏前并入缓冲前缀后的改写值（`select` 改写 `kind`）。
+pub(crate) const KIND_SENTENCE_BUFFERED_COMMIT: &str = "sentence_buffered_commit";
+
+// ---------------------------------------------------------------- crate 外可见面
+//
+// 只有集成测试 `tests/key_sequence_differential.rs` 用到的项是 crate 公开 API；其余交互层项
+// 仅 crate 内可见（`platform/` 只依赖 `scheme::{…}`），故不再用 glob 把整层平铺出去。
+pub use keys::K_SOUND_TO_CHAR_SHAPE_KEY;
+pub use learning_glue::LiveLearning;
+pub use processor::{ProcessorEnv, ProcessorResult, processor};
+pub use state::SentenceState;
+pub use translate::{CompositionBuilder, update_notifier};
+
+pub(crate) use early_commit::*;
+pub(crate) use keys::*;
+pub(crate) use learning_glue::*;
+pub(crate) use processor::*;
+pub(crate) use select::*;
+pub(crate) use state::*;
+pub(crate) use translate::*;
 
 #[cfg(test)]
 mod tests;

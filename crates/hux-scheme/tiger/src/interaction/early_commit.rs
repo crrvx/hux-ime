@@ -17,10 +17,9 @@ pub fn reset_early_evidence(state: &mut SentenceState) {
 }
 
 /// 参照 `has_selection_suffix`：显式选重后缀（分号/引号/数字）。
-pub fn has_selection_suffix(raw: &[u8]) -> bool {
-    raw.iter()
-        .any(|byte| *byte == b';' || *byte == b'\'' || byte.is_ascii_digit())
-}
+///
+/// 判定实现在 [`crate::decode::has_selection_suffix`]（beam 侧与交互侧共用一份）。
+pub(crate) use crate::decode::has_selection_suffix;
 
 /// 参照 `common_text_prefix`：逐字符公共前缀。
 pub fn common_text_prefix(left: &str, right: &str) -> String {

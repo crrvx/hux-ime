@@ -11,11 +11,12 @@
 
 from __future__ import annotations
 
-import hashlib
-import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+from _common import fail_for, repo_root
+from _hashutil import fingerprint, sha256_file
+
+ROOT = repo_root()
 DIR = ROOT / "assets" / "themes"
 MANIFEST = DIR / "MANIFEST"
 EXPECTED_DIGEST = "7ad673c4c6df5330db8fc84566a65b93ab39c6686de12428f7caa208208c7a9d"
@@ -30,9 +31,8 @@ EXPECTED_FILES = (
 )
 
 
-def fail(message: str) -> None:
-    print(f"主题校验失败：{message}", file=sys.stderr)
-    raise SystemExit(1)
+# 失败出口：`check_themes: <消息>` 写 stderr 后立即退出（共享实现见 `_common.py`）。
+fail = fail_for("check_themes")
 
 
 def manifest_entries() -> list[str]:
@@ -78,19 +78,17 @@ def main() -> int:
         for path in (DIR / name).rglob("*")
         if path.is_file()
     )
-    lines = []
-    for path in files:
-        relative = path.relative_to(DIR).as_posix()
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
-        lines.append(f"{digest}  {relative}\n")
-    aggregate = hashlib.sha256("".join(lines).encode("utf-8")).hexdigest()
+    # 标签取相对路径（与 `sha256sum` 的输出格式一致），顺序即上面排好的顺序。
+    aggregate = fingerprint(
+        (sha256_file(path), path.relative_to(DIR).as_posix()) for path in files
+    )
     if aggregate != EXPECTED_DIGEST:
         fail(
             "取用指纹与常量不一致：\n"
             f"  实际 {aggregate}\n  期望 {EXPECTED_DIGEST}\n"
             "（重算：cd assets/themes && find hufu-* -type f | sort | xargs sha256sum | sha256sum）"
         )
-    print(f"主题校验通过（{len(entries)} 套 / {len(lines)} 个文件，指纹一致）")
+    print(f"主题校验通过（{len(entries)} 套 / {len(files)} 个文件，指纹一致）")
     return 0
 
 

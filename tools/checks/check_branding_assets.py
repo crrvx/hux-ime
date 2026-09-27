@@ -19,15 +19,16 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import re
 import shutil
 import struct
 import subprocess
-import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+from _common import fail_for, repo_root
+from _hashutil import fingerprint, sha256_bytes, sha256_file
+
+ROOT = repo_root()
 DIR = ROOT / "assets" / "branding"
 MASTER = DIR / "hux.png"
 SVG = DIR / "hux.svg"
@@ -41,13 +42,8 @@ PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 RGBA_COLOR_TYPE = 6
 
 
-def fail(message: str) -> None:
-    print(f"品牌图形校验失败：{message}", file=sys.stderr)
-    raise SystemExit(1)
-
-
-def digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+# 失败出口：`check_branding_assets: <消息>` 写 stderr 后立即退出（共享实现见 `_common.py`）。
+fail = fail_for("check_branding_assets")
 
 
 def png_header(path: Path) -> tuple[int, int, int]:
@@ -59,19 +55,13 @@ def png_header(path: Path) -> tuple[int, int, int]:
     return width, height, head[25]
 
 
-def fingerprint(paths: list[Path]) -> str:
-    """与生成器和 README 里的命令同构：逐文件 `sha256sum` 行再取一次 sha256。"""
-    lines = [f"{digest(path)}  {path.name}".encode() for path in paths]
-    return hashlib.sha256(b"\n".join(lines) + b"\n").hexdigest()
-
-
 def check_master() -> tuple[int, int]:
     if not MASTER.is_file():
         fail(f"缺少主源位图 {MASTER.relative_to(ROOT)}")
     width, height, color_type = png_header(MASTER)
     if color_type != RGBA_COLOR_TYPE:
         fail(f"{MASTER.name} 颜色类型 {color_type}，图标主源需要带 alpha（类型 6）")
-    actual = digest(MASTER)
+    actual = sha256_file(MASTER)
     if actual != MASTER_SHA256:
         fail(f"{MASTER.name} 与常量不符：实测 sha256 = {actual}")
     return width, height
@@ -106,7 +96,7 @@ def check_svg(master_size: tuple[int, int]) -> None:
     if payload is None:
         fail(f"{SVG.name} 没有内嵌 base64 位图")
     embedded = base64.b64decode(payload.group(1))
-    actual = hashlib.sha256(embedded).hexdigest()
+    actual = sha256_bytes(embedded)
     if actual != MASTER_SHA256:
         fail(f"{SVG.name} 内嵌的不是当前主源：内嵌 sha256 = {actual}")
 
@@ -134,7 +124,8 @@ def main() -> int:
     bitmaps = check_bitmaps()
 
     files = [MASTER, SVG, *bitmaps]
-    actual = fingerprint(files)
+    # 聚合口径与生成器、README 里的命令同构：文件名作标签，逐文件整读摘要按序拼行。
+    actual = fingerprint((sha256_file(path), path.name) for path in files)
     if actual != FINGERPRINT:
         fail("四个文件的聚合 sha256 与常量不符：实测 = " + actual)
 

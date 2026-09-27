@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::ffi::CString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -93,6 +93,8 @@ impl Engine {
     }
 
     /// 设置派生的角色 + 运行时开关的生效值（与 [`scheme_config_with_runtime`] 同一装袋口径）。
+    ///
+    /// `pub(crate)`：`tests.rs` 用它核对「按键路径下发的配置袋」与构造期一致。
     pub(crate) fn scheme_config_with_runtime(&self) -> SchemeConfig {
         scheme_config_with_runtime(&self.settings, self.runtime_option_values())
     }
@@ -100,7 +102,7 @@ impl Engine {
     /// 下发配置袋（设置派生的角色 + 运行时开关的生效值），方案据此自算学习 mode、重建词库。
     ///
     /// 按键路径每次都会问一次：设置未变且运行时开关值不变时直接返回，不重建配置袋。
-    pub(crate) fn push_scheme_config(&mut self) {
+    fn push_scheme_config(&mut self) {
         let runtime = self.runtime_option_values();
         if !self.config_dirty && self.applied_runtime == Some(runtime) {
             return;
@@ -141,7 +143,7 @@ impl Engine {
 }
 
 /// 事件泵每轮按键的最大轮数（选项事件可能触发确认，进而产生新事件）。
-pub(crate) const EVENT_PUMP_ROUNDS: usize = 4;
+const EVENT_PUMP_ROUNDS: usize = 4;
 
 /// 解析方案的选项声明：返回（角色 → 键表, 可选错误诊断）。
 ///
@@ -296,12 +298,58 @@ pub(crate) fn assemble_scheme(
     (scheme, option_roles, notes)
 }
 
+/// 角色序（= [`RUNTIME_OPTION_ROLES`]）的选项键 C 字符串。
+///
+/// 角色顺序与 `hux_abi.h` 的 `HUX_OPTION_*` 一致（ABI 边界用角色，不暴露方案键名）；
+/// 缺失角色为 `None`（宿主跳过该项）。构造与「重新部署」共用这一份实现。
+fn option_keys(roles: &OptionKeys) -> Vec<Option<CString>> {
+    RUNTIME_OPTION_ROLES
+        .iter()
+        .map(|role| roles.key(role).map(crate::ui::cstring_lossy))
+        .collect()
+}
+
+/// 选项存储的装配（构造与「重新部署」共用）：用户目录不可用时为 `None`（此时仅用内建缺省）。
+fn options_store(
+    options_dir: Option<&Path>,
+    settings: &Settings,
+    roles: &OptionKeys,
+) -> Option<OptionsStore> {
+    options_dir.map(|dir| OptionsStore::load_with_defaults(dir, settings.store_defaults(roles)))
+}
+
+/// 打开学习库并把它并入装配说明（构造与「重新部署」共用同一口径）。
+///
+/// 库在 `<user dir>/<方案 id 哈希>.userdb/`；用户目录不可用时为禁用占位。
+/// 诊断统一拼成 `learning: <错误|库名>`，并把「存储是否可写」告诉方案。
+/// 调用方须保证旧句柄已释放——同一路径二次打开会撞上 LevelDB 的独占锁
+/// （rusty-leveldb 的 `LOCK`）；库名依赖方案 id，故按传入方案的 id 打开。
+fn open_learning(
+    options_dir: Option<&Path>,
+    scheme: &mut TigerScheme,
+    notes: &mut Vec<String>,
+) -> LearningStore {
+    let learning = match options_dir {
+        Some(dir) => {
+            LearningStore::open(dir, &learning_store::store_name(scheme.id()), wall_clock())
+        }
+        None => LearningStore::disabled("user data directory unavailable"),
+    };
+    if let Some(error) = &learning.error {
+        notes.push(format!("learning: {error}"));
+    } else {
+        notes.push(format!("learning: {}", learning.name));
+    }
+    scheme.set_store_ready(learning.store_ready());
+    learning
+}
+
 pub struct Engine {
     pub(crate) host: Option<HostCallback>,
     /// 方案（平台经 `dyn Scheme` 驱动，不直接引用方案模块；共享资源与会话态都在方案内）。
     pub(crate) scheme: Box<dyn Scheme>,
     pub(crate) sessions: HashMap<u64, Session>,
-    pub(crate) next_session: u64,
+    next_session: u64,
     /// 选项存储（用户目录不可用时为 `None`，此时仅用内建缺省）。
     pub(crate) options: Option<OptionsStore>,
     /// 外部配置（fcitx5 配置界面 / 测试；默认 = 内建缺省）。
@@ -319,22 +367,22 @@ pub struct Engine {
     applied_runtime: Option<RuntimeOptions>,
     /// 本次按键「已提交且未消费」：宿主层应消费该键并以 `forwardKey` 重发，
     /// 保证「提交 → 按键」送达顺序（对齐 fcitx5 核心 `KeyEventOrderFix` 修法）。
-    pub forward_after_commit: bool,
+    pub(crate) forward_after_commit: bool,
     pub(crate) status: CString,
     /// 状态串基线（构造时的加载说明；选项保存出错时拼在其后）。
-    pub(crate) status_base: String,
+    status_base: String,
     /// 选项保存失败的最近一条诊断（来自 [`hux_cfg::OPTIONS_ERROR_PROPERTY`]）。
-    pub(crate) option_error: Option<String>,
+    option_error: Option<String>,
     /// 学习库的**当前**诊断（构造 / 重新部署时读一次，运行期落库失败由
     /// [`Engine::observe_learning_error`] 跟进）。
-    pub(crate) learning_error: Option<String>,
+    learning_error: Option<String>,
     /// 构造 / 重新部署时已并入 `status_base` 的那条学习诊断（避免与运行期条目重复拼接）。
-    pub(crate) learning_error_baseline: Option<String>,
+    learning_error_baseline: Option<String>,
     /// 配置页热键绑定里无法解析的项（`角色=键名`，见 [`unparsable_key_bindings`]）。
-    pub(crate) hotkey_notes: Vec<String>,
+    hotkey_notes: Vec<String>,
     /// 最近一次配置下发的逐角色诊断（角色缺失 / 类型不符，`config:` 前缀）。
     /// 方案已按缺省值回退，此串只是把「设置没生效」的原因暴露到状态里。
-    pub(crate) config_notes: Vec<String>,
+    config_notes: Vec<String>,
     /// 「重新部署」是否按进程环境重算目录（生产 `true`；测试注入固定目录时为 `false`）。
     ///
     /// 生产路径按 [`data_dirs`] / [`user_data_dir`] 解析（`HUX_DATA_DIRS` 覆盖、否则 XDG 规则）；
@@ -406,31 +454,14 @@ impl Engine {
         let (mut scheme, option_roles, mut notes) = assemble_scheme(&dirs, model, &initial);
         // 选项：有存储则同步（参照 `M.options.sync`，同步写入由核心抑制观察）；
         // 无存储时直接用内建缺省。会话创建时逐个同步（见 `session_new`）。
-        let options = options_dir.as_deref().map(|dir| {
-            OptionsStore::load_with_defaults(dir, settings.store_defaults(&option_roles))
-        });
-        // 学习库：`<user dir>/<方案 id 哈希>.userdb/`（用户目录不可用则禁用）。
-        let learning = match options_dir.as_deref() {
-            Some(dir) => {
-                LearningStore::open(dir, &learning_store::store_name(scheme.id()), wall_clock())
-            }
-            None => LearningStore::disabled("user data directory unavailable"),
-        };
+        let options = options_store(options_dir.as_deref(), &settings, &option_roles);
+        // 学习库的打开与诊断口径见 `open_learning`（与「重新部署」共用一份实现）。
         // 构造期诊断进 `status_base`；运行期变化由 `observe_learning_error` 补进状态串
         // （此处留一份基线快照，避免同一条错误被拼两次）。
+        let learning = open_learning(options_dir.as_deref(), &mut scheme, &mut notes);
         let learning_error = learning.error.clone();
-        if let Some(error) = &learning.error {
-            notes.push(format!("learning: {error}"));
-        } else {
-            notes.push(format!("learning: {}", learning.name));
-        }
-        scheme.set_store_ready(learning.store_ready());
         let status_base = notes.join("; ");
-        // 角色顺序与 `hux_abi.h` 的 `HUX_OPTION_*` 一致（ABI 边界用角色，不暴露方案键名）。
-        let option_keys = RUNTIME_OPTION_ROLES
-            .iter()
-            .map(|role| option_roles.key(role).map(crate::ui::cstring_lossy))
-            .collect();
+        let option_keys = option_keys(&option_roles);
         let model_info = crate::ui::cstring_lossy(scheme.model_info());
         Self {
             host,
@@ -471,7 +502,7 @@ impl Engine {
         // 分流：**可持久化项**（存储有声明的缺省）只经 `store.sync` 写入——其写入带抑制名单，
         // 不会被随后的选项事件当成用户改动写进 `options.yaml`；其余（如 `ascii_punct`）直接写。
         // 参照实现同此：缺省经 `M.options.sync` 写入并由 `live.syncing` 抑制。
-        for (name, value) in self.settings.option_defaults(&self.option_roles) {
+        for (name, value) in self.settings.session_option_defaults(&self.option_roles) {
             if self
                 .options
                 .as_ref()
@@ -517,7 +548,7 @@ impl Engine {
     }
 
     /// 取会话执行闭包后放回（借用拆分：会话与共享状态互不重叠）。
-    pub(crate) fn with_session<R>(
+    fn with_session<R>(
         &mut self,
         session_id: u64,
         f: impl FnOnce(&mut Self, &mut Session) -> R,
@@ -548,13 +579,7 @@ impl Engine {
         }
     }
 
-    pub(crate) fn key_in(
-        &mut self,
-        session: &mut Session,
-        keysym: u32,
-        states: u32,
-        release: bool,
-    ) -> bool {
+    fn key_in(&mut self, session: &mut Session, keysym: u32, states: u32, release: bool) -> bool {
         self.forward_after_commit = false;
         let key = KeyEvent::new(keysym as i32, core_modifiers(states, release));
         // 字反查段：←/→/↑/↓ **交应用处理**（应用光标随动），本层不消费也不改动输入；
@@ -598,7 +623,7 @@ impl Engine {
         }
     }
 
-    pub(crate) fn select_candidate_in(&mut self, session: &mut Session, index: usize) -> bool {
+    fn select_candidate_in(&mut self, session: &mut Session, index: usize) -> bool {
         self.forward_after_commit = false;
         let now = wall_clock();
         match self
@@ -620,7 +645,7 @@ impl Engine {
     ///
     /// `key_forward`：按键路径传入消费结果（据提交计算 `forward_after_commit`）；
     /// 候选点击传 `None`（非按键路径，恒不转发）。
-    pub(crate) fn finish(&mut self, session: &mut Session, _now: f64, key_forward: Option<bool>) {
+    fn finish(&mut self, session: &mut Session, _now: f64, key_forward: Option<bool>) {
         let mut commits = Vec::new();
         let mut invalidated = false;
         // 事件泵：选项事件可能触发确认（进而产生提交），循环至排空。
@@ -682,7 +707,7 @@ impl Engine {
     }
 
     /// 重算两排提示（上排 = 光标左侧拼音、下排 = 虎码）；不在查码段则清空。
-    pub(crate) fn refresh_reverse_lookup_aux(&mut self, session: &mut Session) {
+    fn refresh_reverse_lookup_aux(&mut self, session: &mut Session) {
         let tagged = self.reverse_lookup_tagged(session);
         let state = &mut session.reverse_lookup;
         if !tagged || !state.valid {
@@ -704,7 +729,7 @@ impl Engine {
         });
     }
 
-    pub(crate) fn set_surrounding_in(
+    fn set_surrounding_in(
         &mut self,
         session: &mut Session,
         text: Option<&str>,
@@ -733,7 +758,7 @@ impl Engine {
         self.with_session(session_id, |engine, session| engine.reset_in(session));
     }
 
-    pub(crate) fn reset_in(&mut self, session: &mut Session) {
+    fn reset_in(&mut self, session: &mut Session) {
         // 契约：重置即丢弃——先清掉未派发的事件（含可能的提交），避免下次按键补上屏。
         session.context.drain_events();
         session.reverse_lookup = ReverseLookupState::default();
@@ -747,7 +772,7 @@ impl Engine {
     }
 
     /// 选项事件 → 记录/持久化（参照 `M.options` 的选项通知器）。
-    pub(crate) fn observe_option(&mut self, context: &mut Context, name: &str) {
+    fn observe_option(&mut self, context: &mut Context, name: &str) {
         if let Some(options) = self.options.as_mut() {
             options.observe(context, name);
         }
@@ -764,7 +789,7 @@ impl Engine {
     ///
     /// 属性是唯一来源（[`Engine::observe_option`] 从上下文属性读，[`Engine::apply_settings`]
     /// 的批量写回直接把结果交到这里），故两处共用本入口。
-    pub(crate) fn set_option_error(&mut self, error: Option<String>) {
+    fn set_option_error(&mut self, error: Option<String>) {
         if error != self.option_error {
             self.option_error = error;
             self.refresh_status();
@@ -772,7 +797,7 @@ impl Engine {
     }
 
     /// 重建状态串（基线 + 配置诊断 + 选项保存错误 + 运行期学习库错误 + 热键绑定诊断，若有）。
-    pub(crate) fn refresh_status(&mut self) {
+    fn refresh_status(&mut self) {
         let mut status = self.status_base.clone();
         if !self.config_notes.is_empty() {
             status.push_str("; ");
@@ -802,7 +827,7 @@ impl Engine {
     /// 此前 `learning.error` 只在 `new_with_dirs` 里读一次：打开失败可见，而**运行期写盘失败**
     /// （LevelDB `put` 返回错误）既无日志也不进 `hux_engine_status`。这里在落库路径上调一次，
     /// 诊断变化即刷新状态串（与 `*_options_error` 同风格）。
-    pub(crate) fn observe_learning_error(&mut self) {
+    fn observe_learning_error(&mut self) {
         let current = self.learning.error.clone();
         if current != self.learning_error {
             self.learning_error = current;
@@ -821,7 +846,10 @@ impl Engine {
         self.options
             .as_ref()
             .and_then(|store| store.value(name))
-            .or_else(|| self.settings.option_default(&self.option_roles, name))
+            .or_else(|| {
+                self.settings
+                    .session_option_default(&self.option_roles, name)
+            })
     }
 
     /// 设置运行时开关（状态菜单）：白名单校验 → 写入全部会话 → 持久化（`options.yaml`）。
@@ -869,7 +897,7 @@ impl Engine {
             self.hotkey_notes = hotkey_notes;
             self.refresh_status();
         }
-        let option_defaults = self.settings.option_defaults(&self.option_roles);
+        let option_defaults = self.settings.session_option_defaults(&self.option_roles);
         let store_defaults = self.settings.store_defaults(&self.option_roles);
         // 先登记缺省（决定哪些角色由存储管理），再把设置值写成持久化值（一次落盘）。
         let saved = match self.options.as_mut() {
@@ -919,7 +947,7 @@ impl Engine {
 
     /// 候选布局（context 选项）：host `selector` 读取 `_vertical` 决定 ←→/↑↓ 语义。
     /// 仅「竖排」置位；「横排/跟随全局」维持横排键语义（面板排列见 C++ `LayoutHint`）。
-    pub(crate) fn apply_layout_options(&self, session: &mut Session) {
+    fn apply_layout_options(&self, session: &mut Session) {
         let vertical = self.settings.candidate_layout == CandidateLayout::Vertical;
         if session.context.get_option("_vertical") != vertical {
             session.context.set_option("_vertical", vertical);
@@ -952,29 +980,19 @@ impl Engine {
         let (mut scheme, option_roles, mut notes) = assemble_scheme(&dirs, model, &config);
         // 学习库：重开（重读库文件）。必须先释放旧句柄——同一路径二次打开会撞上 LevelDB 的
         // 独占锁（rusty-leveldb 的 `LOCK`）；库名依赖方案 id，故按**新**方案的 id 打开。
-        let learning = match options_dir.as_deref() {
-            Some(dir) => {
-                self.learning = LearningStore::disabled("reloading");
-                LearningStore::open(dir, &learning_store::store_name(scheme.id()), wall_clock())
-            }
-            None => LearningStore::disabled("user data directory unavailable"),
-        };
-        // 与构造同口径：诊断进状态串基线，并留一份基线快照（避免运行期条目重复拼接）。
-        let learning_error = learning.error.clone();
-        if let Some(error) = &learning_error {
-            notes.push(format!("learning: {error}"));
-        } else {
-            notes.push(format!("learning: {}", learning.name));
+        if options_dir.is_some() {
+            self.learning = LearningStore::disabled("reloading");
         }
-        scheme.set_store_ready(learning.store_ready());
+        // 与构造同口径（见 `open_learning`）：诊断进状态串基线，并留一份基线快照
+        // （避免运行期条目重复拼接）。
+        let learning = open_learning(options_dir.as_deref(), &mut scheme, &mut notes);
+        let learning_error = learning.error.clone();
         self.learning_error = learning_error.clone();
         self.learning_error_baseline = learning_error;
         self.learning = learning;
         // 选项存储：重开（重读 `options.yaml`）；缺省仍取当前设置（与构造同一口径）。
         // 会话上下文在下面的逐会话重置里由 `sync` 重放。
-        self.options = options_dir.as_deref().map(|dir| {
-            OptionsStore::load_with_defaults(dir, self.settings.store_defaults(&option_roles))
-        });
+        self.options = options_store(options_dir.as_deref(), &self.settings, &option_roles);
         // 释放旧方案的会话（平台侧 id 与宿主输入上下文不受影响），再换上重新装配的方案。
         let old_sessions: Vec<_> = self
             .sessions
@@ -987,10 +1005,7 @@ impl Engine {
         self.scheme = Box::new(scheme);
         // 角色表随方案重新解析（角色缺失时宿主菜单跳过该项，诊断进状态串）。
         self.option_roles = option_roles;
-        self.option_keys = RUNTIME_OPTION_ROLES
-            .iter()
-            .map(|role| self.option_roles.key(role).map(crate::ui::cstring_lossy))
-            .collect();
+        self.option_keys = option_keys(&self.option_roles);
         self.status_base = notes.join("; ");
         // 逐角色诊断由随后的配置下发重新产出，先清掉旧方案的（避免拼出过期诊断）。
         self.config_notes.clear();
@@ -1029,7 +1044,7 @@ impl Engine {
     }
 
     /// 提交回调（`engine:commit_text`）。
-    pub(crate) fn host_commit(&self, text: &str) {
+    fn host_commit(&self, text: &str) {
         let Some(host) = &self.host else {
             return;
         };

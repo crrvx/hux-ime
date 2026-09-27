@@ -23,11 +23,17 @@ from __future__ import annotations
 
 import argparse
 import base64
-import hashlib
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+# 共享哈希助手在 `tools/checks/`（守卫与生成器同用一套口径）：直接运行本脚本时
+# `sys.path[0]` 是 `tools/generators/`，故显式补上相邻目录。
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "checks"))
+
+from _common import repo_root  # noqa: E402（须在 sys.path 之后）
+from _hashutil import fingerprint, sha256_bytes, sha256_file  # noqa: E402（须在 sys.path 之后）
+
+ROOT = repo_root()
 DIR = ROOT / "assets" / "branding"
 MASTER = DIR / "hux.png"
 SVG = DIR / "hux.svg"
@@ -110,19 +116,10 @@ def main() -> int:
     print(f"已写出 {SVG.name}（内嵌 {len(payload)} 字节）+ " + "、".join(t.name for t in sizes))
     print()
     print("守卫常量：")
-    print(f'MASTER_SHA256 = "{hashlib.sha256(payload).hexdigest()}"')
+    print(f'MASTER_SHA256 = "{sha256_bytes(payload)}"')
     print(f"CANVAS = ({x}, {y}, {side})")
-    print(f'FINGERPRINT = "{fingerprint([master, SVG, *sizes])}"')
+    print(f'FINGERPRINT = "{fingerprint((sha256_file(path), path.name) for path in (master, SVG, *sizes))}"')
     return 0
-
-
-def fingerprint(paths: list[Path]) -> str:
-    """四个文件的聚合 sha256：逐文件 `sha256sum` 行（同 README 里的命令）再取一次 sha256。"""
-    lines = []
-    for path in paths:
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
-        lines.append(f"{digest}  {path.name}".encode())
-    return hashlib.sha256(b"\n".join(lines) + b"\n").hexdigest()
 
 
 if __name__ == "__main__":

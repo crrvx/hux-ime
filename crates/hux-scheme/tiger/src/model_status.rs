@@ -8,13 +8,12 @@
 //! 认出的**格式名**），状态串日志答「哪个文件、为什么失败」（[`ModelStatus::summary`]）。
 //!
 //! 格式标签按**文件头 magic** 判定、与装载器解耦：文件名只决定查找顺序，不声明格式；
-//! 认不出的（含空文件 / 非模型文件）一律「未知格式」。
+//! 认不出的（含空文件 / 非模型文件）一律「未知格式」。magic 判定单点在 [`crate::ngram::detect_format`]，
+//! 本模块只把判定结果翻译成展示标签（装载器读文件与状态侧读标签因此不会各判一套）。
 
+use crate::ngram::{MAGIC_LEN, ModelFormat, detect_format};
 use std::io::Read;
 use std::path::Path;
-
-/// 模型文件头 magic 的长度（三阶 `TCSKNM02` / 五阶 `TCSKNM03`）。
-const MAGIC_LEN: usize = 8;
 
 /// 未知格式标签。
 const UNKNOWN_FORMAT: &str = "未知格式";
@@ -127,14 +126,12 @@ impl ModelStatus {
 /// 模型文件头 magic → 格式标签（纯函数，不依赖装载器是否支持该格式）。
 ///
 /// 三阶 `TCSKNM02`、五阶 `TCSKNM03` 是上游的两种模型格式；其余（含过短/空文件头）
-/// 一律「未知格式」。
+/// 一律「未知格式」。判定取 [`crate::ngram::detect_format`]，本函数只管标签。
 pub fn format_label(magic: &[u8]) -> &'static str {
-    if magic.starts_with(b"TCSKNM02") {
-        "三阶 TCSKNM02"
-    } else if magic.starts_with(b"TCSKNM03") {
-        "五阶 TCSKNM03"
-    } else {
-        UNKNOWN_FORMAT
+    match detect_format(magic) {
+        ModelFormat::Mobile3 => "三阶 TCSKNM02",
+        ModelFormat::Mobile5 => "五阶 TCSKNM03",
+        ModelFormat::Unknown => UNKNOWN_FORMAT,
     }
 }
 
