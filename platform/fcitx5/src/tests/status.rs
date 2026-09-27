@@ -16,6 +16,14 @@ use super::*;
 fn unparsable_hotkey_binding_reaches_the_status_string() {
     let _guard = serial();
     let mut engine = TestEngine::new(host(), fixture_dirs(), None, None);
+    initial_status_has_no_hotkey_diagnostic(&mut engine);
+    parseable_bindings_produce_no_diagnostic(&mut engine);
+    unparsable_bindings_are_named(&mut engine);
+    diagnostics_clear_after_repair(&mut engine);
+}
+
+/// 缺省设置下不应有热键诊断。
+fn initial_status_has_no_hotkey_diagnostic(engine: &mut TestEngine) {
     assert!(
         !engine
             .engine
@@ -26,6 +34,10 @@ fn unparsable_hotkey_binding_reaches_the_status_string() {
             .contains("hotkeys:"),
         "缺省设置不应有热键诊断"
     );
+}
+
+/// 正例：可解析的键名不产生诊断。
+fn parseable_bindings_produce_no_diagnostic(engine: &mut TestEngine) {
     // 正例：可解析的键名不产生诊断。
     engine.engine.apply_settings(Settings {
         page_up_keys: vec!["Page_Up".to_string(), "bracketleft".to_string()],
@@ -41,6 +53,10 @@ fn unparsable_hotkey_binding_reaches_the_status_string() {
             .contains("hotkeys:"),
         "可解析的绑定不应有诊断"
     );
+}
+
+/// 负例：无名字的 keysym（媒体键）必须逐项点名。
+fn unparsable_bindings_are_named(engine: &mut TestEngine) {
     // 负例：X11 `XF86AudioPlay` = 0x1008ff14，rime 键名表里没有名字。
     engine.engine.apply_settings(Settings {
         page_up_keys: vec!["Page_Up".to_string(), "0x1008ff14".to_string()],
@@ -66,6 +82,10 @@ fn unparsable_hotkey_binding_reaches_the_status_string() {
         status.contains("char_to_sound_shape_keys=(unknown)"),
         "诊断须覆盖四项绑定：{status}"
     );
+}
+
+/// 改回可解析的绑定后诊断清空。
+fn diagnostics_clear_after_repair(engine: &mut TestEngine) {
     // 改回可解析后诊断清空。
     engine.engine.apply_settings(Settings {
         page_up_keys: vec!["Page_Up".to_string()],
@@ -124,6 +144,14 @@ fn status_string_is_refreshed_on_read() {
 fn scheme_config_diagnostics_reach_the_status_string() {
     let _guard = serial();
     let mut engine = TestEngine::new(host(), fixture_dirs(), None, Some(temp_user_dir("cfgdiag")));
+    assembled_scheme_config_has_no_diagnostic(&mut engine);
+    wrong_value_type_is_named(&mut engine);
+    missing_role_is_named(&mut engine);
+    diagnostics_clear_after_a_full_config(&mut engine);
+}
+
+/// 真实装配路径不应有配置诊断。
+fn assembled_scheme_config_has_no_diagnostic(engine: &mut TestEngine) {
     let status = engine
         .engine
         .diagnostics
@@ -135,7 +163,10 @@ fn scheme_config_diagnostics_reach_the_status_string() {
         !status.contains("config:"),
         "真实装配路径不应有配置诊断：{status}"
     );
+}
 
+/// 类型不符（`Count` 装进开关角色）必须进状态串。
+fn wrong_value_type_is_named(engine: &mut TestEngine) {
     // 类型不符：把 `Count` 装进开关角色 ⇒ 诊断进状态串（方案仍按缺省回退）。
     let bad = crate::engine::scheme_config(&engine.engine.settings).with(
         hux_cfg::roles::ROLE_LEARNING_ON_TAB,
@@ -153,7 +184,10 @@ fn scheme_config_diagnostics_reach_the_status_string() {
         status.contains("config: 角色 tab_learning 类型不符（期望 开关，实际 计数）"),
         "类型不符必须可见：{status}"
     );
+}
 
+/// 缺角色（漏装 `page_size`）必须点名，不静默当作 0。
+fn missing_role_is_named(engine: &mut TestEngine) {
     // 缺角色：漏装 `page_size` ⇒ 同样点名（不静默当作页大小 0）。
     let mut partial = hux_core::scheme::SchemeConfig::new();
     for (role, value) in [
@@ -180,7 +214,10 @@ fn scheme_config_diagnostics_reach_the_status_string() {
         status.contains("config: 缺少角色 page_size"),
         "漏装角色必须可见：{status}"
     );
+}
 
+/// 重新下发完整配置袋后诊断清空。
+fn diagnostics_clear_after_a_full_config(engine: &mut TestEngine) {
     // 重新下发完整配置袋（设置派生的角色 + 运行时开关的生效值）：诊断清空（状态串回到基线）。
     let good = engine.engine.scheme_config_with_runtime();
     engine.engine.apply_scheme_config(good);

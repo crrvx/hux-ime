@@ -189,6 +189,11 @@ mod tests {
     /// 判据不看 `paging` 标签（本仓语义强化，见函数文档）。
     #[test]
     fn paging_action_is_the_shared_key_binder_predicate() {
+        check_default_page_keys_need_a_visible_menu();
+        check_configured_page_keys_follow_options();
+    }
+
+    fn check_default_page_keys_need_a_visible_menu() {
         let options = HostOptions::default();
         let mut menu = context_with_menu(&["a", "b", "c", "d", "e", "f"], 0);
         assert_eq!(
@@ -227,7 +232,9 @@ mod tests {
             None,
             "`paging` 标签不是判据（判据是菜单可见）"
         );
+    }
 
+    fn check_configured_page_keys_follow_options() {
         // schema 绑定的其它翻页键按 options 生效（`[`/`]`），未绑定的键不判翻页。
         let custom = HostOptions {
             page_size: 2,

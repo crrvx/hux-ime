@@ -273,28 +273,50 @@ fn auto_commit_matches_visible_top_guard() {
 /// 恒等于 tracker 边界），故这里直接驱动 `try_commit_mature_prefix` 的调用点：
 /// 同一 tracker 在 `jreynvtah`（竞争边界 7 ⇒ 只剩 2 键前瞻）下不得上屏，
 /// 在 `jreynvtahx`（再多 1 键 ⇒ 满足 retain=3）下才上屏。
-#[test]
-fn mature_prefix_waits_for_the_competing_boundary() {
+///
+/// 早提交闸门的两行向量：`raw` + 该向量下要核对的注释前提。
+struct MaturePrefixCase {
+    raw: &'static [u8],
+    note: &'static str,
+}
+
+const MATURE_PREFIX_CASES: [MaturePrefixCase; 2] = [
+    MaturePrefixCase {
+        // 竞争边界 `nv|tvt`：`jreynvtah` 只给到 7，9-7=2 < retain(3) ⇒ 不上屏。
+        raw: b"jreynvtah",
+        note: "竞争边界未满足前不得提前上屏",
+    },
+    MaturePrefixCase {
+        // 再多 1 键：10-7=3 ≥ retain ⇒ 上屏「有」并停在竞争边界 `jreynvt`。
+        raw: b"jreynvtahx",
+        note: "",
+    },
+];
+
+/// 带 `有` 追踪器的会话状态：已确认 `jrey`，追踪器共享 0.995、证据 3 条。
+fn mature_prefix_state(separator: char) -> SentenceState {
+    let mut state = SentenceState::fresh(1);
+    state.committed_raw = "jrey".to_string();
+    state.trackers.insert(
+        format!("有{separator}6"),
+        Tracker {
+            text: "有".to_string(),
+            text_char_count: 1,
+            raw_length: 6,
+            evidence_count: 3,
+            strong_count: 0,
+            gap_count: 0,
+            last_share: 0.995,
+        },
+    );
+    state
+}
+
+/// 驱动一次 `try_commit_mature_prefix`（无 `submitted_first`、`retain = 0`），
+/// 返回 (是否上屏, 状态)。
+fn drive_mature_prefix(raw: &[u8]) -> (bool, SentenceState) {
     let separator = '\u{1f}';
-    let mk_state = || {
-        let mut state = SentenceState::fresh(1);
-        state.committed_raw = "jrey".to_string();
-        state.trackers.insert(
-            format!("有{separator}6"),
-            Tracker {
-                text: "有".to_string(),
-                text_char_count: 1,
-                raw_length: 6,
-                evidence_count: 3,
-                strong_count: 0,
-                gap_count: 0,
-                last_share: 0.995,
-            },
-        );
-        state
-    };
-    // 竞争边界 `nv|tvt`：`jreynvtah` 只给到 7，9-7=2 < retain(3) ⇒ 不上屏。
-    let mut state = mk_state();
+    let mut state = mature_prefix_state(separator);
     let mut context = Context::new();
     let mut dot_armed = false;
     let mut decoder = lexicon_fixture();
@@ -304,35 +326,26 @@ fn mature_prefix_waits_for_the_competing_boundary() {
         live: &mut live,
         now: 0.0,
     };
-    assert!(!try_commit_mature_prefix(
+    let committed = try_commit_mature_prefix(
         &mut learning,
         &mut context,
         &mut state,
-        b"jreynvtah",
+        raw,
         0,
         None,
         &mut dot_armed,
-    ));
+    );
+    (committed, state)
+}
+
+#[test]
+fn mature_prefix_waits_for_the_competing_boundary() {
+    let [before, after] = &MATURE_PREFIX_CASES;
+    let (committed, state) = drive_mature_prefix(before.raw);
+    assert!(!committed, "{}", before.note);
     assert_eq!(state.committed_text, "", "竞争边界未满足前不得提前上屏");
-    // 再多 1 键：10-7=3 ≥ retain ⇒ 上屏「有」并停在竞争边界 `jreynvt`。
-    let mut state = mk_state();
-    let mut context = Context::new();
-    let mut decoder = lexicon_fixture();
-    let mut live = LiveLearning::default();
-    let mut learning = LearningCommit {
-        decoder: &mut decoder,
-        live: &mut live,
-        now: 0.0,
-    };
-    assert!(try_commit_mature_prefix(
-        &mut learning,
-        &mut context,
-        &mut state,
-        b"jreynvtahx",
-        0,
-        None,
-        &mut dot_armed,
-    ));
+    let (committed, state) = drive_mature_prefix(after.raw);
+    assert!(committed, "{}", after.note);
     assert_eq!(state.committed_text, "有");
     // 上屏边界仍是 tracker 自己的 raw 边界（竞争边界只作「是否够前瞻」的闸门）。
     assert_eq!(state.committed_raw, "jreynv");

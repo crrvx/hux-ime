@@ -69,6 +69,55 @@ mod tests {
             .expect("punct table")
     }
 
+    /// 表驱动用例的一行：原用例名、初始上下文、按键与逐次期望（夹具与断言逐条等价）。
+    struct Case {
+        // 原用例名（保留可检索性）。
+        name: &'static str,
+        // 初始上下文：`true` ⇒ 组合中带菜单（`context_with_menu`），`false` ⇒ 空上下文。
+        composing: bool,
+        // 按键（`KeyEvent::from_repr` 名称）。
+        key: &'static str,
+        // 逐次按下的（宿主链结果；`Some` 时断言该次按键后的 `last_commit_text`）。
+        steps: &'static [(HostResult, Option<&'static str>)],
+        // 末态是否断言输入已清空（仅原「追加」用例断言）。
+        input_empty: bool,
+    }
+
+    // 一行 = 一条原用例。
+    const CASES: &[Case] = &[
+        Case {
+            name: "punctuator_commits_standalone_punct",
+            composing: false,
+            key: "comma",
+            steps: &[(HostResult::Consumed, Some("，"))],
+            input_empty: false,
+        },
+        Case {
+            name: "punctuator_appends_to_composition_text",
+            composing: true,
+            key: "comma",
+            steps: &[(HostResult::Consumed, Some("甲，"))],
+            input_empty: true,
+        },
+        Case {
+            name: "punctuator_pair_alternates",
+            composing: false,
+            key: "apostrophe",
+            steps: &[
+                (HostResult::Consumed, Some("‘")),
+                (HostResult::Consumed, Some("’")),
+            ],
+            input_empty: false,
+        },
+        Case {
+            name: "punctuator_passes_unmapped_key",
+            composing: false,
+            key: "space",
+            steps: &[(HostResult::Forward, None)],
+            input_empty: false,
+        },
+    ];
+
     /// 标点宿主链的表驱动用例：原四条独立用例（独立提交 / 追加到组合 / 成对交替 /
     /// 未映射键放行）合并于此——夹具与断言逐条等价；平台侧的端到端版本保留在
     /// `platform/fcitx5/src/tests.rs`（跨层重复只留平台侧）。
@@ -83,56 +132,8 @@ mod tests {
     /// | `punctuator_passes_unmapped_key` | 4 | 空上下文 `space` ⇒ `Forward`（原用例不断言上屏） |
     #[test]
     fn punctuator_commits_appends_pairs_and_passes_unmapped() {
-        // 一行 = 一条原用例。
-        struct Case {
-            // 原用例名（保留可检索性）。
-            name: &'static str,
-            // 初始上下文：`true` ⇒ 组合中带菜单（`context_with_menu`），`false` ⇒ 空上下文。
-            composing: bool,
-            // 按键（`KeyEvent::from_repr` 名称）。
-            key: &'static str,
-            // 逐次按下的（宿主链结果；`Some` 时断言该次按键后的 `last_commit_text`）。
-            steps: &'static [(HostResult, Option<&'static str>)],
-            // 末态是否断言输入已清空（仅原「追加」用例断言）。
-            input_empty: bool,
-        }
-
         let table = punct_table();
-        let cases = [
-            Case {
-                name: "punctuator_commits_standalone_punct",
-                composing: false,
-                key: "comma",
-                steps: &[(HostResult::Consumed, Some("，"))],
-                input_empty: false,
-            },
-            Case {
-                name: "punctuator_appends_to_composition_text",
-                composing: true,
-                key: "comma",
-                steps: &[(HostResult::Consumed, Some("甲，"))],
-                input_empty: true,
-            },
-            Case {
-                name: "punctuator_pair_alternates",
-                composing: false,
-                key: "apostrophe",
-                steps: &[
-                    (HostResult::Consumed, Some("‘")),
-                    (HostResult::Consumed, Some("’")),
-                ],
-                input_empty: false,
-            },
-            Case {
-                name: "punctuator_passes_unmapped_key",
-                composing: false,
-                key: "space",
-                steps: &[(HostResult::Forward, None)],
-                input_empty: false,
-            },
-        ];
-
-        for case in cases {
+        for case in CASES {
             let mut context = if case.composing {
                 context_with_menu(&["甲", "乙"], 0)
             } else {

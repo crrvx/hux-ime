@@ -30,7 +30,7 @@
 | T3.8b | `tools/generators/gen_ngram_golden.lua:74` 用 `("不存在"):sub(1, 3)` 造第 26 个 token | [待办] | 代码**是对的**：Lua `sub` 按字节截出 `不`（`e4b88d`）——金样 29617 行 = 26³+3·26²+10013、<br>`e4b88d` 恰 2104 次；但写法隐晦。改成显式 `"不"` 会改金样，<br>故留到下次重生成金样时一并改（属金样冻结范围，非本轮） |
 | K14b | 学习库 materialized 缓存可改为共享分区（原 `learning.rs` 注释里的优化设想） | [待办] | 第 8 批只删了那条未来笔记（原文留在台账）：<br>`Fifo<String, Rc<Materialized>>` 改共享需先有基准数据、<br>收益与风险未知，属性能批 |
 | T1.3 | pin/URL 常量硬编码 4+ 处且两套取 pin 机制（`git show` vs <br>`worktree add`） | [待办] | T2.2 / T2.4 已随第 11 批完成；<br>pin/URL 收敛牵动 `ci.yml` 与 4 个生成器，单独一批 |
-| `2+3 批残留` | 测试取夹具路径的写法不统一：`key_sequence_differential.rs` 内联 5 处<br>`join("../../..")`，而共享助手 `hux_test_support::repo_path` 已是单点实现 | [待办] | 第 13 批已收掉其余三项：可见性 26 项收紧、<br>`model_status::format_label` 转私有、<br>`scheme_config_with_runtime` 不再从 `crate::engine` 根再导出；<br>`Engine` 字段另见 §2。余项属测试整理，收益仅为一致性 |
+| `2+3 批残留` | 测试取夹具路径的写法不统一：内联 `join("../../..")` 剩 5 处<br>（`key_sequence_differential.rs` 4 处 +<br>`key_sequence_differential/dump.rs` 1 处），<br>而共享助手 `hux_test_support::repo_path` 已是单点实现 | [待办] | 第 13 批已收掉其余三项：可见性 26 项收紧、<br>`model_status::format_label` 转私有、<br>`scheme_config_with_runtime` 不再从 `crate::engine` 根再导出；<br>`Engine` 字段另见 §2。余项属测试整理，收益仅为一致性 |
 | `5 批未做部分` | 第 11 批按风险与文件域切开、留给后续批的项 ——<br>方案·数据：D7 `ReverseLookup`、D10 `trait RankKey`、<br>D11 `StateView`、D12 `expand_range`、D13 `has_complete_candidate`、<br>D16 `LexicalModel` 6 个 pub 字段（须先改集成测试契约）、<br>B10 的 decode 侧选重字节表、B20（10 参 `translate`） | [待办] | D7/D10–D13 触热路径排序与证据分配，须逐项带金样差分验证；<br>D16 受测试契约阻塞；B10/B20 属低成本项，可随任一结构批顺带。<br>**低成本项已随第 13 批收口**：`scheme.rs` 内联测试 635 行迁出、<br>4 条 `paging_action` 用例迁入 `key_binder`、<br>「无时间衰减」括注与新旧语义叙事清理；<br>`punct_shape_comment` 经评估不搬（见 §2） |
 
 - **M8 补记**：**② rust 工具链：有意不钉**（跟随 stable 最新版；CI 用 \

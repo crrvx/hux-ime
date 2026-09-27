@@ -189,7 +189,30 @@ mod tests {
         assert_eq!(size_of::<HuxOptions>(), 15 * scalar + 4 * list);
         // **逐字段**（名字 + 偏移，按声明序）：任何改名都让 `offset_of!` 编译失败，
         // 任何同宽换序都让下一条偏移断言失败（此前只有 8 个抽查点）。
-        let expected: &[(&str, usize)] = &[
+        let expected = options_expected_offsets();
+        let offsets = options_field_offsets();
+        assert_eq!(
+            offsets.len(),
+            HUX_OPTIONS_FIELDS.len(),
+            "本表的字段数与 `HUX_OPTIONS_FIELDS` 不一致"
+        );
+        for (index, ((name, offset), actual)) in expected.iter().zip(offsets).enumerate() {
+            assert_eq!(
+                *name, HUX_OPTIONS_FIELDS[index],
+                "第 {index} 个字段名与 `HUX_OPTIONS_FIELDS` 不一致"
+            );
+            assert_eq!(
+                *offset, actual,
+                "`hux_options.{name}` 的偏移应为 {offset}，实际 {actual}"
+            );
+        }
+    }
+
+    /// `hux_options` 逐字段的**期望偏移**（名字 + 偏移，按声明序）。
+    fn options_expected_offsets() -> Vec<(&'static str, usize)> {
+        let scalar = size_of::<i32>();
+        let list = size_of::<HuxKeyList>();
+        vec![
             ("early_commit", 0),
             ("early_commit_to_preedit", scalar),
             ("allow_duplicate_single", 2 * scalar),
@@ -209,8 +232,12 @@ mod tests {
             ("min_retained_input_length", 12 * scalar + 4 * list),
             ("full_charset", 13 * scalar + 4 * list),
             ("filter_non_han", 14 * scalar + 4 * list),
-        ];
-        let offsets = [
+        ]
+    }
+
+    /// `HuxOptions` 逐字段的**实际偏移**（按声明序）：任何改名都让 `offset_of!` 编译失败。
+    fn options_field_offsets() -> [usize; 19] {
+        [
             offset_of!(HuxOptions, early_commit),
             offset_of!(HuxOptions, early_commit_to_preedit),
             offset_of!(HuxOptions, allow_duplicate_single),
@@ -230,22 +257,7 @@ mod tests {
             offset_of!(HuxOptions, min_retained_input_length),
             offset_of!(HuxOptions, full_charset),
             offset_of!(HuxOptions, filter_non_han),
-        ];
-        assert_eq!(
-            offsets.len(),
-            HUX_OPTIONS_FIELDS.len(),
-            "本表的字段数与 `HUX_OPTIONS_FIELDS` 不一致"
-        );
-        for (index, ((name, offset), actual)) in expected.iter().zip(offsets).enumerate() {
-            assert_eq!(
-                *name, HUX_OPTIONS_FIELDS[index],
-                "第 {index} 个字段名与 `HUX_OPTIONS_FIELDS` 不一致"
-            );
-            assert_eq!(
-                *offset, actual,
-                "`hux_options.{name}` 的偏移应为 {offset}，实际 {actual}"
-            );
-        }
+        ]
     }
 
     /// `hux_options` 的**字段名与声明序**必须与 Rust 结构体逐项一致。

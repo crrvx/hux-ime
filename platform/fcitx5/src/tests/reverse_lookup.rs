@@ -108,6 +108,15 @@ fn reverse_lookup_character_end_to_end() {
         hux_test_support::repo_path("data"),
     ];
     let mut engine = TestEngine::new(host(), dirs, None, None);
+    character_lookup_default_trigger_and_refresh(&mut engine);
+    character_lookup_with_a_modified_trigger(&mut engine);
+    pronunciation_lookup_trigger_variants(&mut engine);
+    pronunciation_lookup_single_char_trigger_commits(&mut engine);
+    character_lookup_single_char_trigger_commits(&mut engine);
+}
+
+/// 默认 `~`（无修饰单字符）：给默认可上屏候选、两排随周边文本与按键刷新。
+fn character_lookup_default_trigger_and_refresh(engine: &mut TestEngine) {
     // 应用侧周边文本「中欧中兴」，光标在第 2 个字符后（锚点 = 2）。
     engine.set_surrounding(Some("中欧中兴"), 2);
     // 默认 ~（无修饰单字符）→ 有默认可上屏候选（触发字符本身）；上排「咅」、下排「虍」。
@@ -134,6 +143,10 @@ fn reverse_lookup_character_end_to_end() {
     // 其它键：退出查码段并照常处理。
     assert!(engine.key(u32::from(b'a'), 0, false), "普通键照常处理");
     assert_eq!(engine.session().context.input(), b"a");
+}
+
+/// 显式改成带修饰的触发键（Alt+"）⇒ **不给**默认候选（同一契约的另一半）。
+fn character_lookup_with_a_modified_trigger(engine: &mut TestEngine) {
     // 同一契约的另一半：显式把触发键改成带修饰的 Alt+" → **不给**默认候选。
     engine.reset();
     engine.apply_settings(Settings {
@@ -146,6 +159,10 @@ fn reverse_lookup_character_end_to_end() {
         candidates.is_empty(),
         "带修饰触发键不给默认候选：{candidates:?}"
     );
+}
+
+/// 音反查触发键三态：默认 `、显式 Alt+:、单字符 `;` 各自是否给默认候选。
+fn pronunciation_lookup_trigger_variants(engine: &mut TestEngine) {
     // 音反查：默认 `（无修饰单字符）给默认候选；带修饰键（显式 Alt+:）不给。
     engine.reset();
     assert!(engine.key(0x60, 0, false), "默认 ` 应被消费");
@@ -177,6 +194,10 @@ fn reverse_lookup_character_end_to_end() {
         candidates.iter().any(|candidate| candidate == "；"),
         "单字符触发键应给默认候选：{candidates:?}"
     );
+}
+
+/// 音反查单字符触发键（`）的默认可上屏候选：空格确认上屏。
+fn pronunciation_lookup_single_char_trigger_commits(engine: &mut TestEngine) {
     // 音反查：单字符触发键（`）→ 同样给默认可上屏候选，空格上屏。
     engine.reset();
     engine.apply_settings(Settings {
@@ -191,6 +212,10 @@ fn reverse_lookup_character_end_to_end() {
     );
     assert!(engine.key(0x20, 0, false), "空格确认候选");
     assert_eq!(COMMITS.lock().unwrap().last().unwrap(), "`");
+}
+
+/// 字反查单字符触发键（~）的默认可上屏候选：空格确认上屏。
+fn character_lookup_single_char_trigger_commits(engine: &mut TestEngine) {
     // 单字符触发键（~）→ 提供默认可上屏候选，空格上屏。
     engine.reset();
     engine.apply_settings(Settings {

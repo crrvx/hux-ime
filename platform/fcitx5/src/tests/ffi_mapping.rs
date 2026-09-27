@@ -100,52 +100,77 @@ fn data_info_tracks_settings_and_option_changes() {
     let user = temp_user_dir("data-info-user");
     let mut engine = Engine::new_with_dirs(host(), vec![data.clone()], None, Some(user.clone()));
 
-    let info = |engine: &Engine| -> String {
-        let pointer = unsafe { hux_engine_data_info(engine) };
-        assert!(!pointer.is_null(), "引擎有效时摘要非空");
-        unsafe { std::ffi::CStr::from_ptr(pointer) }
-            .to_string_lossy()
-            .into_owned()
-    };
-    let summary = |tables: &str, entries: usize, chars: usize, full: u8, filter: u8| {
-        format!(
-            "code_tables=[{tables}] entries={entries} chars={chars} full_charset={full} \
-             filter_non_han={filter}"
-        )
-    };
     let main_only = "tiger_sentence.codes.txt";
 
     // 出厂口径：两个开关都开，追加表在（非法汉字行已被过滤）。
-    assert_eq!(info(&engine), summary(EXTRA_TABLES, 28, 26, 1, 1));
-    // 缓存：连续两次调用返回同一指针（摘要按需算一次，宿主不必自己缓存）。
-    let first = unsafe { hux_engine_data_info(&engine) };
-    assert_eq!(unsafe { hux_engine_data_info(&engine) }, first);
-
-    // 配置页推送：关掉全字集 ⇒ 摘要与词库同时变，且设置值写回 `options.yaml`。
-    engine.apply_settings(Settings {
-        full_charset: false,
-        ..Default::default()
-    });
-    assert_eq!(info(&engine), summary(main_only, 27, 25, 0, 1));
-    let persisted = std::fs::read_to_string(user.join(OPTIONS_FILE)).expect("options.yaml");
-    assert!(
-        persisted.contains("tiger_sentence_full_charset: false"),
-        "设置推送应写回持久化选项：{persisted}"
-    );
-
-    // 状态菜单：打开全字集、关掉过滤 ⇒ 追加表两行都入词库。
-    assert!(engine.set_option_value("tiger_sentence_full_charset", true));
-    assert!(engine.set_option_value("tiger_sentence_filter_non_han", false));
-    assert_eq!(info(&engine), summary(EXTRA_TABLES, 29, 27, 1, 0));
-
-    // 重新部署：重读数据与持久化选项，摘要照新状态重算。
-    assert!(engine.redeploy());
-    assert_eq!(info(&engine), summary(EXTRA_TABLES, 29, 27, 1, 0));
+    factory_tables_are_reported(&engine, EXTRA_TABLES);
+    settings_push_recomputes_the_summary(&mut engine, &user, main_only);
+    option_switches_recompute_the_summary(&mut engine, EXTRA_TABLES);
+    redeploy_recomputes_the_summary(&mut engine, EXTRA_TABLES);
 
     // 空指针安全。
     assert!(unsafe { hux_engine_data_info(std::ptr::null()) }.is_null());
     std::fs::remove_dir_all(&data).ok();
     std::fs::remove_dir_all(&user).ok();
+}
+
+/// 出厂口径：两个开关都开，追加表在，且连续调用复用同一次计算（同一指针）。
+fn factory_tables_are_reported(engine: &Engine, tables: &str) {
+    assert_eq!(data_info(engine), summary(tables, 28, 26, 1, 1));
+    // 缓存：连续两次调用返回同一指针（摘要按需算一次，宿主不必自己缓存）。
+    let first = unsafe { hux_engine_data_info(engine) };
+    assert_eq!(unsafe { hux_engine_data_info(engine) }, first);
+}
+
+/// 配置页推送：关掉全字集 ⇒ 摘要与词库同时变，且设置值写回 `options.yaml`。
+fn settings_push_recomputes_the_summary(
+    engine: &mut Engine,
+    user: &std::path::Path,
+    main_only: &str,
+) {
+    // 配置页推送：关掉全字集 ⇒ 摘要与词库同时变，且设置值写回 `options.yaml`。
+    engine.apply_settings(Settings {
+        full_charset: false,
+        ..Default::default()
+    });
+    assert_eq!(data_info(engine), summary(main_only, 27, 25, 0, 1));
+    let persisted = std::fs::read_to_string(user.join(OPTIONS_FILE)).expect("options.yaml");
+    assert!(
+        persisted.contains("tiger_sentence_full_charset: false"),
+        "设置推送应写回持久化选项：{persisted}"
+    );
+}
+
+/// 状态菜单：打开全字集、关掉过滤 ⇒ 追加表两行都入词库。
+fn option_switches_recompute_the_summary(engine: &mut Engine, tables: &str) {
+    // 状态菜单：打开全字集、关掉过滤 ⇒ 追加表两行都入词库。
+    assert!(engine.set_option_value("tiger_sentence_full_charset", true));
+    assert!(engine.set_option_value("tiger_sentence_filter_non_han", false));
+    assert_eq!(data_info(engine), summary(tables, 29, 27, 1, 0));
+}
+
+/// 重新部署：重读数据与持久化选项，摘要照新状态重算。
+fn redeploy_recomputes_the_summary(engine: &mut Engine, tables: &str) {
+    // 重新部署：重读数据与持久化选项，摘要照新状态重算。
+    assert!(engine.redeploy());
+    assert_eq!(data_info(engine), summary(tables, 29, 27, 1, 0));
+}
+
+/// 读取数据装载摘要（`hux_engine_data_info`）为可比较的字符串。
+fn data_info(engine: &Engine) -> String {
+    let pointer = unsafe { hux_engine_data_info(engine) };
+    assert!(!pointer.is_null(), "引擎有效时摘要非空");
+    unsafe { std::ffi::CStr::from_ptr(pointer) }
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// 拼装期望的数据装载摘要文本。
+fn summary(tables: &str, entries: usize, chars: usize, full: u8, filter: u8) -> String {
+    format!(
+        "code_tables=[{tables}] entries={entries} chars={chars} full_charset={full} \
+         filter_non_han={filter}"
+    )
 }
 
 /// 候选竖排：作用于已存在会话（host 读取 `_vertical`）。

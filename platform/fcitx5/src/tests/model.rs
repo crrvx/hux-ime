@@ -195,6 +195,17 @@ fn redeploy_refreshes_model_info_and_resets_sessions() {
     assert_eq!(unsafe { hux_engine_redeploy(engine) }, 1);
     assert_eq!(read(), "三阶 TCSKNM02");
 
+    session_survives_redeploy(engine, session);
+    unsafe { hux_engine_session_free(engine, session) };
+    unsafe { hux_engine_free(engine) };
+    std::fs::remove_dir_all(&dir).ok();
+
+    // 空指针：返回 0（宿主据此报错，而不是假装成功）。
+    assert_eq!(unsafe { hux_engine_redeploy(std::ptr::null_mut()) }, 0);
+}
+
+/// 重新部署后会话 id 仍可用（重置而非释放）；未知 id 仍被忽略。
+fn session_survives_redeploy(engine: *mut Engine, session: u64) {
     // 会话 id 仍可用（重置而非释放）；未知 id 仍被忽略。
     let state = unsafe { &*engine };
     assert!(state.sessions.contains_key(&session));
@@ -211,12 +222,6 @@ fn redeploy_refreshes_model_info_and_resets_sessions() {
         unsafe { hux_engine_key(engine, session + 100, u32::from(b'a'), 0, 0) },
         0
     );
-    unsafe { hux_engine_session_free(engine, session) };
-    unsafe { hux_engine_free(engine) };
-    std::fs::remove_dir_all(&dir).ok();
-
-    // 空指针：返回 0（宿主据此报错，而不是假装成功）。
-    assert_eq!(unsafe { hux_engine_redeploy(std::ptr::null_mut()) }, 0);
 }
 
 /// 重新部署 = **重走一遍构造期的读取**：手改 `options.yaml` 后（进程仍在跑）重新部署即生效。

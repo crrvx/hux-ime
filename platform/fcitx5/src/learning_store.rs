@@ -88,9 +88,9 @@ impl LearningStore {
         }
     }
 
-    /// 参照 `M.open`：打开数据库、加载 `e/` 事件、构建运行时索引。
-    pub fn open(user_dir: &Path, name: &str, now: f64) -> Self {
-        let mut store = Self {
+    /// 空仓初值（未打开 / 未提交）。
+    fn empty(name: &str, now: f64) -> Self {
+        Self {
             name: name.to_string(),
             db: None,
             events: Vec::new(),
@@ -101,7 +101,12 @@ impl LearningStore {
             scored_at: now,
             error: None,
             index_version: 0,
-        };
+        }
+    }
+
+    /// 参照 `M.open`：打开数据库、加载 `e/` 事件、构建运行时索引。
+    pub fn open(user_dir: &Path, name: &str, now: f64) -> Self {
+        let mut store = Self::empty(name, now);
         let path = user_dir.join(format!("{name}.userdb"));
         // 用户目录可能尚不存在（参照的 rime 用户目录总是由框架创建）。
         if let Some(parent) = path.parent() {
@@ -117,6 +122,15 @@ impl LearningStore {
                 return store;
             }
         };
+        if !Self::load_events(&mut store, &mut db, now) {
+            return store;
+        }
+        store.db = Some(db);
+        store
+    }
+
+    /// 扫描 `e/` 事件并落到 `store`：库不可用返回 `false`（此时不提交 `db`）。
+    fn load_events(store: &mut Self, db: &mut DB, now: f64) -> bool {
         let mut events = Vec::new();
         let mut count = 0usize;
         let mut bytes = 0usize;
@@ -158,26 +172,30 @@ impl LearningStore {
             }
             Err(error) => {
                 store.error = Some(format!("learning database is unavailable: {error}"));
-                return store;
+                return false;
             }
         }
         if let Some(reason) = failure {
             store.error = Some(reason);
-            return store;
+            return false;
         }
         if skipped > 0 {
-            // 既有诊断通道（构造期读一次、`Engine::new_with_dirs` 并入状态串）。
-            store.error = Some(format!(
-                "learning database skipped {skipped} undecodable record(s)"
-            ));
+            Self::record_skipped(store, skipped);
         }
         store.count = count;
         store.bytes = bytes;
         store.sequence = sequence;
         store.index = LearningIndex::runtime(&events, now);
         store.events = events;
-        store.db = Some(db);
-        store
+        true
+    }
+
+    /// 坏帧记账：条数进既有诊断，不因一条损坏记录禁用全部学习。
+    fn record_skipped(store: &mut Self, skipped: usize) {
+        // 既有诊断通道（构造期读一次、`Engine::new_with_dirs` 并入状态串）。
+        store.error = Some(format!(
+            "learning database skipped {skipped} undecodable record(s)"
+        ));
     }
 
     pub fn store_ready(&self) -> bool {

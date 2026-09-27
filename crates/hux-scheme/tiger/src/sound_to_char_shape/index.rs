@@ -80,122 +80,13 @@ impl SoundToCharShapeIndex {
 
     pub(super) fn parse(data: &[u8]) -> Result<Self> {
         let mut reader = Reader { data, pos: 0 };
-        if reader.take(8)? != MAGIC {
-            bail!("bad magic");
-        }
-        let syllable_count = reader.u32()? as usize;
-        let spelling_count = reader.u32()? as usize;
-        let group_count = reader.u32()? as usize;
-        let entry_count = reader.u32()? as usize;
-        // 组码是 `u16`：音节 id 超出该宽度时无法与任何组码相等，且 `collect_chunks`
-        // 的 `edge.syllable as u16` 会把它静默截断成**别的**音节而查到错误的组。
-        if syllable_count > u16::MAX as usize {
-            bail!("syllable count exceeds the group code width: {syllable_count}");
-        }
-        let mut syllables = Vec::with_capacity(reader.capacity(syllable_count, MIN_SYLLABLE_BYTES));
-        for _ in 0..syllable_count {
-            syllables.push(String::from_utf8(reader.bytes()?.to_vec())?);
-        }
-        let mut spellings = Vec::with_capacity(reader.capacity(spelling_count, MIN_SPELLING_BYTES));
-        for _ in 0..spelling_count {
-            let key = reader.bytes()?.to_vec();
-            let alt_count = reader.u8()? as usize;
-            let mut alts = Vec::with_capacity(alt_count);
-            for _ in 0..alt_count {
-                let syllable = reader.u32()?;
-                let kind = reader.u8()?;
-                // 解析期校验：音节 id 必须落在音节表内（否则建边/查组越界）。
-                if syllable as usize >= syllable_count {
-                    bail!("spelling syllable id out of range: {syllable} >= {syllable_count}");
-                }
-                if kind > TYPE_ABBREV {
-                    bail!("unknown spelling kind: {kind}");
-                }
-                alts.push((syllable, kind));
-            }
-            spellings.push((key, alts));
-        }
-        let mut groups = Vec::with_capacity(reader.capacity(group_count, MIN_GROUP_BYTES));
-        for _ in 0..group_count {
-            let count = reader.u8()? as usize;
-            let mut code = Vec::with_capacity(count);
-            for _ in 0..count {
-                let id = reader.u16()?;
-                if id as usize >= syllable_count {
-                    bail!("group syllable id out of range: {id} >= {syllable_count}");
-                }
-                code.push(id);
-            }
-            let entries = reader.u32()?;
-            groups.push(Group {
-                code,
-                first: 0,
-                count: entries,
-            });
-        }
-        let mut entries = Vec::with_capacity(reader.capacity(entry_count, MIN_ENTRY_BYTES));
-        let mut text = String::new();
-        for _ in 0..entry_count {
-            let weight = f64::from(reader.u32()?);
-            let bytes = reader.bytes()?;
-            let offset = u32::try_from(text.len()).context("text pool exceeds u32 offsets")?;
-            text.push_str(std::str::from_utf8(bytes)?);
-            entries.push(Entry {
-                weight,
-                offset,
-                len: bytes.len() as u16,
-            });
-        }
-        // 组 → 词条区间：`checked_add` 保证偏移不 `u32` 回绕（回绕能骗过末尾的
-        // 「总数一致」校验，随后在按组切片处越界 panic），并逐组保证
-        // `first + count <= entry_count`（切片的实际边界依据）。
-        let mut first = 0u32;
-        for group in groups.iter_mut() {
-            group.first = first;
-            first = first
-                .checked_add(group.count)
-                .context("group entry offsets overflow")?;
-            if first as usize > entry_count {
-                bail!("group entry count exceeds the entry count: {first} > {entry_count}");
-            }
-        }
-        if first as usize != entry_count {
-            bail!("entry count mismatch");
-        }
-        // 单字读音倒排：组内音节串按源序收集，去重。
-        let mut character_pinyin: hashbrown::HashMap<char, Vec<String>> = hashbrown::HashMap::new();
-        {
-            let entry_text = |entry: &Entry| -> &str {
-                let start = entry.offset as usize;
-                &text[start..start + entry.len as usize]
-            };
-            for group in &groups {
-                // 音节 id 与组区间均已在上方校验 ⇒ 索引与切片在界内。
-                let end = group.first + group.count;
-                // 读音串**按需**构造：真实索引 600,869 组里只有
-                // 412 组含单字词条，先前的「每组 `Vec<&str>` + `join`」在首次反查时
-                // 白付约 60 万次分配。
-                let mut reading: Option<String> = None;
-                for entry in &entries[group.first as usize..end as usize] {
-                    let mut chars = entry_text(entry).chars();
-                    let (Some(ch), None) = (chars.next(), chars.next()) else {
-                        continue;
-                    };
-                    let reading = reading.get_or_insert_with(|| {
-                        group
-                            .code
-                            .iter()
-                            .map(|id| syllables[*id as usize].as_str())
-                            .collect::<Vec<_>>()
-                            .join("")
-                    });
-                    let readings = character_pinyin.entry(ch).or_default();
-                    if !readings.contains(reading) {
-                        readings.push(reading.clone());
-                    }
-                }
-            }
-        }
+        let (syllable_count, spelling_count, group_count, entry_count) = parse_header(&mut reader)?;
+        let syllables = read_syllables(&mut reader, syllable_count)?;
+        let spellings = read_spellings(&mut reader, spelling_count, syllable_count)?;
+        let mut groups = read_groups(&mut reader, group_count, syllable_count)?;
+        let (entries, text) = read_entries(&mut reader, entry_count)?;
+        assign_group_ranges(&mut groups, entry_count)?;
+        let character_pinyin = build_character_pinyin(&groups, &entries, &text, &syllables);
         Ok(Self {
             character_pinyin,
             spellings,
@@ -241,6 +132,170 @@ impl SoundToCharShapeIndex {
             .get(index)
             .is_some_and(|group| group.code.starts_with(code))
     }
+}
+
+/// 读取魔数与四个计数（音节 / 拼写 / 组 / 词条）。
+fn parse_header(reader: &mut Reader<'_>) -> Result<(usize, usize, usize, usize)> {
+    if reader.take(8)? != MAGIC {
+        bail!("bad magic");
+    }
+    let syllable_count = reader.u32()? as usize;
+    let spelling_count = reader.u32()? as usize;
+    let group_count = reader.u32()? as usize;
+    let entry_count = reader.u32()? as usize;
+    // 组码是 `u16`：音节 id 超出该宽度时无法与任何组码相等，且 `collect_chunks`
+    // 的 `edge.syllable as u16` 会把它静默截断成**别的**音节而查到错误的组。
+    if syllable_count > u16::MAX as usize {
+        bail!("syllable count exceeds the group code width: {syllable_count}");
+    }
+    Ok((syllable_count, spelling_count, group_count, entry_count))
+}
+
+/// 读取音节表（每项为 UTF-8 字节串）。
+fn read_syllables(reader: &mut Reader<'_>, syllable_count: usize) -> Result<Vec<String>> {
+    let mut syllables = Vec::with_capacity(reader.capacity(syllable_count, MIN_SYLLABLE_BYTES));
+    for _ in 0..syllable_count {
+        syllables.push(String::from_utf8(reader.bytes()?.to_vec())?);
+    }
+    Ok(syllables)
+}
+
+/// 读取拼写表；逐条校验音节 id 与类型字节。
+fn read_spellings(
+    reader: &mut Reader<'_>,
+    spelling_count: usize,
+    syllable_count: usize,
+) -> Result<Vec<SpellingEntry>> {
+    let mut spellings = Vec::with_capacity(reader.capacity(spelling_count, MIN_SPELLING_BYTES));
+    for _ in 0..spelling_count {
+        let key = reader.bytes()?.to_vec();
+        let alt_count = reader.u8()? as usize;
+        let mut alts = Vec::with_capacity(alt_count);
+        for _ in 0..alt_count {
+            let syllable = reader.u32()?;
+            let kind = reader.u8()?;
+            // 解析期校验：音节 id 必须落在音节表内（否则建边/查组越界）。
+            if syllable as usize >= syllable_count {
+                bail!("spelling syllable id out of range: {syllable} >= {syllable_count}");
+            }
+            if kind > TYPE_ABBREV {
+                bail!("unknown spelling kind: {kind}");
+            }
+            alts.push((syllable, kind));
+        }
+        spellings.push((key, alts));
+    }
+    Ok(spellings)
+}
+
+/// 读取词条组；组内音节 id 逐条校验，词条区间留待回填。
+fn read_groups(
+    reader: &mut Reader<'_>,
+    group_count: usize,
+    syllable_count: usize,
+) -> Result<Vec<Group>> {
+    let mut groups = Vec::with_capacity(reader.capacity(group_count, MIN_GROUP_BYTES));
+    for _ in 0..group_count {
+        let count = reader.u8()? as usize;
+        let mut code = Vec::with_capacity(count);
+        for _ in 0..count {
+            let id = reader.u16()?;
+            if id as usize >= syllable_count {
+                bail!("group syllable id out of range: {id} >= {syllable_count}");
+            }
+            code.push(id);
+        }
+        let entries = reader.u32()?;
+        groups.push(Group {
+            code,
+            first: 0,
+            count: entries,
+        });
+    }
+    Ok(groups)
+}
+
+/// 读取词条与文本池（文本池偏移按 `u32` 记录）。
+fn read_entries(reader: &mut Reader<'_>, entry_count: usize) -> Result<(Vec<Entry>, String)> {
+    let mut entries = Vec::with_capacity(reader.capacity(entry_count, MIN_ENTRY_BYTES));
+    let mut text = String::new();
+    for _ in 0..entry_count {
+        let weight = f64::from(reader.u32()?);
+        let bytes = reader.bytes()?;
+        let offset = u32::try_from(text.len()).context("text pool exceeds u32 offsets")?;
+        text.push_str(std::str::from_utf8(bytes)?);
+        entries.push(Entry {
+            weight,
+            offset,
+            len: bytes.len() as u16,
+        });
+    }
+    Ok((entries, text))
+}
+
+/// 回填每组的词条区间（`first` 累加，必须在界内且与词条总数一致）。
+fn assign_group_ranges(groups: &mut [Group], entry_count: usize) -> Result<()> {
+    // 组 → 词条区间：`checked_add` 保证偏移不 `u32` 回绕（回绕能骗过末尾的
+    // 「总数一致」校验，随后在按组切片处越界 panic），并逐组保证
+    // `first + count <= entry_count`（切片的实际边界依据）。
+    let mut first = 0u32;
+    for group in groups.iter_mut() {
+        group.first = first;
+        first = first
+            .checked_add(group.count)
+            .context("group entry offsets overflow")?;
+        if first as usize > entry_count {
+            bail!("group entry count exceeds the entry count: {first} > {entry_count}");
+        }
+    }
+    if first as usize != entry_count {
+        bail!("entry count mismatch");
+    }
+    Ok(())
+}
+
+/// 构建单字读音倒排。
+fn build_character_pinyin(
+    groups: &[Group],
+    entries: &[Entry],
+    text: &str,
+    syllables: &[String],
+) -> hashbrown::HashMap<char, Vec<String>> {
+    // 单字读音倒排：组内音节串按源序收集，去重。
+    let mut character_pinyin: hashbrown::HashMap<char, Vec<String>> = hashbrown::HashMap::new();
+    {
+        let entry_text = |entry: &Entry| -> &str {
+            let start = entry.offset as usize;
+            &text[start..start + entry.len as usize]
+        };
+        for group in groups {
+            // 音节 id 与组区间均已在上方校验 ⇒ 索引与切片在界内。
+            let end = group.first + group.count;
+            // 读音串**按需**构造：真实索引 600,869 组里只有
+            // 412 组含单字词条，先前的「每组 `Vec<&str>` + `join`」在首次反查时
+            // 白付约 60 万次分配。
+            let mut reading: Option<String> = None;
+            for entry in &entries[group.first as usize..end as usize] {
+                let mut chars = entry_text(entry).chars();
+                let (Some(ch), None) = (chars.next(), chars.next()) else {
+                    continue;
+                };
+                let reading = reading.get_or_insert_with(|| {
+                    group
+                        .code
+                        .iter()
+                        .map(|id| syllables[*id as usize].as_str())
+                        .collect::<Vec<_>>()
+                        .join("")
+                });
+                let readings = character_pinyin.entry(ch).or_default();
+                if !readings.contains(reading) {
+                    readings.push(reading.clone());
+                }
+            }
+        }
+    }
+    character_pinyin
 }
 
 /// 载入目录序列中首个存在的索引（用户目录 → 共享目录；`.gz` 与未压缩皆可）。

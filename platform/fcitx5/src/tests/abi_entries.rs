@@ -231,6 +231,15 @@ fn surrounding_via_abi_tolerates_null_and_invalid() {
         1
     );
 
+    unavailable_surrounding_clears_the_state(engine, session);
+    null_surrounding_text_clears_the_state(engine, session);
+    negative_cursor_clamps_to_zero(engine, session, &text);
+    unsafe { hux_engine_free(engine) };
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `valid = 0` / 文本指针为空都按「应用不可用」清空会话态。
+fn unavailable_surrounding_clears_the_state(engine: *mut Engine, session: u64) {
     // 应用不支持周边文本（valid = 0）：清空。
     assert_eq!(
         unsafe { hux_engine_set_surrounding(engine, session, std::ptr::null(), 0, 0) },
@@ -244,7 +253,10 @@ fn surrounding_via_abi_tolerates_null_and_invalid() {
             && state.sessions[&session].reverse_lookup.cursor == 0,
         "不可用应清空字反查态"
     );
+}
 
+/// `valid` 仍为 1 但文本指针为空：同「应用不可用」。
+fn null_surrounding_text_clears_the_state(engine: *mut Engine, session: u64) {
     // 文本指针为空（valid 仍为 1）：同「不可用」。
     assert_eq!(
         unsafe { hux_engine_set_surrounding(engine, session, std::ptr::null(), 0, 1) },
@@ -256,7 +268,10 @@ fn surrounding_via_abi_tolerates_null_and_invalid() {
             .valid,
         "空文本指针应清空字反查态"
     );
+}
 
+/// 负光标夹到 0（字符制光标不可能为负）。
+fn negative_cursor_clamps_to_zero(engine: *mut Engine, session: u64, text: &CString) {
     // 负光标：夹到 0（字符制光标不可能为负）。
     assert_eq!(
         unsafe { hux_engine_set_surrounding(engine, session, text.as_ptr(), -1, 1) },
@@ -268,6 +283,4 @@ fn surrounding_via_abi_tolerates_null_and_invalid() {
             && state.sessions[&session].reverse_lookup.cursor == 0,
         "负光标夹到 0"
     );
-    unsafe { hux_engine_free(engine) };
-    std::fs::remove_dir_all(&dir).ok();
 }

@@ -49,135 +49,240 @@ pub fn has_complete_candidate(
     }
     let required = required_text_prefix;
     if required.is_empty() && excluded_text.is_none() && !group_eligible_only && lock.is_none() {
-        let mut reachable = vec![false; raw.len() + 1];
-        reachable[0] = true;
-        for position in 0..raw.len() {
-            if !reachable[position] {
-                continue;
+        return raw_is_reachable(&raw, lexicon, allow_duplicate_single);
+    }
+    constrained_complete(
+        &raw,
+        lexicon,
+        required,
+        excluded_text,
+        group_eligible_only,
+        allow_duplicate_single,
+        lock,
+    )
+}
+
+/// 无附加约束时的快速判定：布尔前沿能否覆盖整串输入。
+fn raw_is_reachable(raw: &[u8], lexicon: &Lexicon, allow_duplicate_single: bool) -> bool {
+    let mut reachable = vec![false; raw.len() + 1];
+    reachable[0] = true;
+    for position in 0..raw.len() {
+        if !reachable[position] {
+            continue;
+        }
+        for &code_length in &lexicon.lengths {
+            if position + code_length > raw.len() {
+                break;
             }
-            for &code_length in &lexicon.lengths {
-                if position + code_length > raw.len() {
-                    break;
-                }
-                let Ok(code) = std::str::from_utf8(&raw[position..position + code_length]) else {
-                    continue;
-                };
-                let Some(candidates) = lexicon.codes.get(code) else {
-                    continue;
-                };
-                let (selected_rank, consumed_end) = parse_selector(&raw, position + code_length);
-                let whole_input_edge = position == 0 && consumed_end == raw.len();
-                if raw.len() > 1 && consumed_end - position < 2 {
-                    continue;
-                }
-                if !eligible_candidates(
-                    candidates,
-                    selected_rank,
-                    whole_input_edge,
-                    allow_duplicate_single,
-                )
-                .is_empty()
-                {
-                    reachable[consumed_end] = true;
-                }
+            let Some((consumed_end, selected)) =
+                edge_candidates(raw, position, code_length, lexicon, allow_duplicate_single)
+            else {
+                continue;
+            };
+            if !selected.is_empty() {
+                reachable[consumed_end] = true;
             }
         }
-        return reachable[raw.len()];
     }
+    reachable[raw.len()]
+}
 
-    let first_ranks_only = group_eligible_only && !has_selection_suffix(&raw);
-    let stride = excluded_text.map(|text| text.len() + 2).unwrap_or(1);
-    let mut states: Vec<HashSet<usize>> = (0..=raw.len()).map(|_| HashSet::new()).collect();
-    let mut start = 0usize;
-    let mut matched = 0usize;
-    let mut excluded = 0usize;
+/// 约束扫描的起点：输入位移、已匹配前缀长度与已排除文本长度。
+struct ScanStart {
+    /// 扫描从此位移开始。
+    position: usize,
+    /// 已匹配的必配前缀长度。
+    matched: usize,
+    /// 已排除文本的进度（等于排除文本长度表示已失败）。
+    excluded: usize,
+}
+
+impl ScanStart {
+    /// 起点已在输入末端时的判定：前缀必须配齐且排除文本未命中。
+    fn complete(&self, required: &str, excluded_text: Option<&str>) -> bool {
+        self.matched == required.len()
+            && excluded_text
+                .map(|text| self.excluded != text.len())
+                .unwrap_or(true)
+    }
+}
+
+/// 约束扫描的只读上下文：输入、必配前缀、排除文本与资格开关。
+struct ScanStream<'a> {
+    /// 归一化输入。
+    raw: &'a [u8],
+    /// 必配文本前缀。
+    required: &'a str,
+    /// 排除文本（命中即失败）。
+    excluded_text: Option<&'a str>,
+    /// 打包步长（`excluded_text.len() + 2`）。
+    stride: usize,
+    /// 是否只接受首位候选。
+    first_ranks_only: bool,
+    /// 是否允许重复单字。
+    allow_duplicate_single: bool,
+}
+
+/// 校验锁前缀（须同时匹配输入与已确认文本）并求扫描起点；不匹配时返回 `None`。
+fn scan_start(
+    raw: &[u8],
+    required: &str,
+    excluded_text: Option<&str>,
+    lock: Option<&DecodeLock<'_>>,
+) -> Option<ScanStart> {
+    let mut start = ScanStart {
+        position: 0,
+        matched: 0,
+        excluded: 0,
+    };
     if let Some(lock) = lock {
         // 参照：锁前缀必须同时匹配输入与已确认文本，扫描自锁末端开始。
         let prefix = normalize(lock.raw);
-        matched = required.len().min(lock.text.len());
+        start.matched = required.len().min(lock.text.len());
         if !raw.starts_with(&prefix)
-            || required.as_bytes().get(..matched) != lock.text.as_bytes().get(..matched)
+            || required.as_bytes().get(..start.matched) != lock.text.as_bytes().get(..start.matched)
         {
-            return false;
+            return None;
         }
-        start = prefix.len();
+        start.position = prefix.len();
         if let Some(excluded_text) = excluded_text {
-            excluded = if excluded_text.as_bytes().starts_with(lock.text.as_bytes()) {
+            start.excluded = if excluded_text.as_bytes().starts_with(lock.text.as_bytes()) {
                 lock.text.len()
             } else {
                 excluded_text.len() + 1
             };
         }
-        if start == raw.len() {
-            return matched == required.len()
-                && excluded_text
-                    .map(|text| excluded != text.len())
-                    .unwrap_or(true);
+    }
+    Some(start)
+}
+
+/// 由位置 `position` 上长度为 `code_length` 的一条码边取可展开候选；
+/// 返回（消费末端，候选集），无可用边时返回 `None`。
+fn edge_candidates<'a>(
+    raw: &[u8],
+    position: usize,
+    code_length: usize,
+    lexicon: &'a Lexicon,
+    allow_duplicate_single: bool,
+) -> Option<(usize, Vec<&'a CodeEntry>)> {
+    let code_end = position + code_length;
+    let code = std::str::from_utf8(&raw[position..code_end]).ok()?;
+    let candidates = lexicon.codes.get(code)?;
+    let (selected_rank, consumed_end) = parse_selector(raw, code_end);
+    let whole_input_edge = position == 0 && consumed_end == raw.len();
+    if raw.len() > 1 && consumed_end - position < 2 {
+        return None;
+    }
+    Some((
+        consumed_end,
+        eligible_candidates(
+            candidates,
+            selected_rank,
+            whole_input_edge,
+            allow_duplicate_single,
+        ),
+    ))
+}
+
+/// 由一条边推进所有打包状态；命中完整候选（配齐前缀且排除文本未命中）时返回 `true`。
+fn advance_scan(
+    states: &mut [HashSet<usize>],
+    packed_states: &[usize],
+    selected: &[&CodeEntry],
+    consumed_end: usize,
+    stream: &ScanStream<'_>,
+) -> bool {
+    for &packed in packed_states {
+        let matched_length = packed / stream.stride;
+        for candidate in selected {
+            let Some(next_matched) =
+                advance_required_prefix(stream.required, matched_length, &candidate.text)
+            else {
+                continue;
+            };
+            if stream.first_ranks_only
+                && candidate.rank != 1
+                && !(stream.allow_duplicate_single && candidate.text.chars().count() == 1)
+            {
+                continue;
+            }
+            let mut next_excluded = packed % stream.stride;
+            if let Some(excluded) = stream.excluded_text
+                && next_excluded <= excluded.len()
+            {
+                let tail = &excluded.as_bytes()[next_excluded..];
+                if tail.starts_with(candidate.text.as_bytes()) {
+                    next_excluded += candidate.text.len();
+                } else {
+                    next_excluded = excluded.len() + 1;
+                }
+            }
+            if consumed_end == stream.raw.len()
+                && next_matched == stream.required.len()
+                && stream
+                    .excluded_text
+                    .map(|text| next_excluded != text.len())
+                    .unwrap_or(true)
+            {
+                return true;
+            }
+            states[consumed_end].insert(next_matched * stream.stride + next_excluded);
         }
     }
-    states[start].insert(matched * stride + excluded);
-    for position in start..raw.len() {
+    false
+}
+
+/// 有附加约束时的完整判定：锁前缀、文本前缀、排除文本与资格过滤共同约束。
+fn constrained_complete(
+    raw: &[u8],
+    lexicon: &Lexicon,
+    required: &str,
+    excluded_text: Option<&str>,
+    group_eligible_only: bool,
+    allow_duplicate_single: bool,
+    lock: Option<&DecodeLock<'_>>,
+) -> bool {
+    let first_ranks_only = group_eligible_only && !has_selection_suffix(raw);
+    let stride = excluded_text.map(|text| text.len() + 2).unwrap_or(1);
+    let mut states: Vec<HashSet<usize>> = (0..=raw.len()).map(|_| HashSet::new()).collect();
+    let start = match scan_start(raw, required, excluded_text, lock) {
+        Some(start) => start,
+        None => return false,
+    };
+    if start.position == raw.len() {
+        return start.complete(required, excluded_text);
+    }
+    states[start.position].insert(start.matched * stride + start.excluded);
+    let stream = ScanStream {
+        raw,
+        required,
+        excluded_text,
+        stride,
+        first_ranks_only,
+        allow_duplicate_single,
+    };
+    for position in start.position..raw.len() {
         if states[position].is_empty() {
             continue;
         }
         let packed_states: Vec<usize> = states[position].iter().copied().collect();
         for &code_length in &lexicon.lengths {
-            let code_end = position + code_length;
-            if code_end > raw.len() {
+            if position + code_length > raw.len() {
                 break;
             }
-            let Ok(code) = std::str::from_utf8(&raw[position..code_end]) else {
+            let Some((consumed_end, selected)) =
+                edge_candidates(raw, position, code_length, lexicon, allow_duplicate_single)
+            else {
                 continue;
             };
-            let Some(candidates) = lexicon.codes.get(code) else {
-                continue;
-            };
-            let (selected_rank, consumed_end) = parse_selector(&raw, code_end);
-            let whole_input_edge = position == 0 && consumed_end == raw.len();
-            if raw.len() > 1 && consumed_end - position < 2 {
-                continue;
-            }
-            let selected = eligible_candidates(
-                candidates,
-                selected_rank,
-                whole_input_edge,
-                allow_duplicate_single,
-            );
-            for &packed in &packed_states {
-                let matched_length = packed / stride;
-                for candidate in &selected {
-                    let Some(next_matched) =
-                        advance_required_prefix(required, matched_length, &candidate.text)
-                    else {
-                        continue;
-                    };
-                    if first_ranks_only
-                        && candidate.rank != 1
-                        && !(allow_duplicate_single && candidate.text.chars().count() == 1)
-                    {
-                        continue;
-                    }
-                    let mut next_excluded = packed % stride;
-                    if let Some(excluded) = excluded_text
-                        && next_excluded <= excluded.len()
-                    {
-                        let tail = &excluded.as_bytes()[next_excluded..];
-                        if tail.starts_with(candidate.text.as_bytes()) {
-                            next_excluded += candidate.text.len();
-                        } else {
-                            next_excluded = excluded.len() + 1;
-                        }
-                    }
-                    if consumed_end == raw.len()
-                        && next_matched == required.len()
-                        && excluded_text
-                            .map(|text| next_excluded != text.len())
-                            .unwrap_or(true)
-                    {
-                        return true;
-                    }
-                    states[consumed_end].insert(next_matched * stride + next_excluded);
-                }
+            if advance_scan(
+                &mut states,
+                &packed_states,
+                &selected,
+                consumed_end,
+                &stream,
+            ) {
+                return true;
             }
         }
     }

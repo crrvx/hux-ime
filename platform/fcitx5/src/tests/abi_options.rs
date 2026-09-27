@@ -111,6 +111,14 @@ fn settings_options_field_by_field() {
     assert_eq!(applied, 1, "应用非缺省设置应报告已应用");
     let back = unsafe { &(*engine).settings };
 
+    every_settings_field_round_trips(back, &input);
+    options_field_names_match_the_abi_table();
+    unsafe { crate::abi::hux_engine_free(engine) };
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// 往返后每个设置字段都回到输入值（顺序 = `HUX_OPTIONS_FIELDS` 的声明序）。
+fn every_settings_field_round_trips(back: &Settings, input: &Settings) {
     // 逐字段核对（顺序 = `HUX_OPTIONS_FIELDS` 的声明序）：往返后必须回到输入值。
     // 标量字段逐字相等；四个键表比到「内核 `repr()` 规范形」——键名的别名
     // （如 `Page_Down` → `Next`）在这里归一，不算搬运失败。
@@ -163,7 +171,10 @@ fn settings_options_field_by_field() {
     );
     assert_eq!(back.full_charset, input.full_charset, "full_charset");
     assert_eq!(back.filter_non_han, input.filter_non_han, "filter_non_han");
+}
 
+/// C ABI 字段名序列与上面逐字段断言的顺序逐项一致。
+fn options_field_names_match_the_abi_table() {
     // 表与结构体同源：字段名序列必须与 C ABI 的字段表逐项一致（本用例逐字段断言的顺序即它）。
     let names: Vec<String> = HUX_OPTIONS_FIELDS
         .iter()
@@ -194,6 +205,4 @@ fn settings_options_field_by_field() {
         ],
         "`HUX_OPTIONS_FIELDS` 的顺序即本用例的断言顺序"
     );
-    unsafe { crate::abi::hux_engine_free(engine) };
-    std::fs::remove_dir_all(&dir).ok();
 }

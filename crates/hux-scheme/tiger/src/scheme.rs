@@ -8,34 +8,35 @@
 //! 平台原先直接编排的处理器 + 宿主链 + 重建 + 证据流程，收在这里。
 
 use hashbrown::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use hux_core::host::{self, HostOptions};
+use hux_core::host::HostOptions;
 use hux_core::key::KeyEvent;
 use hux_core::learning::{Event, LearningIndex};
 use hux_core::punct::PunctTable;
 use hux_core::scheme::{
-    ConfigError, KeyOutcome, OptionDecl, Scheme, SchemeConfig, SessionId, asset_paths, find_asset,
+    ConfigError, KeyOutcome, OptionDecl, Scheme, SchemeConfig, SessionId, asset_paths,
 };
 use hux_core::session::Context;
 
 use crate::char_to_sound_shape;
 use crate::decode::Decoder;
 use crate::interaction::{
-    CompositionBuilder, HostCommitObserver, K_CHAR_TO_SOUND_SHAPE_KEY, K_SOUND_TO_CHAR_SHAPE_KEY,
-    LiveLearning, ProcessorEnv, ProcessorResult, SentenceState, buffered_text, process_key_event,
-    reset_early_evidence, select_candidate_at, update_notifier,
+    CompositionBuilder, LiveLearning, ProcessorEnv, ProcessorResult, SentenceState, buffered_text,
+    process_key_event, reset_early_evidence, select_candidate_at, update_notifier,
 };
 use crate::lexical;
-use crate::lexicon::{LEXICAL_FILE, Lexicon, SUPPLEMENT_FILE, Supplement};
+use crate::lexicon::{LEXICAL_FILE, Lexicon, Supplement};
 use crate::ngram::MobileModel;
 
 mod assets;
 mod config;
+mod wiring;
 
 pub use assets::{ASSETS, SCHEME_CONFIG_ROLES, SCHEME_ID};
 use assets::{OPTION_DECLARATIONS, SYMBOLS_FILE};
 use config::{Config, config_diagnostics};
+use wiring::{forward_to_host, supplement_dir, sync_trigger_keys};
 
 /// 每会话状态（原先由平台 `Session` 持有）。
 struct TigerSession {
@@ -128,48 +129,8 @@ impl TigerScheme {
         (scheme, notes)
     }
 
-    /// 学习 mode 串（参照 `prepare_learning`）：关闭 Tab 学习 → 空串 = 不记录。
-    /// 模式串自带版本号（`c69c1a8` 起 v1→v2）：事件与索引按 mode 分区，
-    /// 旧版记录仍留在库中但不再命中。
-    fn mode_from_config(&self) -> String {
-        if !self.config.learning_on_tab {
-            return String::new();
-        }
-        format!(
-            "sentence-v2|rules={}|optimal={}|dup={}",
-            self.learning_rules,
-            self.config.high_freq_limit,
-            u8::from(self.config.allow_duplicate_single)
-        )
-    }
-
     fn session_mut(&mut self, session: SessionId) -> Option<&mut TigerSession> {
         self.sessions.get_mut(&session.0)
-    }
-}
-
-/// 补充短语所在目录：在**全部**数据目录中取首个存在该文件者。
-///
-/// 与 lexical / symbols 一致走资产查找——若只读 `dirs.first()`（用户目录恒排第一），
-/// 一键安装把数据装到系统级目录时该文件会永不生效。
-fn supplement_dir(dirs: &[PathBuf]) -> Option<PathBuf> {
-    find_asset(dirs, SUPPLEMENT_FILE).and_then(|path| path.parent().map(Path::to_path_buf))
-}
-
-/// 触发键（属性）：把两项触发键的 rime 键名列表（逗号分隔）交给 core 解析 / 匹配。
-/// 配置变更后在下一次按键 / 重建时惰性同步（属性仅在按键处理中读取）。
-fn sync_trigger_keys(context: &mut Context, config: &Config) {
-    for (property, value) in [
-        (
-            K_SOUND_TO_CHAR_SHAPE_KEY,
-            config.reverse_lookup_pronunciation_keys.join(","),
-        ),
-        (
-            K_CHAR_TO_SOUND_SHAPE_KEY,
-            config.reverse_lookup_character_keys.join(","),
-        ),
-    ] {
-        hux_core::session::set_property_if_changed(context, property, &value);
     }
 }
 
@@ -339,23 +300,15 @@ impl Scheme for TigerScheme {
         .map_err(|error| error.to_string())?;
         match result {
             ProcessorResult::Consume => Ok(KeyOutcome::Consumed),
-            // 参照链：处理器未消费的键交宿主等价物（selector/navigator/express_editor 等）。
-            ProcessorResult::Forward => {
-                let mut observer = HostCommitObserver {
-                    decoder,
-                    live: &mut state.live,
-                    state: &state.state,
-                    now,
-                };
-                // 契约结果类型即宿主链结果类型（`KeyOutcome` ≡ `HostResult`），无需转换。
-                Ok(host::process_key(
-                    key,
-                    context,
-                    punct.as_ref(),
-                    host_options,
-                    Some(&mut observer),
-                ))
-            }
+            ProcessorResult::Forward => Ok(forward_to_host(
+                key,
+                context,
+                punct.as_ref(),
+                host_options,
+                decoder,
+                state,
+                now,
+            )),
         }
     }
 

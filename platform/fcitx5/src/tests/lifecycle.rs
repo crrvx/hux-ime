@@ -50,6 +50,14 @@ fn engine_applies_learning_after_key() {
         "学习库就绪时 mode 串非空"
     );
 
+    let baseline = baseline_candidate_order(&mut engine);
+    committed_candidate_is_recorded_as_a_learning_event(&mut engine);
+    learned_index_reorders_the_candidates(&mut engine, &baseline);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// 打 `abab` 并返回基线候选序（两条同码 `ab` 边）。
+fn baseline_candidate_order(engine: &mut TestEngine) -> Vec<String> {
     // 基线：`abab`（两条同码 `ab` 边）的候选序。
     for code in *b"abab" {
         engine.key(u32::from(code), 0, false);
@@ -65,7 +73,11 @@ fn engine_applies_learning_after_key() {
         ],
         "夹具基线候选序"
     );
+    baseline
+}
 
+/// Tab 锁定第 2 个候选 → 大写 A 交宿主链提交：宿主提交点写入纠错学习事件。
+fn committed_candidate_is_recorded_as_a_learning_event(engine: &mut TestEngine) {
     // Tab 锁定第 2 个候选 → 大写 A 交宿主链提交：宿主提交点写入纠错学习事件。
     let before = engine.engine.learning.index_version();
     assert!(engine.key(0xff09, 0, false), "Tab 应被消费");
@@ -76,7 +88,10 @@ fn engine_applies_learning_after_key() {
         before,
         "宿主提交应写入学习库（库版本变化）"
     );
+}
 
+/// 学习后重打同一串：候选序必须随新索引而变（索引未被应用到解码器时保持不变）。
+fn learned_index_reorders_the_candidates(engine: &mut TestEngine, baseline: &[String]) {
     // 学习后重打同一串：候选序必须随新索引而变——索引未被应用到解码器时保持不变。
     UPDATES.lock().unwrap().clear();
     for code in *b"abab" {
@@ -98,7 +113,6 @@ fn engine_applies_learning_after_key() {
         "学习后候选序（学的 `乙甲` 一侧上浮）"
     );
     assert!(engine.engine.learning.store_ready(), "学习库应保持就绪");
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]

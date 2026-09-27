@@ -21,6 +21,23 @@ pub(crate) fn cstring_lossy(text: &str) -> CString {
     }
 }
 
+/// 无高亮候选（如未翻译段）时的回退预编辑：「缓冲 + 实况输入」，光标按字节对应。
+fn fallback_preedit(buffered: &str, live: &str, live_caret: usize) -> (String, usize) {
+    let mut text = String::new();
+    text.push_str(buffered);
+    if !buffered.is_empty() && !live.is_empty() {
+        text.push(' ');
+    }
+    let prefix_length = if buffered.is_empty() {
+        0
+    } else {
+        buffered.len() + usize::from(!live.is_empty())
+    };
+    text.push_str(live);
+    let cursor = (prefix_length + live_caret).min(text.len());
+    (text, cursor)
+}
+
 impl Engine {
     pub(crate) fn push_update(&self, session: &Session) {
         let Some(host) = &self.host else {
@@ -29,69 +46,7 @@ impl Engine {
         let Some(update) = host.update else {
             return;
         };
-        let buffered = self.scheme.buffered_text(&session.context);
-        let live_bytes = session.context.live_input();
-        let live = String::from_utf8_lossy(live_bytes).into_owned();
-        // 参照 librime `Composition::GetPreedit` + 参照 Lua 的候选 preedit：
-        // 高亮候选的 preedit（「按字分码」，含缓冲前缀与音反查前缀）始终优先；
-        // 组合（光标）之后的原始输入原样接在其后——左/右移动时保持按字分码，
-        // 光标落在分码文本末尾、原始尾部之前。
-        let highlighted = session
-            .context
-            .composition
-            .back()
-            .and_then(|segment| segment.selected_candidate())
-            .map(|candidate| candidate.preedit.clone())
-            .unwrap_or_default();
-        // 预编辑内容（`PreeditMode`）：候选分码（默认，历史行为）/ 原始输入 / 不显示。
-        // 字反查段不下发预编辑：避免应用端 marked text 锁住光标（←/→ 无法移动），
-        // 故与「不显示」同路，在这里一次算出终值——不在末尾覆盖已算好的 `preedit` / `cursor`。
-        let preedit_mode = self.settings.preedit_mode;
-        let tagged = self.reverse_lookup_tagged(session);
-        let (mut preedit, cursor) = if tagged || preedit_mode == PreeditMode::Hidden {
-            (String::new(), 0)
-        } else if preedit_mode == PreeditMode::CandidateCode && !highlighted.is_empty() {
-            let cursor = highlighted.len();
-            // 末段 `end` 为组合输入（含缓冲 `~` 标记）的字节位；换算到实况输入。
-            let marker =
-                usize::from(!buffered.is_empty() && session.context.input().first() == Some(&b'~'));
-            let composed_end = session
-                .context
-                .composition
-                .back()
-                .map(|segment| segment.end)
-                .unwrap_or(0)
-                .saturating_sub(marker)
-                .min(live_bytes.len());
-            let mut text = highlighted;
-            text.push_str(&String::from_utf8_lossy(&live_bytes[composed_end..]));
-            (text, cursor)
-        } else {
-            // 无高亮候选（如未翻译段）：回退「缓冲 + 实况输入」，光标按字节对应。
-            let mut text = String::new();
-            text.push_str(&buffered);
-            if !buffered.is_empty() && !live.is_empty() {
-                text.push(' ');
-            }
-            let prefix_length = if buffered.is_empty() {
-                0
-            } else {
-                buffered.len() + usize::from(!live.is_empty())
-            };
-            text.push_str(&live);
-            let cursor = (prefix_length + session.context.live_caret()).min(text.len());
-            (text, cursor)
-        };
-        // 参照 `Composition::GetPreedit`：段提示插在光标处（如音反查段的「〔拼音〕」）。
-        let prompt = session
-            .context
-            .composition
-            .back()
-            .map(|segment| segment.prompt.clone())
-            .unwrap_or_default();
-        if !tagged && preedit_mode == PreeditMode::CandidateCode && !prompt.is_empty() {
-            preedit.insert_str(cursor.min(preedit.len()), &prompt);
-        }
+        let (preedit, cursor) = self.preedit_and_cursor(session);
         let (mut texts, mut comments, selected) = match session.context.composition.back() {
             Some(segment) => (
                 segment
@@ -138,5 +93,60 @@ impl Engine {
                 aux_down.as_ptr(),
             );
         }
+    }
+
+    /// 本次下发的预编辑文本与光标：候选分码 / 原始输入 / 不显示三选一，再插段提示。
+    fn preedit_and_cursor(&self, session: &Session) -> (String, usize) {
+        let buffered = self.scheme.buffered_text(&session.context);
+        let live_bytes = session.context.live_input();
+        let live = String::from_utf8_lossy(live_bytes).into_owned();
+        // 参照 librime `Composition::GetPreedit` + 参照 Lua 的候选 preedit：
+        // 高亮候选的 preedit（「按字分码」，含缓冲前缀与音反查前缀）始终优先；
+        // 组合（光标）之后的原始输入原样接在其后——左/右移动时保持按字分码，
+        // 光标落在分码文本末尾、原始尾部之前。
+        let highlighted = session
+            .context
+            .composition
+            .back()
+            .and_then(|segment| segment.selected_candidate())
+            .map(|candidate| candidate.preedit.clone())
+            .unwrap_or_default();
+        // 预编辑内容（`PreeditMode`）：候选分码（默认，历史行为）/ 原始输入 / 不显示。
+        // 字反查段不下发预编辑：避免应用端 marked text 锁住光标（←/→ 无法移动），
+        // 故与「不显示」同路，在这里一次算出终值——不在末尾覆盖已算好的 `preedit` / `cursor`。
+        let preedit_mode = self.settings.preedit_mode;
+        let tagged = self.reverse_lookup_tagged(session);
+        let (mut preedit, cursor) = if tagged || preedit_mode == PreeditMode::Hidden {
+            (String::new(), 0)
+        } else if preedit_mode == PreeditMode::CandidateCode && !highlighted.is_empty() {
+            let cursor = highlighted.len();
+            // 末段 `end` 为组合输入（含缓冲 `~` 标记）的字节位；换算到实况输入。
+            let marker =
+                usize::from(!buffered.is_empty() && session.context.input().first() == Some(&b'~'));
+            let composed_end = session
+                .context
+                .composition
+                .back()
+                .map(|segment| segment.end)
+                .unwrap_or(0)
+                .saturating_sub(marker)
+                .min(live_bytes.len());
+            let mut text = highlighted;
+            text.push_str(&String::from_utf8_lossy(&live_bytes[composed_end..]));
+            (text, cursor)
+        } else {
+            fallback_preedit(&buffered, &live, session.context.live_caret())
+        };
+        // 参照 `Composition::GetPreedit`：段提示插在光标处（如音反查段的「〔拼音〕」）。
+        let prompt = session
+            .context
+            .composition
+            .back()
+            .map(|segment| segment.prompt.clone())
+            .unwrap_or_default();
+        if !tagged && preedit_mode == PreeditMode::CandidateCode && !prompt.is_empty() {
+            preedit.insert_str(cursor.min(preedit.len()), &prompt);
+        }
+        (preedit, cursor)
     }
 }
