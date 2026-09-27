@@ -120,10 +120,17 @@
 - **撇号音节切分与上游 librime 依赖**：`92a0b54` 的「按 `speller/delimiter` 切分音节」依赖上游 \
   librime 的 delimiter 修复 [rime/librime#1233](https://github.com/rime/librime/pull/1233)； \
   本机 librime 1.17.0 未含该修复 ⇒ 入库音反查金样里含撇号的段**无候选**（`apostrophe-*` 三例， \
-  背景见 [`../goldens/README.md`](../goldens/README.md)）。本仓只落地「识别模式放行 \
-  `` `^[a-z']*$` `` + 撇号保留在输入中」，**不实现音节切分**（反查段由本段独占、音节按拼写键前缀建边， \
-  拼写表不含 `'`）⇒ 行为与金样一致（注释见 `sound_to_char_shape::matches_pattern`）。 \
-  **回归**：上游修复并入后重生成 `key_sequence`/`sound_to_char_shape` 两份探针金样、复验 \
+  背景见 [`../goldens/README.md`](../goldens/README.md)）。
+- **本仓**：按方案意图**实现**该切分（`sound_to_char_shape::translate`：撇号在匹配拼写键时透明 \
+  跳过、但强制断音——音节与尾部补全都不得跨过；分隔符在预编辑里原样保留、输入当场可见， \
+  `` `zh'guo `` → `` `zh'guo ``，段首/段尾同样保留；另加本仓选择「连续撇号只保留第一个（多余的 \
+  丢弃、不录入）」，金样无该用例、同样登不出差异）⇒ 与 pin（未含修复的 librime）行为不同， \
+  **但登记不出差异**：这三个用例的重放夹具 \
+  只有 14 个音节（无 `xi`/`an`）⇒ 两边逐步记录逐字段相同，入表会被 `registry_is_falsifiable` 判成 \
+  「偏离已消失」，故仍走金样比对。**代价**：这项差异没有金样作证，只由 `sound_to_char_shape.rs` 的 \
+  单测覆盖（`translate_honors_syllable_delimiter` 等）并记在登记表旁的注释里；夹具补入 `xi`/`an` \
+  一类音节、重生成金样（须同步 sha 表）后才能转为登记项。
+- **回归**：上游修复并入后重生成 `key_sequence`/`sound_to_char_shape` 两份探针金样、复验 \
   `apostrophe-*`；若届时也并入 `feat/reverse-lookup`，③ 的两条登记项一并删除。
 
 ## ④ 宿主链交互：`Ctrl+BackSpace` / `Ctrl+Delete` 与不带修饰者同义（用户要求）

@@ -290,7 +290,11 @@ gzip -9 -n -c /tmp/lexical.tsv > goldens/lexical.tsv.gz
     音反查金样的撇号用例依赖上游 librime \
     的delimiter修复（[rime/librime#1233](https://github.com/rime/librime/pull/1233)；
   - `92a0b54` 的「按 `speller/delimiter` 切分音节」），本机 librime 1.17.0 未含该修复 ⇒ \
-    输入撇号后反查段**无候选**（金样如实记录）。真实索引（`data/tiger_sentence.pinyin.bin.gz`， \
+    输入撇号后反查段**无候选**（金样如实记录）；本仓已实现该切分（撇号透明跳过、强制断音； \
+    预编辑里原样保留撇号、输入当场可见，段首/段尾同样保留）， \
+    但这份金样登不出差异——夹具索引只有 14 个音节、无 `xi`/`an` ⇒ 三例在两边同样无候选 \
+    （见 [`../docs/upstream-deviations.md`](../docs/upstream-deviations.md) ③）。真实索引 \
+    （`data/tiger_sentence.pinyin.bin.gz`， \
     sha256 `18a0931a…`）由同一生成器产出，本地复验： \
     `python3 tools/generators/gen_pinyin_index.py --source _external/tiger-sentense-rime/PY_c.dict.yaml --out /tmp/pinyin.bin.gz && cmp /tmp/pinyin.bin.gz data/tiger_sentence.pinyin.bin.gz` \
     （参照检出须含 `898579f` 的 `PY_c.dict.yaml`）。
