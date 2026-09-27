@@ -26,7 +26,7 @@ CMake 侧用 `file(STRINGS … ENCODING UTF-8)` 显式读（别去掉那个选�
 - 码表四件套 `tiger_sentence.{codes,char_ranks,full_code_whitelist,supplement}.txt`： \
   取自上游 [`tiger-sentense-rime`](https://github.com/lvyww/tiger-sentense-rime)（GPL-3.0）， \
   与夹具 `goldens/lexicon/` 同内容（`supplement.txt` 仅注释中方案名改为「虎句」； \
-  本仓版 sha256 见 [`../goldens/README.md`](../goldens/README.md) 夹具表， \
+  本仓版 sha256 见 [`../goldens/PROVENANCE.md`](../goldens/PROVENANCE.md) 夹具表， \
   上游 pin 原文件 `538f7d60ae378235628a86e7ef20d24396453488fde950a88e52fdb6f558a5ac`）。
 - `tiger_sentence.codes.huma.txt`： \
   **追加码表**——虎码官方版（`2026.08.15`）单字表里**主表没有的字**（102,332 条、93,666 字）， \
@@ -67,7 +67,8 @@ CMake 侧用 `file(STRINGS … ENCODING UTF-8)` 显式读（别去掉那个选�
   主表放用户数据目录时追加表也要放**同一目录**（否则共享目录的 `huma` 表被静默忽略、字集退回  \
   9,794字），实际装载情况可由 `Lexicon::extra_code_tables()` 查；
 - 拼接后走同一条 `parse_codes_content`： \
-  `(text, code)` 去重保首见、同码内行序即 rank ⇒ **主表 rank、`optimal_single` 等派生标志逐位不变**， \
+  `(text, code)` 去重保首见、同码内行序即 rank ⇒ \
+  **主表 rank、`optimal_single` 等派生标志逐位不变**， \
   追加表只能在既有码上垫后或引入新码；
 - 追加表缺失 / 为空 / 不可读 / 是目录都不影响主表、也不报错——加表后请用 `check_code_tables.py`  \
   与`shipped_data` 测试确认生效；
@@ -82,8 +83,9 @@ CMake 侧用 `file(STRINGS … ENCODING UTF-8)` 显式读（别去掉那个选�
 1. **内容**：只写主表里**没有的字**的 `(字, 码)`——给主表已有字并官方码会改它的最优码（ \
    `optimal_single` true → false，「整串直出」奖励不再可达），就不是「只追加」了。 \
    格式同主表（每行 `<text>\t<code>`，`#` 与空行忽略，码只用小写 a–z）；同码内按权重降序。
-2. **登记四处**：`data/MANIFEST`（装 / 卸 / CMake 共用的唯一清单）、`REUSE.toml`（来源与许可标注）、 \
-   `docs/resources.md` 的「1. 方案数据」表、`goldens/README.md` 的 sha256 表（CI 逐行核对）。
+2. **登记四处**：`data/MANIFEST`（装 / 卸 / CMake 共用的唯一清单）、 \
+   `REUSE.toml`（来源与许可标注）、`docs/resources.md` 的「1. 方案数据」表、 \
+   `goldens/PROVENANCE.md` 的 sha256 表（CI 逐行核对）。
 3. **生成器**：`tools/generators/<name>.py`，读**不入库**的外部源（路径走环境变量， \
    如 `HUMA_DICT`）、确定且幂等；表头写明源、版本与源文件 sha256，便于追溯。
 4. **门槛**：`python3 tools/checks/check_code_tables.py`（命名口径 / 行格式 / 去重 / 只补缺字）、 \
@@ -96,9 +98,9 @@ CMake 侧用 `file(STRINGS … ENCODING UTF-8)` 显式读（别去掉那个选�
 两条代价（现测数据：`huma` 表 102,332 条、出厂口径装载 116,762 条）：
 
 - **装载成本**：release 库下仅主表约 17 ms / 常驻 19 MB； \
-  合并后满载约 140–156 ms / 常驻约 107 MB（实测峰值 170 MB；解析约 50 ms → 11–18 ms）。每次rebuild（ \
-  含 `apply_high_freq_limit` 与切这两个开关）都要重付——状态菜单切一次阻塞约 0.15 s（debug档约 1 s） \
-  。
+  合并后满载约 140–156 ms / 常驻约 107 MB（实测峰值 170 MB；解析约 50 ms → 11–18 ms）。 \
+  每次rebuild（含 `apply_high_freq_limit` 与切这两个开关）都要重付—— \
+  状态菜单切一次阻塞约 0.15 s（debug档约 1 s）。
 - **学习指纹**：码表内容（合并后）进 `sentence-v2|rules=<hash>`， \
   追加表一改既有学习记录就不再命中（库文件还在，属一次「学习失效」体感）； \
   出厂口径下指纹与只有主表时**不同**，关掉「启用全字集」也切到另一套分区。

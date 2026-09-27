@@ -5,10 +5,12 @@
 
 > **本文是活政策**：本仓有意偏离上游参照的**全部**登记、依据、可证伪期望值与回归做法。 \
 > 金样记录上游行为、**字节不动**；偏离按「期望差异集合 == 实测差异集合」表达。 \
-> 四类各一节（编号沿用原重构文档的分类，今并入 [`design.md`](design.md)）：**① 翻页 / 标点遮蔽修复**、**② addon 扩展**、 \
+> 四类各一节（编号沿用原重构文档的分类，今并入 [`design.md`](design.md)）： \
+> **① 翻页 / 标点遮蔽修复**、**② addon 扩展**、 \
 > **③ pin 差异**、**④ 宿主链交互**。历史见[`review-ledger.md`](review-ledger.md)， \
-> 结构与契约见 [`design.md`](design.md)，金样清单 / 格式 / 校验 / \
-> 重生成见 [`../goldens/README.md`](../goldens/README.md)。
+> 结构与契约见 [`design.md`](design.md)，金样清单 / 格式 / 校验见 \
+> [`../goldens/README.md`](../goldens/README.md)，重生成见 \
+> [`../goldens/REGENERATE.md`](../goldens/REGENERATE.md)。
 
 **⚖️ 已实施**：①②③ 登记在 \
 `crates/hux-scheme/tiger/tests/key_sequence_differential.rs` 的 `DEVIATIONS` \
@@ -21,24 +23,30 @@
 > `when: paging` 的「已翻过页」标签。落地与代价见下。
 
 - **缺陷依据**（上游 `abad411` `fix(rime): preserve punctuation learning …` 起）：
-  - 方案处理器在 `context.has_menu()` 时对**所有**可打印 ASCII 标点先「暂存学习 + 确认组合」再交标点表；
-  - 翻页绑定却只在宿主 `key_binder`（上游 schema 缺省 `-`（`when: paging`）/`=`（`when: has_menu`）， \
+  - 方案处理器在 `context.has_menu()` 时对**所有**可打印 ASCII 标点 \
+    先「暂存学习 + 确认组合」再交标点表；
+  - 翻页绑定却只在宿主 `key_binder`（上游 schema 缺省 \
+    `-`（`when: paging`）/`=`（`when: has_menu`）， \
     可另绑 `[`/`]`）⇒ 菜单可见时这些键**永远轮不到**翻页绑定；
   - `Page_Up`/`Page_Down`/`Tab` 不经该分支。
 - **最小复现**：`j a` + `equal` ⇒ 上游提交「一=」，本仓下翻一页（金样 `punct_menu_equal`）； \
   音反查 `` ` z = = `` / `` ` z = = - `` / `` ` z h o = - `` 同理 \
   （`nav-page-equal`/`nav-page-minus`/`nav-page-zho`）。(b)：`j a` + `minus`， \
-  上游因 `when: paging` 不成立提交「一-」，本仓按「菜单可见即拦截」上翻页（金样 `punct_menu_minus`）。
+  上游因 `when: paging` 不成立提交「一-」，本仓按「菜单可见即拦截」 \
+  上翻页（金样 `punct_menu_minus`）。
 - **本仓修法**（判据复用，避免两处条件漂移）：core 抽出**唯一**判据 \
   `hux_core::host::paging_action(context, options, key_event) -> Option<PagingDir>`—— \
   两侧同前置 `menu_available` = `!ascii_mode && has_menu`：命中 `page_up_keys` ⇒ `Up`、 \
   `page_down_keys` ⇒ `Down`；`key_binder` 与方案标点分支**共用**它，标点分支入口先问一次， \
   判为翻页则**不消费**（不 stage 学习、不确认组合），键落回宿主链翻页。 \
-  `ProcessorEnv` 新增 `host_options: &HostOptions`，平台 `TigerScheme` 把与宿主链同一份绑定传进处理器。
+  `ProcessorEnv` 新增 `host_options: &HostOptions`， \
+  平台 `TigerScheme` 把与宿主链同一份绑定传进处理器。
 - **用户决定 B 落地**：参照的 `-` 带 `when: paging`（`key_binder.cc:248-266` 的 `kWhenPaging` \
   **只看末段 `paging` 标签**，要先翻过页才吃该键）⇒ 改为「菜单可见即拦截」——`paging_action` 的 \
-  `Up` 分支由「命中 `page_up_keys` 且 `has_paging_tag`」改为「…且 `menu_available`」。`paging` 标签的 \
-  **唯一读取方**随之消失，按「不留写了但没人读的字段」删除 `mark_paging`/`has_paging_tag` 与全部写入点 \
+  `Up` 分支由「命中 `page_up_keys` 且 `has_paging_tag`」改为 \
+  「…且 `menu_available`」。`paging` 标签的 \
+  **唯一读取方**随之消失，按「不留写了但没人读的字段」 \
+  删除 `mark_paging`/`has_paging_tag` 与全部写入点 \
   （金样比对面不含标签，字节零变化）。**代价**：菜单可见时 `-`/`=`/`[`/`]` 不再能作为标点打出 \
   （被判为翻页而消费）；`ascii_mode` 或无菜单时仍照旧落标点。
 - **不受影响的路径**（逐条单测）：无菜单、非标点键、编辑/导航键、`Page_Up`/`Page_Down`、 \
@@ -85,7 +93,8 @@
 ## ② addon 扩展：数字直选（`tiger_sentence_digit_select`，出厂缺省 `true`）
 
 - **依据**：上游方案核心没有该选项（数字作为编码字符入串）；本仓按出厂缺省开启 ⇒ \
-  菜单可见时数字直选当前页候选（`processor` 的 `select_page_candidate`，走与 `space` 相同的确认/学习链）； \
+  菜单可见时数字直选当前页候选（`processor` 的 `select_page_candidate`， \
+  走与 `space` 相同的确认/学习链）； \
   平台侧开关 `hux_engine_option_value + HUX_OPTION_DIGIT_SELECT`。
 - **代价**：菜单可见时数字不再作为编码字符入串（与上游行为不同）；关掉该选项即回退上游路径。
 - **可证伪表达**：金样记录上游行为、重放按出厂缺省驱动，差异登记为 `AddonExtension` \
@@ -97,18 +106,19 @@
   `92a0b54` 撇号音节分隔）把撇号写进 `speller/delimiter`（`" "` → `" '"`）作为音节分隔符； \
   本仓音反查语义（识别模式 `` `^[a-z']*$` ``、撇号保留在输入、反查段内数字绝对索引、`;` 惰性）\
   追平该尖端，常量随之取 `" '"`。两个 pin 与参照提交见 \
-  [`../goldens/README.md`](../goldens/README.md)「来源与校验和」。
+  [`../goldens/PROVENANCE.md`](../goldens/PROVENANCE.md)「来源与校验和」。
 - **影响面**：仅「`'` + 数字/`;`」序列。本仓把 `ab'1` 切成 abc 段 `ab'` + raw 段 `1` \
   （上游主干是单段 `ab'1`）；**段结构本身不在比对面**（`preedit` 按设计不比对）⇒ \
   `apostrophe_digit_split`/`apostrophe_semicolon_split` 两例逐位通过。可见差异是**末段类型**： \
-  raw 末段（无菜单）⇒ `Up`/`Down`/`Page_*` **不被消费**。**代价**：与主干 pin 行为不同 ⇒ 需两条登记项， \
+  raw 末段（无菜单）⇒ `Up`/`Down`/`Page_*` **不被消费**。**代价**：与主干 pin 行为 \
+  不同 ⇒ 需两条登记项， \
   且改回 `" "` 等于回退上游改动。
 - **探针实测（决定性证据）**：同一探针（系统 librime 1.17.0）以 `PIN=92a0b54` 重跑 \
   `tools/generators/gen_key_sequence_golden.sh`，所得行与本仓**逐位相同**（`Page_Down` 后 \
   `consumed=0`）⇒ 差异源自**上游自己后续提交**。
 - **覆盖与守护**：金样新增 `apostrophe_digit_page`/`apostrophe_semicolon_page`（只增不改：旧内容是 \
   新文件的**严格前缀**；66 例/275 步 → **68 例/285 步**，sha 见 \
-  [`../goldens/README.md`](../goldens/README.md)），登记为 `BranchPinDelimiter`； \
+  [`../goldens/PROVENANCE.md`](../goldens/PROVENANCE.md)），登记为 `BranchPinDelimiter`； \
   单测 `abc_segmentor_splits_after_a_delimiter_before_a_digit` 钉住 `abc_segmentor` 的断段行为 \
   （`'` + 数字/`;` 断开、`'` + 首字母单段）。负向对照：常量改回 `" "` ⇒ 两条登记项报 \
   「登记的偏离已消失」并失败。
@@ -120,18 +130,19 @@
 - **撇号音节切分与上游 librime 依赖**：`92a0b54` 的「按 `speller/delimiter` 切分音节」依赖上游 \
   librime 的 delimiter 修复 [rime/librime#1233](https://github.com/rime/librime/pull/1233)； \
   本机 librime 1.17.0 未含该修复 ⇒ 入库音反查金样里含撇号的段**无候选**（`apostrophe-*` 三例， \
-  背景见 [`../goldens/README.md`](../goldens/README.md)）。
+  背景见 [`../goldens/PROVENANCE.md`](../goldens/PROVENANCE.md)）。
 - **本仓**：按方案意图**实现**该切分（`sound_to_char_shape::translate`：撇号在匹配拼写键时透明 \
   跳过、但强制断音——音节与尾部补全都不得跨过；分隔符在预编辑里原样保留、输入当场可见， \
   `` `zh'guo `` → `` `zh'guo ``，段首/段尾同样保留；另加本仓选择「连续撇号只保留第一个（多余的 \
-  丢弃、不录入）」，金样无该用例、同样登不出差异）⇒ 与 pin（未含修复的 librime）行为不同， \
-  **但登记不出差异**：这三个用例的重放夹具 \
-  只有 14 个音节（无 `xi`/`an`）⇒ 两边逐步记录逐字段相同，入表会被 `registry_is_falsifiable` 判成 \
-  「偏离已消失」，故仍走金样比对。**代价**：这项差异没有金样作证，只由 `sound_to_char_shape.rs` 的 \
-  单测覆盖（`translate_honors_syllable_delimiter` 等）并记在登记表旁的注释里；夹具补入 `xi`/`an` \
-  一类音节、重生成金样（须同步 sha 表）后才能转为登记项。
-- **回归**：上游修复并入后重生成 `key_sequence`/`sound_to_char_shape` 两份探针金样、复验 \
-  `apostrophe-*`；若届时也并入 `feat/reverse-lookup`，③ 的两条登记项一并删除。
+  丢弃、不录入）」，金样无该用例、同样登不出差异）⇒ 与 pin（未含修复的 librime）行为不同。
+  夹具索引补入 `xi`/`an` 后（见 [`../goldens/PROVENANCE.md`](../goldens/PROVENANCE.md) 的 \
+  「本地改动」行），三个 `apostrophe-*` 用例的差异即可证伪：本仓侧 `` `xi `` 给候选（西/系）、 \
+  `` `xi'an `` 出词「西安」并能 `space` 上屏，探针侧 `'` 之后一律无候选 ⇒ \
+  已登记为 `BranchPinDelimiter`（期望值逐字取自 `dump_registered_expectations`）。 \
+  **代价**：上游修复并入前，这三例不做逐位比对；该语义另有 `sound_to_char_shape.rs` \
+  的单测覆盖（`translate_honors_syllable_delimiter` 等）。
+- **回归**：上游修复并入后重生成两份探针金样、复验 `apostrophe-*`（届时删除这三条登记）； \
+  若届时也并入 `feat/reverse-lookup`，③ 的两条登记项一并删除。
 
 ## ④ 宿主链交互：`Ctrl+BackSpace` / `Ctrl+Delete` 与不带修饰者同义（用户要求）
 
@@ -141,12 +152,12 @@
 - **本仓**：按要求**取消这两个交互**——`Ctrl+BackSpace` ≡ `BackSpace`、 \
   `Ctrl+Delete` ≡ `Delete`（`crates/hux-core/src/host.rs` 的 match 臂已把修饰位并入普通臂）。 \
   **代价**：失去参照的「按音节回退」与「删除高亮候选」两条通道。 \
-  金样与差分**都覆盖不到**宿主链（真机路径上这两个键先被方案 `processor` 消费，探针用例也无 Ctrl 变体）， \
+  金样与差分**都覆盖不到**宿主链（真机路径上这两个键先被方案 `processor` 消费， \
+  探针用例也无 Ctrl 变体）， \
   只能由单测守护： \
   `ctrl_backspace_and_ctrl_delete_match_their_plain_variants`——同一初始状态下「带 Ctrl」与 \
   「不带 Ctrl」的可观测状态指纹（输入 / 光标 / 组合段与选中态 / 菜单 / 已上屏文本）**逐字段相等**。
 - **回归做法**：若要恢复参照语义，把 `host.rs` 中并入的 `K_CONTROL_MASK` 拆回独立分支、 \
   恢复`BackToPreviousSyllable`/`DeleteCandidate`（后者还需 `selected_index` 能表达参照的`-1`）， \
   并改该单测；**不需要动任何金样**。连带结论：`selected_index` 无法表达 `-1`、 \
-  `Ctrl+Delete` 退化为吞键等条目（[`review-ledger.md`](review-ledger.md) \
-  §5.1）随本决定**关闭**——不再需要「删除候选」通道。
+  `Ctrl+Delete` 退化为吞键等条目随本决定**关闭**——不再需要「删除候选」通道。

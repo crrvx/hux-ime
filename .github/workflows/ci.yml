@@ -46,7 +46,7 @@ jobs:
         # 只拦「平台痕迹」：env / XDG / 系统时钟 / 直接打印。
         # 允许按平台传入的显式路径读数据文件，故不查 std::fs。
         # 先剥离注释再匹配（注释里写「不要用 println!」不该让 CI 变红），
-        # 字符串字面量与真代码照旧命中——与 §7「注释与文档叙述不受影响」一致。
+        # 字符串字面量与真代码照旧命中——注释与文档叙述不影响判定。
         run: |
           if ! python3 tools/checks/rust_source_grep.py --root crates/hux-core/src \
               --pattern 'std::env::var|SystemTime|/usr/share|eprintln!|println!' \
@@ -128,20 +128,21 @@ jobs:
             exit 1
           fi
       - name: Verify golden checksums & headers
-        # 逐行解析 goldens/README.md 的 sha256 表并与实际文件比对，
-        # 另核对三份「不重生成」金样（key / key_sequence / sound_to_char_shape）的内部头部
-        # （`# reference … @ <pin>` 与来源文件 sha256）与 goldens/README.md 声明的 pin 是否一致。
+        # 逐行解析 goldens/PROVENANCE.md 的 sha256 表并与实际文件比对，
+        # 另核对四份「不重生成」金样（key / key_sequence / key_sequence_tab /
+        # sound_to_char_shape）的内部头部
+        # （`# reference … @ <pin>` 与来源文件 sha256）与 goldens/PROVENANCE.md 声明的 pin 是否一致。
         run: python3 tools/checks/verify_golden_shas.py
       - name: Verify non-regenerated goldens (sha256)
         run: |
-          # 与上一步**互为独立来源**（值写在本文件里，不读 README）：key / key_sequence /
+          # 与上一步**互为独立来源**（值写在本文件里，不读文档）：key / key_sequence /
           # key_sequence_tab / sound_to_char_shape 依赖具体 librime 版本，CI 不重生成，
           # 故此处再钉一次。
           sha256sum -c - <<'SUMS'
           7fae4983ab69e36ebd2e5cac267df81e9bc325731deaefcaa22873aeca8660c0  goldens/key.tsv.gz
           8ce095cf98bae0bbfbd561e6b1e3aa7f1961af6e8e3c3b62b692a7e89e325aa1  goldens/key_sequence.tsv.gz
           3c89618d0fb067bb0ce5562646a62924576c0610226aed3fa70689b6549da9bc  goldens/key_sequence_tab.tsv.gz
-          e9d48698bf73807a37933b7c2324afbc27fffe7b0492f0dd2787116ec06a7545  goldens/sound_to_char_shape.tsv.gz
+          bcfe4102b66806b2f9b250d9679b7256a56bba6941c9190b41b07fd90d49500f  goldens/sound_to_char_shape.tsv.gz
           SUMS
       - name: Verify branding assets (shared graphics)
         # 位图尺寸须与文件名声明一致、矢量源可渲染（见 assets/branding/README.md）。

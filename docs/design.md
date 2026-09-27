@@ -5,7 +5,9 @@
 
 hux-ime（虎虚）：虎句（`tiger_sentence`）输入方案的 fcitx5 原生 Rust 实现。
 参照实现（测试 oracle，仅开发 / CI 使用）：<https://github.com/lvyww/tiger-sentense-rime>；
-金样清单、重新生成命令与校验和见 [`goldens/README.md`](../goldens/README.md)。
+金样清单见 [`goldens/README.md`](../goldens/README.md)， \
+重新生成命令见 [`goldens/REGENERATE.md`](../goldens/REGENERATE.md)， \
+校验和见 [`goldens/PROVENANCE.md`](../goldens/PROVENANCE.md)。
 
 本文是**活规则 + 设计现状**的单一来源。原重构文档 `docs/refactor.md` 已并入本文： \
 其 §1 / §2 → 「结构与硬规则」、§5 → 「方案契约」、§6 → 「测试与性能纪律」、 \
@@ -13,6 +15,7 @@ hux-ime（虎虚）：虎句（`tiger_sentence`）输入方案的 fcitx5 原生 
 审计总账）见 [`review-ledger.md`](review-ledger.md)；有意偏离（编号沿用原 §8： \
 ① 翻页 / 标点遮蔽修复（含用户决定 B）、② addon扩展、③ pin 差异、④ 宿主链交互； \
 含金样策略与回归做法）见 [`upstream-deviations.md`](upstream-deviations.md)； \
+查表式参考（模块映射、数据与目录）见 [`reference.md`](reference.md)； \
 文档纪律见 `AGENTS.md`。
 
 ## 1. 结构与硬规则
@@ -52,19 +55,18 @@ crates/                       # 平台无关的 Rust 库
   hux-ffi/                    # C ABI：C 布局类型 + 导出函数（桌面 / Android 共用）
   hux-scheme/
     tiger/                    # 虎码（字/词/句）——当前唯一全量实现
-    yuhao/  wubi/             # init：骨架（形码族，复用 tiger 框架；说明见 README）
-    shuangpin/  quanpin/      # init：骨架（拼音族，接口预留；说明见 README）
+    yuhao/  wubi/             # 计划：形码族骨架（复用 tiger 框架；见 hux-scheme/README.md）
+    shuangpin/  quanpin/      # 计划：拼音族骨架（接口预留；见 hux-scheme/README.md）
   hux-test-support/           # 测试助手（金样路径 / transcript 编解码 / 临时目录）
 platform/                     # 平台适配
   fcitx5/                     # 共享 fcitx5 适配：Rust 组装（Engine/UI 快照/存储实现/Paths）
                               #   + C++ 壳 + CMake（linux 与 android 共用）
-  linux/                      # 桌面：构建 / 安装说明（入口脚本在仓库根；打包待做）
   android/                    # Android：构建接线（对接 fcitx5-android fork 的 plugin/hux）
-  windows/  macos/  ios/      # init：骨架（说明见 platform/README.md）
+  windows/  macos/  ios/      # 计划：未建目录（平台总览见 platform/README.md）
 ```
 
-平台层分工：`platform/fcitx5` 是**共用适配**（两端都是 fcitx5，环境变量与路径解析同一套）， \
-`platform/linux` / `platform/android` 只管各自的**构建与分发**。文件级模块： \
+平台层分工：`platform/fcitx5` 是**共用适配**（两端都是 fcitx5，环境变量与路径解析同一套）； \
+桌面侧的构建 / 安装由仓库根脚本承担，`platform/android` 只管 Android 的构建与分发。文件级模块： \
 `hux-core` 有 `cache` / `learning` / `key` / `key_table` / `session` / `host` / `punct` / \
 `scheme`（方案契约），`hux-scheme/tiger` 有 `lexicon` / `decode` / `lexical` / `ngram` / \
 `sound_to_char_shape` / `char_to_sound_shape` / `interaction`（+ `interaction/`）； \
@@ -76,11 +78,11 @@ platform/                     # 平台适配
 其余目录：`data/`（随包数据源）、`assets/branding/`（品牌图形， \
 主源 `hux.png`）、`goldens/`（差分金样与夹具）、`tools/`（生成器 / 探针 / 用例）、 \
 `docs/`（索引见根 `README.md`「文档」表）；`platform/android` 的插件接线**待启动**、 \
-`platform/linux` 打包待做，见 [`../platform/README.md`](../platform/README.md)； \
-参照实现 → Rust 的模块映射（含各模块差分手段）见本文「模块映射」。
+PKGBUILD 打包待做，见 [`../platform/README.md`](../platform/README.md)； \
+参照实现 → Rust 的模块映射（含各模块差分手段）见 [`reference.md`](reference.md) §1。
 
-> **现状**：`crates/hux-cfg`、`crates/hux-ffi`、`crates/hux-scheme/tiger`、`platform/fcitx5`、 \
-> `platform/linux` 均已落地；`hux-core` 只余通用内核 \
+> **现状**：`crates/hux-cfg`、`crates/hux-ffi`、`crates/hux-scheme/tiger`、`platform/fcitx5` \
+> 均已落地；`hux-core` 只余通用内核 \
 > （cache/collections/key/key_table/learning/punct/session/host） \
 > **+ 方案契约 `hux_core::scheme`**；平台装配根构造 tiger 后以 `dyn Scheme`驱动。
 
@@ -167,10 +169,11 @@ platform/                     # 平台适配
     **装-卸-CMake 清单一致自检**（`tools/checks/check_data_manifest.sh`）/两个一键脚本的`bash -n` + \
     `--dry-run` 冒烟）+ `addon` 作业（cmake configure 与构建链接、 \
     `hux_abi.h` ↔ `libhux.so` 符号一致、`DESTDIR` 安装布局 = 3 个插件文件 + \
-    `data/MANIFEST`全部随包数据）+ 金样重生成比对（「层依赖」一步覆盖本文「结构与硬规则」规则 1 的四条边）；
+    `data/MANIFEST`全部随包数据）+ 金样重生成比对（「层依赖」一步覆盖本文「结构与硬规则」 \
+    规则 1 的四条边）；
   - `rust` 作业 16 步；
-  - **待补**：`cargo-deny`（可选）、CI action 钉 commit sha（[`review-ledger.md`](review-ledger.md) \
-    §0的 `[待办]`）；
+  - **待补**：CI action 钉 commit sha、可选的 `cargo-deny`（活口见 [`open-items.md`](open-items.md) \
+    §1 的 `M8` 补记）；
   - Rust 工具链**有意跟随最新 stable**（不钉 `rust-toolchain.toml`）。
 
 ## 4. 依赖校验
@@ -203,39 +206,23 @@ platform/                     # 平台适配
 - 方案骨架：
   - `crates/hux-scheme/{yuhao,wubi,shuangpin,quanpin}/`—— \
     见[`../crates/hux-scheme/README.md`](../crates/hux-scheme/README.md)；
-  - 平台骨架：`platform/{windows,macos,ios}/`——见 [`../platform/README.md`](../platform/README.md)。 \
+  - 平台骨架：`platform/{windows,macos,ios}/`—— \
+    见 [`../platform/README.md`](../platform/README.md)。 \
     每个骨架目录写明：目标、与 tiger / fcitx5 的差异、数据与 API 需求、依赖方向；
   - **仅目录与说明，不进 workspace**，避免空壳死代码。
 
 ## 6. 模块映射（参照 → Rust）
 
-| 参照                                                         | Rust                                                                                   | 差分手段                      |
-| ------------------------------------------------------------ | -------------------------------------------------------------------------------------- | ----------------------------- |
-| `lua/tiger_sentence_cache.lua`                               | `hux-core`: `cache.rs`                                                                 | fixture 金样（状态/淘汰序）   |
-| `lua/tiger_sentence_ngram.lua`                               | `tiger/ngram.rs`                                                                       | `logp`/`obs`/`status` 逐位    |
-| `lua/tiger_sentence.lua`（词库/解码/证据）                   | `tiger/lexicon.rs` + `tiger/decode.rs`                                                 | 数据索引 + 解码/证据/学习快照 |
-| `lua/tiger_sentence_learning.lua`                            | `hux-core`: `learning.rs`（机制）<br>+ `tiger/interaction/learning_glue.rs`（策略）    | 检查重放 + learning 金样      |
-| `lua/tiger_sentence_lexical.lua`                             | `tiger/lexical.rs`（TCSLEX01）                                                         | 词先验金样                    |
-| `lua/tiger_sentence.lua`（processor/translator/filter/选项） | `hux-core`: `key.rs` + `session.rs`；<br>`tiger`: `interaction.rs`（+ `interaction/`） | 键序列金样                    |
-| librime `key_event`/`key_table`                              | `hux-core`: `key.rs` + `key_table.rs`（由源码生成）                                    | 键金样（真 librime 探针）     |
-| librime `reverse_lookup_translator`                          | `tiger/sound_to_char_shape.rs`（TCSRV01）                                              | 音反查金样                    |
-| librime 宿主链                                               | `hux-core`: `host.rs` + `punct.rs`（提交点回调见 `CommitObserver`）                    | 键序列金样                    |
+映射表已移至 [`reference.md`](reference.md) §1（单一来源）。
 
 ## 7. 数据与目录
 
-- 目录解析在平台层（`platform/fcitx5/src/paths.rs`；内核不读环境变量）： \
-  只读目录 `HUX_DATA_DIRS`（覆盖）> `$XDG_DATA_HOME/fcitx5/hux`（缺省 \
-  `~/.local/share/fcitx5/hux`）> `$XDG_DATA_DIRS/*/fcitx5/hux`（缺省 `/usr/local/share`、 \
-  `/usr/share`，末级 `/usr/share/fcitx5/hux`）；开发可用 `HUX_DATA_DIRS`（冒号分隔）与 \
-  `HUX_MODEL` 覆盖；安装去向见 [`resources.md`](resources.md)「落点与查找顺序」。
-- 运行数据：码表四件套 + 追加码表、模型、`symbols.yaml`、词先验、音反查索引、 \
-  选项与学习库（文件名 / 格式 / 来源见 [`../data/README.md`](../data/README.md)、 \
-  [`resources.md`](resources.md)）。
+数据与目录解析已移至 [`reference.md`](reference.md) §2（单一来源）。
 
 ## 8. fcitx5 集成要点
 
 - **注册与构建**：addon 元数据 + 输入法条目 conf，C++ 薄壳链接 Rust 静态库； \
-  构建 / 安装与落点见 [`usage.md`](usage.md)「安装」。
+  构建 / 安装与落点见 [`install.md`](install.md)「安装」。
 - **会话**：每输入上下文一个（`InputContextProperty`；暂存隔离，选项为引擎级）， \
   失焦 / 切换见 [`platform/README.md`](../platform/README.md)； \
   组合重建由 `interaction::CompositionBuilder` 按参照 `Compose` 语义（`input[..caret]`、 \
@@ -279,7 +266,9 @@ platform/                     # 平台适配
 2. **键序列金样**：真 librime 探针生成「键序列 → 提交 / 候选 / 预编辑」，Rust 重放比对；
 3. **CI**：fmt / clippy / 差分 + 固定参照提交重生成 fixture 金样比对。
 
-清单、格式、重生成与 sha 校验见 [`goldens/README.md`](../goldens/README.md)， \
+清单、格式、重生成与 sha 校验见 [`goldens/README.md`](../goldens/README.md)（清单 / 格式）、 \
+[`goldens/REGENERATE.md`](../goldens/REGENERATE.md)（重生成）与 \
+[`goldens/PROVENANCE.md`](../goldens/PROVENANCE.md)（sha 表）， \
 分层、CI 作业与工具链纪律见本文「测试与性能纪律」。
 
 ## 10. 性能

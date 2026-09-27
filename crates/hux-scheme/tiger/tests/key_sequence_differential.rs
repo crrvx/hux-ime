@@ -71,6 +71,11 @@ enum DeviationKind {
     /// 主干 pin `abad411` 是 `" "` ⇒ `'` 之后的 `1`/`;` 在本仓切成「abc 段 + raw 段」，
     /// 上游主干保持单段。同 pin 的探针实测（`PIN=92a0b54` 重跑同一探针）与**本仓行完全
     /// 相同**，即该差异是上游自己后续提交带来的，不是本仓发明。
+    ///
+    /// **同一 pin 缺口的音反查面**：`sound_to_char_shape.tsv.gz` 的三个 `apostrophe-*` 与之同源——
+    /// 方案 schema 要求 `'` 在反查段内作音节分隔符，而本机 librime 1.17.0 未含上游 delimiter 修复
+    /// （[rime/librime#1233](https://github.com/rime/librime/pull/1233)）⇒ 探针在 `'` 之后一律无候选；
+    /// 本仓按方案意图切分（`'` 透明跳过、强制断音）⇒ 三例的逐步记录确有差异。
     BranchPinDelimiter,
 }
 
@@ -81,26 +86,16 @@ struct Deviation {
     /// 用例名（必须在该金样中真实存在且唯一）。
     case: &'static str,
     kind: DeviationKind,
-    /// 本仓期望的逐步记录，与金样 `step` 行**同字段**（去掉 `step`/用例名/序号三列）：
-    /// `repr \t consumed \t input \t caret \t commit \t highlight \t count \t candidates \t comments`
-    /// （`input`/`commit`/候选/注释为 hex；`count == 0` 时候选与注释写 `-`）。
+    /// 本仓期望的逐步记录：与金样 `step` 行同字段，但去掉 `step`/用例名/序号/`preedit`
+    /// 四列（`preedit` 属宿主层职责，金样保留、本表不比对），依次为
+    /// `repr`、`consumed`、`input`、`caret`、`commit`、`page_no`、`highlight`、
+    /// `count`、`candidates`、`comments`。`repr` 只作可读性标注、不参与比对
+    /// （`RowView` 只含其后 9 列）；`input`/`commit`/`candidates`/`comments` 为 hex，
+    /// 空串写 `-`（`count == 0` 时候选与注释同为 `-`）。
     steps: &'static [&'static str],
 }
 
 use DeviationKind::{AddonExtension, BranchPinDelimiter, UpstreamDefectFix};
-
-// ---- 未登记项：音反查段内的音节分隔符（撇号）------------------------------------
-//
-// 方案 schema 的 `speller/delimiter: " '"`（分支尖端 `92a0b54`）本就要求 `'` 在反查段内作
-// **音节分隔符**（参照仓库 README 亦注明该切分需要已含上游 delimiter 修复的 librime），而本
-// 金样的 librime pin 1.17.0 不含该修复。本仓按方案意图实现该切分
-// （`sound_to_char_shape::translate`：字形、音节与尾部补全均不得跨过 `'`），**但三个
-// `apostrophe-*` 用例登记不出差异**：其重放夹具索引只有 14 个音节
-// （`gong gu guo hua o ou xin xing zai zhao zhe zhen zhong zhou`），既无 `xi` 也无 `an`
-// ⇒ `` `xi ``/`` `xi'an `` 在本仓与上游（即便带 delimiter 修复）都是无候选，逐步记录逐字段
-// 相同。入表会被 `registry_is_falsifiable` 判为「偏离已消失」，故仍走金样比对；该语义由
-// `sound_to_char_shape.rs` 的单测覆盖（`translate_honors_syllable_delimiter` 等）。
-// 若日后重生成金样并把 `xi`/`an` 一类音节补进夹具，这三个用例应转为登记项。
 
 /// 登记表（金样字节保持原样，不重生成）。**每一项都必须确有差异**，否则
 /// `deviated_cases_match_their_registered_expectations` 会报「偏离已消失」。
@@ -224,6 +219,53 @@ const DEVIATIONS: &[Deviation] = &[
             "apostrophe\t1\t616227\t3\t-\t0\t0\t0\t-\t-",
             "semicolon\t1\t6162273b\t4\t-\t0\t0\t0\t-\t-",
             "Page_Down\t0\t6162273b\t4\t-\t0\t0\t0\t-\t-",
+        ],
+    },
+    // ---- pin 缺口：音反查段内的音节分隔符（撇号，见 DeviationKind::BranchPinDelimiter）----
+    //
+    // 夹具索引已含 `xi`/`an`，故 `x`/`i` 两步两边都有候选（逐字段相同）；差异从 `'` 起：
+    // 上游探针（librime 1.17.0 未含 delimiter 修复）在 `'` 之后一律无候选，本仓按方案
+    // schema 的 `speller/delimiter: " '"` 切分（`'` 透明跳过、强制断音）⇒ 候选保留到 `xi'`，
+    // `` `xi'an `` 出词「西安」（`a`/`n` 逐步补全，`space` 上屏）。
+    Deviation {
+        golden: "sound_to_char_shape.tsv.gz",
+        case: "apostrophe-tail",
+        kind: BranchPinDelimiter,
+        steps: &[
+            "`\t1\t60\t1\t-\t0\t0\t1\t60\te38094e58d8ae8a792e38095",
+            "x\t1\t6078\t2\t-\t0\t0\t2\te8a5bf,e7b3bb\t-,-",
+            "i\t1\t607869\t3\t-\t0\t0\t2\te8a5bf,e7b3bb\t-,-",
+            "apostrophe\t1\t60786927\t4\t-\t0\t0\t2\te8a5bf,e7b3bb\t-,-",
+        ],
+    },
+    Deviation {
+        golden: "sound_to_char_shape.tsv.gz",
+        case: "apostrophe-inner",
+        kind: BranchPinDelimiter,
+        // `` ` xi' an ``：`'` 断音后 `a`/`n` 逐步补全第二段 ⇒ 候选收敛到「西安」。
+        steps: &[
+            "`\t1\t60\t1\t-\t0\t0\t1\t60\te38094e58d8ae8a792e38095",
+            "x\t1\t6078\t2\t-\t0\t0\t2\te8a5bf,e7b3bb\t-,-",
+            "i\t1\t607869\t3\t-\t0\t0\t2\te8a5bf,e7b3bb\t-,-",
+            "apostrophe\t1\t60786927\t4\t-\t0\t0\t2\te8a5bf,e7b3bb\t-,-",
+            "a\t1\t6078692761\t5\t-\t0\t0\t1\te8a5bfe5ae89\t20e8a5bf3a3f20e5ae893a3f",
+            "n\t1\t60786927616e\t6\t-\t0\t0\t1\te8a5bfe5ae89\t20e8a5bf3a3f20e5ae893a3f",
+        ],
+    },
+    Deviation {
+        golden: "sound_to_char_shape.tsv.gz",
+        case: "apostrophe-commit",
+        kind: BranchPinDelimiter,
+        // 同上再加 `space`：本仓上屏「西安」（`commit` 非空、输入清空）；上游无候选，
+        // `space` 落成空格标点（金样该步 `commit` 为空）。
+        steps: &[
+            "`\t1\t60\t1\t-\t0\t0\t1\t60\te38094e58d8ae8a792e38095",
+            "x\t1\t6078\t2\t-\t0\t0\t2\te8a5bf,e7b3bb\t-,-",
+            "i\t1\t607869\t3\t-\t0\t0\t2\te8a5bf,e7b3bb\t-,-",
+            "apostrophe\t1\t60786927\t4\t-\t0\t0\t2\te8a5bf,e7b3bb\t-,-",
+            "a\t1\t6078692761\t5\t-\t0\t0\t1\te8a5bfe5ae89\t20e8a5bf3a3f20e5ae893a3f",
+            "n\t1\t60786927616e\t6\t-\t0\t0\t1\te8a5bfe5ae89\t20e8a5bf3a3f20e5ae893a3f",
+            "space\t1\t-\t0\te8a5bfe5ae89\t0\t0\t0\t-\t-",
         ],
     },
 ];
@@ -993,10 +1035,10 @@ fn sound_to_char_shape_matches_reference() {
             &mut failures,
         );
     }
-    // 重放面下限（同上）：28 例 / 149 步（登记偏离 3 例 15 步另计）。
+    // 重放面下限（同上）：25 例 / 132 步（登记偏离 6 例 32 步另计）。
     assert!(
-        kept.len() >= 28 && steps >= 149,
-        "sound_to_char_shape 重放覆盖不足：{} 例 / {} 步（下限 28 例 / 149 步）",
+        kept.len() >= 25 && steps >= 132,
+        "sound_to_char_shape 重放覆盖不足：{} 例 / {} 步（下限 25 例 / 132 步）",
         kept.len(),
         steps
     );

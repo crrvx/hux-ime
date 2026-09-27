@@ -6,9 +6,9 @@
 分层：`hux-core` → `hux-cfg` / `hux-ffi` → `hux-scheme/tiger` → `platform/*`； \
 平台优先级 linux / android → windows → macos / ios，只经 `hux-ffi` 边界接入内核（内核无平台假设）。
 
-构建 / 安装见 [usage.md](../docs/usage.md)，安装去向与产物清单见 \
+构建 / 安装见 [install.md](../docs/install.md)，安装去向与产物清单见 \
 [resources.md](../docs/resources.md)，配置项见 [config.md](../docs/config.md)， \
-结构规则与模块映射见 [design.md](../docs/design.md)（§1 硬规则 / §6 模块映射）， \
+结构规则见 [design.md](../docs/design.md)（§1 硬规则）、 \
 随包数据见 [data/README.md](../data/README.md)。
 
 ## 状态总览
@@ -16,15 +16,16 @@
 | 平台 | 状态 | 落点 / 入口 | 参考实现 |
 | --- | --- | --- | --- |
 | Linux 桌面 | 构建 / 安装可用；打包（PKGBUILD）待做 | `fcitx5/`（C++ 薄壳 + Rust 组装）、根 `install.sh` / `uninstall.sh` | fcitx5；按键语义与提交通知器参照 librime |
-| Android | **待启动**（从里程碑 M0 开始） | fork `fcitx5-android` 新增 `plugin/hux`，以 git submodule 引本仓库；<br>与桌面共用 `fcitx5/`；<br>本仓 `android/` 将放插件构建接线与模型分发说明 | fcitx5-android（addon 布局与 jyutping 插件同构） |
+| Android | **待启动**（从里程碑 M0 开始） | fork `fcitx5-android` 新增 `plugin/hux`，以 git submodule 引本仓库；<br>与桌面共用 `fcitx5/`；<br>本仓 `android/` 放插件构建接线与模型分发说明<br>（见 [`android/README.md`](android/README.md)） | fcitx5-android（addon 布局与 jyutping 插件同构） |
 | Windows | 仅占位（骨架，暂缓） | `windows/` | 上游 `虎爪`（tigerclaw，win 原生）、fcitx5-windows |
 | macOS | 仅占位（骨架，暂缓） | `macos/` | fcitx5-macos |
 | iOS | 仅占位（骨架，暂缓） | `ios/` | fcitx5-ios |
 
 ## Linux 桌面（fcitx5）
 
-- 构建 / 安装与落点见 [`usage.md`](../docs/usage.md)「安装」；状态：可用，**打包（PKGBUILD）待做**。
-- 数据目录运行时解析见 [`design.md`](../docs/design.md) §7（实现 `fcitx5/src/paths.rs`）、 \
+- 构建 / 安装与落点见 [`install.md`](../docs/install.md)「安装」； \
+  状态：可用，**打包（PKGBUILD）待做**。
+- 数据目录运行时解析见 [`reference.md`](../docs/reference.md) §2（实现 `fcitx5/src/paths.rs`）、 \
   安装去向见 [`resources.md`](../docs/resources.md)「落点与查找顺序」、 \
   CI 的 `addon` 作业见 [`design.md`](../docs/design.md) §3（测试与性能纪律）。
 
@@ -65,63 +66,20 @@
   避免 marked text 锁住光标）；Esc / 再次触发 / 其它键退出； \
   展示面为面板辅助文本条（auxUp/auxDown）。
 
-### 析构顺序核对（真机）
-
-`HuxEngine` 的析构契约是「**先** `sessionFactory_.unregister()`（销毁全部 `HuxSession`， \
-各自调 `hux_engine_session_free`）**再** `hux_engine_free(engine_)`」； \
-源码依据见 `fcitx5/shell/hux.cpp` 的 `~HuxEngine` 注释与 \
-[`review-ledger.md`](../docs/review-ledger.md)「历史纪要」的 UAF 结案行。 \
-真机复核靠**专属日志类别 `hux`**（`FCITX_DEFINE_LOG_CATEGORY(huxLog, "hux")` + \
-`FCITX_LOGC(huxLog, Debug)`；`FCITX_DEBUG()` 走 `default` 类别，用它会要求放宽全局级别）：
-
-```
-D… hux.cpp:NNN] hux: ~HuxSession id=1
-D… hux.cpp:NNN] hux: ~HuxSession id=2
-D… hux.cpp:NNN] hux: ~HuxEngine
-```
-
-打开方式：日志规则**只能经命令行**给出（`fcitx5 --help`：`--verbose <logging rule>`， \
-形如 `category1=level1,…`，级别 `5` = Debug；本机 5.1.22 的二进制与源码 \
-`InstanceArgument::parseOption` / `fcitx::Log::setLogRule` 都只有这一条路径， \
-**没有** `FCITX_LOG_RULE` 之类的环境变量）：
-
-```bash
-fcitx5 -r --verbose='hux=5'   # 前台运行：析构日志直接打在 stderr（或用 -d + journalctl -t fcitx5）
-fcitx5-remote -e              # 另开终端让它退出（等价于 Ctrl+C / kill <pid>）
-```
-
-#### 实测结果（2026-09-22，fcitx5 5.1.22；行号按当前 `hux.cpp`）
-
-用户实跑一次（先打字建立会话，再 `fcitx5-remote -e` 退出）：
-
-```
-D 16:41:47.539570 hux.cpp:605] hux: ~HuxSession id=1
-D 16:41:47.539666 hux.cpp:605] hux: ~HuxSession id=2
-D 16:41:47.539687 hux.cpp:605] hux: ~HuxSession id=4
-D 16:41:47.539722 hux.cpp:605] hux: ~HuxSession id=3
-I 16:41:47.539734 addonmanager.cpp:306] Unloading addon hux
-D 16:41:47.539737 hux.cpp:704] hux: ~HuxEngine
-```
-
-判据通过：4 个会话**全部早于** `~HuxEngine`，且其后 `~HuxSession` 计数为 **0** ⇒ \
-没有会话在引擎释放后回调。规则在**进程启动期**读入，故须让带 `--verbose` \
-启动的进程退出才能看到它自己的析构日志（`systemd --user` 托管时： \
-给该 unit 的 `ExecStart` 加上 `--verbose=hux=5` 并重启，再 `systemctl --user stop fcitx5`）。 \
-**判据**：日志里全部 `hux: ~HuxSession …` 行必须**早于** `hux: ~HuxEngine` 行； \
-若顺序相反（或其后又冒出 `~HuxSession`），即命中 UAF 路径，请附日志回报。
-
 ### 安装落点（平台特有部分）
 
 `cmake --install` 的产物 = **3 个插件文件 + 3 个图标 + `../data/MANIFEST` 列出的全部随包数据**； \
-清单与去向见 [`usage.md`](../docs/usage.md)「产物清单」与 [`resources.md`](../docs/resources.md)。 \
+清单与去向见 [`install.md`](../docs/install.md)「产物清单」与 \
+[`resources.md`](../docs/resources.md)。 \
 平台侧只补插件目录三条：
 
 - 系统级跟随 `FCITX_INSTALL_ADDONDIR`（`lib64` 或 multiarch 的 `lib/<triplet>`）， \
   兼容 `lib` / `lib64`。
 - 用户级加 `-DHUX_RELATIVE_ADDON_DIR=ON`，把安装目标记为**相对**路径 \
   `lib/fcitx5`（该变量本身是绝对路径，`--prefix` 无法重定位）⇒ `<prefix>/lib/fcitx5/libhux.so`。
-- 插件目录**没有用户级缺省值**，用户级安装需 `FCITX_ADDON_DIRS`（`install.sh -u` 写 \
-  `~/.config/environment.d/90-hux.conf`）。
+- 插件目录**没有用户级缺省值**，需 `FCITX_ADDON_DIRS`（`install.sh -u` 会写 \
+  `environment.d`）；检测是否生效与回退办法见 [`../docs/install.md`](../docs/install.md) \
+  「用户级（`-u`）的环境变量」。
 
 ### 已知限制
 
@@ -170,82 +128,7 @@ D 16:41:47.539737 hux.cpp:704] hux: ~HuxEngine
 
 ## Android（fcitx5-android 插件，待启动）
 
-### 已确认决策
-
-目标：**fcitx5-android 插件 APK**，决策见下表。
-
-| 项 | 决策 |
-| --- | --- |
-| 仓库 | fork `fcitx5-android`，新增 `plugin/hux`，<br>以 git submodule 引本仓库（`hux-ime`） |
-| 模型 | 单独「模型插件」APK<br>（仅 assets 携带 <br>`usr/share/fcitx5/hux/models/sentence-ngram-mobile.bin`） |
-| ABI | 仅 `arm64-v8a`（Rust 目标 `aarch64-linux-android`） |
-| 分发 | GitHub Releases |
-| 构建 | 本地 Gradle 为主；CI 待定 |
-
-### 上游集成事实
-
-- **插件 = 独立 APK**：包名 `org.fcitx.fcitx5.android.plugin.<name>[.debug]`， \
-  `${appId}.plugin.MANIFEST` intent + `res/xml/plugin.xml`（`apiVersion 0.1`）； \
-  主程序合并其 `assets/`（`DataManager` 复制进应用数据目录、`descriptor.json` 差量更新）。
-- **addon 布局**（同构 jyutping）：`usr/lib/fcitx5/libhux.so`、`usr/share/fcitx5/addon/hux.conf`、 \
-  `usr/share/fcitx5/inputmethod/hux.conf`（`COMPONENT config`）、 \
-  `usr/share/fcitx5/hux/…`（`COMPONENT prebuilt-assets`， \
-  `fcitxComponent { installPrebuiltAssets = true }`）；候选点击走 \
-  `CandidateWord::select()`（`androidfrontend.cpp`）。
-- **运行时环境**（`native-lib.cpp`，先于 fcitx5）：`XDG_DATA_HOME=<外部 files>/data`（可写： \
-  选项 / 学习库 / 模型）、`XDG_DATA_DIRS=<appData>/usr/share`（插件数据安装位置）、 \
-  `FCITX_ADDON_DIRS` 由核心处理。**构建**：NDK `28.0.13004108`、CMake `3.31.6`、AGP； \
-  插件模块用五个约定插件（app / plugin-app / native-app / data-descriptor / fcitx-component）。
-
-### 本仓库（hux-ime）改动
-
-- 平台层数据目录查找支持 **`XDG_DATA_DIRS`**（落 `fcitx5/src/paths.rs`，内核不读环境变量）， \
-  桌面行为不变；顺序见 [`design.md`](../docs/design.md) §7。
-- `__ANDROID__` 差异（配置 schema、状态区子菜单）待验收决定； \
-  文档 [`usage.md`](../docs/usage.md) 增补 Android 安装 / 模型与 `REUSE` 头。
-
-### fork 侧工作（`plugin/hux`，未开始）
-
-- `settings.gradle.kts` 加 `include(":plugin:hux")`；`.gitmodules` 加 `hux-ime` 子模块； \
-  `plugin/hux/build.gradle.kts`：五个约定插件、`packaging.jniLibs.excludes`（`libc++_shared`、 \
-  `libFcitx5*` 等）；`AndroidManifest.xml`、`res/xml/plugin.xml`（domain `fcitx5-hux`）、 \
-  图标与文案、`plugin_resources_keep.xml`。
-- `src/main/cpp/CMakeLists.txt`：`find_package(fcitx5 CONFIG)` + \
-  `find_package(Fcitx5Core MODULE)`；Rust `ANDROID_ABI=arm64-v8a → aarch64-linux-android` 的 \
-  `cargo build --target … --release`（staticlib 免链接器配置）； \
-  `add_library(hux SHARED <hux-ime>/platform/fcitx5/shell/hux.cpp)` 链接 \
-  `libhux_platform_fcitx5.a`、`Fcitx5::Core`（按需 `log dl m unwind`）； \
-  安装 `install(TARGETS hux LIBRARY DESTINATION /usr/lib/fcitx5 COMPONENT config)`、 \
-  `install(FILES conf/* … COMPONENT config)`、 \
-  `install(DIRECTORY data/ … COMPONENT prebuilt-assets)`（排除 `README.md`）。
-- 模型插件模块：`assets/usr/share/fcitx5/hux/models/sentence-ngram-mobile.bin` + `plugin.xml`； \
-  构建 `./gradlew :plugin:hux:assembleRelease`（需 Android SDK/NDK、 \
-  `rustup target add aarch64-linux-android`）。
-
-### 验收（真机）
-
-① 装好主程序 + 插件 → 输入法列表出现「虎虚」；② 打字出候选、点击上屏、翻页、数字直选； \
-③ 音反查 / 字反查（软键盘触发键可另配；硬件键盘默认 `` ` `` / `~`）； \
-④ 配置页「行为/快捷键」可读写并即时生效；⑤ 选项 / 学习库落在 \
-`Android/data/<pkg>/files/data/fcitx5/hux/`；⑥ 装模型 APK 后整句质量提升， \
-logcat 可见 `hux: dirs… model…`。
-
-### 风险与备选
-
-- **Rust × AGP**：CMake 内调 cargo 不稳 → 先脚本 cargo 构建，CMake 只链接。
-- **配置页渲染**：`List|Key` 与嵌套子配置受支持（对照 Android `ConfigType`）； \
-  异常 → Android 分支扁平 schema。**状态区**：`SimpleAction`+`Menu` 子菜单不被渲染 → 平铺 5 个开关。
-- **模型体积**（~224 MB）：GitHub Releases 直发，F-Droid/Play 暂不做； \
-  **上游收编**先 fork 自用，视情况再提 PR（其 CI 是否接受 Rust 构建待议）。
-
-### 里程碑
-
-| 阶段 | 内容 | 预估 |
-| --- | --- | --- |
-| M0 | 骨架可加载（插件 APK → 虎虚出现、能打字） | 0.5–1 天 |
-| M1 | 功能闭环（数据/选项/学习/配置页/状态区） | 1–2 天 |
-| M2 | 模型 APK + 文档 | 0.5–1 天 |
-| M3 | 发布（GitHub Releases + 使用说明） | 0.5 天 |
+计划与决策见 [`android/README.md`](android/README.md)。
 
 ## Windows / macOS / iOS（骨架，暂缓）
 

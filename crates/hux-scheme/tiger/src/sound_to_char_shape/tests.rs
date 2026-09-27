@@ -43,8 +43,8 @@ fn punct_shape_comments_match_reference() {
 #[test]
 fn fixture_index_reports_counts() {
     let index = fixture_index();
-    assert_eq!(index.entry_count(), 22);
-    assert_eq!(index.spellings.len(), 19);
+    assert_eq!(index.entry_count(), 27);
+    assert_eq!(index.spellings.len(), 22);
 }
 
 #[test]
