@@ -6,6 +6,8 @@
 //! 语义对齐 librime 1.17.0 的词典音反查（`reverse_lookup_translator` + `ReverseLookupFilter`）：
 //! - 输入（去掉前缀后）按**拼写表**分段：音节本体 + 缩写（PY_c.schema.yaml 的两条
 //!   `abbrev` 规则），缩写可信度罚 `log(0.5)`；
+//! - 段内的**音节分隔符**（见 [`SYLLABLE_DELIMITER`]）在匹配拼写键时透明跳过、但**强制**断音：
+//!   没有音节（含尾部补全）能跨过它，且它在预编辑里原样保留（含段首、段尾；只有音节边界插空格）；
 //! - 输入尾部无法由拼写键消耗时，对剩余部分做**补全**（拼写表子树展开；本体拼写再罚
 //!   `log(0.05)`，缩写保持自身罚）；
 //! - 分段路径的音节序列必须与词条的码**完全一致**；
@@ -41,6 +43,10 @@ const KIND_COMPLETION: u8 = 3;
 /// 索引中的类型标记（0 = 本体，1 = 缩写）。
 const TYPE_NORMAL: u8 = 0;
 const TYPE_ABBREV: u8 = 1;
+/// 音节分隔符（方案 schema 的 `speller/delimiter` 的撇号；段内空格是上屏/选词键，撇号才是
+/// 唯一实际入口）：匹配拼写键时透明跳过，但**强制**在该处断音，并在预编辑里原样保留。
+/// 判定都在本模块：[`DelimitedCode`]（断音）与 [`repeats_delimiter`]（录入）。
+const SYLLABLE_DELIMITER: u8 = b'\'';
 /// 参照 `kAbbreviationPenalty = log(0.5)`。
 const ABBREV_PENALTY: f64 = -std::f64::consts::LN_2;
 /// 参照 `kCompletionPenalty = log(0.05)`。
@@ -291,7 +297,16 @@ pub fn load_first(dirs: &[PathBuf]) -> (Option<SoundToCharShapeIndex>, Option<St
     }
 }
 
+/// 追加 `ch` 是否只是重复音节分隔符：连续撇号只保留第一个，多余的**丢弃、不录入**
+/// （输入串与预编辑都不会出现 `''`，也不打断反查段）。
+pub(crate) fn repeats_delimiter(input: &[u8], ch: char) -> bool {
+    ch == SYLLABLE_DELIMITER as char && input.last() == Some(&SYLLABLE_DELIMITER)
+}
+
 /// 音反查翻译（参照 `ReverseLookupTranslator::Query`）：`input` 为段输入（含前缀）。
+///
+/// 分隔符语义见 [`SYLLABLE_DELIMITER`]：先折成 [`DelimitedCode`]（紧凑码 + 边界掩码），
+/// 建图、补全、预编辑都按它定位与断句。
 #[allow(clippy::too_many_arguments)]
 pub fn translate(
     index: &SoundToCharShapeIndex,
@@ -306,32 +321,35 @@ pub fn translate(
     limit: usize,
 ) -> Vec<Candidate> {
     let prefix_byte = prefix as u8;
-    let code = if input.first() == Some(&prefix_byte) {
+    let raw = if input.first() == Some(&prefix_byte) {
         &input[prefix.len_utf8()..]
     } else {
         input
     };
     // 前缀单独成段：`punct` 段与音反查段同区间，参照里由标点翻译器给出候选。
-    if code.is_empty() {
+    if raw.is_empty() {
         return punct_candidate(punct, pairs, prefix, full_shape, start, end)
             .into_iter()
             .collect();
     }
-    let len = code.len();
-    let mut edges = build_edges(index, code);
-    let types = path_types(&edges, len);
+    let code = DelimitedCode::new(raw);
+    let mut edges = build_edges(index, &code);
+    let types = path_types(&edges, code.len());
     // `path_types` 恒置 `types[0]`（见其定义）⇒ 该兜底分支不可达，保留为防御。
-    let Some(farthest) = (0..=len).rev().find(|&position| types[position].is_some()) else {
+    let Some(farthest) = (0..=code.len())
+        .rev()
+        .find(|&position| types[position].is_some())
+    else {
         return Vec::new();
     };
     // 参照 `BuildSyllableGraph` 的剪枝：最远顶点的最优拼写类型决定「缩写/补全」是否被弃
     // （全拼可达时缩写一律弃用）。
     let last_type = types[farthest].unwrap_or(KIND_NORMAL).max(KIND_FUZZY);
     prune(&mut edges, &types, farthest, last_type);
-    if farthest < len && !complete(index, &mut edges, code, farthest) {
+    if farthest < code.len() && !complete(index, &mut edges, &code, farthest) {
         return Vec::new();
     }
-    let chunks = collect_chunks(index, &edges, code, len);
+    let chunks = collect_chunks(index, &edges, &code);
     let code_prefix = String::from_utf8_lossy(&input[..prefix.len_utf8()]).into_owned();
     let mut candidates = emit(index, &chunks, &code_prefix, start, end, limit);
     code_comment_filter(&mut candidates, true, lexicon);
@@ -347,19 +365,64 @@ struct Edge {
     penalty: f64,
 }
 
-/// 建立拼写边（按音节 id、终点排序；与参照 `Transpose` 的索引序一致）。
-fn build_edges(index: &SoundToCharShapeIndex, code: &[u8]) -> Vec<Vec<Edge>> {
+/// 段输入去掉音节分隔符后的形态：紧凑码 + 边界掩码。
+///
+/// `boundary.len() == compact.len() + 1`，`boundary[i] == true` 表示 `compact[i - 1]` 与
+/// `compact[i]` 之间原有分隔符 ⇒ `boundary[0]` = 段首、`boundary[compact.len()]` = 段尾；
+/// 同一界上的连续分隔符并成一个（故连写与单写等价）。
+struct DelimitedCode {
+    compact: Vec<u8>,
+    boundary: Vec<bool>,
+}
+
+impl DelimitedCode {
+    fn new(code: &[u8]) -> Self {
+        let mut compact = Vec::with_capacity(code.len());
+        let mut boundary = vec![false];
+        for &byte in code {
+            if byte == SYLLABLE_DELIMITER {
+                boundary[compact.len()] = true;
+            } else {
+                compact.push(byte);
+                boundary.push(false);
+            }
+        }
+        Self { compact, boundary }
+    }
+
+    fn len(&self) -> usize {
+        self.compact.len()
+    }
+
+    /// `position..end`（要求 `position < end`）内没有分隔符 ⇒ 这段紧凑码是一个完整音节的拼写。
+    /// 边界落在 `position` 或 `end` 上都算「没有」：分隔符只在音节之间断音，不吞掉两侧音节。
+    fn unbroken(&self, position: usize, end: usize) -> bool {
+        !self.boundary[position + 1..end].iter().any(|&flag| flag)
+    }
+
+    /// 紧凑码下标 `position`（含末尾哨兵 `len`）之前原有分隔符 ⇒ 预编辑在这里拼回撇号。
+    fn delimiter_before(&self, position: usize) -> bool {
+        self.boundary[position]
+    }
+}
+
+/// 建立拼写边（按音节 id、终点排序；与参照 `Transpose` 的索引序一致）；音节不得跨分隔符
+/// （见 [`DelimitedCode::unbroken`]）。
+fn build_edges(index: &SoundToCharShapeIndex, code: &DelimitedCode) -> Vec<Vec<Edge>> {
     let len = code.len();
     let mut edges: Vec<Vec<Edge>> = (0..=len).map(|_| Vec::new()).collect();
-    for position in 0..len {
-        let rest = &code[position..];
+    for (position, vertex) in edges[..len].iter_mut().enumerate() {
+        let rest = &code.compact[position..];
         for (key, alts) in &index.spellings {
             if key.is_empty() || !rest.starts_with(key) {
                 continue;
             }
             let end = position + key.len();
+            if !code.unbroken(position, end) {
+                continue;
+            }
             for &(syllable, kind) in alts {
-                edges[position].push(Edge {
+                vertex.push(Edge {
                     end,
                     syllable,
                     kind: if kind == TYPE_ABBREV {
@@ -375,7 +438,7 @@ fn build_edges(index: &SoundToCharShapeIndex, code: &[u8]) -> Vec<Vec<Edge>> {
                 });
             }
         }
-        edges[position].sort_by_key(|edge| (edge.syllable, edge.end));
+        vertex.sort_by_key(|edge| (edge.syllable, edge.end));
     }
     edges
 }
@@ -419,14 +482,20 @@ fn prune(edges: &mut [Vec<Edge>], types: &[Option<u8>], farthest: usize, last_ty
 
 /// 尾部补全（参照 `BuildSyllableGraph` 的 completion 段）：`tail` 对应拼写键子树；
 /// 本体拼写按补全罚、缩写保持自身罚。补全后不重跑剪枝。
+///
+/// 补全边自 `farthest` 直连 `len`：`farthest..len` 内有分隔符时直接放弃补全（返回 `false`
+/// ⇒ 整段无候选），否则补出的音节会跨过分隔符。
 fn complete(
     index: &SoundToCharShapeIndex,
     edges: &mut [Vec<Edge>],
-    code: &[u8],
+    code: &DelimitedCode,
     farthest: usize,
 ) -> bool {
     let len = code.len();
-    let tail = &code[farthest..];
+    if farthest < len && !code.unbroken(farthest, len) {
+        return false;
+    }
+    let tail = &code.compact[farthest..];
     let mut added = false;
     for (key, alts) in &index.spellings {
         if !key.starts_with(tail) {
@@ -466,15 +535,16 @@ struct Chunk {
     preedit: String,
 }
 
-/// 广度优先收集「码恰好等于路径音节序列」的词条块（参照 `Table::Query` 的推入序）。
-/// `code` 用于生成「按音节分码」的预编辑：上一段为全拼（正常拼写）时在下一个音节前插空格，
-/// 缩写/补全段与后续合并（如 `` `zhongguo `` → `` `zhong guo ``、`` `zho `` → `` `zho ``）。
+/// 广度优先收集「码恰好等于路径音节序列」的词条块（参照 `Table::Query` 的推入序），并生成
+/// 「按音节分码」的预编辑：上一段为全拼时在下一音节前插空格（`` `zhongguo `` → `` `zhong guo ``），
+/// 上一段是缩写/补全则与后续音节合并（`` `zhguo `` → `` `zhguo ``），分隔符处原样保留撇号
+/// （含段首与段尾，`` `zh'guo `` → `` `zh'guo ``、`` `zh' `` → `` `zh' ``）——与输入同形。
 fn collect_chunks(
     index: &SoundToCharShapeIndex,
     edges: &[Vec<Edge>],
-    code: &[u8],
-    len: usize,
+    code: &DelimitedCode,
 ) -> Vec<Chunk> {
+    let len = code.len();
     let mut chunks = Vec::new();
     let mut queue = std::collections::VecDeque::new();
     queue.push_back((
@@ -490,21 +560,27 @@ fn collect_chunks(
             next_path.push(edge.syllable as u16);
             let next_penalty = penalty + edge.penalty;
             let mut next_preedit = preedit.clone();
-            if !next_preedit.is_empty() && last_kind == KIND_NORMAL {
+            // 分隔符原样保留（含段首），只有音节边界插空格。
+            if code.delimiter_before(position) {
+                next_preedit.push(SYLLABLE_DELIMITER as char);
+            } else if !next_preedit.is_empty() && last_kind == KIND_NORMAL {
                 next_preedit.push(' ');
             }
-            next_preedit.push_str(&String::from_utf8_lossy(&code[position..edge.end]));
-            if let Some(group) = index.group(&next_path) {
-                if edge.end == len {
+            next_preedit.push_str(&String::from_utf8_lossy(&code.compact[position..edge.end]));
+            if edge.end == len {
+                // 到达段尾：段尾分隔符同样保留（此路径不再扩展，可直接改预编辑）。
+                if code.delimiter_before(len) {
+                    next_preedit.push(SYLLABLE_DELIMITER as char);
+                }
+                if let Some(group) = index.group(&next_path) {
                     chunks.push(Chunk {
                         first: group.first,
                         count: group.count,
                         penalty: next_penalty,
-                        preedit: next_preedit.clone(),
+                        preedit: next_preedit,
                     });
                 }
-            }
-            if edge.end < len && index.prefix_exists(&next_path) {
+            } else if index.prefix_exists(&next_path) {
                 queue.push_back((edge.end, next_path, next_penalty, next_preedit, edge.kind));
             }
         }
@@ -623,12 +699,12 @@ fn punct_shape_comment(punct: &str) -> String {
 /// 音反查输入模式：`<前缀>[a-z']*`（参照 schema `recognizer/patterns/reverse_lookup`
 /// = `^` + 前缀 + `[a-z']*$`）：撇号可出现在任意位置。
 ///
-/// 口径事实（与本仓实现一致）：上游 `92a0b54` 把撇号同时放进 `speller/delimiter`，
-/// 使反查段内按撇号**切分音节**（依赖上游 librime 的 delimiter 修复
-/// [rime/librime#1233](https://github.com/rime/librime/pull/1233)；本机 librime 1.17.0
-/// 未含该修复，故已入库金样里含撇号的反查段**无候选**）。
-/// 本仓只落地「模式放行 + 撇号保留在输入中」，**不实现音节切分**：反查段由本段独占，
-/// 音节按拼写键前缀匹配建边，而拼写表不含 `'` ⇒ 含撇号的反查段同样无候选（与金样一致）。
+/// 口径事实：上游 `92a0b54` 把撇号同时放进 `speller/delimiter`，使反查段内按撇号**切分
+/// 音节**（依赖上游 librime 的 delimiter 修复
+/// [rime/librime#1233](https://github.com/rime/librime/pull/1233)；参照仓库亦注明该切分需要
+/// librime 已含该修复；而本机 librime 1.17.0 未含，故已入库金样里含撇号的反查段**无候选**）。
+/// 本仓按方案 schema 的意图实现该切分（见 [`translate`]）：撇号是音节分隔符 —— 匹配拼写键时
+/// 透明跳过，但**强制**断音；金样对照见 `key_sequence_differential` 的音反查重放。
 /// 撇号在 abc 段一侧的效果见 `interaction::translate::SEGMENTATION_DELIMITER`（追踪反查分支 pin 的 schema）。
 pub fn matches_pattern(input: &[u8], prefix: char) -> bool {
     let prefix = prefix as u8;
@@ -791,6 +867,149 @@ mod tests {
         assert_eq!(preedits(b"`zhongguo")[0], "`zhong guo");
         assert_eq!(preedits(b"`zhongg")[0], "`zhong g");
         assert_eq!(preedits(b"`zho")[0], "`zho");
+    }
+
+    /// 分隔符用例的合成索引（字段序同 [`SoundToCharShapeIndex::parse`]，借用下面的
+    /// [`IndexBuilder`]）：`xi` / `xian` / `xi an` 三条路径互相竞争 —— 金样夹具的 14 个音节里
+    /// 既无 `xi` 也无 `an`，表达不出「撇号强制断音」与「退化成单音节」的区别。
+    fn delimiter_index() -> SoundToCharShapeIndex {
+        let builder = IndexBuilder {
+            syllables: vec![
+                "an".to_string(),
+                "guo".to_string(),
+                "xi".to_string(),
+                "xian".to_string(),
+                "zhong".to_string(),
+            ],
+            spellings: vec![
+                (b"an".to_vec(), vec![(0, TYPE_NORMAL)]),
+                (b"guo".to_vec(), vec![(1, TYPE_NORMAL)]),
+                // `x` 是 `xi`/`xian` 的缩写键（两条 `abbrev` 规则的效果）。
+                (b"x".to_vec(), vec![(2, TYPE_ABBREV), (3, TYPE_ABBREV)]),
+                (b"xi".to_vec(), vec![(2, TYPE_NORMAL)]),
+                (b"xian".to_vec(), vec![(3, TYPE_NORMAL)]),
+                (b"zhong".to_vec(), vec![(4, TYPE_NORMAL)]),
+            ],
+            groups: vec![
+                (vec![0], 1),
+                (vec![1], 1),
+                (vec![2], 1),
+                (vec![2, 0], 1),
+                (vec![3], 1),
+                (vec![4], 1),
+                (vec![4, 1], 1),
+            ],
+            entries: vec![
+                (100, "安".to_string()),
+                (100, "国".to_string()),
+                (200, "西".to_string()),
+                (300, "西安".to_string()),
+                (500, "先".to_string()),
+                (1000, "中".to_string()),
+                (900, "中国".to_string()),
+            ],
+        };
+        SoundToCharShapeIndex::parse(&builder.bytes()).expect("delimiter index")
+    }
+
+    /// 跑一次音反查（测试用固定前缀与上屏区间）。
+    fn reverse_lookup(index: &SoundToCharShapeIndex, input: &[u8]) -> Vec<Candidate> {
+        translate(
+            index,
+            &Lexicon::load(&[], 0),
+            input,
+            '`',
+            0,
+            input.len(),
+            None,
+            &mut PairState::default(),
+            false,
+            CANDIDATE_LIMIT,
+        )
+    }
+
+    fn candidate_texts(index: &SoundToCharShapeIndex, input: &[u8]) -> Vec<String> {
+        reverse_lookup(index, input)
+            .into_iter()
+            .map(|candidate| candidate.text)
+            .collect()
+    }
+
+    fn candidate_preedits(index: &SoundToCharShapeIndex, input: &[u8]) -> Vec<String> {
+        reverse_lookup(index, input)
+            .into_iter()
+            .map(|candidate| candidate.preedit)
+            .collect()
+    }
+
+    /// 音节分隔符在匹配拼写键时透明跳过，但**强制**断音：音节与尾部补全都不得跨段。
+    #[test]
+    fn translate_honors_syllable_delimiter() {
+        let index = delimiter_index();
+        // 无分隔符：`xian` 同时可达 [xian]（先）与 [xi][an]（西安）。
+        assert_eq!(candidate_texts(&index, b"`xian"), ["先", "西安"]);
+        // 强制断音：只剩 [xi][an]（西安），跨段的 [xian]（先）被剔除。
+        assert_eq!(candidate_texts(&index, b"`xi'an"), ["西安"]);
+        // 末尾分隔符等价于无分隔符；首部、连续分隔符等价于单个分隔符。
+        assert_eq!(candidate_texts(&index, b"`xi"), ["西"]);
+        assert_eq!(
+            candidate_texts(&index, b"`xi'"),
+            candidate_texts(&index, b"`xi")
+        );
+        assert_eq!(
+            candidate_texts(&index, b"`'xi'an"),
+            candidate_texts(&index, b"`xi'an")
+        );
+        assert_eq!(
+            candidate_texts(&index, b"`xi'an'"),
+            candidate_texts(&index, b"`xi'an")
+        );
+        assert_eq!(
+            candidate_texts(&index, b"`xi''an"),
+            candidate_texts(&index, b"`xi'an")
+        );
+        // 尾部补全不得跨段：`xia'n` 的 `an` 跨过末尾分隔符 ⇒ 无候选
+        //（补全若跨段，[xi] + 补全 `an` 就会错出「西安」）。
+        assert!(candidate_texts(&index, b"`xia'n").is_empty());
+        // 某段拼不出音节 ⇒ 整段无候选（不报错、不 panic）。
+        assert!(candidate_texts(&index, b"`xi'qan").is_empty());
+        assert!(candidate_texts(&index, b"`zhq'guo").is_empty());
+        // 裸分隔符（无音节）同样只是无候选。
+        assert!(candidate_texts(&index, b"`'").is_empty());
+        assert!(candidate_texts(&index, b"`''").is_empty());
+    }
+
+    /// 分隔符在预编辑里**原样保留为撇号**（与输入同形），即便前一音节是缩写/补全匹配；
+    /// 只有音节边界才插空格。
+    #[test]
+    fn translate_keeps_delimiter_in_preedit() {
+        let index = delimiter_index();
+        // 全拼 + 全拼：`xi'an` → [xi][an]，预编辑与输入同形。
+        assert_eq!(candidate_preedits(&index, b"`xi'an")[0], "`xi'an");
+        // 无分隔符时 `xian` 是一个音节，预编辑同样与输入同形（没有可插空格的边界）。
+        assert_eq!(candidate_preedits(&index, b"`xian")[0], "`xian");
+        let index = fixture_index();
+        // 缩写 + 全拼：`zh'guo` → [zh][guo]（中国），分隔符保留。
+        assert_eq!(candidate_texts(&index, b"`zh'guo"), ["中国"]);
+        assert_eq!(candidate_preedits(&index, b"`zh'guo")[0], "`zh'guo");
+        // 对照：音节边界（无分隔符）仍是空格。
+        assert_eq!(candidate_preedits(&index, b"`zhongguo")[0], "`zhong guo");
+        // 分隔符透明：`zhong'g` 与 `zhongg` 同候选，但预编辑各自保留分隔符 / 走空格规则。
+        assert_eq!(
+            candidate_texts(&index, b"`zhong'g"),
+            candidate_texts(&index, b"`zhongg")
+        );
+        assert_eq!(candidate_preedits(&index, b"`zhong'g")[0], "`zhong'g");
+        assert_eq!(candidate_preedits(&index, b"`zhongg")[0], "`zhong g");
+        // 段首 / 段尾的分隔符同样原样可见（掩码两侧都记）。
+        let index = delimiter_index();
+        assert_eq!(candidate_preedits(&index, b"`'xi'an")[0], "`'xi'an");
+        assert_eq!(candidate_preedits(&index, b"`xi'an'")[0], "`xi'an'");
+        // 连续分隔符落在同一界上 ⇒ 预编辑里只出现一个。
+        assert_eq!(candidate_preedits(&index, b"`xi''an")[0], "`xi'an");
+        // 段尾分隔符：全拼未完成也当场可见（夹具里的 `zh` 是 `zhong` 的缩写）。
+        let index = fixture_index();
+        assert_eq!(candidate_preedits(&index, b"`zh'")[0], "`zh'");
     }
 
     // ------------------------------------------------------------ 畸形索引加固

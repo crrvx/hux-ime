@@ -89,6 +89,19 @@ struct Deviation {
 
 use DeviationKind::{AddonExtension, BranchPinDelimiter, UpstreamDefectFix};
 
+// ---- 未登记项：音反查段内的音节分隔符（撇号）------------------------------------
+//
+// 方案 schema 的 `speller/delimiter: " '"`（分支尖端 `92a0b54`）本就要求 `'` 在反查段内作
+// **音节分隔符**（参照仓库 README 亦注明该切分需要已含上游 delimiter 修复的 librime），而本
+// 金样的 librime pin 1.17.0 不含该修复。本仓按方案意图实现该切分
+// （`sound_to_char_shape::translate`：字形、音节与尾部补全均不得跨过 `'`），**但三个
+// `apostrophe-*` 用例登记不出差异**：其重放夹具索引只有 14 个音节
+// （`gong gu guo hua o ou xin xing zai zhao zhe zhen zhong zhou`），既无 `xi` 也无 `an`
+// ⇒ `` `xi ``/`` `xi'an `` 在本仓与上游（即便带 delimiter 修复）都是无候选，逐步记录逐字段
+// 相同。入表会被 `registry_is_falsifiable` 判为「偏离已消失」，故仍走金样比对；该语义由
+// `sound_to_char_shape.rs` 的单测覆盖（`translate_honors_syllable_delimiter` 等）。
+// 若日后重生成金样并把 `xi`/`an` 一类音节补进夹具，这三个用例应转为登记项。
+
 /// 登记表（金样字节保持原样，不重生成）。**每一项都必须确有差异**，否则
 /// `deviated_cases_match_their_registered_expectations` 会报「偏离已消失」。
 const DEVIATIONS: &[Deviation] = &[

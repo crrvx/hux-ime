@@ -167,6 +167,10 @@ pub fn processor(
             .iter()
             .any(|prefix| sound_to_char_shape::matches_pattern(&next, *prefix))
         {
+            // 连续的音节分隔符只保留第一个：判定与语义都在音反查模块。
+            if sound_to_char_shape::repeats_delimiter(context.input(), ch) {
+                return Ok(ProcessorResult::Consume);
+            }
             context.push_input(&[ch as u8]);
             return Ok(ProcessorResult::Consume);
         }

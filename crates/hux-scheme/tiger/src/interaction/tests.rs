@@ -1842,6 +1842,123 @@ fn processor_sound_to_char_shape_accepts_multiple_triggers() {
     assert_eq!(h.context.input(), b"`");
 }
 
+/// 音反查索引夹具（`goldens/sound_to_char_shape/`：小 PY_c + `tiger_sentence.pinyin.bin`）——
+/// 与差分层 `key_sequence_differential` 的音反查重放同源（该目录即方案数据目录，含
+/// `tiger_sentence.codes.txt`）。
+fn reverse_lookup_fixture() -> Decoder {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../goldens/sound_to_char_shape");
+    let lexicon = Lexicon::load(std::slice::from_ref(&dir), 0);
+    let supplement = crate::lexicon::Supplement::load_default(Some(&dir));
+    Decoder::new(lexicon, supplement, None)
+}
+
+/// 反查夹具 + 反查前缀属性（`` ` `` = grave）；`reprs` 全部敲完（逐步断言按键被消费）。
+fn reverse_lookup_harness(reprs: &[&str]) -> FusionHarness {
+    let mut harness = FusionHarness::new(reverse_lookup_fixture());
+    harness
+        .context
+        .set_property(K_SOUND_TO_CHAR_SHAPE_KEY, "grave");
+    for repr in reprs {
+        assert_eq!(harness.press(repr), ProcessorResult::Consume, "{repr}");
+    }
+    harness
+}
+
+/// 反查段里文本为 `text` 的候选预编辑。
+fn candidate_preedit<'a>(harness: &'a FusionHarness, text: &str) -> &'a str {
+    harness
+        .context
+        .composition
+        .back()
+        .expect("反查段")
+        .candidates
+        .iter()
+        .find(|candidate| candidate.text == text)
+        .unwrap_or_else(|| panic!("反查段应有候选 {text:?}"))
+        .preedit
+        .as_str()
+}
+
+/// 反查段首候选的预编辑。
+fn first_candidate_preedit(harness: &FusionHarness) -> &str {
+    harness
+        .context
+        .composition
+        .back()
+        .expect("反查段")
+        .candidates
+        .first()
+        .expect("反查段应有候选")
+        .preedit
+        .as_str()
+}
+
+/// 音反查段内的音节分隔符（撇号）经**真实链路**（`processor` → `CompositionBuilder::rebuild`）
+/// 留在段内、不切段：`` `zh'guo `` 的候选是「中国」、预编辑 `` `zh'guo ``（撇号原样保留），
+/// 上屏提交「中国」；不含撇号的 `` `zhguo `` 候选相同，但缩写 `zh` 与后续音节合并成
+/// `` `zhguo ``（对照见下）。撇号在 abc 段一侧是 `SEGMENTATION_DELIMITER`（切分），在反查段
+/// 一侧是**音节分隔符**（透明跳过 + 强制断音，见 `sound_to_char_shape`）⇒ 本用例钉住反查段
+/// 整体覆盖到输入末尾，中途不得断段或结束段。
+#[test]
+fn processor_reverse_lookup_keeps_syllable_delimiter_inside_segment() {
+    let steps: [(&str, &[u8]); 7] = [
+        ("grave", b"`"),
+        ("z", b"`z"),
+        ("h", b"`zh"),
+        ("apostrophe", b"`zh'"),
+        ("g", b"`zh'g"),
+        ("u", b"`zh'gu"),
+        ("o", b"`zh'guo"),
+    ];
+    let mut harness = FusionHarness::new(reverse_lookup_fixture());
+    harness
+        .context
+        .set_property(K_SOUND_TO_CHAR_SHAPE_KEY, "grave");
+    for (repr, expected) in steps {
+        assert_eq!(harness.press(repr), ProcessorResult::Consume, "{repr}");
+        assert_eq!(harness.context.input(), expected, "{repr}");
+        let segment = harness.context.composition.back().expect("反查段");
+        // 每一步（含撇号那一步）都仍是**同一个**反查段，且整段覆盖到输入末尾。
+        assert_eq!(segment.start, 0, "{repr}");
+        assert_eq!(segment.end, expected.len(), "{repr}");
+        assert!(
+            segment.has_tag(crate::sound_to_char_shape::SOUND_TO_CHAR_SHAPE_TAG),
+            "{repr}"
+        );
+    }
+    assert_eq!(candidate_preedit(&harness, "中国"), "`zh'guo");
+    assert_eq!(harness.press("space"), ProcessorResult::Consume);
+    assert_eq!(harness.context.last_commit_text(), "中国");
+
+    // 对照：不含撇号的既有路径不变 —— 候选同为「中国」，但缩写 `zh` 与后续音节**合并**成
+    // 预编辑 `` `zhguo ``（只有分隔符才强制插空格，正是撇号那一步的差异）；同样上屏「中国」。
+    let mut plain = reverse_lookup_harness(&["grave", "z", "h", "g", "u", "o"]);
+    assert_eq!(candidate_preedit(&plain, "中国"), "`zhguo");
+    assert_eq!(plain.press("space"), ProcessorResult::Consume);
+    assert_eq!(plain.context.last_commit_text(), "中国");
+
+    // 段尾的分隔符当场可见（候选预编辑原样保留撇号，不必等后续音节）。
+    let trailing = reverse_lookup_harness(&["grave", "z", "h", "apostrophe"]);
+    assert_eq!(first_candidate_preedit(&trailing), "`zh'");
+}
+
+/// 音反查段内**连续**的音节分隔符只保留第一个：多余的丢弃、不录入——输入串不被改写，
+/// 段尾也不前进，候选与预编辑保持与单个撇号完全一致。
+#[test]
+fn processor_reverse_lookup_drops_consecutive_syllable_delimiters() {
+    let mut harness = reverse_lookup_harness(&["grave", "z", "h", "apostrophe"]);
+    for _ in 0..2 {
+        assert_eq!(harness.press("apostrophe"), ProcessorResult::Consume);
+        assert_eq!(harness.context.input(), &b"`zh'"[..]);
+        let segment = harness.context.composition.back().expect("反查段");
+        assert_eq!(segment.end, 4, "连续撇号不得留在段内");
+    }
+    assert_eq!(first_candidate_preedit(&harness), "`zh'");
+    assert_eq!(harness.press("space"), ProcessorResult::Consume);
+    assert_eq!(harness.context.last_commit_text(), "中");
+}
+
 #[test]
 fn processor_backspace_pops_locked_input() {
     let mut h = Harness::new();
