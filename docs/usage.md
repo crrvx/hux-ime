@@ -75,7 +75,10 @@ addon 目录无用户级缺省值，`FCITX_ADDON_DIRS` **取代**缺省搜索集
 [`../data/README.md`](../data/README.md)）。
 
 手工安装依赖 CMake 3.20+ 与 fcitx5 开发文件（CMake 包 `Fcitx5Core`；Arch `fcitx5`、 \
-Fedora `fcitx5-devel`、Debian/Ubuntu `libfcitx5core-dev`）：
+Fedora `fcitx5-devel`、Debian/Ubuntu `libfcitx5core-dev`）。 \
+可选依赖 `atspi-2`（Arch `at-spi2-core`、Fedora `at-spi2-core-devel`、 \
+Debian/Ubuntu `libatspi2.0-dev`）：装上即启用 AT-SPI 取字来源； \
+装不上或不想用可加 `-DHUX_ATSPI=OFF` 显式关闭：
 
 ```sh
 cmake -S platform/fcitx5 -B build/addon \
@@ -149,6 +152,18 @@ cp data/tiger_sentence.* data/symbols.yaml ~/.local/share/fcitx5/hux/
 
 - `方向键` 移动应用光标（信息随光标刷新）
 - `Esc` / 再次触发 / 输入其它键：退出
+- **取字来源**：优先用应用上报的周边文本；应用不上报时（终端等）改用 **AT-SPI** \
+  取焦点处的文本与光标（需系统辅助功能已开启，见下条「局限」）。两者都有却不一致时， \
+  以**更晚变化**的那一源为准（应用改了内容却不再上报时，仍能跟着走）； \
+  两者都没有时两排留空，不做猜测、也不提示
+- **不按键也会刷新**：两排显示期间插件每 150 ms 复查一次来源，光标被方向键或鼠标移动、 \
+  或应用自己改了文本之后，两排会自己跟上，不需要再按一次键
+- **局限**：AT-SPI 要走得通，得**系统辅助功能已开启**、且应用把无障碍文本暴露出来 \
+  （GTK / Qt / Chromium 系通常可以；Firefox 只在辅助功能开启时才建无障碍树）。没开辅助 \
+  功能时浏览器根本不挂在无障碍总线上，纯终端也不暴露 —— 这两处仍取不到。开关：\
+  `busctl --user get-property org.a11y.Bus /org/a11y/bus org.a11y.Status IsEnabled`； \
+  真机诊断：`bash tools/atspi/live-probe.sh`。若构建时缺 `atspi-2` 开发包，插件自动退回 \
+  「只用应用上报的周边文本」
 
 ```
 咅 zhong

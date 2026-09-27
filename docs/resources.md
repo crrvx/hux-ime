@@ -132,6 +132,8 @@ git clone https://github.com/fcxxxz/rime-mohu _external/rime-mohu
   [`../goldens/README.md`](../goldens/README.md)。
 - 探针用例矩阵 `tools/cases/*.txt` 与探针 `tools/probes/*.cpp`：本仓自写、不随包、无生成器 \
   （探针依赖系统 librime / librime-lua，用法见 [`../goldens/README.md`](../goldens/README.md)）。
+- AT-SPI 夹具 `tools/atspi/*`（假可访问应用 + 探针 + 一键脚本）：本仓自写、不随包、无生成器 \
+  （依赖系统 `atspi-2` 与 Python `dbus`/`gi`，用法见 `tools/atspi/README.md`）。
 
 ## 6. 源码生成物（不随包，编进插件）
 
@@ -189,7 +191,10 @@ git clone https://github.com/fcxxxz/rime-mohu _external/rime-mohu
 
 **本引擎无常驻服务、无 socket、无端口**：
 
-- addon 是 fcitx5 进程内的动态库（`libhux.so`，`OnDemand=True`）：无守护进程、不监听端口、不与外部通信。
+- addon 是 fcitx5 进程内的动态库（`libhux.so`，`OnDemand=True`）：无守护进程、不监听端口； \
+  启用 AT-SPI 取字来源时只作为**客户端**连接会话既有的无障碍 D-Bus， \
+  读写焦点文本与光标；不自建总线、不提供服务、不开端口（实现见 \
+  [`../platform/README.md`](../platform/README.md)）。
 - 学习库是同进程内的 LevelDB（`…userdb/`），只用文件锁。
 - 日志走 fcitx5 设施（类别 `hux`）；安装脚本不自动重启 fcitx5，不产生脚本侧日志。
 - 进程环境覆盖只有 `HUX_DATA_DIRS`（数据）与 `HUX_MODEL`（模型）；其余 `HUX_*` 只见于测试与探针。
