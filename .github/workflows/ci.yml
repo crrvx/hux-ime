@@ -225,7 +225,11 @@ jobs:
           cmake --build build/addon -j"$(nproc)"
       - name: Verify C ABI symbols (hux_abi.h ↔ libhux.so)
         run: |
-          nm -D --defined-only build/addon/libhux.so \
+          # `hux` 目标由落点的 `add_subdirectory` 加进来，构建树里的落点随布局变
+          # （当前是 `build/addon/fcitx5/libhux.so`）⇒ 不写死路径，按实际落点定位。
+          so=$(find build/addon -name libhux.so -print -quit)
+          test -n "$so" || { echo "::error::构建树里没有 libhux.so"; exit 1; }
+          nm -D --defined-only "$so" \
             | awk '$2=="T"||$2=="i"{print $3}' | grep '^hux_' | sort -u > /tmp/so.txt
           grep -oE '\bhux_[a-z_0-9]+[[:space:]]*\(' crates/hux-ffi/include/hux_abi.h \
             | tr -d ' (' | sort -u > /tmp/hdr.txt

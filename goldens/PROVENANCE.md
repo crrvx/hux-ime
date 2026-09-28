@@ -59,29 +59,16 @@
 ## 参照仓库文件（生成时）
 
 - `lua/`、`tools/` 均为参照仓库路径；两 pin 相同的文件只列一行
-- 各文件的来源 pin：
 
-| 文件 | 来源 pin |
-|---|---|
-| `lua/tiger_sentence.lua`（主干金样） | 主干 `abad411` |
-| `lua/tiger_sentence.lua`（音反查金样） | 反查 `92a0b54` |
-| `lua/tiger_sentence_learning.lua` | 两 pin 相同 |
-| `lua/tiger_sentence_ngram.lua` | 两 pin 相同 |
-| `lua/tiger_sentence_cache.lua` | 两 pin 相同 |
-| `lua/tiger_sentence_lexical.lua` | 两 pin 相同 |
-| `tools/model_fixture.lua` | 主干 `abad411` |
-
-- 上表各文件的 sha256（顺序同表）：
-
-| 文件 | sha256 |
-|---|---|
-| `lua/tiger_sentence.lua`（主干金样） | `b77a747597a140e6fec315d8bc78344b8d8d3bdc007132bc7c53a9c6a3f22dd3` |
-| `lua/tiger_sentence.lua`（音反查金样） | `f33cee28f78a612d77570297a6949732f46eeb3c4011b7fe760f43c3b3120b89` |
-| `lua/tiger_sentence_learning.lua` | `0f685ae57fb4e70662492b7a3e56b91b5e8e9592cc64d881db181c9bf7acd9c6` |
-| `lua/tiger_sentence_ngram.lua` | `fd7b2337d5215f51ffea092c76f07951a8e2172087e823d8a4b1641f11d8bf4e` |
-| `lua/tiger_sentence_cache.lua` | `8ebd209588fb62d0bf888e752b95d8588ecbcdef2af40f8b009865fc3c41da7c` |
-| `lua/tiger_sentence_lexical.lua` | `d49f45f0ee0033fd2466269d967b4784f508da220ec62215806e227ea590fe8d` |
-| `tools/model_fixture.lua` | `ed5c771ee29835c20b46476635809ed37d70ad0c79d14df0ae13233f5da7d45a` |
+| 文件 | 来源 pin | sha256 |
+|---|---|---|
+| `lua/tiger_sentence.lua`（主干金样） | 主干 `abad411` | `b77a747597a140e6fec315d8bc78344b8d8d3bdc007132bc7c53a9c6a3f22dd3` |
+| `lua/tiger_sentence.lua`（音反查金样） | 反查 `92a0b54` | `f33cee28f78a612d77570297a6949732f46eeb3c4011b7fe760f43c3b3120b89` |
+| `lua/tiger_sentence_learning.lua` | 两 pin 相同 | `0f685ae57fb4e70662492b7a3e56b91b5e8e9592cc64d881db181c9bf7acd9c6` |
+| `lua/tiger_sentence_ngram.lua` | 两 pin 相同 | `fd7b2337d5215f51ffea092c76f07951a8e2172087e823d8a4b1641f11d8bf4e` |
+| `lua/tiger_sentence_cache.lua` | 两 pin 相同 | `8ebd209588fb62d0bf888e752b95d8588ecbcdef2af40f8b009865fc3c41da7c` |
+| `lua/tiger_sentence_lexical.lua` | 两 pin 相同 | `d49f45f0ee0033fd2466269d967b4784f508da220ec62215806e227ea590fe8d` |
+| `tools/model_fixture.lua` | 主干 `abad411` | `ed5c771ee29835c20b46476635809ed37d70ad0c79d14df0ae13233f5da7d45a` |
 
 ## 数据夹具
 
