@@ -46,7 +46,7 @@ jobs:
         # 只拦「平台痕迹」：env / XDG / 系统时钟 / 直接打印。
         # 允许按平台传入的显式路径读数据文件，故不查 std::fs。
         # 先剥离注释再匹配（注释里写「不要用 println!」不该让 CI 变红），
-        # 字符串字面量与真代码照旧命中——与 §7「注释与文档叙述不受影响」一致。
+        # 字符串字面量与真代码照旧命中——注释与文档叙述不影响判定。
         run: |
           if ! python3 tools/checks/rust_source_grep.py --root crates/hux-core/src \
               --pattern 'std::env::var|SystemTime|/usr/share|eprintln!|println!' \
@@ -94,6 +94,15 @@ jobs:
             echo "::error::hux-cfg / hux-ffi 只允许依赖 hux-core（及外部 crate）"
             exit 1
           fi
+          # 平台落点的数据目录 crate 必须是**叶子**：Android 侧在 fork 的插件工程里单独构建，
+          # 一旦依赖工作区内部 crate，那边就得把整棵树搬过去（数据目录规则只用标准库）。
+          for leaf in hux-platform-linux hux-platform-android; do
+            if cargo tree --locked -p "$leaf" --edges normal --prefix none \
+                | grep -E '^hux-' | grep -qv "^${leaf} v"; then
+              echo "::error::$leaf 不得依赖任何内部 crate（落点只碰标准库）"
+              exit 1
+            fi
+          done
           # core 不得引用已迁出的方案模块（剥离注释后匹配）
           if ! python3 tools/checks/rust_source_grep.py --root crates/hux-core/src \
               --pattern 'crate::(decode|lexicon|lexical|ngram|interaction|sound_to_char_shape|char_to_sound_shape)\b' \
@@ -128,20 +137,21 @@ jobs:
             exit 1
           fi
       - name: Verify golden checksums & headers
-        # 逐行解析 goldens/README.md 的 sha256 表并与实际文件比对，
-        # 另核对三份「不重生成」金样（key / key_sequence / sound_to_char_shape）的内部头部
-        # （`# reference … @ <pin>` 与来源文件 sha256）与 goldens/README.md 声明的 pin 是否一致。
+        # 逐行解析 goldens/PROVENANCE.md 的 sha256 表并与实际文件比对，
+        # 另核对四份「不重生成」金样（key / key_sequence / key_sequence_tab /
+        # sound_to_char_shape）的内部头部
+        # （`# reference … @ <pin>` 与来源文件 sha256）与 goldens/PROVENANCE.md 声明的 pin 是否一致。
         run: python3 tools/checks/verify_golden_shas.py
       - name: Verify non-regenerated goldens (sha256)
         run: |
-          # 与上一步**互为独立来源**（值写在本文件里，不读 README）：key / key_sequence /
+          # 与上一步**互为独立来源**（值写在本文件里，不读文档）：key / key_sequence /
           # key_sequence_tab / sound_to_char_shape 依赖具体 librime 版本，CI 不重生成，
           # 故此处再钉一次。
           sha256sum -c - <<'SUMS'
           7fae4983ab69e36ebd2e5cac267df81e9bc325731deaefcaa22873aeca8660c0  goldens/key.tsv.gz
           8ce095cf98bae0bbfbd561e6b1e3aa7f1961af6e8e3c3b62b692a7e89e325aa1  goldens/key_sequence.tsv.gz
           3c89618d0fb067bb0ce5562646a62924576c0610226aed3fa70689b6549da9bc  goldens/key_sequence_tab.tsv.gz
-          e9d48698bf73807a37933b7c2324afbc27fffe7b0492f0dd2787116ec06a7545  goldens/sound_to_char_shape.tsv.gz
+          bcfe4102b66806b2f9b250d9679b7256a56bba6941c9190b41b07fd90d49500f  goldens/sound_to_char_shape.tsv.gz
           SUMS
       - name: Verify branding assets (shared graphics)
         # 位图尺寸须与文件名声明一致、矢量源可渲染（见 assets/branding/README.md）。
@@ -163,7 +173,7 @@ jobs:
         # 两个一键脚本是文档首推入口：语法 + `--dry-run` 冒烟（不写系统目录）。
         # `bash -n a b c` 只检查第一个文件（其余当位置参数），故逐个文件检查。
         run: |
-          for script in install.sh uninstall.sh tools/generators/*.sh tools/checks/*.sh; do
+          for script in install.sh uninstall.sh platform/linux/*.sh tools/generators/*.sh tools/generators/lib/*.sh tools/checks/*.sh; do
             bash -n "$script"
           done
           ./install.sh --dry-run >/dev/null
@@ -209,13 +219,17 @@ jobs:
           rustc -V
       - name: Configure & build addon (cargo + cmake)
         run: |
-          cmake -S platform/fcitx5 -B build/addon \
+          cmake -S platform/linux -B build/addon \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=/usr
           cmake --build build/addon -j"$(nproc)"
       - name: Verify C ABI symbols (hux_abi.h ↔ libhux.so)
         run: |
-          nm -D --defined-only build/addon/libhux.so \
+          # `hux` 目标由落点的 `add_subdirectory` 加进来，构建树里的落点随布局变
+          # （当前是 `build/addon/fcitx5/libhux.so`）⇒ 不写死路径，按实际落点定位。
+          so=$(find build/addon -name libhux.so -print -quit)
+          test -n "$so" || { echo "::error::构建树里没有 libhux.so"; exit 1; }
+          nm -D --defined-only "$so" \
             | awk '$2=="T"||$2=="i"{print $3}' | grep '^hux_' | sort -u > /tmp/so.txt
           grep -oE '\bhux_[a-z_0-9]+[[:space:]]*\(' crates/hux-ffi/include/hux_abi.h \
             | tr -d ' (' | sort -u > /tmp/hdr.txt
@@ -315,80 +329,10 @@ jobs:
           python3 tools/generators/gen_key_table.py \
             --source external/librime/src/rime/key_table.cc --out /tmp/key_table.rs
           diff /tmp/key_table.rs crates/hux-core/src/key_table.rs
-      - name: Regenerate goldens
-        run: |
-          lua tools/generators/gen_ngram_golden.lua \
-            --reference _external/tiger-sentense-rime \
-            --model /tmp/ngram_fixture.bin \
-            --out /tmp/ngram_fixture.tsv --mode fixture
-          lua tools/generators/gen_lexicon_golden.lua \
-            --reference _external/tiger-sentense-rime \
-            --data "$PWD/goldens/lexicon" --out /tmp/lexicon.tsv --mode present
-          lua tools/generators/gen_lexicon_golden.lua \
-            --reference _external/tiger-sentense-rime \
-            --data /tmp/no-such-dir --out /tmp/lexicon_missing.tsv --mode missing
-          lua tools/generators/gen_lexicon_golden.lua \
-            --reference _external/tiger-sentense-rime \
-            --data "$PWD/goldens/lexicon_variants" --out /tmp/lexicon_variants.tsv --mode present
-          lua tools/generators/gen_lexicon_golden.lua \
-            --reference _external/tiger-sentense-rime \
-            --data "$PWD/goldens/lexicon_codes_only" --out /tmp/lexicon_codes_only.tsv --mode present
-          lua tools/generators/gen_decode_golden.lua \
-            --reference _external/tiger-sentense-rime \
-            --data "$PWD/goldens/lexicon" --out /tmp/decode.tsv
-          lua tools/generators/gen_decode_golden.lua \
-            --reference _external/tiger-sentense-rime \
-            --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
-            --lexical "$PWD/data/tiger_sentence.lexical.bin" \
-            --out /tmp/decode_model.tsv --every 7
-          lua tools/generators/gen_decode_golden.lua \
-            --reference _external/tiger-sentense-rime \
-            --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
-            --lexical "$PWD/data/tiger_sentence.lexical.bin" \
-            --out /tmp/decode_rank_first.tsv --every 7 --duplicate 0
-          lua tools/generators/gen_decode_golden.lua \
-            --reference _external/tiger-sentense-rime \
-            --data "$PWD/goldens/lexicon" --out /tmp/decode_evidence.tsv --early-commit 1 --required 1
-          lua tools/generators/gen_decode_golden.lua \
-            --reference _external/tiger-sentense-rime \
-            --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
-            --lexical "$PWD/data/tiger_sentence.lexical.bin" \
-            --out /tmp/decode_evidence_model.tsv --every 7 --early-commit 1 --required 1
-          lua tools/generators/gen_learning_golden.lua \
-            --reference _external/tiger-sentense-rime --out /tmp/learning.tsv
-          lua tools/generators/gen_decode_golden.lua \
-            --reference _external/tiger-sentense-rime \
-            --data "$PWD/goldens/lexicon" --out /tmp/decode_learning.tsv --learning 1
-          lua tools/generators/gen_decode_golden.lua \
-            --reference _external/tiger-sentense-rime \
-            --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
-            --lexical "$PWD/data/tiger_sentence.lexical.bin" \
-            --out /tmp/decode_learning_model.tsv --every 7 --learning 1
-          lua tools/generators/gen_decode_golden.lua \
-            --reference _external/tiger-sentense-rime \
-            --data "$PWD/goldens/lexicon" --out /tmp/decode_learning_evidence.tsv \
-            --early-commit 1 --required 1 --learning 1
-          lua tools/generators/gen_lexical_golden.lua \
-            --reference _external/tiger-sentense-rime \
-            --model "$PWD/data/tiger_sentence.lexical.bin" --out /tmp/lexical.tsv
-      - name: Compare with committed goldens
-        run: |
-          cmp goldens/ngram_fixture.bin /tmp/ngram_fixture.bin
-          gunzip -c goldens/ngram_fixture.tsv.gz | cmp - /tmp/ngram_fixture.tsv
-          gunzip -c goldens/lexicon.tsv.gz | cmp - /tmp/lexicon.tsv
-          gunzip -c goldens/lexicon_missing.tsv.gz | cmp - /tmp/lexicon_missing.tsv
-          gunzip -c goldens/lexicon_variants.tsv.gz | cmp - /tmp/lexicon_variants.tsv
-          gunzip -c goldens/lexicon_codes_only.tsv.gz | cmp - /tmp/lexicon_codes_only.tsv
-          gunzip -c goldens/decode.tsv.gz | cmp - /tmp/decode.tsv
-          gunzip -c goldens/decode_model.tsv.gz | cmp - /tmp/decode_model.tsv
-          gunzip -c goldens/decode_rank_first.tsv.gz | cmp - /tmp/decode_rank_first.tsv
-          gunzip -c goldens/decode_evidence.tsv.gz | cmp - /tmp/decode_evidence.tsv
-          gunzip -c goldens/decode_evidence_model.tsv.gz | cmp - /tmp/decode_evidence_model.tsv
-          gunzip -c goldens/learning.tsv.gz | cmp - /tmp/learning.tsv
-          gunzip -c goldens/decode_learning.tsv.gz | cmp - /tmp/decode_learning.tsv
-          gunzip -c goldens/decode_learning_model.tsv.gz | cmp - /tmp/decode_learning_model.tsv
-          gunzip -c goldens/decode_learning_evidence.tsv.gz | cmp - /tmp/decode_learning_evidence.tsv
-          gunzip -c goldens/lexical.tsv.gz | cmp - /tmp/lexical.tsv
+      - name: Regenerate goldens and compare with committed
+        # 15 次 lua 生成 + 15 次逐字节比对收敛在此脚本（与 golden-lua-latest 共用）；参考检出、
+        # 金样目录与临时目录取脚本默认值（_external/tiger-sentense-rime、goldens、$TMPDIR）。
+        run: bash tools/generators/regen_goldens.sh
 
   # Arch 的系统 lua 即最新版；验证金样在最新 Lua 下同样逐字节一致。
   # shell: bash 显式设置（容器内默认 shell 不保证是 bash）。
@@ -412,78 +356,8 @@ jobs:
           git -C _external/tiger-sentense-rime remote add origin "$REFERENCE_REPO"
           git -C _external/tiger-sentense-rime fetch --depth 1 origin "$REFERENCE_COMMIT"
           git -C _external/tiger-sentense-rime checkout --detach FETCH_HEAD
-      - name: Regenerate goldens (system lua)
+      - name: Regenerate goldens and compare with committed (system lua)
+        # 15 次 lua 生成 + 15 次逐字节比对与 golden 作业共用同一脚本入口（顺序与产物名单见脚本）。
         run: |
           lua -v
-          lua tools/generators/gen_ngram_golden.lua \
-            --reference _external/tiger-sentense-rime \
-            --model /tmp/ngram_fixture.bin \
-            --out /tmp/ngram_fixture.tsv --mode fixture
-          lua tools/generators/gen_lexicon_golden.lua \
-            --reference _external/tiger-sentense-rime \
-            --data "$PWD/goldens/lexicon" --out /tmp/lexicon.tsv --mode present
-          lua tools/generators/gen_lexicon_golden.lua \
-            --reference _external/tiger-sentense-rime \
-            --data /tmp/no-such-dir --out /tmp/lexicon_missing.tsv --mode missing
-          lua tools/generators/gen_lexicon_golden.lua \
-            --reference _external/tiger-sentense-rime \
-            --data "$PWD/goldens/lexicon_variants" --out /tmp/lexicon_variants.tsv --mode present
-          lua tools/generators/gen_lexicon_golden.lua \
-            --reference _external/tiger-sentense-rime \
-            --data "$PWD/goldens/lexicon_codes_only" --out /tmp/lexicon_codes_only.tsv --mode present
-          lua tools/generators/gen_decode_golden.lua \
-            --reference _external/tiger-sentense-rime \
-            --data "$PWD/goldens/lexicon" --out /tmp/decode.tsv
-          lua tools/generators/gen_decode_golden.lua \
-            --reference _external/tiger-sentense-rime \
-            --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
-            --lexical "$PWD/data/tiger_sentence.lexical.bin" \
-            --out /tmp/decode_model.tsv --every 7
-          lua tools/generators/gen_decode_golden.lua \
-            --reference _external/tiger-sentense-rime \
-            --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
-            --lexical "$PWD/data/tiger_sentence.lexical.bin" \
-            --out /tmp/decode_rank_first.tsv --every 7 --duplicate 0
-          lua tools/generators/gen_decode_golden.lua \
-            --reference _external/tiger-sentense-rime \
-            --data "$PWD/goldens/lexicon" --out /tmp/decode_evidence.tsv --early-commit 1 --required 1
-          lua tools/generators/gen_decode_golden.lua \
-            --reference _external/tiger-sentense-rime \
-            --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
-            --lexical "$PWD/data/tiger_sentence.lexical.bin" \
-            --out /tmp/decode_evidence_model.tsv --every 7 --early-commit 1 --required 1
-          lua tools/generators/gen_learning_golden.lua \
-            --reference _external/tiger-sentense-rime --out /tmp/learning.tsv
-          lua tools/generators/gen_decode_golden.lua \
-            --reference _external/tiger-sentense-rime \
-            --data "$PWD/goldens/lexicon" --out /tmp/decode_learning.tsv --learning 1
-          lua tools/generators/gen_decode_golden.lua \
-            --reference _external/tiger-sentense-rime \
-            --data "$PWD/goldens/lexicon" --model "$PWD/goldens/ngram_fixture.bin" \
-            --lexical "$PWD/data/tiger_sentence.lexical.bin" \
-            --out /tmp/decode_learning_model.tsv --every 7 --learning 1
-          lua tools/generators/gen_decode_golden.lua \
-            --reference _external/tiger-sentense-rime \
-            --data "$PWD/goldens/lexicon" --out /tmp/decode_learning_evidence.tsv \
-            --early-commit 1 --required 1 --learning 1
-          lua tools/generators/gen_lexical_golden.lua \
-            --reference _external/tiger-sentense-rime \
-            --model "$PWD/data/tiger_sentence.lexical.bin" --out /tmp/lexical.tsv
-      - name: Compare with committed goldens
-        run: |
-          cmp goldens/ngram_fixture.bin /tmp/ngram_fixture.bin
-          gunzip -c goldens/ngram_fixture.tsv.gz | cmp - /tmp/ngram_fixture.tsv
-          gunzip -c goldens/lexicon.tsv.gz | cmp - /tmp/lexicon.tsv
-          gunzip -c goldens/lexicon_missing.tsv.gz | cmp - /tmp/lexicon_missing.tsv
-          gunzip -c goldens/lexicon_variants.tsv.gz | cmp - /tmp/lexicon_variants.tsv
-          gunzip -c goldens/lexicon_codes_only.tsv.gz | cmp - /tmp/lexicon_codes_only.tsv
-          gunzip -c goldens/decode.tsv.gz | cmp - /tmp/decode.tsv
-          gunzip -c goldens/decode_model.tsv.gz | cmp - /tmp/decode_model.tsv
-          gunzip -c goldens/decode_rank_first.tsv.gz | cmp - /tmp/decode_rank_first.tsv
-          gunzip -c goldens/decode_evidence.tsv.gz | cmp - /tmp/decode_evidence.tsv
-          gunzip -c goldens/decode_evidence_model.tsv.gz | cmp - /tmp/decode_evidence_model.tsv
-          gunzip -c goldens/learning.tsv.gz | cmp - /tmp/learning.tsv
-          gunzip -c goldens/decode_learning.tsv.gz | cmp - /tmp/decode_learning.tsv
-          gunzip -c goldens/decode_learning_model.tsv.gz | cmp - /tmp/decode_learning_model.tsv
-          gunzip -c goldens/decode_learning_evidence.tsv.gz | cmp - /tmp/decode_learning_evidence.tsv
-          gunzip -c goldens/lexical.tsv.gz | cmp - /tmp/lexical.tsv
+          bash tools/generators/regen_goldens.sh

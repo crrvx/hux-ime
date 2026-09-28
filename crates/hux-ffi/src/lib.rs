@@ -42,9 +42,9 @@ pub struct HuxOptions {
     pub page_down: HuxKeyList,
     /// 数字直选（1–9；0=10）。
     pub digit_select: i32,
-    /// 候选排列：0 = 跟随全局（默认），1 = 横排，2 = 竖排。
+    /// 候选排列：见 `hux_abi.h` 的 `HUX_CANDIDATE_LAYOUT_*`。
     pub candidate_layout: i32,
-    /// 预编辑内容：0 = 候选分码（默认），1 = 原始输入，2 = 不显示。
+    /// 预编辑内容：见 `hux_abi.h` 的 `HUX_PREEDIT_MODE_*`。
     pub preedit_mode: i32,
     /// 翻页循环：1 = 开（默认 0 = 关）。
     pub page_cycle: i32,
@@ -56,26 +56,29 @@ pub struct HuxOptions {
     pub filter_non_han: i32,
 }
 
+/// 宿主「状态已更新」回调（`hux_abi.h` 里 `hux_host.update` 的签名）：UI 状态快照。
+///
+/// 参数依次为 `user`、预编辑文本、光标字节偏移、候选文本数组、候选注释数组、候选数、
+/// 当前高亮索引、两排辅助文本（上排 / 下排）；文本均为 NUL 结尾的 UTF-8。
+pub type HostUpdateFn = unsafe extern "C" fn(
+    *mut c_void,
+    *const c_char,
+    i32,
+    *const *const c_char,
+    *const *const c_char,
+    i32,
+    i32,
+    *const c_char,
+    *const c_char,
+);
+
 /// 宿主回调表（由 C++ 薄壳提供；函数指针可为空，便于测试）。
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub struct HostCallback {
     pub user: *mut c_void,
     pub commit: Option<unsafe extern "C" fn(*mut c_void, *const c_char)>,
-    #[allow(clippy::type_complexity)]
-    pub update: Option<
-        unsafe extern "C" fn(
-            *mut c_void,
-            *const c_char,
-            i32,
-            *const *const c_char,
-            *const *const c_char,
-            i32,
-            i32,
-            *const c_char,
-            *const c_char,
-        ),
-    >,
+    pub update: Option<HostUpdateFn>,
 }
 
 /// `hux_engine_key` 返回值位掩码：已消费（宿主不应再处理该键）。
@@ -84,36 +87,38 @@ pub const HUX_KEY_CONSUMED: i32 = 0x1;
 /// 重发（保证客户端先收到提交、后收到按键；对齐 fcitx5 核心 `KeyEventOrderFix` 修法）。
 pub const HUX_KEY_FORWARD_AFTER_COMMIT: i32 = 0x2;
 
+/// `hux_options` 的字段名序列（Rust ↔ `include/hux_abi.h` ↔ C++ 壳三处的唯一对照）。
+///
+/// 每个名字都在本 crate 的布局用例里被 `offset_of!` 逐字段引用 ⇒ 改 Rust 字段名即**编译
+/// 失败**；本表与头文件的声明序再由头文件解析结果校对。平台侧据此逐项核对
+/// `hux_cfg::Settings` ↔ 本结构的映射（见平台测试的 `settings_options_field_by_field`）：
+/// 两边都引同一张表，任一处的字段增删 / 换序都会让守卫失败。
+pub const HUX_OPTIONS_FIELDS: &[&str] = &[
+    "early_commit",
+    "early_commit_to_preedit",
+    "allow_duplicate_single",
+    "full_shape",
+    "ascii_punct",
+    "learning_on_tab",
+    "high_freq_limit",
+    "reverse_lookup_pronunciation",
+    "reverse_lookup_character",
+    "page_size",
+    "page_up",
+    "page_down",
+    "digit_select",
+    "candidate_layout",
+    "preedit_mode",
+    "page_cycle",
+    "min_retained_input_length",
+    "full_charset",
+    "filter_non_han",
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::mem::{offset_of, size_of};
-
-    /// `hux_options` 的字段名序列（Rust ↔ `include/hux_abi.h` ↔ C++ 壳三处的唯一对照）。
-    ///
-    /// 每个名字都在 [`c_layout_matches_header`] 里被 `offset_of!` 逐字段引用 ⇒ 改 Rust 字段名
-    /// 即**编译失败**；本表与 [`HUX_OPTIONS_FIELDS`] 的顺序再由 `hux_abi.h` 的解析结果校对。
-    const HUX_OPTIONS_FIELDS: &[&str] = &[
-        "early_commit",
-        "early_commit_to_preedit",
-        "allow_duplicate_single",
-        "full_shape",
-        "ascii_punct",
-        "learning_on_tab",
-        "high_freq_limit",
-        "reverse_lookup_pronunciation",
-        "reverse_lookup_character",
-        "page_size",
-        "page_up",
-        "page_down",
-        "digit_select",
-        "candidate_layout",
-        "preedit_mode",
-        "page_cycle",
-        "min_retained_input_length",
-        "full_charset",
-        "filter_non_han",
-    ];
 
     /// 头文件 `typedef struct hux_options { … } hux_options;` 的成员名（声明序，去注释）。
     fn header_options_fields() -> Vec<String> {
@@ -184,7 +189,30 @@ mod tests {
         assert_eq!(size_of::<HuxOptions>(), 15 * scalar + 4 * list);
         // **逐字段**（名字 + 偏移，按声明序）：任何改名都让 `offset_of!` 编译失败，
         // 任何同宽换序都让下一条偏移断言失败（此前只有 8 个抽查点）。
-        let expected: &[(&str, usize)] = &[
+        let expected = options_expected_offsets();
+        let offsets = options_field_offsets();
+        assert_eq!(
+            offsets.len(),
+            HUX_OPTIONS_FIELDS.len(),
+            "本表的字段数与 `HUX_OPTIONS_FIELDS` 不一致"
+        );
+        for (index, ((name, offset), actual)) in expected.iter().zip(offsets).enumerate() {
+            assert_eq!(
+                *name, HUX_OPTIONS_FIELDS[index],
+                "第 {index} 个字段名与 `HUX_OPTIONS_FIELDS` 不一致"
+            );
+            assert_eq!(
+                *offset, actual,
+                "`hux_options.{name}` 的偏移应为 {offset}，实际 {actual}"
+            );
+        }
+    }
+
+    /// `hux_options` 逐字段的**期望偏移**（名字 + 偏移，按声明序）。
+    fn options_expected_offsets() -> Vec<(&'static str, usize)> {
+        let scalar = size_of::<i32>();
+        let list = size_of::<HuxKeyList>();
+        vec![
             ("early_commit", 0),
             ("early_commit_to_preedit", scalar),
             ("allow_duplicate_single", 2 * scalar),
@@ -204,8 +232,12 @@ mod tests {
             ("min_retained_input_length", 12 * scalar + 4 * list),
             ("full_charset", 13 * scalar + 4 * list),
             ("filter_non_han", 14 * scalar + 4 * list),
-        ];
-        let offsets = [
+        ]
+    }
+
+    /// `HuxOptions` 逐字段的**实际偏移**（按声明序）：任何改名都让 `offset_of!` 编译失败。
+    fn options_field_offsets() -> [usize; 19] {
+        [
             offset_of!(HuxOptions, early_commit),
             offset_of!(HuxOptions, early_commit_to_preedit),
             offset_of!(HuxOptions, allow_duplicate_single),
@@ -225,22 +257,7 @@ mod tests {
             offset_of!(HuxOptions, min_retained_input_length),
             offset_of!(HuxOptions, full_charset),
             offset_of!(HuxOptions, filter_non_han),
-        ];
-        assert_eq!(
-            offsets.len(),
-            HUX_OPTIONS_FIELDS.len(),
-            "本表的字段数与 `HUX_OPTIONS_FIELDS` 不一致"
-        );
-        for (index, ((name, offset), actual)) in expected.iter().zip(offsets).enumerate() {
-            assert_eq!(
-                *name, HUX_OPTIONS_FIELDS[index],
-                "第 {index} 个字段名与 `HUX_OPTIONS_FIELDS` 不一致"
-            );
-            assert_eq!(
-                *offset, actual,
-                "`hux_options.{name}` 的偏移应为 {offset}，实际 {actual}"
-            );
-        }
+        ]
     }
 
     /// `hux_options` 的**字段名与声明序**必须与 Rust 结构体逐项一致。

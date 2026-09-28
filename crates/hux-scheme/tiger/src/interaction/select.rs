@@ -16,9 +16,9 @@ pub fn apply_buffered_commit(context: &mut Context) {
     let Some(candidate) = segment.candidates.get_mut(segment.selected_index) else {
         return;
     };
-    if candidate.kind == "sentence_buffered" {
+    if candidate.kind == KIND_SENTENCE_BUFFERED {
         candidate.text = format!("{prefix}{}", candidate.text);
-        candidate.kind = "sentence_buffered_commit".to_string();
+        candidate.kind = KIND_SENTENCE_BUFFERED_COMMIT.to_string();
     }
 }
 

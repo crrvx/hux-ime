@@ -3,8 +3,12 @@
 
 use super::*;
 
-/// 缓冲前缀属性（**唯一**仍写出的会话属性：`select` / `early_commit` / `learning_glue`
-/// 与内核视图都读它；其余会话状态改由方案侧 `SentenceState` 承载，见 `state.rs` 的 `save`）。
+/// 缓冲前缀属性（方案侧**唯一**仍写出的会话属性：与内核布尔标记同在 `state.rs` 的 `save` 写出；
+/// 宿主另有通用属性通道 `Scheme::set_property`，不在本约定内）。
+/// 属性只作**上层可见的文本快照**：宿主经 `Scheme::buffered_text` 回读，方案侧 `state.rs` 的
+/// `buffered_text`（调用方 `select` / `translate`）亦然；`early_commit` / `learning_glue` 读的
+/// 是状态字段 `SentenceState::buffered_text`。内核判据是同一处 `Context::set_buffered(…)` 的
+/// `is_buffered()` 标记，**不读本属性**；其余会话状态由方案侧 `SentenceState` 承载。
 pub const K_BUFFERED: &str = "tiger_sentence_buffered_text";
 /// 音反查触发键（内部属性：宿主按设置写入逗号分隔的 rime 键名；空/缺省 = 关闭）。
 pub const K_SOUND_TO_CHAR_SHAPE_KEY: &str = "_sound_to_char_shape_key";
@@ -53,6 +57,20 @@ pub(crate) fn trigger_chars(keys: &[KeyEvent]) -> Vec<char> {
     chars
 }
 
+/// 无 Ctrl/Alt/Super 的按键（Shift 不参与，由字符归一各自处理）。
+pub(crate) fn modifier_free(key_event: &KeyEvent) -> bool {
+    !(key_event.ctrl() || key_event.alt() || key_event.super_modifier())
+}
+
+/// 可打印 ASCII（`0x20 < code < 0x7f`）对应的字符。
+fn ascii_char(code: i32) -> Option<char> {
+    if code > 0x20 && code < 0x7f {
+        char::from_u32(code as u32)
+    } else {
+        None
+    }
+}
+
 /// 按键「实际产生的字符」（字符归一；供触发键匹配与单字符判定）。
 /// 兼容前端上报 `grave+Shift` 或 `asciitilde`（US 布局的 `~`）。
 pub fn key_char(key_event: &KeyEvent) -> Option<char> {
@@ -63,11 +81,7 @@ pub fn key_char(key_event: &KeyEvent) -> Option<char> {
     if code == 0x7e {
         return Some('~');
     }
-    if code > 0x20 && code < 0x7f {
-        char::from_u32(code as u32)
-    } else {
-        None
-    }
+    ascii_char(code)
 }
 
 /// 输入恰为单个字符时取其字符。
@@ -90,7 +104,7 @@ pub fn key_matches(key_event: &KeyEvent, configured: &KeyEvent) -> bool {
 /// 单字符触发键（无 Ctrl/Alt/Super）产生的字符；带修饰时返回 None
 /// ——「只有单字符快捷键才提供默认可上屏候选」。
 pub fn single_char_trigger(key: &KeyEvent) -> Option<char> {
-    if key.ctrl() || key.alt() || key.super_modifier() {
+    if !modifier_free(key) {
         return None;
     }
     key_char(key)
@@ -111,7 +125,7 @@ pub fn is_modifier_repr(repr: &str) -> bool {
 
 /// 参照 `is_plain_char_key`：只接受无 Ctrl/Alt/Super 的字符输入。
 pub fn is_plain_char_key(key_event: &KeyEvent, repr: &str) -> Option<char> {
-    if key_event.ctrl() || key_event.alt() || key_event.super_modifier() {
+    if !modifier_free(key_event) {
         return None;
     }
     if repr.len() == 1
@@ -144,13 +158,8 @@ pub fn is_plain_char_key(key_event: &KeyEvent, repr: &str) -> Option<char> {
 /// 参照 `Recognizer::ProcessKeyEvent`：可被音反查模式接受的字符（`ch > 0x20 && ch < 0x80`，
 /// 排除 Ctrl/Alt/Super；空格由 `use_space=false` 排除）。
 pub(crate) fn recognizer_char(key_event: &KeyEvent) -> Option<char> {
-    if key_event.ctrl() || key_event.alt() || key_event.super_modifier() {
+    if !modifier_free(key_event) {
         return None;
     }
-    let code = key_event.keycode;
-    if code > 0x20 && code < 0x7f {
-        char::from_u32(code as u32)
-    } else {
-        None
-    }
+    ascii_char(key_event.keycode)
 }

@@ -22,23 +22,12 @@
 --   prefix <hex text> <raw_length> <bits share> <bits base_share> <bits boundary_share> <closed> <chars>
 --   rawlen <hex text> <raw_length>
 
-local function parse_args(argv)
-    local opts = {}
-    local i = 1
-    while i <= #argv do
-        local key = argv[i]:match("^%-%-([%w_%-]+)$")
-        if not key then error("unexpected argument: " .. argv[i]) end
-        opts[key] = argv[i + 1]
-        i = i + 2
-    end
-    return opts
-end
-
-local opts = parse_args({ ... })
--- 默认参照检出：与仓库同级（相对脚本位置解析，不依赖调用时的 cwd）。
+-- 共享助手（parse_args / reference_dir / emitter / hex / bits）：见 lib/lua_util.lua 头注。
 local script_dir = (arg and arg[0] or ""):match("^(.*)[/\\]") or "."
-local reference = opts.reference or os.getenv("HUX_REFERENCE_REPO")
-    or (script_dir .. "/../../_external/tiger-sentense-rime")
+package.path = script_dir .. "/lib/?.lua;" .. package.path
+local util = require("lua_util")
+local opts = util.parse_args({ ... })
+local reference = util.reference_dir(opts, script_dir)
 assert(opts.data, "missing --data")
 assert(opts.out, "missing --out")
 local every = tonumber(opts.every or "1") or 1
@@ -99,7 +88,7 @@ if learning_flag then
         if not entries or not entries[index] then return nil end
         return entries[index].t
     end
-    local first_a, second_a = pick("a", 1), pick("a", 2)
+    local _, second_a = pick("a", 1), pick("a", 2)
     local first_ab, second_ab = pick("ab", 1), pick("ab", 2)
     local second_abc = pick("abc", 2)
     local context = first_ab and utf8.char(utf8.codepoint(first_ab)) or ""
@@ -126,7 +115,6 @@ if learning_flag then
     learning_now = 40 * 86400
     local index = module.build(learning_events, learning_now)
     sentence.set_learning_for_test(index, "t")
-    local _ = first_a
 end
 
 local inputs, seen = {}, {}
@@ -163,19 +151,8 @@ for _, entry in ipairs(inputs) do
 end
 
 local out = assert(io.open(opts.out, "w"))
-local emitted = 0
-local function emit(...)
-    out:write(table.concat({ ... }, "\t"), "\n")
-    emitted = emitted + 1
-end
-local function hex(text)
-    if text == "" then return "-" end
-    return (text:gsub(".", function(c) return string.format("%02x", c:byte()) end))
-end
-local function bits(value)
-    local lo, hi = string.unpack("<I4I4", string.pack("<d", value))
-    return string.format("0x%08x%08x", hi, lo)
-end
+local emit, emitted = util.emitter(out)
+local hex, bits = util.hex, util.bits
 
 local function emit_decode_pass(input, required)
     sentence.reset_decode_cache()
@@ -278,5 +255,5 @@ end
 out:close()
 os.execute("rm -rf '" .. work .. "'")
 print(string.format('{"lua":"%s","inputs":%d,"emitted":%d,"model":%s,"duplicate":%s,"early":%s}',
-    _VERSION, #selected, emitted, opts.model and "true" or "false", duplicate and "true" or "false",
+    _VERSION, #selected, emitted(), opts.model and "true" or "false", duplicate and "true" or "false",
     early and "true" or "false"))

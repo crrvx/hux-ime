@@ -183,17 +183,26 @@ punctuator:
     "'": { pair: [ "‘", "’" ] }
 "#;
 
+    /// 一份文档里的 full_shape / half_shape 是两套彼此独立的表：标量条目按所属形状提交，某形状未定义该键则不给标点。
     #[test]
     fn parses_shapes_and_definitions() {
         let table = PunctTable::parse(SAMPLE).expect("parse");
-        assert!(!table.is_empty());
+        assert!(
+            !table.is_empty(),
+            "样例含 half_shape 条目，解析后不应是空表"
+        );
         let table = table;
         let mut pairs = PairState::default();
         assert_eq!(
             table.resolve(',', false, &mut pairs),
-            Some("，".to_string())
+            Some("，".to_string()),
+            "half_shape 的标量型条目按原样提交：, → ，"
         );
-        assert_eq!(table.resolve('-', false, &mut pairs), Some("-".to_string()));
+        assert_eq!(
+            table.resolve('-', false, &mut pairs),
+            Some("-".to_string()),
+            "half_shape 的标量 - 原样提交，不被 full_shape 影响"
+        );
         assert_eq!(
             table.resolve('-', true, &mut pairs),
             None,
@@ -201,45 +210,71 @@ punctuator:
         );
         assert_eq!(
             table.resolve('\\', true, &mut pairs),
-            Some("、".to_string())
+            Some("、".to_string()),
+            "full_shape 的反斜杠条目映射到顿号"
         );
     }
 
+    /// 成对条目（pair）按 key 在两位之间交替取用，且每张形状表各维护一份交替状态，互不推进对方。
     #[test]
     fn pair_alternates_per_key() {
         let table = PunctTable::parse(SAMPLE).expect("parse");
         let mut pairs = PairState::default();
         assert_eq!(
             table.resolve('\'', false, &mut pairs),
-            Some("‘".to_string())
+            Some("‘".to_string()),
+            "pair 首次取第一位 ‘"
         );
         assert_eq!(
             table.resolve('\'', false, &mut pairs),
-            Some("’".to_string())
+            Some("’".to_string()),
+            "pair 第二次翻转取第二位 ’"
         );
         assert_eq!(
             table.resolve('\'', false, &mut pairs),
-            Some("‘".to_string())
+            Some("‘".to_string()),
+            "pair 第三次翻回第一位 ‘"
         );
         // 另一张表（full_shape）独立交替
-        assert_eq!(table.resolve('\'', true, &mut pairs), Some("‘".to_string()));
-        assert_eq!(table.resolve('\'', true, &mut pairs), Some("’".to_string()));
+        assert_eq!(
+            table.resolve('\'', true, &mut pairs),
+            Some("‘".to_string()),
+            "full_shape 的交替状态与 half_shape 相互独立"
+        );
+        assert_eq!(
+            table.resolve('\'', true, &mut pairs),
+            Some("’".to_string()),
+            "full_shape 侧独立交替的第二位 ’"
+        );
     }
 
+    /// 发布默认 data/symbols.yaml 覆盖了 rime 习惯：half_shape 的 "/" 提交半角 /（而非顿号），只有 full_shape 才是全角 ／。
     #[test]
     fn shipped_default_symbols_override_slash() {
         // 发布默认（data/symbols.yaml）：half_shape 的 "/" 提交 "/"（非 、）；full_shape 仍为 ／。
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/symbols.yaml");
+        let path = hux_test_support::repo_path("data/symbols.yaml");
         let table = PunctTable::load(&path).expect("load data/symbols.yaml");
         let mut pairs = PairState::default();
-        assert_eq!(table.resolve('/', false, &mut pairs), Some("/".to_string()));
-        assert_eq!(table.resolve('/', true, &mut pairs), Some("／".to_string()));
+        assert_eq!(
+            table.resolve('/', false, &mut pairs),
+            Some("/".to_string()),
+            "发布默认：half_shape 的 / 提交 / 而非 、"
+        );
+        assert_eq!(
+            table.resolve('/', true, &mut pairs),
+            Some("／".to_string()),
+            "发布默认：full_shape 的 / 提交全角 ／"
+        );
     }
 
+    /// 畸形文档只有两种合法结局：YAML 语法错误必须报错，缺少 punctuator 节则退化成空表——都不得当成有效表静默收下。
     #[test]
     fn rejects_malformed_documents() {
-        assert!(PunctTable::parse("\t\t: [").is_err());
+        assert!(
+            PunctTable::parse("\t\t: [").is_err(),
+            "YAML 语法错误必须报错，不得静默退化成空表"
+        );
         let empty = PunctTable::parse("other: 1").expect("parse");
-        assert!(empty.is_empty());
+        assert!(empty.is_empty(), "无 punctuator 节的文档解析成空表而非报错");
     }
 }

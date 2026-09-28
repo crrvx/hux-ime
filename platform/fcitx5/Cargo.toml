@@ -21,5 +21,13 @@ hux-core = { path = "../../crates/hux-core" }
 hux-ffi = { path = "../../crates/hux-ffi" }
 hux-scheme-tiger = { path = "../../crates/hux-scheme/tiger" }
 
+# 数据目录**根**规则按目标平台选一份落点实现（见 src/paths.rs）。Cargo 不允许同一个依赖名
+# 在不同 target 下指向不同路径，故两份各用本名，共用层只按平台选 `use`（两行 cfg + 兜底报错）。
+[target.'cfg(target_os = "android")'.dependencies]
+hux-platform-android = { path = "../android" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+hux-platform-linux = { path = "../linux" }
+
 [dev-dependencies]
 hux-test-support = { path = "../../crates/hux-test-support" }

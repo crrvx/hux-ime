@@ -14,30 +14,51 @@ use hux_core::key::KeyEvent;
 use hux_core::scheme::{Scheme, SchemeConfig, Value};
 use hux_core::session::Context;
 use hux_scheme_tiger::scheme::TigerScheme;
+use hux_test_support::bench::{flag, quantile_us};
 use hux_test_support::{decode_hex, open_golden, repo_path};
 use std::io::BufRead;
 use std::time::Instant;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let flag = |name: &str| -> Option<String> {
-        args.iter()
-            .position(|arg| arg == name)
-            .and_then(|index| args.get(index + 1))
-            .cloned()
-    };
-    let limit: usize = flag("--codes")
+    let limit = parse_limit(&args);
+    let repeat = parse_repeat(&args);
+    let config = bench_config();
+
+    let codes = load_codes(limit);
+    assert!(!codes.is_empty(), "语料为空");
+
+    let model_path = flag(&args, "--model");
+    let mut samples = Vec::new();
+    let keys = run_rounds(&codes, model_path.as_deref(), &config, repeat, &mut samples);
+    samples.sort_unstable();
+    report(&codes, repeat, keys, model_path.is_some(), &samples);
+}
+
+/// 解析 `--codes`（默认 200）。
+fn parse_limit(args: &[String]) -> usize {
+    flag(args, "--codes")
         .map(|value| value.parse().expect("--codes"))
-        .unwrap_or(200);
-    let repeat: usize = flag("--repeat")
+        .unwrap_or(200)
+}
+
+/// 解析 `--repeat`（默认 10）。
+fn parse_repeat(args: &[String]) -> usize {
+    flag(args, "--repeat")
         .map(|value| value.parse().expect("--repeat"))
-        .unwrap_or(10);
+        .unwrap_or(10)
+}
+
+/// 基准用的方案配置（每轮重复装载）。
+fn bench_config() -> SchemeConfig {
     // 角色名与 `hux-cfg` 的角色常量同值（基准只经契约驱动，不依赖配置层）。
-    let config = SchemeConfig::new()
+    SchemeConfig::new()
         .with("high_freq_limit", Value::Count(1500))
         .with("page_size", Value::Count(5))
-        .with("tab_learning", Value::Bool(false)); // 基准不引入学习库差异
+        .with("tab_learning", Value::Bool(false)) // 基准不引入学习库差异
+}
 
+fn load_codes(limit: usize) -> Vec<String> {
     // 语料：金样里的输入码（与 decode 差分同一批），逐字符作为按键送入。
     let mut codes = Vec::new();
     for line in open_golden("goldens/decode.tsv.gz").lines() {
@@ -52,20 +73,27 @@ fn main() {
             break;
         }
     }
-    assert!(!codes.is_empty(), "语料为空");
+    codes
+}
 
-    let model_path = flag("--model");
+/// 重复 `repeat` 轮：每轮新建方案与会话，逐字符按键并计时；返回累计按键数。
+fn run_rounds(
+    codes: &[String],
+    model: Option<&str>,
+    config: &SchemeConfig,
+    repeat: usize,
+    samples: &mut Vec<u64>,
+) -> u64 {
     let mut keys = 0u64;
-    let mut samples = Vec::new();
     for _ in 0..repeat {
         let (mut scheme, _notes) = TigerScheme::load(
             &[repo_path("goldens/lexicon")],
-            model_path.clone().map(std::path::PathBuf::from),
-            &config,
+            model.map(std::path::PathBuf::from),
+            config,
         );
         let mut context = Context::new();
         let session = scheme.new_session(&mut context);
-        for code in &codes {
+        for code in codes {
             for ch in code.chars() {
                 if !ch.is_ascii() {
                     continue;
@@ -87,21 +115,21 @@ fn main() {
             scheme.reset_session(session, &mut context);
         }
     }
-    samples.sort_unstable();
+    keys
+}
+
+/// 打印总览 JSON（`keys` / `mean_us` / `p50_us` / `p95_us` / `max_us`）。
+fn report(codes: &[String], repeat: usize, keys: u64, model: bool, samples: &[u64]) {
     let total: u64 = samples.iter().sum();
-    let pick = |quantile: f64| -> f64 {
-        let index = ((samples.len() as f64 - 1.0) * quantile).round() as usize;
-        samples[index] as f64 / 1000.0
-    };
     println!(
         "{{\"codes\":{},\"repeat\":{},\"keys\":{},\"model\":{},\"mean_us\":{:.2},\"p50_us\":{:.2},\"p95_us\":{:.2},\"max_us\":{:.2}}}",
         codes.len(),
         repeat,
         keys,
-        model_path.is_some(),
+        model,
         total as f64 / samples.len() as f64 / 1000.0,
-        pick(0.50),
-        pick(0.95),
+        quantile_us(samples, 0.50),
+        quantile_us(samples, 0.95),
         samples[samples.len() - 1] as f64 / 1000.0,
     );
 }

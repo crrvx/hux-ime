@@ -22,48 +22,23 @@
 --   close                                   执行 close
 -- 空串参数编码为 `-`；其余为 UTF-8 字节的小写十六进制。
 
-local function parse_args(argv)
-    local opts = { mode = "fixture" }
-    local i = 1
-    while i <= #argv do
-        local key = argv[i]:match("^%-%-([%w_]+)$")
-        if not key then error("unexpected argument: " .. argv[i]) end
-        local value = argv[i + 1]
-        if not value then error("missing value for --" .. key) end
-        opts[key] = value
-        i = i + 2
-    end
-    return opts
-end
-
-local opts = parse_args({ ... })
--- 默认参照检出：与仓库同级（相对脚本位置解析，不依赖调用时的 cwd）。
+-- 共享助手（parse_args / reference_dir / emitter / hex / bits / lcg）：见 lib/lua_util.lua 头注。
 local script_dir = (arg and arg[0] or ""):match("^(.*)[/\\]") or "."
-local reference = opts.reference or os.getenv("HUX_REFERENCE_REPO")
-    or (script_dir .. "/../../_external/tiger-sentense-rime")
+package.path = script_dir .. "/lib/?.lua;" .. package.path
+local util = require("lua_util")
+local opts = util.parse_args({ ... }, { mode = "fixture" })
+local reference = util.reference_dir(opts, script_dir)
 assert(opts.model, "missing --model")
 assert(opts.out, "missing --out")
 
 package.path = reference .. "/lua/?.lua;" .. package.path
 local reader = require("tiger_sentence_ngram").new({ page_misses = 0, page_bytes = 0 })
 
-local function hex(text)
-    if text == "" then return "-" end
-    return (text:gsub(".", function(c) return string.format("%02x", c:byte()) end))
-end
-
-local function bits(value)
-    local lo, hi = string.unpack("<I4I4", string.pack("<d", value))
-    return string.format("0x%08x%08x", hi, lo)
-end
+local hex, bits = util.hex, util.bits
 
 local out = assert(io.open(opts.out, "w"))
-local emitted, checks = 0, 0
-
-local function emit(...)
-    out:write(table.concat({ ... }, "\t"), "\n")
-    emitted = emitted + 1
-end
+local emit, emitted = util.emitter(out)
+local checks = 0
 
 local function check(ok, message)
     checks = checks + 1
@@ -161,7 +136,7 @@ local function run_fixture()
     model.close()
     emit("close")
     print(string.format('{"mode":"fixture","lua":"%s","emitted":%d,"oracle_checks":%d}',
-        _VERSION, emitted, checks))
+        _VERSION, emitted(), checks))
 end
 
 -- ----------------------------------------------------------------- sample
@@ -209,11 +184,7 @@ local function run_sample()
     emit_status(model)
 
     -- 确定性伪随机三元组（LCG，种子固定）。
-    local seed = 20260916
-    local function next_index(limit)
-        seed = (seed * 1103515245 + 12345) % 2147483648
-        return seed % limit + 1
-    end
+    local next_index = util.lcg(20260916)
     for _ = 1, 20000 do
         local a = tokens[next_index(#tokens)]
         local b = tokens[next_index(#tokens)]
@@ -233,7 +204,7 @@ local function run_sample()
     emit_status(model)
     model.close()
     emit("close")
-    print(string.format('{"mode":"sample","lua":"%s","emitted":%d}', _VERSION, emitted))
+    print(string.format('{"mode":"sample","lua":"%s","emitted":%d}', _VERSION, emitted()))
 end
 
 local started = os.clock()

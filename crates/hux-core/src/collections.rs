@@ -57,6 +57,15 @@ impl<K: Hash + Eq, V> Map<K, V> {
         self.entries.get(key)
     }
 
+    /// 按键取值（可变），用于原地更新已有值。
+    pub fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        self.entries.get_mut(key)
+    }
+
     /// 缺省插入并返回值的可变引用（等价底层容器的 `entry(key).or_default()`，
     /// 但不暴露底层 `Entry` 类型）。
     pub fn entry_or_default(&mut self, key: K) -> &mut V
@@ -111,13 +120,6 @@ impl<T: Hash + Eq> Set<T> {
     pub fn new() -> Self {
         Self {
             entries: hashbrown::HashSet::new(),
-        }
-    }
-
-    /// 预留至少 `capacity` 个元素的容量（同 [`Map::with_capacity`]）。
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self {
-            entries: hashbrown::HashSet::with_capacity(capacity),
         }
     }
 
@@ -197,6 +199,15 @@ impl<T: fmt::Debug> fmt::Debug for Set<T> {
     }
 }
 
+// 相等性转发底层实现：只比**内容**（键值对集合），迭代序由按实例取的随机种子决定，不参与判定。
+impl<K: Hash + Eq, V: PartialEq> PartialEq for Map<K, V> {
+    fn eq(&self, other: &Self) -> bool {
+        self.entries == other.entries
+    }
+}
+
+impl<K: Hash + Eq, V: Eq> Eq for Map<K, V> {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -223,10 +234,6 @@ mod tests {
         assert_eq!(map.insert("甲".to_string(), 1), None);
         assert_eq!(map.insert("甲".to_string(), 2), Some(1));
         assert_eq!(map.len(), 1);
-        let mut set: Set<String> = Set::with_capacity(64);
-        assert!(set.insert("甲".to_string()));
-        assert!(!set.insert("甲".to_string()));
-        assert_eq!(set.len(), 1);
     }
 
     #[test]
@@ -262,6 +269,26 @@ mod tests {
         set.insert("甲".to_string());
         raw_set.insert("甲".to_string());
         assert_eq!(format!("{set:?}"), format!("{raw_set:?}"));
+    }
+
+    /// 相等性只看内容：与底层容器同义（插入序与迭代序都不参与判定）。
+    #[test]
+    fn map_equality_follows_the_wrapped_container() {
+        let left: Map<String, bool> = [("甲".to_string(), true), ("乙".to_string(), false)]
+            .into_iter()
+            .collect();
+        // 插入序不同、内容相同 ⇒ 相等（底层容器的相等性即如此）。
+        let reordered: Map<String, bool> = [("乙".to_string(), false), ("甲".to_string(), true)]
+            .into_iter()
+            .collect();
+        assert_eq!(left, reordered);
+
+        let changed: Map<String, bool> = [("甲".to_string(), false), ("乙".to_string(), false)]
+            .into_iter()
+            .collect();
+        assert_ne!(left, changed, "同键不同值不等");
+        let shorter: Map<String, bool> = [("甲".to_string(), true)].into_iter().collect();
+        assert_ne!(left, shorter, "键数不同不等");
     }
 
     #[test]

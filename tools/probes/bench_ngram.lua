@@ -6,23 +6,12 @@
 --
 --   lua tools/probes/bench_ngram.lua --reference <repo> --model <bin> --transcript <tsv>
 
-local function parse_args(argv)
-    local opts = {}
-    local i = 1
-    while i <= #argv do
-        local key = argv[i]:match("^%-%-([%w_]+)$")
-        if not key then error("unexpected argument: " .. argv[i]) end
-        opts[key] = argv[i + 1]
-        i = i + 2
-    end
-    return opts
-end
-
-local opts = parse_args({ ... })
--- 默认参照检出：与仓库同级（相对脚本位置解析，不依赖调用时的 cwd）。
+-- 共享助手（parse_args / reference_dir）：见 tools/generators/lib/lua_util.lua 头注。
 local script_dir = (arg and arg[0] or ""):match("^(.*)[/\\]") or "."
-local reference = opts.reference or os.getenv("HUX_REFERENCE_REPO")
-    or (script_dir .. "/../../_external/tiger-sentense-rime")
+package.path = script_dir .. "/../generators/lib/?.lua;" .. package.path
+local util = require("lua_util")
+local opts = util.parse_args({ ... })
+local reference = util.reference_dir(opts, script_dir)
 assert(opts.model and opts.transcript, "missing --model or --transcript")
 
 package.path = reference .. "/lua/?.lua;" .. package.path

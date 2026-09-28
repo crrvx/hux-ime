@@ -185,7 +185,7 @@ mod tests {
 
     /// 构造一个最小 TCSLEX01（自洽位图，仅用于单测）。
     fn synthetic(entries: &[&str], bits: usize, hashes_count: usize) -> LexicalModel {
-        assert_eq!(bits % 8, 0);
+        assert_eq!(bits % 8, 0, "合成夹具的位图长度必须是整字节");
         let mut bitmap = vec![0u8; bits / 8];
         for entry in entries {
             let (first, second) = hashes(entry);
@@ -206,23 +206,34 @@ mod tests {
         parse(data).expect("parse synthetic")
     }
 
+    /// 头部五字段是定位位图与长度闸门的唯一依据，必须逐字段回读校验。
     #[test]
     fn header_fields_are_parsed() {
         let model = synthetic(&["甲乙", "甲乙丙"], 8192, 4);
-        assert_eq!(model.bit_count, 8192);
-        assert_eq!(model.hash_count, 4);
-        assert_eq!(model.entry_count, 2);
-        assert_eq!(model.minimum_length, 2);
-        assert_eq!(model.maximum_length, 4);
+        assert_eq!(model.bit_count, 8192, "头部位图位数应回读写入的 8192");
+        assert_eq!(model.hash_count, 4, "头部哈希个数应回读 4");
+        assert_eq!(model.entry_count, 2, "头部词条数应回读 2");
+        assert_eq!(model.minimum_length, 2, "最短词长应回读 2");
+        assert_eq!(model.maximum_length, 4, "最长词长应回读 4");
     }
 
+    /// 钉住 contains 与 contains_bits 的分工：前者先过长度闸门，后者直查位图，越界词上两者可以不一致。
     #[test]
     fn contains_honors_length_gate() {
         let model = synthetic(&["甲乙", "甲乙丙"], 8192, 4);
-        assert!(model.contains("甲乙"));
-        assert!(model.contains("甲乙丙"));
-        assert!(!model.contains("甲"));
-        assert!(!model.contains("甲乙丙丁戊"));
+        assert!(model.contains("甲乙"), "闸门内且位图命中的「甲乙」应判存在");
+        assert!(
+            model.contains("甲乙丙"),
+            "闸门内且位图命中的「甲乙丙」应判存在"
+        );
+        assert!(
+            !model.contains("甲"),
+            "短于 minimum_length 必须判不存在，与位图无关"
+        );
+        assert!(
+            !model.contains("甲乙丙丁戊"),
+            "长于 maximum_length 必须判不存在"
+        );
         // 词长越界：M.contains 为假，但位图查询可能为真
         let (first, second) = hashes("甲");
         let mut bit_hit = true;
@@ -232,27 +243,40 @@ mod tests {
                 bit_hit = false;
             }
         }
-        assert_eq!(model.contains_bits("甲"), bit_hit);
+        assert_eq!(
+            model.contains_bits("甲"),
+            bit_hit,
+            "contains_bits 必须等价于逐位手算，不受长度闸门影响"
+        );
     }
 
+    /// 词图打分的基线契约：只累加不重叠词，空串得 0。
     #[test]
     fn score_sums_unoverlapping_words() {
         let model = synthetic(&["甲乙", "甲乙丙"], 8192, 4);
         // score：两个不重叠词 = 1.0 + 1.2
-        assert!((model.score("甲乙甲乙丙") - 2.2).abs() < 1e-12);
-        assert_eq!(model.score(""), 0.0);
+        assert!(
+            (model.score("甲乙甲乙丙") - 2.2).abs() < 1e-12,
+            "两个不重叠词应累计 1.0+1.2=2.2"
+        );
+        assert_eq!(model.score(""), 0.0, "空串不得得分");
     }
 
+    /// 截断或版本不符的头部必须报错，不得解析出半个模型。
     #[test]
     fn parse_rejects_bad_headers() {
-        assert!(parse(MAGIC.to_vec()).is_err());
+        assert!(
+            parse(MAGIC.to_vec()).is_err(),
+            "只有 MAGIC、缺头部的模型必须报错"
+        );
         let mut bad = Vec::new();
         bad.extend_from_slice(MAGIC);
         bad.extend_from_slice(&2u32.to_le_bytes());
         bad.extend_from_slice(&[0u8; 24]);
-        assert!(parse(bad).is_err());
+        assert!(parse(bad).is_err(), "头部版本号非 1 必须报错");
     }
 
+    /// 记忆化只是加速：命中缓存不得改变得分，比较按位型而非浮点近似。
     #[test]
     fn score_with_cache_matches_uncached() {
         let model = synthetic(&["甲乙", "甲乙丙"], 8192, 4);
@@ -261,23 +285,30 @@ mod tests {
         // 缓存路径与无缓存路径必须逐位一致（重复子串触发缓存命中）。
         assert_eq!(
             model.score_with_cache(text, &mut cache).to_bits(),
-            model.score(text).to_bits()
+            model.score(text).to_bits(),
+            "缓存路径与无缓存路径的得分必须逐位一致"
         );
-        assert!(cache.contains_key("甲乙"));
+        assert!(
+            cache.contains_key("甲乙"),
+            "重复子串必须真正写进缓存，否则本用例没覆盖到缓存路径"
+        );
     }
 
+    /// 钉住随仓发布词库的头部与体量，数据换代时这些数字必须显式更新。
     #[test]
     fn real_model_loads_when_present() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../data/tiger_sentence.lexical.bin");
+        let path = hux_test_support::repo_path("data/tiger_sentence.lexical.bin");
         let model = load(&path).expect("load real lexical model");
-        assert_eq!(model.bit_count, 1_200_000);
-        assert_eq!(model.hash_count, 10);
-        assert_eq!(model.minimum_length, 2);
-        assert_eq!(model.maximum_length, 4);
-        assert_eq!(model.bytes, 150_032);
-        assert!(model.contains_bits("我们"));
-        assert!(model.contains("我们"));
-        assert!(model.score("我们的") > 0.0);
+        assert_eq!(model.bit_count, 1_200_000, "发布模型位图位数应为 1200000");
+        assert_eq!(model.hash_count, 10, "发布模型哈希个数应为 10");
+        assert_eq!(model.minimum_length, 2, "发布模型最短词长应为 2");
+        assert_eq!(model.maximum_length, 4, "发布模型最长词长应为 4");
+        assert_eq!(model.bytes, 150_032, "发布模型文件字节数应为 150032");
+        assert!(model.contains_bits("我们"), "发布模型位图应命中「我们」");
+        assert!(model.contains("我们"), "发布模型应判定「我们」存在");
+        assert!(
+            model.score("我们的") > 0.0,
+            "发布模型给「我们的」的得分应为正"
+        );
     }
 }

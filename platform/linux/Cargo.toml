@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+[package]
+name = "hux-platform-linux"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "虎虚（hux-ime）Linux 落点：XDG 数据目录根（桌面安装布局）"

@@ -33,6 +33,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from _common import repo_root
+
 try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
@@ -103,6 +105,10 @@ class Annotation:
 
 
 def fail(message: str) -> None:
+    """记一条失败（**不退出**）：本脚本要一次列全所有问题，退出码由 `main` 汇总返回。
+
+    故不取 `_common.fail_for`（那个立即退出）；与共享出口的差别仅此一处。
+    """
     print(f"FAIL {message}", file=sys.stderr)
 
 
@@ -312,7 +318,7 @@ def main() -> int:
         help="仓库根（缺省 = 本脚本上两级目录；副本反向验证时可指定）",
     )
     args = parser.parse_args()
-    root = Path(args.root).resolve() if args.root else Path(__file__).resolve().parents[2]
+    root = Path(args.root).resolve() if args.root else repo_root()
 
     ledger_path = root / LEDGER
     if not ledger_path.is_file():

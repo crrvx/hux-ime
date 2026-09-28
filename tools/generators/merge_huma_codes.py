@@ -18,27 +18,32 @@
 
 输出按「码 → 官方权重降序 → 字」排序：同一码内先出高频字。同源必得同字节（源里带 version、
 生成时把源的 sha256 写进表头，故表头也不随机器变化）；改了源就重跑并更新 `data/MANIFEST` 与
-`goldens/README.md` 里的 sha。
+`goldens/PROVENANCE.md` 里的 sha。
 """
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import os
 import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+# 共享助手在 `tools/checks/`（守卫与生成器同用一套口径）：直接运行本脚本时
+# `sys.path[0]` 是 `tools/generators/`，故显式补上相邻目录。
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "checks"))
+
+from _common import fail_for, repo_root  # noqa: E402（须在 sys.path 之后）
+from _hashutil import sha256_bytes  # noqa: E402（须在 sys.path 之后）
+
+ROOT = repo_root()
 PRIMARY = ROOT / "data" / "tiger_sentence.codes.txt"
 TARGET = ROOT / "data" / "tiger_sentence.codes.huma.txt"
 YAML_HEADER = re.compile(r"^[a-z_]+:")
 
 
-def fail(message: str) -> None:
-    print(f"merge_huma_codes: {message}", file=sys.stderr)
-    raise SystemExit(1)
+# 失败出口：`merge_huma_codes: <消息>` 写 stderr 后立即退出（共享实现见 `_common.py`）。
+fail = fail_for("merge_huma_codes")
 
 
 def read_primary(path: Path) -> set[tuple[str, str]]:
@@ -100,7 +105,7 @@ def main() -> int:
     primary_chars = {text for text, _ in primary if len(text) == 1}
     version, rows = read_source(source)
     payload = source.read_bytes()
-    digest = hashlib.sha256(payload).hexdigest()
+    digest = sha256_bytes(payload)
 
     # 只收**主表没有的字**：给主表已有的字补官方短码会改它的最优码
     # （`optimal_single` 由 true 变 false，"整串直出"奖励不再可达），
@@ -136,7 +141,6 @@ def main() -> int:
 
     chars = {text for text, _, _ in added}
     codes = {code for _, code, _ in added}
-    primary_chars = {text for text, _ in primary if len(text) == 1}
     new_chars = {text for text in chars if text not in primary_chars}
     print(f"源 {source.name}：version {version}，sha256 {digest[:12]}…，单字行 {len(rows)}")
     print(f"主表已有 {len(primary)} 对（{len(primary_chars)} 个字）；本表追加 {len(added)} 对：")

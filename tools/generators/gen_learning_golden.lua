@@ -14,7 +14,9 @@
 --   index <name> <kind:full|runtime> <now> <corpus>
 --   confirmed <index> <base-corpus> <accepted-corpus> <now>    # 经 M.open/M.confirm 的更新路径
 --   codes <index> <n> <hex code>...
---   score / prefix / update / trim / chain / node / reward / maturity / contribution
+--   score / prefix / trim / chain / node / reward / maturity / contribution
+--   journalrecord <hex key> <hex value> | journalrecords <n>     # 持久化路径的记录/计数
+--   journalevent <time> <hex mode> <hex code> <hex text> <hex ctx> | journalevents <n>
 --   diffcase / diffpath / diff / diffevent
 --   fusionmode <hex mode> <hex out>                      # M.fusion_mode
 --   paircode <hex raw> <hex direct> <hex composed> <hex code>   # M.fusion_pair_code
@@ -23,23 +25,12 @@
 --   fusionevent <hex mode> <hex raw> <hex direct> <hex composed> <0|1> <raw_end> <time>
 --               <hex out-mode> <hex code> <hex text> <hex ctx> <raw_start> <text_start> <text_end>
 
-local function parse_args(argv)
-    local opts = {}
-    local i = 1
-    while i <= #argv do
-        local key = argv[i]:match("^%-%-([%w_%-]+)$")
-        if not key then error("unexpected argument: " .. argv[i]) end
-        opts[key] = argv[i + 1]
-        i = i + 2
-    end
-    return opts
-end
-
-local opts = parse_args({ ... })
--- 默认参照检出：与仓库同级（相对脚本位置解析，不依赖调用时的 cwd）。
+-- 共享助手（parse_args / reference_dir / emitter / hex / bits）：见 lib/lua_util.lua 头注。
 local script_dir = (arg and arg[0] or ""):match("^(.*)[/\\]") or "."
-local reference = opts.reference or os.getenv("HUX_REFERENCE_REPO")
-    or (script_dir .. "/../../_external/tiger-sentense-rime")
+package.path = script_dir .. "/lib/?.lua;" .. package.path
+local util = require("lua_util")
+local opts = util.parse_args({ ... })
+local reference = util.reference_dir(opts, script_dir)
 assert(opts.out, "missing --out")
 
 package.path = reference .. "/lua/?.lua;" .. package.path
@@ -74,19 +65,8 @@ local real_time = os.time
 os.time = function() return NOW end
 
 local out = assert(io.open(opts.out, "w"))
-local emitted = 0
-local function emit(...)
-    out:write(table.concat({ ... }, "\t"), "\n")
-    emitted = emitted + 1
-end
-local function hex(text)
-    if text == nil or text == "" then return "-" end
-    return (text:gsub(".", function(c) return string.format("%02x", c:byte()) end))
-end
-local function bits(value)
-    local lo, hi = string.unpack("<I4I4", string.pack("<d", value))
-    return string.format("0x%08x%08x", hi, lo)
-end
+local emit, emitted = util.emitter(out)
+local hex, bits = util.hex, util.bits
 
 -- ---------------------------------------------------------------- 工具面
 for _, text in ipairs({ "", "tiger_sentence", "虎句", "a", "schema/虎" }) do
@@ -451,4 +431,4 @@ end
 
 out:close()
 os.time = real_time
-print(string.format('{"lua":"%s","emitted":%d}', _VERSION, emitted))
+print(string.format('{"lua":"%s","emitted":%d}', _VERSION, emitted()))

@@ -186,8 +186,8 @@ name = "hux-cfg"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "hashbrown 0.15.5",
  "hux-core",
+ "hux-test-support",
  "yaml-rust2",
 ]
 
@@ -206,16 +206,26 @@ name = "hux-ffi"
 version = "0.1.0"
 
 [[package]]
+name = "hux-platform-android"
+version = "0.1.0"
+
+[[package]]
 name = "hux-platform-fcitx5"
 version = "0.1.0"
 dependencies = [
  "hux-cfg",
  "hux-core",
  "hux-ffi",
+ "hux-platform-android",
+ "hux-platform-linux",
  "hux-scheme-tiger",
  "hux-test-support",
  "rusty-leveldb",
 ]
+
+[[package]]
+name = "hux-platform-linux"
+version = "0.1.0"
 
 [[package]]
 name = "hux-scheme-tiger"

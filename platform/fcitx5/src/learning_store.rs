@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! 学习库（参照 `tiger_sentence_learning.lua` 的 `M.open`/`M.confirm`/`M.refresh_scores`）：
+//! 学习库（参照 `tiger_sentence_learning.lua` 的 `M.open`/`M.confirm`）：
 //! `<user dir>/<name>.userdb/`（LevelDB，键 `e/%010d`、值 = frame 五元组）；
-//! 上限 1 万条 / 16 MiB。`7b220ce` 起学习**不再随时间衰减**，故 `refresh_scores`
-//! 不再重建索引（参照同函数直接返回 `store.index`）。
+//! 上限 1 万条 / 16 MiB。`7b220ce` 起学习**不再随时间衰减**，学习分只在确认时重算
+//! （参照的 `M.refresh_scores` 已退化为直接返回 `store.index`，故本仓不再保留该入口）。
 
 use std::path::Path;
 
@@ -88,9 +88,9 @@ impl LearningStore {
         }
     }
 
-    /// 参照 `M.open`：打开数据库、加载 `e/` 事件、构建运行时索引。
-    pub fn open(user_dir: &Path, name: &str, now: f64) -> Self {
-        let mut store = Self {
+    /// 空仓初值（未打开 / 未提交）。
+    fn empty(name: &str, now: f64) -> Self {
+        Self {
             name: name.to_string(),
             db: None,
             events: Vec::new(),
@@ -101,7 +101,12 @@ impl LearningStore {
             scored_at: now,
             error: None,
             index_version: 0,
-        };
+        }
+    }
+
+    /// 参照 `M.open`：打开数据库、加载 `e/` 事件、构建运行时索引。
+    pub fn open(user_dir: &Path, name: &str, now: f64) -> Self {
+        let mut store = Self::empty(name, now);
         let path = user_dir.join(format!("{name}.userdb"));
         // 用户目录可能尚不存在（参照的 rime 用户目录总是由框架创建）。
         if let Some(parent) = path.parent() {
@@ -117,6 +122,15 @@ impl LearningStore {
                 return store;
             }
         };
+        if !Self::load_events(&mut store, &mut db, now) {
+            return store;
+        }
+        store.db = Some(db);
+        store
+    }
+
+    /// 扫描 `e/` 事件并落到 `store`：库不可用返回 `false`（此时不提交 `db`）。
+    fn load_events(store: &mut Self, db: &mut DB, now: f64) -> bool {
         let mut events = Vec::new();
         let mut count = 0usize;
         let mut bytes = 0usize;
@@ -158,26 +172,30 @@ impl LearningStore {
             }
             Err(error) => {
                 store.error = Some(format!("learning database is unavailable: {error}"));
-                return store;
+                return false;
             }
         }
         if let Some(reason) = failure {
             store.error = Some(reason);
-            return store;
+            return false;
         }
         if skipped > 0 {
-            // 既有诊断通道（构造期读一次、`Engine::new_with_dirs` 并入状态串）。
-            store.error = Some(format!(
-                "learning database skipped {skipped} undecodable record(s)"
-            ));
+            Self::record_skipped(store, skipped);
         }
         store.count = count;
         store.bytes = bytes;
         store.sequence = sequence;
         store.index = LearningIndex::runtime(&events, now);
         store.events = events;
-        store.db = Some(db);
-        store
+        true
+    }
+
+    /// 坏帧记账：条数进既有诊断，不因一条损坏记录禁用全部学习。
+    fn record_skipped(store: &mut Self, skipped: usize) {
+        // 既有诊断通道（构造期读一次、`Engine::new_with_dirs` 并入状态串）。
+        store.error = Some(format!(
+            "learning database skipped {skipped} undecodable record(s)"
+        ));
     }
 
     pub fn store_ready(&self) -> bool {
@@ -235,13 +253,6 @@ impl LearningStore {
         }
         changed
     }
-
-    /// 参照 `M.refresh_scores`：`7b220ce` 起该函数只返回 `store.index`
-    /// （「安静的时钟不得改变已发布的学习分」），故索引恒不变、恒返回 `false`。
-    /// 保留该入口以对齐参照的调用点（`if not context:is_composing() then …`）。
-    pub fn refresh_scores(&mut self, _now: f64) -> bool {
-        false
-    }
 }
 
 #[cfg(test)]
@@ -296,25 +307,6 @@ mod tests {
         assert!(store.store_ready(), "缺失的用户目录应被创建且库可用");
         assert!(user_dir.join(format!("{name}.userdb")).is_dir());
         std::fs::remove_dir_all(&base).ok();
-    }
-
-    #[test]
-    fn refresh_scores_never_republishes_the_index() {
-        let dir = temp_dir("refresh");
-        let base = crate::wall_clock();
-        let mut store = LearningStore::open(&dir, &store_name("x"), base);
-        store.confirm(&[event(base, "甲")]);
-        let version = store.index_version();
-        let epoch = store.index().now;
-        assert_eq!(epoch, store.scored_at);
-        // 参照 `7b220ce`：无时间衰减 ⇒ 无论过多久（含时钟回退）都不重建、不换 epoch。
-        assert!(!store.refresh_scores(base + 30.0));
-        assert!(!store.refresh_scores(base + 61.0));
-        assert!(!store.refresh_scores(base - 1000.0));
-        assert_eq!(store.index_version(), version);
-        assert_eq!(store.index().now, epoch, "索引 epoch 不得被刷新改写");
-        assert_eq!(store.scored_at, epoch);
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

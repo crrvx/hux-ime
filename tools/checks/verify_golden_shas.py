@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""校验 `goldens/README.md` 的校验和表与金样内部头部。
+"""校验 `goldens/PROVENANCE.md` 的校验和表与金样内部头部。
 
 三件事，任一不符即 `exit 1`：
 
-1. **表 ↔ 文件**：`goldens/README.md`「数据夹具」「已入库金样 sha256」两张表里每一条 `| 文件 | sha256 |`
+1. **表 ↔ 文件**：`goldens/PROVENANCE.md` 各表（「数据夹具」「已入库金样 sha256」等）里每一条 `| 文件 | sha256 |`
    都按候选根（仓库根 / `goldens/` / `goldens/lexicon/`）唯一解析到实际文件并逐字节比对；
    且顶层金样（`goldens/*.tsv.gz`、`goldens/ngram_fixture.bin`）**必须**都在表里（防新增未登记）。
 2. **内部头部 ↔ 表 / 文档声明的 pin**：四份探针 / 表金样（`key`、`key_sequence`、
    `key_sequence_tab`、`sound_to_char_shape`）头部的 `# reference: … @ <pin>` 与 `<来源文件> sha256:` 必须与
-   `goldens/README.md`「来源与校验和」声明的 pin / sha 一致（换 pin 重生成后只改表、不改头部即失败）。
+   `goldens/PROVENANCE.md`「来源与校验和」声明的 pin / sha 一致（换 pin 重生成后只改表、不改头部即失败）。
 3. **参照仓库文件 ↔ pin**（`--reference DIR`，需要参照检出）：`lua/*`、`tools/*` 行按该行声明的
    pin 用 `git show <pin>:<path>` 取内容比对；「两 pin 相同」的行两个 pin 都必须相符。
 
@@ -23,14 +23,16 @@ from __future__ import annotations
 
 import argparse
 import gzip
-import hashlib
 import re
 import subprocess
 import sys
 from pathlib import Path
 
+from _common import repo_root
+from _hashutil import sha256_bytes, sha256_stream
+
 # sha 表与 pin 声明所在文档。
-SHA_DOC = Path("goldens/README.md")
+SHA_DOC = Path("goldens/PROVENANCE.md")
 SHA256_RE = re.compile(r"\b[0-9a-f]{64}\b")
 SHA1_RE = re.compile(r"\b[0-9a-f]{40}\b")
 TOP_LEVEL_GLOBS = ("*.tsv.gz", "ngram_fixture.bin")
@@ -65,18 +67,15 @@ class Failure(Exception):
     """一条校验失败（汇总后统一打印）。"""
 
 
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def parse_tables(text: str) -> tuple[dict[str, str], dict[str, tuple[str, str, str]]]:
-    """返回（本仓文件标签 → sha256，参照行标签 → (来源说明, sha256, 仓库内路径)）。"""
+    """返回（本仓文件标签 → sha256，参照行标签 → (来源说明, sha256, 仓库内路径)）。
+
+    同一个键出现两行即 `Failure`：后一行会**静默覆盖**前一行（反向检查），
+    否则「表里改了却没生效」只能靠人眼发现。
+    """
     local: dict[str, str] = {}
     reference: dict[str, tuple[str, str, str]] = {}
+    duplicates: list[str] = []
     for line in text.splitlines():
         if not line.startswith("|"):
             continue
@@ -93,11 +92,20 @@ def parse_tables(text: str) -> tuple[dict[str, str], dict[str, tuple[str, str, s
             continue
         path = path_match.group(1)
         label = cells[0].replace("`", "")
-        # 参照仓库文件行：首列以 `lua/` / `tools/` 开头（`goldens/README.md` 明标「均为参照仓库路径」）。
+        # 参照仓库文件行：首列以 `lua/` / `tools/` 开头（`goldens/PROVENANCE.md` 明标「均为参照仓库路径」）。
         if path.startswith(("lua/", "tools/")):
+            if label in reference:
+                duplicates.append(f"{label}（前 {reference[label][1][:12]}… → 后 {shas[0][:12]}…）")
             reference[label] = (cells[1], shas[0], path)
         else:
+            if path in local:
+                duplicates.append(f"{path}（前 {local[path][:12]}… → 后 {shas[0][:12]}…）")
             local[path] = shas[0]
+    if duplicates:
+        raise Failure(
+            f"{SHA_DOC} 的 sha256 表有重复键（同一文件/标签两行，后一行会覆盖前一行）："
+            + "；".join(duplicates)
+        )
     return local, reference
 
 
@@ -170,7 +178,7 @@ def check_reference_file(repo: Path, pin: str, path: str) -> str:
                 f"本地检出请 `git fetch origin {pin}`）"
             )
         raise Failure(f"取不到 {path} @ {pin}：{message}{hint}")
-    return hashlib.sha256(result.stdout).hexdigest()
+    return sha256_bytes(result.stdout)
 
 
 def main() -> int:
@@ -178,7 +186,7 @@ def main() -> int:
     parser.add_argument(
         "--root",
         type=Path,
-        default=Path(__file__).resolve().parents[2],
+        default=repo_root(),
         help="仓库根（默认按脚本位置推断）",
     )
     parser.add_argument(
@@ -208,7 +216,13 @@ def main() -> int:
         print(f"FAIL 找不到校验和文档：{SHA_DOC}", file=sys.stderr)
         return 1
     text = sha_doc_path.read_text(encoding="utf-8")
-    local, reference = parse_tables(text)
+    try:
+        local, reference = parse_tables(text)
+    except Failure as error:
+        # 表自身不自洽（重复键）：后续「表 ↔ 文件」比对没有意义，直接失败收尾。
+        print(f"FAIL {error}", file=sys.stderr)
+        print("verify_golden_shas: 0 项通过，1 项失败（sha256 表解析失败，后续校验跳过）")
+        return 1
     pins = {
         "main": next_hex(text, "**主干 pin**", SHA1_RE),
         "reverse": next_hex(text, "**反查分支 pin**", SHA1_RE),
@@ -218,10 +232,14 @@ def main() -> int:
     declared_shas: dict[str, str] = dict(local)
     declared_shas.update({label: sha for label, (_, sha, _) in reference.items()})
 
-    # 1. 表 ↔ 文件
+    # 1. 表 ↔ 文件（金样改名/缺失时 resolve_local 抛 Failure：记为一条失败，不抛 traceback）
     for label, sha in sorted(local.items()):
-        path = resolve_local(root, label)
-        actual = sha256_file(path)
+        try:
+            path = resolve_local(root, label)
+        except Failure as error:
+            failures.append(str(error))
+            continue
+        actual = sha256_stream(path)
         note(
             actual == sha,
             f"{path.relative_to(root)} sha256 与 {SHA_DOC} 表一致",

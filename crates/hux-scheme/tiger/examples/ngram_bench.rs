@@ -4,7 +4,7 @@
 //! 与 `tools/probes/bench_ngram.lua` 对齐的基准：加载模型后重放 transcript 中的全部
 //! logp 查询，输出加载/查询耗时与结果位模式校验和（xor）。
 //!
-//!   cargo run --release --example ngram_bench -- <model.bin> <transcript.tsv>
+//!   cargo run --release -q -p hux-scheme-tiger --example ngram_bench -- <model.bin> <transcript.tsv>
 
 use hux_scheme_tiger::ngram::MobileModel;
 use hux_test_support::decode_hex as decode;

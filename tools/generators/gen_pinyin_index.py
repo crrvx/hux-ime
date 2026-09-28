@@ -31,12 +31,17 @@ from __future__ import annotations
 
 import argparse
 import gzip
-import hashlib
 import json
 import pathlib
 import re
 import struct
 import sys
+
+# 共享哈希助手在 `tools/checks/`（守卫与生成器同用一套口径）：直接运行本脚本时
+# `sys.path[0]` 是 `tools/generators/`，故显式补上相邻目录。
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "checks"))
+
+from _hashutil import sha256_stream  # noqa: E402（须在 sys.path 之后）
 
 MAGIC = b"TCSRV01\n"
 TYPE_NORMAL = 0
@@ -197,14 +202,6 @@ def write_output(path: pathlib.Path, data: bytes) -> None:
         path.write_bytes(data)
 
 
-def sha256(path: pathlib.Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def read_output(path: pathlib.Path) -> bytes:
     """读取已写入的索引（按扩展名判断是否 gzip）。"""
     raw = path.read_bytes()
@@ -232,7 +229,7 @@ def main() -> int:
         "syllables": len(index["syllables"]),
         "spelling_keys": len(index["spellings"]),
     }
-    source_sha = sha256(args.source)
+    source_sha = sha256_stream(args.source)
 
     if args.check:
         if not args.out.is_file():
@@ -244,7 +241,7 @@ def main() -> int:
             raise SystemExit(
                 f"check failed: {args.out} 与由 {args.source} 重建的内容不一致"
             )
-        actual = sha256(args.out)
+        actual = sha256_stream(args.out)
         if args.manifest:
             if not args.manifest.is_file():
                 raise SystemExit(f"missing manifest: {args.manifest}")
@@ -258,7 +255,7 @@ def main() -> int:
         return 0
 
     write_output(args.out, data)
-    output_sha = sha256(args.out)
+    output_sha = sha256_stream(args.out)
     print(f"wrote {args.out} ({args.out.stat().st_size} bytes, sha256={output_sha})")
     print("counts", counts)
     if args.manifest:

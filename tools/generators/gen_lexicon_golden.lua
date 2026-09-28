@@ -15,23 +15,12 @@
 --   supp    count=<n> error=<0|1>     supplement_status（路径不入样）
 -- 空串参数编码为 `-`；字符串为 UTF-8 字节的小写十六进制。
 
-local function parse_args(argv)
-    local opts = { mode = "present" }
-    local i = 1
-    while i <= #argv do
-        local key = argv[i]:match("^%-%-([%w_]+)$")
-        if not key then error("unexpected argument: " .. argv[i]) end
-        opts[key] = argv[i + 1]
-        i = i + 2
-    end
-    return opts
-end
-
-local opts = parse_args({ ... })
--- 默认参照检出：与仓库同级（相对脚本位置解析，不依赖调用时的 cwd）。
+-- 共享助手（parse_args / reference_dir / emitter / hex）：见 lib/lua_util.lua 头注。
 local script_dir = (arg and arg[0] or ""):match("^(.*)[/\\]") or "."
-local reference = opts.reference or os.getenv("HUX_REFERENCE_REPO")
-    or (script_dir .. "/../../_external/tiger-sentense-rime")
+package.path = script_dir .. "/lib/?.lua;" .. package.path
+local util = require("lua_util")
+local opts = util.parse_args({ ... }, { mode = "present" })
+local reference = util.reference_dir(opts, script_dir)
 assert(opts.data, "missing --data")
 assert(opts.out, "missing --out")
 
@@ -41,17 +30,8 @@ local sentence = require("tiger_sentence")
 sentence.set_model_enabled(false)
 
 local out = assert(io.open(opts.out, "w"))
-local emitted = 0
-
-local function emit(...)
-    out:write(table.concat({ ... }, "\t"), "\n")
-    emitted = emitted + 1
-end
-
-local function hex(text)
-    if text == "" then return "-" end
-    return (text:gsub(".", function(c) return string.format("%02x", c:byte()) end))
-end
+local emit, emitted = util.emitter(out)
+local hex = util.hex
 
 local function status_payload()
     local st = sentence.data_status()
@@ -97,10 +77,8 @@ local function sorted_codes(view)
 end
 
 local mode = opts.mode
-if mode == "present" then
-    sentence.ensure_lexicon(nil)
-elseif mode == "missing" then
-    -- 空目录同样触发惰性装载；数据文件缺失走错误路径。
+if mode == "present" or mode == "missing" then
+    -- 两种模式都触发惰性装载；missing 的空目录走「数据文件缺失」的错误路径。
     sentence.ensure_lexicon(nil)
 else
     error("unknown mode: " .. mode)
@@ -137,4 +115,4 @@ else
 end
 
 out:close()
-print(string.format('{"mode":"%s","lua":"%s","codes":%d,"emitted":%d}', mode, _VERSION, #codes, emitted))
+print(string.format('{"mode":"%s","lua":"%s","codes":%d,"emitted":%d}', mode, _VERSION, #codes, emitted()))

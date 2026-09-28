@@ -132,6 +132,32 @@ typedef struct hux_key_list {
   int32_t states[HUX_MAX_KEYS];
 } hux_key_list;
 
+/*
+ * 候选排列（`hux_options.candidate_layout`）。
+ *
+ * 取值是 **ABI**：壳侧 `shell/hux.cpp` 用同名宏填充并有 `static_assert` 守卫，
+ * Rust 侧 `platform/fcitx5/src/abi.rs` 用具名常量读取、由用例逐项比对。
+ * 加取值 / 调值必须同时改这三处，否则编译或测试失败。
+ */
+enum {
+  HUX_CANDIDATE_LAYOUT_FOLLOW_GLOBAL = 0,
+  HUX_CANDIDATE_LAYOUT_HORIZONTAL = 1,
+  HUX_CANDIDATE_LAYOUT_VERTICAL = 2,
+  /* 取值总数（哨兵；不是合法取值）。 */
+  HUX_CANDIDATE_LAYOUT_COUNT = 3,
+};
+
+/*
+ * 预编辑内容（`hux_options.preedit_mode`）。取值同样是 ABI，改法与候选排列一致。
+ */
+enum {
+  HUX_PREEDIT_MODE_CANDIDATE_CODE = 0,
+  HUX_PREEDIT_MODE_RAW_INPUT = 1,
+  HUX_PREEDIT_MODE_HIDDEN = 2,
+  /* 取值总数（哨兵；不是合法取值）。 */
+  HUX_PREEDIT_MODE_COUNT = 3,
+};
+
 /* 外部配置（Rust 侧 Settings 的 C 布局；由壳从 fcitx5 配置读出后传入）。 */
 typedef struct hux_options {
   int32_t early_commit;
@@ -147,9 +173,9 @@ typedef struct hux_options {
   hux_key_list page_up;
   hux_key_list page_down;
   int32_t digit_select;
-  /* 候选排列：0 = 跟随全局（默认），1 = 横排，2 = 竖排。 */
+  /* 候选排列：见 `HUX_CANDIDATE_LAYOUT_*`。 */
   int32_t candidate_layout;
-  /* 预编辑内容：0 = 候选分码（默认），1 = 原始输入，2 = 不显示。 */
+  /* 预编辑内容：见 `HUX_PREEDIT_MODE_*`。 */
   int32_t preedit_mode;
   /* 翻页循环：0 = 关（默认），1 = 开。 */
   int32_t page_cycle;
@@ -168,7 +194,7 @@ typedef struct hux_options {
  * （`platform/fcitx5/src/abi.rs` 的 `hux_engine_option_role_count`），
  * 并由用例 `option_role_order_matches_the_abi_header` 逐项比对；
  * 宿主侧以 `HUX_OPTION_COUNT` 做 `static_assert` 长度守卫（`shell/hux.cpp`）。
- * 加角色 / 调序必须同时改这三处，否则编译或测试失败（此前 `kLabels[role]` 会越界读）。
+ * 加角色 / 调序必须同时改这三处，否则编译或测试失败。
  */
 enum {
   HUX_OPTION_EARLY_COMMIT = 0,

@@ -61,12 +61,11 @@ impl<K: Clone + Eq + Hash, V> Fifo<K, V> {
     }
 
     /// Lua `#keys`：已占用槽位数（达到上限后恒为 limit）。
+    // 只按 Lua `#keys` 语义暴露长度：调用方（`ngram` 的统计）都只问长度，
+    // 因此不提供 `is_empty`，与 clippy 的 len/is_empty 配对约定有意不同。
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.keys.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.keys.is_empty()
     }
 
     pub fn values(&self) -> impl Iterator<Item = &V> {
@@ -125,18 +124,10 @@ impl<K: Clone + Eq + Hash> Columns<K> {
     }
 
     /// Lua `#keys`。
+    // 同 `Fifo::len`：只问长度，不提供 `is_empty`。
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.keys.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.keys.is_empty()
-    }
-
-    pub fn clear(&mut self) {
-        self.map.clear();
-        self.keys.clear();
-        self.next = 1;
     }
 }
 
@@ -144,19 +135,21 @@ impl<K: Clone + Eq + Hash> Columns<K> {
 mod tests {
     use super::*;
 
+    /// Fifo 命中已存在的 key 时原地换值：值更新、槽位不推进也不新增。
     #[test]
     fn fifo_updates_existing_key_in_place() {
         let mut cache = Fifo::new(2);
         cache.put(10u32, "a");
         cache.put(20u32, "b");
-        assert_eq!(cache.get(&10), Some(&"a"));
-        assert_eq!(cache.len(), 2);
+        assert_eq!(cache.get(&10), Some(&"a"), "未满员时写入即可读回：10 → a");
+        assert_eq!(cache.len(), 2, "两个不同 key 各占一槽");
         // 已存在的 key 原地更新，不推进槽位。
         cache.put(10u32, "a2");
-        assert_eq!(cache.get(&10), Some(&"a2"));
-        assert_eq!(cache.len(), 2);
+        assert_eq!(cache.get(&10), Some(&"a2"), "原地更新换值不换槽：10 → a2");
+        assert_eq!(cache.len(), 2, "原地更新不得新增槽位");
     }
 
+    /// Fifo 满员后写入新 key 顶掉最旧槽位，容量恒等于 limit：淘汰只换内容，不改变槽位数。
     #[test]
     fn fifo_evicts_oldest_slot() {
         let mut cache = Fifo::new(2);
@@ -164,21 +157,34 @@ mod tests {
         cache.put(20u32, "b");
         // 新 key 顶掉最旧槽位（10）。
         cache.put(30u32, "c");
-        assert_eq!(cache.get(&10), None);
-        assert_eq!(cache.get(&20), Some(&"b"));
-        assert_eq!(cache.get(&30), Some(&"c"));
-        assert_eq!(cache.len(), 2);
+        assert_eq!(
+            cache.get(&10),
+            None,
+            "limit=2 时第 3 个 key 必须顶掉最旧的 10"
+        );
+        assert_eq!(cache.get(&20), Some(&"b"), "未被淘汰的 20 仍在缓存");
+        assert_eq!(cache.get(&30), Some(&"c"), "刚写入的 30 必须命中");
+        assert_eq!(cache.len(), 2, "淘汰只换内容，槽位数恒等于 limit");
     }
 
+    /// Columns 的 claim 对同一 key 幂等（回原槽且不推进游标）；槽位用尽后循环复用，被顶掉的旧 key 随即失效。
     #[test]
     fn columns_claim_and_evict() {
         let mut columns = Columns::new(2);
-        assert_eq!(columns.claim(7u64), 1);
-        assert_eq!(columns.claim(7u64), 1);
-        assert_eq!(columns.claim(8u64), 2);
-        assert_eq!(columns.len(), 2);
-        assert_eq!(columns.claim(9u64), 1); // 槽位循环：顶掉 7
-        assert_eq!(columns.slot(&7), None);
-        assert_eq!(columns.slot(&9), Some(1));
+        assert_eq!(columns.claim(7u64), 1, "首次 claim 分到 1 号槽");
+        assert_eq!(
+            columns.claim(7u64),
+            1,
+            "已分配 key 重复 claim 必须回到原槽且不推进游标"
+        );
+        assert_eq!(columns.claim(8u64), 2, "新 key 依次占用 2 号槽");
+        assert_eq!(columns.len(), 2, "两个 key 占满两槽");
+        assert_eq!(
+            columns.claim(9u64),
+            1,
+            "槽位循环复用：第 3 个 key 回到 1 号槽"
+        ); // 槽位循环：顶掉 7
+        assert_eq!(columns.slot(&7), None, "被顶掉的 7 必须查不到");
+        assert_eq!(columns.slot(&9), Some(1), "1 号槽此时由 9 占用");
     }
 }

@@ -18,7 +18,7 @@
 //!
 //! [`SchemeConfig`]: hux_core::scheme::SchemeConfig
 
-use hashbrown::HashMap;
+use hux_core::collections::Map;
 use hux_core::scheme::OptionDecl;
 use std::fmt;
 
@@ -124,14 +124,14 @@ impl fmt::Display for DeclError {
 /// [`Scheme::option_declarations`]: hux_core::scheme::Scheme::option_declarations
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct OptionKeys {
-    keys: HashMap<&'static str, &'static str>,
+    keys: Map<&'static str, &'static str>,
 }
 
 impl OptionKeys {
     /// 由方案的声明解析：先铺宿主标准键，再逐个收方案声明；
     /// **缺任一 [`SCHEME_OPTION_ROLES`] 即 `Err`**（换方案漏声明会在装配处暴露，不会静默失效）。
     pub fn resolve(declarations: &[OptionDecl]) -> Result<Self, DeclError> {
-        let mut keys = HashMap::new();
+        let mut keys = Map::new();
         for role in HOST_OPTION_ROLES {
             keys.insert(*role, *role);
         }
@@ -236,28 +236,48 @@ mod tests {
         );
     }
 
+    /// 换方案漏声明角色必须点名报错而不是静默缺键；宿主标准键在此与方案角色汇合。
     #[test]
     fn resolve_needs_every_scheme_role() {
         // 正例：方案声明的角色齐备，宿主标准键就位。
         let keys = OptionKeys::resolve(&declarations()).expect("完整声明");
-        assert_eq!(keys.key(ROLE_EARLY_COMMIT), Some("scheme_early_commit"));
-        assert_eq!(keys.key(ROLE_FULL_SHAPE), Some("full_shape"));
-        assert_eq!(keys.key(ROLE_ASCII_PUNCT), Some("ascii_punct"));
-        assert_eq!(keys.key("not_a_role"), None);
+        assert_eq!(
+            keys.key(ROLE_EARLY_COMMIT),
+            Some("scheme_early_commit"),
+            "方案声明的角色未解析成其声明的键：按角色取不到选项键"
+        );
+        assert_eq!(
+            keys.key(ROLE_FULL_SHAPE),
+            Some("full_shape"),
+            "宿主标准选项的键必须等于角色名本身（rime 标准名），不得被方案改写"
+        );
+        assert_eq!(
+            keys.key(ROLE_ASCII_PUNCT),
+            Some("ascii_punct"),
+            "宿主标准选项 ascii_punct 由配置层自持：键必须等于角色名"
+        );
+        assert_eq!(
+            keys.key("not_a_role"),
+            None,
+            "未知角色不得取到选项键：键表只应包含已声明的角色"
+        );
 
         // 负例：缺一个角色即报错，并点名缺失角色（换方案漏声明不得静默通过）。
         let mut incomplete = declarations();
         incomplete.retain(|decl| decl.role != ROLE_DIGIT_SELECT);
         assert_eq!(
             OptionKeys::resolve(&incomplete),
-            Err(DeclError::Missing(vec![ROLE_DIGIT_SELECT]))
+            Err(DeclError::Missing(vec![ROLE_DIGIT_SELECT])),
+            "缺一个方案角色必须报 Missing 并点名该角色（digit_select），不得静默通过或被别的角色顶替"
         );
         assert_eq!(
             OptionKeys::resolve(&[]),
-            Err(DeclError::Missing(SCHEME_OPTION_ROLES.to_vec()))
+            Err(DeclError::Missing(SCHEME_OPTION_ROLES.to_vec())),
+            "空声明必须一次点名全部必需角色，且顺序与清单一致（换方案漏声明不得静默通过）"
         );
     }
 
+    /// 重复与空声明都是装配缺陷：同名不得后覆盖先，宿主标准项不得被方案改名。
     #[test]
     fn resolve_rejects_duplicate_and_empty_declarations() {
         // 同角色两条声明：后者不得静默覆盖前者。
@@ -268,7 +288,8 @@ mod tests {
         });
         assert_eq!(
             OptionKeys::resolve(&duplicated),
-            Err(DeclError::Duplicate(ROLE_EARLY_COMMIT))
+            Err(DeclError::Duplicate(ROLE_EARLY_COMMIT)),
+            "同角色重复声明必须报 Duplicate 并点名重复者，不得后覆盖先"
         );
 
         // 宿主标准选项由配置层自持：方案不得改名（改名即冲突）。
@@ -279,22 +300,29 @@ mod tests {
         });
         assert_eq!(
             OptionKeys::resolve(&hijacked),
-            Err(DeclError::Duplicate(ROLE_FULL_SHAPE))
+            Err(DeclError::Duplicate(ROLE_FULL_SHAPE)),
+            "方案重声明宿主标准角色必须报 Duplicate：宿主标准键不得被方案改名"
         );
 
         // 空角色名 / 空键：装配缺陷，直接报错。
         let mut empty = declarations();
         empty.push(OptionDecl { role: "", key: "x" });
-        assert_eq!(OptionKeys::resolve(&empty), Err(DeclError::Empty));
+        assert_eq!(
+            OptionKeys::resolve(&empty),
+            Err(DeclError::Empty),
+            "空角色名必须报 Empty：装配缺陷不得被当成合法声明收下"
+        );
 
         // 诊断文案（进平台状态串）。
         assert_eq!(
             DeclError::Missing(vec![ROLE_DIGIT_SELECT]).to_string(),
-            "方案未声明角色：digit_select"
+            "方案未声明角色：digit_select",
+            "Missing 的诊断文案必须点名缺失角色（该串进平台状态栏）"
         );
         assert_eq!(
             DeclError::Duplicate(ROLE_DIGIT_SELECT).to_string(),
-            "角色重复声明：digit_select"
+            "角色重复声明：digit_select",
+            "Duplicate 的诊断文案必须点名重复角色（该串进平台状态栏）"
         );
     }
 }

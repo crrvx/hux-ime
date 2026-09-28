@@ -14,4 +14,6 @@ __pycache__/
 # 本地 / 外部 / 临时
 _tmp/
 _external/
+# 外部检出（参照仓库）：生成脚本与 CI 按 `external/…` 取用（如 `external/librime/…`）
+external/
 goldens/local/

@@ -1,52 +1,24 @@
 // SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! C ABI：C 布局类型与 `extern "C"` 导出（C++ 薄壳调用；与 `../../crates/hux-ffi/include/hux_abi.h` 一一对应）。
+//! C ABI：C 布局类型与 `extern "C"` 导出（C++ 薄壳调用；与 `../../../crates/hux-ffi/include/hux_abi.h` 一一对应）。
 
 use std::ffi::c_char;
 
 use crate::engine::Engine;
 use hux_cfg::{CandidateLayout, PreeditMode, Settings};
 
-use hux_core::key::{
-    K_ALT_MASK, K_CONTROL_MASK, K_LOCK_MASK, K_RELEASE_MASK, K_SHIFT_MASK, K_SUPER_MASK, KeyEvent,
-};
+use hux_core::key::KeyEvent;
 
 pub(crate) use hux_ffi::{
     HUX_KEY_CONSUMED, HUX_KEY_FORWARD_AFTER_COMMIT, HUX_MAX_KEYS, HostCallback, HuxKeyList,
     HuxOptions,
 };
 
-// fcitx5 `KeyState` 位（`fcitx-utils/keysym.h`）。
-pub(crate) const FCITX_SHIFT: u32 = 1 << 0;
-pub(crate) const FCITX_CAPS_LOCK: u32 = 1 << 1;
-pub(crate) const FCITX_CTRL: u32 = 1 << 2;
-pub(crate) const FCITX_ALT: u32 = 1 << 3;
-pub(crate) const FCITX_SUPER: u32 = 1 << 6;
+mod mapping;
 
-/// fcitx5 `KeyState` → core（Rime）掩码。
-pub(crate) fn core_modifiers(states: u32, release: bool) -> i32 {
-    let mut modifiers = 0;
-    if states & FCITX_SHIFT != 0 {
-        modifiers |= K_SHIFT_MASK;
-    }
-    if states & FCITX_CAPS_LOCK != 0 {
-        modifiers |= K_LOCK_MASK;
-    }
-    if states & FCITX_CTRL != 0 {
-        modifiers |= K_CONTROL_MASK;
-    }
-    if states & FCITX_ALT != 0 {
-        modifiers |= K_ALT_MASK;
-    }
-    if states & FCITX_SUPER != 0 {
-        modifiers |= K_SUPER_MASK;
-    }
-    if release {
-        modifiers |= K_RELEASE_MASK;
-    }
-    modifiers
-}
+// 按键状态位与 ABI 枚举取值经此处重导出，crate 内名字与拆分前一致。
+pub(crate) use mapping::*;
 
 /// 创建引擎实例（`host` 可为空指针）。
 ///
@@ -119,7 +91,7 @@ pub unsafe extern "C" fn hux_engine_reset(engine: *mut Engine, session: u64) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hux_engine_status(engine: *const Engine) -> *const c_char {
     match unsafe { engine.as_ref() } {
-        Some(engine) => engine.status.as_ptr(),
+        Some(engine) => engine.diagnostics.status.as_ptr(),
         None => std::ptr::null(),
     }
 }
@@ -237,13 +209,13 @@ pub unsafe extern "C" fn hux_engine_apply_settings(
         full_charset: options.full_charset != 0,
         filter_non_han: options.filter_non_han != 0,
         candidate_layout: match options.candidate_layout {
-            1 => CandidateLayout::Horizontal,
-            2 => CandidateLayout::Vertical,
+            CANDIDATE_LAYOUT_HORIZONTAL => CandidateLayout::Horizontal,
+            CANDIDATE_LAYOUT_VERTICAL => CandidateLayout::Vertical,
             _ => CandidateLayout::FollowGlobal,
         },
         preedit_mode: match options.preedit_mode {
-            1 => PreeditMode::RawInput,
-            2 => PreeditMode::Hidden,
+            PREEDIT_MODE_RAW_INPUT => PreeditMode::RawInput,
+            PREEDIT_MODE_HIDDEN => PreeditMode::Hidden,
             _ => PreeditMode::CandidateCode,
         },
         page_cycle: options.page_cycle != 0,

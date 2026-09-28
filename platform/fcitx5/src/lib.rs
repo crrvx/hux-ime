@@ -20,23 +20,5 @@ mod ui;
 /// 学习库时间戳（平台层读系统时钟；内核不读时钟）。
 pub(crate) use engine::wall_clock;
 
-// 测试可见面：仅单元测试使用的重导出（`tests.rs` 以 `use crate::*` 取用）。
-#[cfg(test)]
-pub(crate) use abi::*;
-#[cfg(test)]
-pub(crate) use engine::Engine;
-#[cfg(test)]
-pub(crate) use hux_cfg::{
-    CandidateLayout, MAX_MIN_RETAINED_INPUT_LENGTH, OPTIONS_FILE, PreeditMode, Settings,
-};
-#[cfg(test)]
-pub(crate) use hux_core::key::KeyEvent;
-#[cfg(test)]
-pub(crate) use session::Session;
-#[cfg(test)]
-use std::ffi::{CString, c_char, c_void};
-#[cfg(test)]
-use std::path::PathBuf;
-
 #[cfg(test)]
 mod tests;

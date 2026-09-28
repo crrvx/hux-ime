@@ -8,8 +8,8 @@
 //   step <case> <index> <repr> <consumed 0/1> <input> <caret> <commit> <preedit>
 //        <page> <highlight> <candidate_count> <candidates> <comments>
 // 文本字段为 UTF-8 字节十六进制，空串为 "-"，候选/注释以 "," 分隔、空为 "-"。
-// repr 支持：单字符可打印键、键名（space/comma/period/.../BackSpace/Left/...）、
-// `<修饰>+<键名>`（Shift/Lock/Control/Alt/Super/Hyper/Meta/Release，如 Release+Shift_L）。
+// repr 由上游 `KeyEvent::Parse` 解析（librime 自己的键名/修饰表）：单字符、键名
+// （space/comma/period/.../BackSpace/Left/...）、`<修饰>+<键名>`；解析失败即显式报错。
 // 与 tools/generators/gen_key_sequence_golden.sh 配套；探针依赖系统 librime/librime-lua，
 // 故金样不在 CI 重生成（同 key.tsv.gz）。
 #include <rime_api.h>
@@ -24,6 +24,23 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+
+namespace rime {
+
+// 与 `rime/key_event.h` 同布局；Parse 由 librime 提供（头文件不随 librime-dev 分发）。
+class KeyEvent {
+public:
+    KeyEvent() = default;
+    int keycode() const { return keycode_; }
+    int modifier() const { return modifier_; }
+    bool Parse(const std::string& repr);
+
+private:
+    int keycode_ = 0;
+    int modifier_ = 0;
+};
+
+}  // namespace rime
 
 namespace {
 
@@ -88,70 +105,13 @@ struct Key {
     int mask;
 };
 
-const std::map<std::string, Key>& key_table() {
-    static const std::map<std::string, Key> table = {
-        {"space", {0x20, 0}},        {"apostrophe", {0x27, 0}},
-        {"semicolon", {0x3b, 0}},    {"period", {0x2e, 0}},
-        {"comma", {0x2c, 0}},        {"minus", {0x2d, 0}},
-        {"equal", {0x3d, 0}},        {"slash", {0x2f, 0}},
-        {"backslash", {0x5c, 0}},    {"grave", {0x60, 0}},
-        {"bracketleft", {0x5b, 0}},  {"bracketright", {0x5d, 0}},
-        {"Tab", {0xff09, 0}},        {"ISO_Left_Tab", {0xfe20, 0}},
-        {"Return", {0xff0d, 0}},     {"KP_Enter", {0xff8d, 0}},
-        {"Escape", {0xff1b, 0}},     {"BackSpace", {0xff08, 0}},
-        {"Delete", {0xffff, 0}},     {"Left", {0xff51, 0}},
-        {"Up", {0xff52, 0}},         {"Right", {0xff53, 0}},
-        {"Down", {0xff54, 0}},       {"Page_Up", {0xff55, 0}},
-        {"Page_Down", {0xff56, 0}},  {"Home", {0xff50, 0}},
-        {"End", {0xff57, 0}},        {"KP_Decimal", {0xffae, 0}},
-        // 修饰键（ascii_composer 切换与标点用例）。
-        {"Shift_L", {0xffe1, 0}},    {"Shift_R", {0xffe2, 0}},
-        {"Control_L", {0xffe3, 0}},  {"Control_R", {0xffe4, 0}},
-        {"Alt_L", {0xffe9, 0}},      {"Alt_R", {0xffea, 0}},
-        {"Super_L", {0xffeb, 0}},    {"Super_R", {0xffec, 0}},
-        {"Caps_Lock", {0xffe5, 0}},  {"Eisu_toggle", {0xff30, 0}},
-    };
-    return table;
-}
-
-int modifier_mask(const std::string& name) {
-    static const std::map<std::string, int> table = {
-        {"Shift", 1 << 0},   {"Lock", 1 << 1},    {"Control", 1 << 2},
-        {"Alt", 1 << 3},     {"Super", 1 << 26},  {"Hyper", 1 << 27},
-        {"Meta", 1 << 28},   {"Release", 1 << 30},
-    };
-    const auto found = table.find(name);
-    return found == table.end() ? -1 : found->second;
-}
-
+// 键表示 → 键值/修饰掩码。交给上游 `KeyEvent::Parse`：探针曾自带一份「与 librime 同构」
+// 的键名与修饰表（46 键 + 8 修饰），那份副本一旦与上游漂移，金样会**静默**改变；改为直调
+// 上游后，未识别的键名/修饰由 Parse 返回 false（librime 记 ERROR 日志），此处显式失败。
 Key resolve(const std::string& repr) {
-    // 可打印单字符直接作键值（不足两字符的名字不存在）。
-    if (repr.size() == 1) {
-        const unsigned char ch = static_cast<unsigned char>(repr[0]);
-        if (ch > 0x20 && ch < 0x7f) return {ch, 0};
-    }
-    // `<修饰>+<键名>`（与 librime `KeyEvent::Parse` 同构）。
-    int mask = 0;
-    std::string key_name = repr;
-    const auto plus = repr.rfind('+');
-    if (plus != std::string::npos) {
-        key_name = repr.substr(plus + 1);
-        const std::string rest = repr.substr(0, plus);
-        std::size_t start = 0;
-        while (start <= rest.size()) {
-            const auto next = rest.find('+', start);
-            const std::string name =
-                rest.substr(start, next == std::string::npos ? std::string::npos : next - start);
-            const int bit = modifier_mask(name);
-            if (bit < 0) throw std::runtime_error("unknown modifier: " + name);
-            mask |= bit;
-            if (next == std::string::npos) break;
-            start = next + 1;
-        }
-    }
-    const auto found = key_table().find(key_name);
-    if (found == key_table().end()) throw std::runtime_error("unknown key repr: " + repr);
-    return {found->second.code, found->second.mask | mask};
+    rime::KeyEvent event;
+    check(event.Parse(repr), "unknown key repr: " + repr);
+    return {event.keycode(), event.modifier()};
 }
 
 std::string input() {

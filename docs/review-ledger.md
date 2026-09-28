@@ -3,129 +3,51 @@
 
 # 复核台账：历史与逐批记录（review ledger）
 
-> **本文是历史留档**：§1「历史纪要」把迁移映射 / 批次 / 上游追平 / 逐批整改 / 四份审计总账压成逐批一行（结论 + 提交号）。 \
-> **§0「未闭合项」是活口**——全仓唯一记录未完事项（`[待办]` / `[已登记·不修+理由]` / `[误报·已核实]` / 待定配置项）之处。 \
-> 活规则见 [`design.md`](design.md)，有意偏离上游见 [`upstream-deviations.md`](upstream-deviations.md)；本文只记「做过什么 / 结论是什么」，不承载规则本身。
+- **本文是历史留档**：§1「历史纪要」把迁移映射 / 批次 / 上游追平 / 逐批整改 / \
+  四份审计总账压成逐批一行（结论 + 提交号）
+- 只记「做过什么 / 结论是什么」，不承载规则本身
+- **未完事项是活口**（`[待办]` / `[已登记·不修+理由]` / `[误报·已核实]` / 待定配置项）已拆到 \
+  [`open-items.md`](open-items.md)——本文不再列未闭合项
+- 活规则见 [`design.md`](design.md)
+- 有意偏离见 [`upstream-deviations.md`](upstream-deviations.md)
 
----
+## 1. 历史纪要（逐批一行）
 
-## 0. 未闭合项（活口）
-
-> 2026-09-21 全仓复核（5 路并行审计 + 人工核实）的已修项见提交 `chore(review)` 三批与 `fix(review)`。 \
-> **状态前缀**（第 4 批 D1–D6）：`[✅ 已修]` ＝ 已落地且有守护；`[待办]` ＝ 仍未做（含成本估计）； \
-> `[已登记·不修+理由]` ＝ 有意不改（理由随条目）；`[误报·已核实]` ＝ 审计结论被实测否掉（本节 1 条，见 §0.3）。 \
-> 每批收尾勾对一次，不留「文档说未做、代码已做」的条目。 **非审计来源的未闭合项**： \
-> 发行版打包（PKGBUILD，AUR `fcitx5-hux`）状态见 [`../platform/README.md`](../platform/README.md)；**待定配置项**（B/C 组）见 §0.4。 \
-> 本节把四份总账里**仍活着**的条目提到最前（其余均已 `[✅ 已修]`，本节即其归宿）； \
-> 共 **9 条**——`[待办]` 3 / `[已登记·不修+理由]` 5 /  \
-> `[误报·已核实]` 1。
-
-### 0.1 `[待办]`（3 条：tiger `C7`、cfg/平台 `F16`、文档工具CI `M8`）
-
-| 编号 | 一句话问题 | 状态 | 归宿（提交 / 批次 · 不修理由 · 待办成本） |
-|---|---|---|---|
-| C7（`Group.code`） | 60 万次 `Group.code: Vec<u16>` 小分配 | [待办] | 未做（第 3b 批登记）：需先有基准数据，且要改组查找 / 前缀剪枝 / <br>`collect_chunks` 的取值路径（扁平 `Vec<u16>` + `(start, len)`），<br>收益与风险不匹配，<br>留待性能批 |
-| F16 | C++ 壳两处脆弱模式：`applyUpdate` 每次 UI 刷新都重建状态区；<br>`HuxCandidateWord::select` <br>内同步触发回调可能销毁候选对象自身 | [待办] | 未改（当前**无实测故障**，C++ 侧以 `session == nullptr` 早退规避）：<br>需真机 fcitx5 压力验证后再定是否投递到事件循环；本机无 fcitx5 运行环境。<br>**UAF 收尾批补充**：生命周期侧的悬垂风险已加固（候选词弱引用 + `~HuxEngine` <br>清状态区，见「历史纪要」第 6 批），<br>**重入 / 自毁结构未动** |
-| M8 | 依赖 / 版本未固定的位置（action 移动标签、`archlinux:latest`、<br>`librime-dev` 版本） | [待办] | **③④ 已实施 / 已注明**：`pacman -Sy` → `-Syu`；<br>`archlinux:latest` **有意不钉**（作业目的即「最新 Lua」）；<br>已在 `goldens/README.md` 注明 CI 的 librime 版本可不同、仅做语法检查。<br>（余见下方 M8 补记） |
-
-- **M8 补记**：**② rust 工具链：有意不钉**（跟随 stable 最新版；CI 用 `dtolnay/rust-toolchain@stable`）—— \
-  代价是 stable 漂移可能让 `cargo fmt --all --check` / clippy `-D warnings` 无预警变红， \
-  届时按当时的稳定版修正即可。**① action 钉 commit sha 仍待办**：离线无法验证 GitHub 侧可用性， \
-  擅自钉死有让 CI  \
-  无预警变红的实际风险
-
-### 0.2 `[已登记·不修+理由]`（5 条：tiger `A7`/`C3`（跨 crate）/`C8`、文档工具CI `M12`/`M17`）
-
-| 编号 | 一句话问题 | 状态 | 归宿（提交 / 批次 · 不修理由 · 待办成本） |
-|---|---|---|---|
-| A7 | NaN 语义与 Lua 相反（正常数据不可达） | [已登记·不修+理由] | 第 3b 批：`reward_for_weight` 的 `clamp` 与 `logp` 的 `max` 两处**只注明差异**——<br>入口 `weight > 0.0` 已排除 NaN ⇒ 正常数据不可达、无金样支撑，<br>改行为属投机 |
-| C3（跨 crate） | `lexicon::candidate_paths` ↔ `hux_core::scheme::asset_paths`（逐字同逻辑）、<br>`state::{live_input,input_caret}` ↔ <br>`core::session::{live_input,live_caret}`（同构双份）、<br>两套 `BOS/EOS`（`&str` vs `char`） | [已登记·不修+理由] | 第 3b 批**只报告不合并**：三者都牵动契约面或热路径类型（core <br>版已有平台调用者），合并需单独排期；现状无行为漂移（判据已统一），<br>风险是后人改一侧忘另一侧 |
-| C8 | 信息项：NaN 语义（见 A7）、<br>`build_edges` 每位置线性扫全部拼写键（449 键 × 段长） | [已登记·不修+理由] | **非缺陷**：NaN 已按 A7 注明；449 键量级的线性扫经评估可接受，<br>报告本身判「仅记录」 |
-| M12 | `tools/cases/key_cases.txt` 有无害重复行（`+`、`Shift++a`） | [已登记·不修+理由] | 第 5 批：重复行**有意保留**——删行会改动入库 `key.tsv.gz` <br>的记录数（同一输入两次解析必须一致，金样里各出现两次）；<br>已就地加注释说明，避免后人误读为「覆盖两种解析」 |
-| M17 | 信息项：其余安装 / 卸载契约已核实一致 | [已登记·不修+理由] | **无需动作**：报告自述已逐项实测相符（CMake 3 文件、`--purge` 覆盖面、<br>帮助行 `sed` 范围、`data/README.md` 溯源、`docs/config.md` 14 + 3 项、<br>24 份文档 0 破链）；本轮只复跑了其中的金样 sha <br>部分（`verify_golden_shas.py` 61 项通过），<br>未逐项重测 |
-
-### 0.3 `[误报·已核实]`（1 条：tiger `B2·子断言`）
-
-| 编号 | 一句话问题 | 状态 | 归宿（提交 / 批次 · 不修理由 · 待办成本） |
-|---|---|---|---|
-| B2·子断言 | 审计称「本仓把 `ab'1` 切成 abc 段 + raw 段 ⇒ 有 rank-3 候选」 | [误报·已核实] | 第 3b 批实测**两 pin 行完全一致**（`ab'1` 都是 `count=0`）：<br>段结构差异不落在比对面（`preedit` 按设计不比对）；<br>`apostrophe_*_split` 两例逐位通过、<br>无需登记 |
-
-### 0.4 待定配置项（B/C 组）
-
-> 原 `docs/config.md`「待扩展（B/C 组）」（来自 `docs/config-options.md`，2026-09 迁入）； \
-> A 组四项（候选排列、预编辑内容、翻页循环、最短保留码数）已实施。记录与转入规则随 [`config.md`](config.md)： \
-> 新想法先落本表（价值 / 现状 / 实现点 / 成本），实施后从本表移除并同步该文与测试。
-
-**低成本余项（现管线只差暴露）**
-
-| 项 | 现状 | 实现点 | 备注 |
-| --- | --- | --- | --- |
-| 反查候选上限 | 固定 20 | 方案常量（`sound_to_char_shape::CANDIDATE_LIMIT`）→ 设置 + ABI `int` | 少用 |
-| 学习库上限 | 固定 1 万条 / 16 MiB | `learning_store` 常量 → 设置（重启生效） | 少用；「清空学习库」需另做动作，非配置 |
-| 候选序号显示 | 随数字直选联动（直选开启才显示 `1`–`9`/`0`） | C++ `setSelectionKey` 条件 → 三态设置 | 少用 |
-
-**B 组（中等成本，可排期）**
-
-- **B1 模型路径**：
-  - 自定义 / 禁用 n-gram 模型（Android 分发依赖该能力，模型 APK 走默认目录）；
-  - 现仅 `HUX_MODEL` 环境变量、创建时加载（改动需重启）；
-  - 做法 = schema `String` → ABI 传路径（空串语义待定）+ 与 `HUX_MODEL` 优先级；
-  - 成本 / 风险 = 中 / 低。
-- **B2 候选选择键可配置**：
-  - 除 Tab/Shift+Tab、Up/Down 外可自定义选字键；
-  - 现 host `key_binder` 固定 Tab/Shift+Tab、`selector` 固定 Up/Down（横排）/ ←→（竖排）；
-  - 做法 = `HostOptions` 增 `prev/next_candidate_keys`（rime 键名，`KeyList` 可多项）、 \
-    `selector` 按列表匹配，理清与翻页键 / 导航键优先级；
-  - 成本 / 风险 = 中 / 低。
-- **B3 普通候选显示虎码注释**：
-  - 学码友好；
-  - 现普通解码候选 `comment` 为空、音反查候选为虎码；
-  - 做法 = 注释来源（候选路径编码 / 词条虎码）、格式与宽度，**仅展示层换算，不进入排序**；
-  - 成本 / 风险 = 中 / 中。
-- **B4 码表 / 标点表自定义**：
-  - **用户目录同名文件覆盖已可用**（`$XDG_DATA_HOME/fcitx5/hux/` = `~/.local/share/fcitx5/hux/`， \
-    放 `tiger_sentence.*.txt` 或 `symbols.yaml` 即生效），无需代码；
-  - 路线 = 先补文档（`usage.md` / `data/README.md`），UI 指定路径（`String` + 重启）再排期；
-  - 成本 = 文档小 / UI 中。
-
-**C 组（高成本，暂缓）**
-
-- **C1 简繁转换**：
-  - 输出简 / 繁切换（参照未带，属扩展）；
-  - 前置 = OpenCC 级转换表（体积 / 许可 / 来源）、转换挂点（提交文本与候选文本）、 \
-    与学习库 / 反查展示的契约；
-  - 成本 / 风险 = 高（数据 + 全链路）。
-- **C2 用户词 / 自造词**：
-  - 词典导入导出与编辑、学习过程可见化；
-  - 现只有打分式学习库（LevelDB 同构）、无用户词层；
-  - 前置 = 数据结构与迁移、与解码排序 / 学习的关系、两端 UI；
-  - 成本 / 风险 = 高。
-
-**明确不做**：早提交概率阈值（share / 证据数，调参危险、参照亦未暴露为 UI）；`memory_profile`（compact /  \
-balanced，本实现仅支持 TCSKNM02 mobile 模型）；`ascii_composer` 系列（Caps / Shift，无内置英文模式）。
-
----
-
-## 1. 历史纪要（逐批一行；原 §1 迁移映射 / §2 批次 / §3 上游追平 / §4 逐批整改 / §5 四份审计总账）
+- 本节把原 §1 迁移映射 / §2 批次 / §3 上游追平 / §4 逐批整改 / §5 四份审计总账 \
+  压成下表，逐批一行
 
 | 批次 / 主题 | 结论 | 提交 / pin |
 | --- | --- | --- |
-| P0–P1 文档评审、机械解耦（`hux-addon` 拆模块、`interaction.rs` 拆目录） | 行为 / API 不变，用例 + 金样全绿 | — |
-| P2 平台承接环境耦合（数据目录 / 时钟 / 状态日志），core 清 env / XDG 硬编码 | 桌面与 Android 路径均由平台构造 | — |
-| P3 拆 crate 与 `platform/`（`hux-cfg` / `hux-ffi` / `platform/fcitx5` / `platform/linux` + 骨架 README） | workspace 编译通过、金样全绿 | — |
-| P4 `hux_core::scheme` 最小契约 + `hux-scheme/tiger` 物理拆分（P4a 去回边 / P4b 迁模块 / P4c 契约注入 / 自审收尾） | 契约落地、不实现新方案；`OptionIds` 等固定契约随后由「① 契约去虎码语义」删除 | — |
-| P5 测试正式化（`hux-test-support` 收编两份 `tests/common/`、单元 / 集成分离、CI 分层） | CI 全绿、全仓无 `mod.rs` | — |
-| P6 性能：先测后优化收口 | **不做**增量解码缓存——打字路径已是微秒级（1–5 字符 p95 ≤ 3.4 µs），尾部仅来自 >20 字符长整句 | — |
-| 迁移阶段与上游追平 B1–B5（`8b615235` → `abad411`，反查支线 → `92a0b54`） | spike 差分 fixture 29,617 行 + 真实模型 62,777 行逐位一致、吞吐约 82×；B1–B5 全落地（早提交权重拆分、跨来源融合 / Direct 序、证据分配优化、等级化纠错去时间衰减、竞争边界前瞻），金样除头部 pin 外逐字节不变 | `abad411` / `92a0b54` |
-| 第 1 批：core F1（`unframe` 非字符边界 panic）、平台 F1/F2/F3/F12（角色守护 / ABI 哨兵 / 标识符中性化） | 已修（`unframe` 改 `get(a..b)?`，坏帧跳过并进诊断） | `8336316a` / `a640141d` / `80c965a2` |
-| 第 2 批：core F2–F12 真缺陷（`Page_Up` 首页标签、`Ctrl(+Shift)+Return`、caret 标点、契约袋错误通道、`highlight`、死码） | 已修（F2 / F11 判据后被「用户决定 B」改写为「菜单可见」） | `a792e79d` + 金样 `d94face3` |
-| 第 3a 批：tiger A1/A2/A4/B1/B3/B8（反查索引上界校验、偏离登记升期望值表、出厂缺省重放） | 已修（恒真自校验换 `DEVIATIONS` 期望值表） | `56fca679` |
-| 第 3b 批：tiger A3/A5–A8/B2/B4–B6/C1–C5/C7 读音串（+ 6 条已知遗留收口） | 已修；A7（NaN 语义）/ C3（跨 crate 重复）/ C8（信息项）登记不修；遗留⑤⑥仍成立但为空操作 / 两侧同构 | `f6372f37` / `63b8d74e` / `84e3beba` / `ff9217e1` |
-| 第 4 批：文档 D1–D14、工具 M1–M17、金样机制（内部头部校验 / 生成器原子写）、CI 守卫、平台 F5/F6/F8/F15 | 已修；M12 / M17 登记不修、M8 留待办（见 §0） | `37f27882` / `9774b639` / `d2f771cb` / `17f7bf2a` |
-| 第 5 批：遗留②③ 补金样（学习 × 早提交组合、Tab 锁真机探针）+ cfg / 平台 / 工具清尾 | 已修（`verify_golden_shas.py` 61 项通过） | `5304bd35` |
-| 第 6 批：文档肃清整合 + 翻页语义按「决定 B」强化 + UAF 收尾 | 已修；`paging` 标签结构性退役；UAF：`HuxSession` 析构契约源码级核实 + 真机核对通过 ⇒ 会话路径无 UAF，候选词自毁压力验证仍未做（见 §0.1 F16） | `4cd0bcaa` / `e7b6054b` / `884e9798` |
-| ① 契约去虎码语义（跨 4 crate） | 已修：`OptionIds` / 固定字段 `SchemeConfig` 删除，改「方案自报角色声明 + 通用键值袋」；线上字符串保留（不破上游互通 / 老配置 / ABI 布局） | — |
-| 第 7 批：C6 公开 API 去 `hashbrown`（不透明 `Map` / `Set`）+ F10.1 学习索引断言 | 已修：迭代序与哈希器语义逐位不变；负向对照实测失败 | `795e31cf` / `10a2de6f` |
-| 配置页保存不落盘（用户报告「提前上屏至预编辑无效」） | 已修：`setConfig` 增 `safeSaveAsIni` + `reloadConfig()`（值不再被 `options.yaml` 静默压回） | — |
-| 四份只读审计总账（85 条发现 / 96 行） | `[✅ 已修]` 87 / `[待办]` 3 / `[已登记·不修+理由]` 5 / `[误报·已核实]` 1；逐条明细与「修法 + 守卫 + 负向对照」随本次精简删除，活口见 §0 | — |
-
+| P0–P1 文档评审、机械解耦（`hux-addon` 拆模块、`interaction.rs` <br>拆目录） | 行为 / API 不变，用例 + 金样全绿 | — |
+| P2 平台承接环境耦合（数据目录 / 时钟 / 状态日志），core 清 env / XDG <br>硬编码 | 桌面与 Android 路径均由平台构造 | — |
+| P3 拆 crate 与 `platform/`（`hux-cfg` / `hux-ffi` /`platform/fcitx5` / <br>`platform/linux` + 骨架 README） | workspace 编译通过、金样全绿 | — |
+| P4 `hux_core::scheme` 最小契约 + `hux-scheme/tiger` 物理拆分<br>（P4a 去回边 / P4b 迁模块 / P4c 契约注入 / 自审收尾） | 契约落地、不实现新方案；<br>`OptionIds` 等固定契约随后由「① 契约去虎码语义」删除 | — |
+| P5 测试正式化（`hux-test-support` 收编两份 `tests/common/`、单元 / 集成分离、<br>CI 分层） | CI 全绿、全仓无 `mod.rs` | — |
+| P6 性能：先测后优化收口 | **不做**增量解码缓存——打字路径已是微秒级<br>（1–5 字符 p95 ≤ 3.4 µs），尾部仅来自 >20 字符长整句 | — |
+| 迁移阶段与上游追平 B1–B5（`8b615235` → `abad411`，反查支线 → <br>`92a0b54`） | spike 差分 fixture 29,617 行 + 真实模型 62,777 行逐位一致、<br>吞吐约 82×；B1–B5 全落地（早提交权重拆分、跨来源融合 / Direct 序、证据分配优化、<br>等级化纠错去时间衰减、竞争边界前瞻），金样除头部 pin 外逐字节不变 | `abad411` / <br>`92a0b54` |
+| 第 1 批：core F1（`unframe` 非字符边界 panic）、平台 F1/F2/F3/F12<br>（角色守护 / ABI 哨兵 / 标识符中性化） | 已修（`unframe` 改 `get(a..b)?`，<br>坏帧跳过并进诊断） | `8336316a` / `a640141d` / `80c965a2` |
+| 第 2 批：core F2–F12 真缺陷（`Page_Up` 首页标签、`Ctrl(+Shift)+Return`、<br>caret 标点、契约袋错误通道、`highlight`、死码） | 已修（F2 / F11 判据后被<br>「用户决定 B」改写为「菜单可见」） | `a792e79d` + 金样 `d94face3` |
+| 第 3a 批：tiger A1/A2/A4/B1/B3/B8（反查索引上界校验、偏离登记升期望值表、<br>出厂缺省重放） | 已修（恒真自校验换 `DEVIATIONS` 期望值表） | `56fca679` |
+| 第 3b 批：tiger A3/A5–A8/B2/B4–B6/C1–C5/C7 读音串（+ 6 <br>条已知遗留收口） | 已修；A7（NaN 语义）/ C3（跨 crate 重复）/ C8（信息项）<br>登记不修；遗留⑤⑥仍成立但为空操作 / 两侧同构 | `f6372f37` / `63b8d74e` / <br>`84e3beba` / `ff9217e1` |
+| 第 4 批：文档 D1–D14、工具 M1–M17、金样机制（内部头部校验 / 生成器原子写）、<br>CI 守卫、平台 F5/F6/F8/F15 | 已修；M12 / M17 登记不修、M8 留待办<br>（见 [`open-items.md`](open-items.md)） | `37f27882` / `9774b639` / <br>`d2f771cb` / `17f7bf2a` |
+| 第 5 批：遗留②③ 补金样（学习 × 早提交组合、Tab 锁真机探针）<br>+ cfg / 平台 / 工具清尾 | 已修（`verify_golden_shas.py` 61 <br>项通过） | `5304bd35` |
+| 第 6 批：文档肃清整合 + 翻页语义按「决定 B」强化 + UAF 收尾 | 已修；<br>`paging` 标签结构性退役；UAF：`HuxSession` 析构契约源码级核实+ 真机核对通过 ⇒ <br>会话路径无 UAF，候选词自毁压力验证仍未做（见 [`open-items.md`](open-items.md) <br>§1 F16） | `4cd0bcaa` / `e7b6054b` / `884e9798` |
+| 真机析构核对（2026-09-22，fcitx5 5.1.22） | 析构契约：**先** <br>`sessionFactory_.unregister()`（销毁全部 `HuxSession`）**再**<br>`hux_engine_free(engine_)`；日志类别 `hux`（`FCITX_DEFINE_LOG_CATEGORY`），<br>开启只能走命令行`fcitx5 -r --verbose='hux=5'` + `fcitx5-remote -e`<br>（无环境变量开关）。实跑 4 会话：`hux.cpp:605] hux: ~HuxSession id=1/2/4/3` <br>全部早于`addonmanager.cpp:306] Unloading addon hux` 与<br>`hux.cpp:704] hux: ~HuxEngine`，其后 `~HuxSession` 计数 0⇒ 会话路径无 UAF<br>（判据：任一 `~HuxSession` 晚于 `~HuxEngine`，或其后又冒出 `~HuxSession`，<br>即命中）。代码锚点：`InstanceArgument::parseOption` 解析开关、<br>`fcitx::Log::setLogRule` 定规则，**无**`FCITX_LOG_RULE` 类环境变量；级别 <br>`5` = Debug。规则在进程**启动期**读入⇒ 运行中改不了：`systemctl --user` 停掉 <br>fcitx5，在 ExecStart 加 `--verbose='hux=5'` 后重启；临时可用前台 <br>`fcitx5 -r -d` 直接看 stderr，或 `journalctl -t fcitx5`。 | `4cd0bcaa` 批 |
+| ① 契约去虎码语义（跨 4 crate） | 已修：`OptionIds` / 固定字段 <br>`SchemeConfig` 删除，改「方案自报角色声明 + 通用键值袋」；线上字符串保留<br>（不破上游互通 / 老配置 / ABI 布局） | — |
+| 第 7 批：C6 公开 API 去 `hashbrown`（不透明 `Map` / `Set`）<br>+ F10.1 学习索引断言 | 已修：迭代序与哈希器语义逐位不变；<br>负向对照实测失败 | `795e31cf` / `10a2de6f` |
+| 配置页保存不落盘（用户报告「提前上屏至预编辑无效」） | 已修：`setConfig` 增 <br>`safeSaveAsIni` + `reloadConfig()`（值不再被 `options.yaml` 静默压回） | — |
+| 四份只读审计总账（85 条发现 / 96 行） | `[✅ 已修]` 87 / `[待办]` 3 / <br>`[已登记·不修+理由]` 5 /`[误报·已核实]` 1；逐条明细与「修法 + 守卫 + 负向对照」<br>随本次精简删除，活口见 [`open-items.md`](open-items.md) | — |
+| 第 8 批（本轮全仓审计的 0+1 批）：ABI 枚举取值具名化 + 死代码 / <br>过期记录清理 | 已修：`hux_abi.h` 增 `HUX_CANDIDATE_LAYOUT_*` / <br>`HUX_PREEDIT_MODE_*`，C++ 壳改用宏 + 两条 `static_assert`，`abi.rs` <br>只给非默认档起名，并加取值守卫用例（`tests.rs` 的 `abi_enum_members` <br>按前缀分段取枚举）；删死码 K8/K10/K11/K13/K14/K15、B16–B19、D18–D20、T3.1–T3.8、<br>平台 5 项 + `engine.rs:265` + `ui.rs:93-97`、`docs/usage.md:27` 与 5 个 README；<br>K12 复核后**完成**（再导出删除、`store::LEGACY_FILE` 降为模块私有）；<br>用例 391 → 390（删两个、加 `option_value_enums_match_the_abi_header`；<br>「学习分不随时间衰减」失去钉桩，语义改由「方法已不存在」保证）；<br>保留待办 T3.8b / T3.1b / K14b（见 [`open-items.md`](open-items.md) <br>§1） | `06c183aa` |
+| 第 9 批（审计整改 2+3 批）：常量单点化 + 公开面收缩 | 已修：<br>tiger D1/D3/D4/D6/D8/D17（`has_selection_suffix` 唯一实现 + <br>`early_commit` 再导出、`LEXICAL_FILE`、magic 判定下沉 `ngram::detect_format`、<br>`added == 4` 具名、`0.99999` 互指注释）、B3/B5/B8/B9/B15（`interaction` 七条 <br>glob 换显式导出、kind 字面量单点化、`CANDIDATE_LIMIT` 与 `state` 再导出清理、<br>`lexicon::{rebuild, reward_for_weight}` 降私有）；cfg K1/K7（`roles` 回用 <br>`collections::Map` 并补 `PartialEq`/`Eq`、去 `hashbrown` 依赖、两个 <br>`option_defaults` 改名 `builtin_option_defaults`/`session_option_defaults`）；<br>工具 T1.4/T1.5/T2.1（新 `_hashutil.py` / `_common.py`，哈希三口径与 <br>`check_resources` 累计 `fail` 语义各自保留）；平台 Engine 装配口径单点化 （<br>`option_keys`/`options_store`/`open_learning`，`redeploy` 语义不变）<br>+ 26 字段 / 17 方法可见性收紧；captain 补修接缝 `decode.rs:403/432` 与 <br>`docs/design.md:100` 过期引用；用例 390 → 391 | `b762bcfa` |
+| 第 10 批（审计整改第 4 批）：测试分层与跨层去重 | 已修：平台 F2（<br>`new_with_dirs` 去 `#[cfg(test)]`、加 <br>`#[cfg_attr(not(test), allow(dead_code))]`，`lib.rs` 13 行 test 再导出删除）、F1<br>（8 个源码文本守卫迁为集成测试 `tests/host_contract.rs`）、F9<br>（3 个裸 ABI 入口补 6 条契约用例）、F6（57 处手搓仓库路径改 <br>`hux_test_support::repo_path`）、F4（`src/tests.rs` 3101 行 / 87 用例拆成 266 <br>行父文件 + 12 个主题子文件；父模块私有助手靠 `use super::*;` 继承，<br>零可见性放宽）；tiger F5（`interaction/tests.rs` 拆 8 个主题文件，<br>**实测 72 用例而非审计说的 73**）、F3（删 `#[cfg(test)] candidate_paths`）、<br>F10/F12（跨层 1:1 重复改内核侧深度断言）；core F8（单测按生产侧分 5 节并重排 7 <br>条）、F11（4 条标点用例并为表驱动）、F7（cfg 8 处改 <br>`hux_test_support::temp_dir`）；用例 391 → 393；余项 `F13/F14` 与 <br>`4 批残留` 见[`open-items.md`](open-items.md) §1 | `896e2bb9` |
+| 第 11 批（审计整改第 5 批）：结构大改 | 已修：方案·数据 A —— <br>`decode.rs` 2923 行拆 `decode/`（beam 1349 / fusion 136 / evidence 320 / <br>reachability 224 / tests 716，门面 376 行）、D2 哨兵码点由 `ngram` 导出（<br>`BOS_CHAR`/`EOS_CHAR`/`BOS_CODE`/`EOS_CODE`）、D9 基准样板移 <br>`hux-test-support`、D14 `State` 三处构造合一、D15 第二个 `impl Decoder` 落位<br>（D17 前批已办）；方案·交互 —— B11 `processor()` 594 行 → `process_key_event()` <br>92 行 + 10 个 `handle_*` + `KeyDispatch`、B2 码注释下沉 `lexicon`（断反向成环）<br>、B4 字反查判据收进 `char_to_sound_shape`、B6 `min_retained` 去 `Option`、<br>B7/B10/B12/B13/B14/B15/B16；`sound_to_char_shape.rs` 1269 → 140 + index 313 + <br>graph 346 + tests 510、`scheme.rs` 1373 → 1068 + assets 134 + config 200；<br>内核 —— `host.rs` 1770 → 132 + `host/` 七文件 1856 行、K3 合并 Confirm 双分支、<br>K4/K9 清历史注释（K5/K14 前批已办）；平台 —— `engine.rs` 1060 → 742 + <br>`engine/{assembly,config,diagnostics}.rs`、K2 `HUX_OPTIONS_FIELDS` 提 <br>`pub const` + 19 项往返用例（`redeploy` 先释放学习库句柄的修正保留）；工具链 ——<br> 新增 `lib/golden_fixture.sh` / `lib/lua_util.lua` / `regen_goldens.sh`<br>（T1.1/T1.2/T1.6/T1.7/T2.2–T2.7），`ci.yml` 489 → 349，<br>全部金样与生成物逐字节不变；根脚本 —— 抽 `tools/scripts/lib.sh`，<br>uninstall 16 平行数组 × 6 触点改落点表，`--help` / `--dry-run` 输出逐字节不变；<br>注解 —— F13/F14 最差文件（6 + 8 文件）与遗留 5 文件（88 条 message + 7 条 <br>`///`）补齐，共 177/177 断言带上下文、72/72 测试有 `///`；用例 393 不变<br>（平台 +1 / 方案层 −1）；全量基线 12 条命令全绿 | `869f6ade` |
+| 第 12 批（审计整改文档层）：文档重排 + 音反查夹具扩词 | 已修：**文档三册** —— <br>`goldens/README.md` 385 → 152（清单 / transcript 格式 / 规则），重生成流程拆到 <br>`goldens/REGENERATE.md`（139 行）、来源 pin 与两张 sha 表拆到<br>`goldens/PROVENANCE.md`（123 行）；`tools/checks/verify_golden_shas.py:35` 的 <br>`SHA_DOC`与 `ci.yml` 注释改指（判定逻辑未动，62 项通过）。**一题一文件** —— <br>`docs/install.md`（174 行）从`docs/usage.md`（235 → 71）拆出；<br>`docs/reference.md`（32 行）收 `docs/design.md` §6/§7（343 → 332，<br>原位留指针保编号）；`docs/resources.md` 编号统一（新 §0 总则、`10b.` → <br>`### 10.1`、`自动校验` → `## 13.`）；`docs/config.md` 零内容节并入选项节。<br>**台账拆册** —— `docs/open-items.md`（124 行）承接全部活口，本文只留 §1<br>（全文 42 行）；`12 批残留`（8 个空占位目录，VCS 不追踪）入表，`4 批残留` 去掉<br>「可与第 12 批同批」。**平台** —— `platform/README.md` 254 → 136<br>（真机析构核对并入台账、Android 计划移`platform/android/README.md`），<br>删 8 个零信息占位 README。**引用与宽度** —— 全仓改指三册（`docs/**`、根 <br>`README.md`、`AGENTS.md`、`platform/**`、<br>`tools/generators/merge_huma_codes.py`）；`platform/README.md` <br>两处随链接变长顶破 100 列已折行，w12.py A/B/C 归零、md 死链 0。**偏离登记** ——<br> 音反查夹具 `PY_c.dict.yaml` 补 `xi`/系/安/案/西安（22 → 27 条、14 → 16 音节）<br>并重生成索引与金样（`ci.yml` 内联 sha 同步），`DEVIATIONS` 追加<br>`apostrophe-tail/inner/commit`（`BranchPinDelimiter`）、重放面下限28 例/149 步 <br>→ 25 例/132 步，`tests.rs` 计数断言 22/19 → 27/22。用例 393；<br>全量基线 15 条命令全绿（393 passed / 0 failed / 1 ignored） | `6db5679c` |
+| 音反查撇号线真机试用（2026-09-27） | 重装 `libhux.so` + 重启 fcitx5 后，<br>在真机观察字反查与撇号（`'`）行为：**已由用户验证通过** | `730c196b` + <br>`5dbdd9c1`（PR #22） |
+| 第 12 批复审（三路只读审查：文档层 / 金样链 / 平台与台账） | 三路共 38 条，<br>逐条复核后全修：**无误** —— `goldens/PROVENANCE.md` 夹具来源失实<br>（实测上游同名文件 82 万行、与本仓 27 条夹具无交集，改注「本仓自建探针小词典」）<br>、复验命令改从 pin blob 取源（默认检出无该文件）、`docs/install.md` 插件库落点<br>（系统级跟随发行版 addon 目录）、`install.sh` 的 `--dry-run` / `-h` 补进册、<br>`review-ledger.md` §0 与 `design.md` §6/§7 二手指针改指`open-items.md` / <br>`reference.md`、`ci.yml` 去易腐章节号、`open-items.md` 行号 / 项数（`:99` → <br>`:74`、61 项加「当时」）、台账五处行数；**精简** —— 根 `README.md` 键位表 9 → 4 <br>条、`AGENTS.md` 文档分工去重、`platform/README.md` 环境变量段改指针、<br>`open-items.md` §5 移入本册；**易读** —— 第 12 批行 11 段超宽单元重排、<br>真机析构核对六类做法回填（代码锚点 / 级别 / 启动期读入 / 临时看法 / 判据）、<br>`REGENERATE.md` 补一键入口与位置参数警告（`OUT=` 会被忽略）；<br>宽度 / 死链 / 62 项 sha 复检归零，15 条基线复跑全绿 | 并入 `6db5679c` |
+| 第 13 批（低成本清理批）：可见性收紧 + 测试归位 + 工具守卫收紧 | 已修：<br>**方案层** —— 26 项 `pub` 收紧（`lexicon.rs` 18 / `sound_to_char_shape.rs` 6 /<br>`model_status::format_label`）、`scheme.rs` 1068 → 432 行（内联测试 635 行迁 <br>`scheme/tests.rs`）、陈旧注释 4 处、rustdoc 链接 4 处；**内核层** —— 4 条 <br>`paging_action` 用例迁入 `host/key_binder.rs` 既有测试模块（<br>`selector.rs` 569 → 388），`paging` 标签叙事清理；**平台层** —— 4 个测试助手归位<br>（`key_list` 去重、`ffi_engine` 留多主题父模块）、13 个子文件补 `//!`、<br>`mod` 声明上移、`scheme_config_with_runtime` 停止从 `crate::engine` 根再导出；<br>**8 条断言加固** —— `digit_select` 补负半、翻页期望改推送 `page_size = 3`、<br>自指期望改字面量、`status` 去重改幂等断言、NUL 用例拆 `tests/ui.rs`、<br>两处名实不符改名、补 `min_retained_input_length`；**工具** —— <br>`check_data_manifest.sh` 行首尾空白改判错（去 `sed`，与 `manifest_lines` <br>口径对齐，负向对照实测失败）、8 个空占位目录清掉；**转登记** —— <br>`punct_shape_comment` 不搬、`Engine` 字段不收紧（见 <br>[`open-items.md`](open-items.md) §2）；`#[test]` 172=172 / 断言 842=842（tiger）<br>、551=551（平台，去重 −3 +3）；15 条基线复跑 392 passed / 0 failed / 1 <br>ignored | `9532b8c7` |
+| 第 14 批（代码拆分）：全仓文件 ≤400 行、函数 ≤60 行 | 已修：**第一波**<br>（4 路并行，先提交） ——内核 `learning.rs` 1169 → 262 + `learning/` 8 册、<br>`session.rs` 1053 → 28 + `session/` 2 册 + 2 测试册、`host/selector.rs` 388 → <br>196、`host/express_editor.rs` 535 → 230、`scheme.rs` 461 → 368；平台 <br>`engine.rs` 740 → 215 + `engine/` 4 册、`ui.rs` 142 → 152、`abi.rs` 411 → 374 + <br>`abi/mapping.rs` 50、`learning_store.rs` 300 → 318；方案·数据 <br>`decode/beam.rs` 1349 → 32 + 10 册、`evidence.rs` 320 → 62 + 3 册、<br>`tests.rs` 716 → 24 + 5 册、`lexicon.rs` 1254 → 216 + 6 册、<br>`ngram.rs` 893 → 389 + 5 册、`sound_to_char_shape/` 的 `index.rs` 与 <br>`tests.rs` 分册。**第二波**（7 路） ——`interaction/processor.rs` 804 → 155 + 6 <br>册、`early_commit.rs` 727 → 35 + 6 册、`translate.rs` 550 → 164 + 3 册、<br>`learning_glue.rs` 409 → 38 + 3 册、`scheme.rs` 432 → 385 + <br>`scheme/wiring.rs` 85；平台测试 `tests/host_contract.rs` 1090 → 79 + 7 册（<br>`#[path]` 显式路径）、`src/tests/key_routing.rs` 490 → 29 + 6 册、<br>`scheme_config.rs` 413 → 55 + 3 册；集成测试 8 个扁平文件 → 26 册；内核 <br>`tests/processor.rs` 681 → 87 + 6 册、`scheme/tests.rs` 640 → 67 + 3 册；<br>`crates/hux-cfg` 的 `store.rs` / `settings.rs` 422 / 418 → 47 / 99 + 子模块；<br>`crates/hux-ffi` 与两个基准 example 的 `main` 拆助手。**规模与判据** ——<br> 99 → 221 个 .rs、33,734 → 37,201 行；最大非豁免文件 389 行（`ngram.rs`）；<br>`crates/hux-core/src/key_table.rs` 2664 行是生成数据表，生成器 <br>`tools/generators/gen_key_table.py`，**永久豁免**；全仓 0 个 >60 行函数<br>（最长 60 = `decode/beam/bucket.rs` 的 `dedup_limit`）；零行为变化：各 crate 的 <br>`#[test]` 与含 `assert` 行数逐个相等，（tiger 172 / 842、core 91 / 462、<br>platform 102 / 638、cfg 22 / 82、ffi 2 / 9、test-support 4 / 12），<br>测试名集合逐字相同，`cargo clippy --workspace -D warnings` 与 <br>`cargo test --workspace` 复跑392 passed / 0 failed / 1 ignored；全仓无 <br>`mod.rs`、无 `tests/common/`、.rs 全 644。**过程** —— 3 <br>路子代理中途崩溃且零落盘，改按文件切小任务后全部收口（任务书加<br>「先写一行开工日志」）；等价改写（借用 / `?` / 枚举派发 / 参数化）<br>逐条登记在各流报告。遗留：`crates/hux-cfg` 有 2 条改动前既有的 rustdoc <br>unresolved link，仓库无 doc 门禁 | `c091d8f0` |
+| 第 15 批（文档重整）：全仓 md 逐行合规（≤80 列） | 已修：**20 册全部重整** —— 违规 518 → **0**；<br>范围：根 `README.md`、`AGENTS.md`、`crates/hux-scheme/README.md`、<br>`assets/{branding,themes}/README.md`、`data/README.md`、`docs/` 十册、<br>`goldens/` 三册、`platform/` 两册；总行数 2389 → 3136；<br>fidelity（`jj file show -r @-` 真基线）20 册全部 **0 token 丢失**；<br>**做法** —— 长段落拆 bullet / 子条、行尾 `\` 续行拆开、<br>宽表改短表 + `<br>` 分段（单元格内逐段 ≤80）、<br>超宽 inline token 单独进 ``` 围栏；<br>**口径** —— (a) 无可折点的超宽标题：改写标题文字、括注下沉为节首说明<br>（改写前三处为 `docs/open-items.md:71` 84 列、`docs/review-ledger.md:22` 98 列、<br>`docs/upstream-deviations.md:178` 98 列）；<br>(b) 引用块保留 `>`、按完整分句拆行、行间加空行（标点零改动）；<br>**检查器**（`_tmp/audit/style_docs3.py`，不入库）逐轮修补：<br>HTML 注释块豁免、`\` 续行合并计违规、<br>整段反引号 span 视作不可断 token、表格改按「单元格 × `<br>` 段」判定；<br>**守卫回归** —— `verify_golden_shas.py` 62 项通过 / 0 失败<br>（`goldens/PROVENANCE.md` 的三张 sha256 表一度被改成「标签 + sha」分条，<br>守卫报 19 条未登记；已转回表格并补回 `data/tiger_sentence.codes.huma.txt`）；<br>`mdlinks.py` 死链 0；`w12.py` 散文 / ASCII / 单元超宽全 0；<br>`check_resources.py` / `check_branding_assets.py` /<br>`check_themes.py`（19 套 / 133）/ `check_code_tables.py`（117701 条）/<br>`check_data_manifest.sh`（8 条）/ `reuse lint`（482 / 482）全 exit 0；<br>**过程** —— 8 路并行（一路崩溃后补派收尾）；captain 自修复原两处越界：<br>`goldens/README.md` 措辞被弱化、`docs/upstream-deviations.md` ③ 节标题被误缩；<br>提交：本行提交（文档重整）；收尾把 `main` 之上的 39 个提交按批次压成 8 个 | — |
+| 第 16 批（平台层）：代码拆成共用层 + 两个落点 | 已修：`platform/fcitx5` 只留共用构建（无 `install()`，单配置报错并指路）<br>新增 `platform/linux/CMakeLists.txt` 承接全部安装规则<br>新增 `platform/android/CMakeLists.txt`：目标 `aarch64-linux-android`<br>库 `-llog -ldl -lm -lunwind`<br>根 `install.sh` / `uninstall.sh` 改 9 行转发到 `platform/linux/`<br>同步 CI 与两个守卫、两个 `MANIFEST`<br>验证：构建 + 安装布局（1 库 + 2 conf + 8 数据 + 19 主题 + 3 图标）<br>`nm -D` 18 符号与 `hux_abi.h` 一致、卸载覆盖 147 / 147、全量基线 fail=0 | `c4fcbff4` / <br>`bb70fec9` |
+| 第 17 批（文档格式）：16 册按样例格式精简 | 已修：`docs/design.md` 439 → 285、`docs/install.md` 205 → 165<br>`docs/upstream-deviations.md` 277 → 197、`docs/resources.md` 267 → 236<br>`goldens/README.md` 244 → 197、`goldens/PROVENANCE.md` 203 → 182<br>`goldens/REGENERATE.md` 160 → 154、`data/README.md` 152 → 108<br>`docs/open-items.md` 159 → 122、`docs/review-ledger.md` 59 → 49<br>`assets/themes/README.md` 78 → 66、`crates/hux-scheme/README.md` 84 → 73<br>`assets/branding/README.md` 62 → 48、`docs/reference.md` 37 → 36<br>`platform/fcitx5/README.md` 111 → 114、`platform/android/README.md` 103<br>口径：顶层 `-` + 缩进 2 空格子条、按意思分层、去句末 `。`<br>并列枚举改表格、`>` 引述块转条目、续行只在真需断行处<br>保真：14 册 `doc_fidelity.py` 0 token 丢失、`w12.py` 22 册 0 超宽<br>`mdlinks.py` 死链 0、`verify_golden_shas.py` 62 / 0<br>`check_resources.py` exit 0、全量基线 16 步 fail=0<br>用例 392 passed / 0 failed / 1 ignored | `d5eadc05` / <br>`de1c0833` |
+| 第 18 批（平台层）：平台专有部分外包到落点 | 已修：**数据目录根规则**下沉——新增两个落点 crate：<br>`platform/linux/src/lib.rs`（`$XDG_DATA_HOME` → `$HOME/.local/share`，<br>`$XDG_DATA_DIRS` 缺省 `/usr/local/share` + `/usr/share`）与<br>`platform/android/src/lib.rs`（只认宿主注入的两个变量，无 `$HOME` / `/usr` 缺省）；<br>两份同名同型（`user_data_root_from_env` / `system_data_roots_from_env`），<br>`platform/fcitx5/src/paths.rs` 只留拼接 `fcitx5/hux`、顺序与 `HUX_DATA_DIRS`，<br>并按平台选 `use`（2 行 cfg，其它目标平台 `compile_error!`）。<br>**教训**：同一依赖名在不同 target 指向不同路径会被 Cargo 拒绝<br>（`… has different source paths depending on the build target`），故不做依赖别名。<br>**打开目录**下沉——`launchFileManager` 从 `shell/hux.cpp` 搬到<br>`platform/linux/shell/open_directory.cpp`（`hux::platform::openDirectory`，<br>双 `fork` + `xdg-open` → `gio open`，行为逐字未改），<br>`platform/android/shell/open_directory.cpp` 恒回 `false`，共用层只留 `shell/platform.h`<br>声明；`hux.cpp` 去掉 `<sys/wait.h>` / `<unistd.h>` / `<cerrno>`。<br>**装配与守卫**——共用 CMake 增 `HUX_PLATFORM_SOURCES`（空值 `FATAL_ERROR`），<br>两个落点各自 set；CI 的 `Layer dependencies` 增落点叶子守卫<br>（落点 crate 不得依赖任何内部 crate）；`host_contract` 模型入口守卫改读落点文件<br>（`Source::read_at`）。**文档**：`platform/` 四册与 `docs/design.md`、<br>`docs/reference.md`。验证：fmt / clippy / `cargo test --workspace` 全绿（落点用例 +6）、<br>cmake 构建 Linux 落点（两个源都进 `libhux.so`）、空 `HUX_PLATFORM_SOURCES` 如期报错、<br>全量基线 fail=0。**未验证**：android cfg 分支本机编不了<br>（`rustup target add aarch64-linux-android` 报只读文件系统），CI 亦无交叉 target | `866d204f` / <br>`6c611e41` |
+| CI 修复（第 18 批后） | 已修：**ABI 符号步骤**写死 `build/addon/libhux.so`，而 `hux` 目标由落点的<br>`add_subdirectory` 加进来（实际在 `build/addon/fcitx5/libhux.so`）⇒ 改为按构建树 `find` 定位<br>（与安装布局检查同口径）；**参照 sha 表**在第 17 批被拆成「来源 pin 表 + sha256 表」<br>而守卫按**同一行**判定 pin（`cells[1]` 来源说明 + `cells[-1]` sha256）⇒ 合回一张三列表<br>验证：`verify_golden_shas.py --reference …` 62 / 7 → **73 / 0**；按 CI 作业逐条复跑：<br>rust 18 步、addon 5 步、golden 2 步全 0 失败（含 15 份 Lua 金样逐字节一致、`nm -D` 18 符号）；<br>全量基线 fail=0。**教训**：本地基线此前只跑无参照的 `verify_golden_shas.py` ⇒ 漏掉参照模式；<br>已把参照模式与 CI 作业复跑器（`_tmp/audit/ci_step.py`）纳入基线 | `c8b18815` |

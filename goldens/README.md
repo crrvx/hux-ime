@@ -1,63 +1,113 @@
 <!-- SPDX-FileCopyrightText: 2026 明雅流风 <crrvx@outlook.com> -->
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 
-# goldens：金样清单、transcript 格式、重新生成与校验和
+# goldens：金样清单、transcript 格式与规则
 
-金样由参照实现（[`lvyww/tiger-sentense-rime`](https://github.com/lvyww/tiger-sentense-rime)的Lua \
-核心）生成， \
-Rust \
-侧逐位重放比对（`crates/hux-scheme/tiger/tests/*_differential.rs`与 \
-`crates/hux-core/tests/*_differential.rs`）。
+- 生成：参照实现（Lua 核心）[`lvyww/tiger-sentense-rime`](https://github.com/lvyww/tiger-sentense-rime)
+- 比对：Rust 侧逐位重放
+  - `crates/hux-scheme/tiger/tests/*_differential.rs`
+  - `crates/hux-core/tests/*_differential.rs`
+- 本页＝清单、transcript 格式与校验入口
+- 再生（生成命令 / 先决条件 / 参照 pin 检出与踩坑）见 [`REGENERATE.md`](REGENERATE.md)
+- 来源与校验和（pin / sha256 表 / 内部头部核对）见 [`PROVENANCE.md`](PROVENANCE.md)
 
 ## 内容
 
 | 文件 | 用途 | 规模 |
 |---|---|---|
-| `ngram_fixture.bin` | ngram 确定性小模型（参照仓库 `tools/model_fixture.lua` 生成） | 17,480 B |
-| `ngram_fixture.tsv.gz` | ngram 金样：`logp`/`obs`/`status`/`cfg`/`trim` | 29617 行 |
-| `lexicon/` | 码表数据夹具（codes / char_ranks / full_code_whitelist / supplement） | 4 文件 |
-| `lexicon.tsv.gz` | lexicon 金样：`status`/`lengths`/`probe`/`limit`/`supp` | 18357 行 |
+| `ngram_fixture.bin` | ngram 确定性小模型 | 17,480 B |
+| `ngram_fixture.tsv.gz` | ngram 金样 | 29617 行 |
+| `lexicon/` | 码表数据夹具 | 4 文件 |
+| `lexicon.tsv.gz` | lexicon 金样 | 18357 行 |
 | `lexicon_missing.tsv.gz` | 数据缺失路径金样 | 6 行 |
-| `lexicon_variants/` + `lexicon_variants.tsv.gz` | 解析边界数据（BOM/CRLF/大写码/重复/非法行/白名单豁免/高频过滤） | 27 条 |
-| `lexicon_codes_only/` + `lexicon_codes_only.tsv.gz` | 仅码表（无字频/白名单/补充） | 13 条 |
-| `decode.tsv.gz` | decode 金样（无模型）：`decode`/`result` | 1980 行 |
+| `lexicon_variants/` + `lexicon_variants.tsv.gz` | 解析边界数据 | 27 条 |
+| `lexicon_codes_only/` + `lexicon_codes_only.tsv.gz` | 仅码表 | 13 条 |
+| `decode.tsv.gz` | decode 金样（无模型） | 1980 行 |
 | `decode_model.tsv.gz` | decode 金样（fixture 模型，抽样） | 351 行 |
-| `decode_rank_first.tsv.gz` | decode 金样（fixture 模型 + 关闭单字重码，抽样） | 330 行 |
-| `decode_evidence.tsv.gz` | 早提交证据金样（无模型；含 `has_complete_candidate` 的 `complete` 用例） | 12241 行 |
-| `decode_evidence_model.tsv.gz` | 早提交证据金样（fixture 模型，抽样；同上） | 2861 行 |
-| `learning.tsv.gz` | 学习金样：<br>`hash` / `score` / `prefix` / `confirmed` / `reward` /<br>成熟度 / `diff` / 融合偏好 / 人工纠错等级 / 日志编码 | 10289 行 |
-| `decode_learning.tsv.gz` | 解码接入学习（无模型；含一条成对融合偏好） | 1988 行 |
-| `decode_learning_model.tsv.gz` | 解码接入学习（fixture 模型，抽样；同上） | 359 行 |
-| `decode_learning_evidence.tsv.gz` | 早提交证据 **+ 学习接入**（三开关并用，无模型；开关与交互见下） | 12257 行 |
-| `key.tsv.gz` | 键名/键事件金样（librime 探针）：`name`/`repr`/`parse`/`modifier` | 5136 行（5132 条记录 + 4 行头部） |
-| `key_sequence.tsv.gz` | 键序列金样（真 librime 探针；主干 pin）：<br>逐步 `consumed` / 输入 / 光标 / 提交 / 候选 / 注释 / 高亮 | 68 例 / 285 步（覆盖与偏离登记见下） |
-| `key_sequence/` | 键序列夹具：<br>合成码表 + `symbols.yaml`＝参照 pin 同文件；<br>探针与 Rust 重放共用；发布默认见 `data/symbols.yaml` | 2 文件 |
-| `key_sequence_tab.tsv.gz` | Tab 锁路径键序列金样（真 librime 探针；主干 pin）；<br>**夹具 `tab_learning: true`** ⇒ 参照学习库就绪、<br>走 `learned.store.db` 的 Tab 基线捕获分支；逐步字段同 `key_sequence` | 8 例 / 44 步（用例名见下） |
-| `key_sequence_tab/` | Tab 金样夹具：<br>`symbols.yaml` 与合成码表与 `key_sequence/` **逐字节相同**；<br>另含 `tiger_sentence.custom.yaml` 把 `tab_learning: true`<br>这一**条件本身**入库 | 3 文件 |
-| `sound_to_char_shape.tsv.gz` | 音反查金样（真 librime 探针；反查分支尖端 pin，已含主干）：<br>逐步 `consumed` / 输入 / 光标 / 提交 / 候选 / 注释 / 高亮 | 31 例 / 164 步（覆盖与偏离登记见下） |
-| `sound_to_char_shape/` | 音反查夹具：<br>小 `PY_c.dict.yaml` + 合成码表 + `symbols.yaml` +<br>`gen_pinyin_index.py` 生成的 `tiger_sentence.pinyin.bin`；<br>探针与 Rust 重放共用 | 4 文件 + 生成物 |
-| `lexical.tsv.gz` | 词先验金样（TCSLEX01 读取/Bloom/打分；真实位图 + 码表语料） | 753 行 |
-| `local/`（不入库） | 真实模型抽样金样（224 MB 模型） | 62,777 条 |
+| `decode_rank_first.tsv.gz` | decode 金样（抽样） | 330 行 |
+| `decode_evidence.tsv.gz` | 早提交证据金样（无模型） | 12241 行 |
+| `decode_evidence_model.tsv.gz` | 早提交证据金样（抽样） | 2861 行 |
+| `learning.tsv.gz` | 学习金样 | 10289 行 |
+| `decode_learning.tsv.gz` | 解码接入学习（无模型） | 1988 行 |
+| `decode_learning_model.tsv.gz` | 解码接入学习（抽样） | 359 行 |
+| `decode_learning_evidence.tsv.gz` | 早提交证据 + 学习接入 | 12257 行 |
+| `key.tsv.gz` | 键名/键事件金样（librime 探针） | 5136 行 |
+| `key_sequence.tsv.gz` | 键序列金样（真 librime 探针） | 68 例 / 285 步 |
+| `key_sequence/` | 键序列夹具 | 2 文件 |
+| `key_sequence_tab.tsv.gz` | Tab 锁路径金样 | 8 例 / 44 步 |
+| `key_sequence_tab/` | Tab 金样夹具 | 3 文件 |
+| `sound_to_char_shape.tsv.gz` | 音反查金样<br>（真 librime 探针） | 31 例 / 164 步 |
+| `sound_to_char_shape/` | 音反查夹具 | 4 文件（含生成物） |
+| `lexical.tsv.gz` | 词先验金样 | 753 行 |
+| `local/`（不入库） | 真实模型抽样金样 | 62,777 条 |
 
-要点（上表「见下」的细节）：
+## 细则
 
-- `key_sequence.tsv.gz` 覆盖点：空码自动上屏、编辑/导航键、标点表、大写字母直接提交、 \
-  `Return` 修饰键变体（`Ctrl(+Shift)+Return`）、标点表 caret 语义、selector 首页上翻、数字直选、 \
-  撇号分段；偏离登记：`punct_menu_equal` / `punct_menu_minus` / `nav_page_home_minus` / \
-  `digit_menu_select` / `apostrophe_digit_page` / `apostrophe_semicolon_page` 记录**上游行为**、 \
-  由差分测试按期望值登记， \
-  理由 / 代价 / 回归见 [`../docs/upstream-deviations.md`](../docs/upstream-deviations.md) ①②③。
-- `key_sequence_tab.tsv.gz` 用例：`tab_lock` / `tab_confirm_space` / `tab_confirm_buffer` / \
-  `tab_buffer_space` / `nav_tab_binder` / `tab_lock_left` / `tab_lock_backspace` / \
-  `tab_lock_up_down`。
-- `sound_to_char_shape.tsv.gz` 覆盖点：裸前缀标点候选、缩写/全拼剪枝、多音节词、Page 键翻页、 \
-  导航/退格/Escape/上屏、数字直选与分号惰性、撇号保留；偏离登记： \
-  `nav-page-equal` / `nav-page-minus` / `nav-page-zho` 记录**上游行为**、 \
-  由差分测试按期望值登记跳过，其余（含 `nav-page-keys`）逐位一致， \
-  见 [`../docs/upstream-deviations.md`](../docs/upstream-deviations.md) ①。
-- `decode_learning_evidence.tsv.gz` 开关与交互： \
-  `--early-commit 1 --required 1 --learning 1`（无模型）；学习 × 证据抑制的交互—— \
-  `learning=1 && truncated=1` 的截断池与 `share`/`base_share`双权重。
+- `ngram_fixture.bin`：生成取自参照仓库 `tools/model_fixture.lua`
+- `ngram_fixture.tsv.gz`：字段 `logp` / `obs` / `status` / `cfg` / `trim`
+- `lexicon/`：构成 codes / char_ranks / full_code_whitelist / supplement
+- `lexicon.tsv.gz`：字段 `status` / `lengths` / `probe` / `limit` / `supp`
+- `lexicon_variants/` + `lexicon_variants.tsv.gz`：覆盖 BOM / CRLF / 大写码 / 重复 / \
+  非法行 / 白名单豁免 / 高频过滤
+- `lexicon_codes_only/` + `lexicon_codes_only.tsv.gz`：口径无字频 / 白名单 / 补充
+- `decode.tsv.gz`：字段 `decode` / `result`
+- `decode_model.tsv.gz`：口径 fixture 模型，抽样
+- `decode_rank_first.tsv.gz`：口径 fixture 模型 + 关闭单字重码，抽样
+- `decode_evidence.tsv.gz`：用例含 `has_complete_candidate` 的 `complete`
+- `decode_evidence_model.tsv.gz`：口径 fixture 模型，抽样；用例同 `decode_evidence.tsv.gz`
+- `learning.tsv.gz`：
+  - 字段一 `hash` / `score` / `prefix` / `confirmed` / `reward`
+  - 字段二 成熟度 / `diff` / 融合偏好 / 人工纠错等级 / 日志编码
+- `decode_learning.tsv.gz`：口径无模型；含一条成对融合偏好
+- `decode_learning_model.tsv.gz`：口径 fixture 模型，抽样；同上
+- `decode_learning_evidence.tsv.gz`：
+  - 口径三开关并用，无模型
+  - 开关与交互：
+    - 三开关 `--early-commit 1 --required 1 --learning 1`
+    - 学习 × 证据抑制：`learning=1 && truncated=1` 的截断池，与 `share` / `base_share` 双权重
+- `key.tsv.gz`：记录数 5132 条 + 4 行头部；字段 `name` / `repr` / `parse` / `modifier`
+- `key_sequence.tsv.gz`：
+  - 探针真 librime，取主干 pin；逐步字段 `consumed` / 输入 / 光标 / 提交 / 候选 / 注释 / 高亮
+  - 覆盖点：
+    - 空码自动上屏 / 编辑 / 导航键 / 标点表
+    - 大写字母直接提交 / `Return` 修饰键变体（`Ctrl(+Shift)+Return`）
+    - 标点表 caret 语义 / selector 首页上翻
+    - 数字直选 / 撇号分段
+  - 偏离登记（六条记录的是**上游行为**，由差分测试按期望值登记）：
+    - `punct_menu_equal` / `punct_menu_minus` / `nav_page_home_minus`
+    - `digit_menu_select`
+    - `apostrophe_digit_page` / `apostrophe_semicolon_page`
+    - 理由 / 代价 / 回归见 ①②③：[`../docs/upstream-deviations.md`](../docs/upstream-deviations.md)
+- `key_sequence/`：构成合成码表 + `symbols.yaml`＝参照 pin 同文件
+  - 探针与 Rust 重放共用；发布默认见 `data/symbols.yaml`
+- `key_sequence_tab.tsv.gz`：
+  - 探针真 librime，取主干 pin；逐步字段同 `key_sequence`
+  - 夹具 `tab_learning: true` ⇒ 参照学习库就绪，走 `learned.store.db` 的 Tab 基线捕获分支
+  - 用例：
+    - `tab_lock` / `tab_confirm_space` / `tab_confirm_buffer`
+    - `tab_buffer_space` / `nav_tab_binder` / `tab_lock_left`
+    - `tab_lock_backspace` / `tab_lock_up_down`
+- `key_sequence_tab/`：
+  - `symbols.yaml` 与合成码表同 `key_sequence/` **逐字节相同**；另含 `tiger_sentence.custom.yaml`
+  - 它把 `tab_learning: true` 这一**条件本身**入库
+- `sound_to_char_shape.tsv.gz`：
+  - 探针真 librime；反查分支尖端 pin，已含主干
+  - 逐步字段 `consumed` / 输入 / 光标 / 提交 / 候选 / 注释 / 高亮
+  - 覆盖点：
+    - 裸前缀标点候选 / 缩写 / 全拼剪枝
+    - 多音节词 / Page 键翻页
+    - 导航 / 退格 / Escape / 上屏
+    - 数字直选与分号惰性 / 撇号保留
+  - 偏离登记：
+    - `nav-page-equal` / `nav-page-minus` / `nav-page-zho`
+    - 这三条记录的是**上游行为**，由差分测试按期望值登记跳过
+    - 其余（含 `nav-page-keys`）逐位一致
+    - 见 ①：[`../docs/upstream-deviations.md`](../docs/upstream-deviations.md)
+- `sound_to_char_shape/`：构成本仓自建小 `PY_c.dict.yaml` + 合成码表 + `symbols.yaml`
+  - 另含 `gen_pinyin_index.py` 生成的 `tiger_sentence.pinyin.bin`
+  - 探针与 Rust 重放共用
+- `lexical.tsv.gz`：口径 TCSLEX01 读取 / Bloom / 打分；语料真实位图 + 码表语料
+- `local/`（不入库）：模型 224 MB
 
 ## transcript 格式（TSV，`#` 注释，`-` 表示空串，字符串为 UTF-8 字节十六进制）
 
@@ -79,7 +129,9 @@ supp    count=<n> error=<0|1>
 
 # decode（冷路径；include_early_commit=false，未接入学习）
 decode <hex input> count=<n> learning=<0|1> truncated=<0|1> required=<hex prefix|->
-result <hex text> <hex segmented> <bits score> <bits confidence_score> <max_rank> <edge_count> <bits supplement_score> <bits learning_score> <bits early_commit_confidence_score>
+result <hex text> <hex segmented> <bits score> <bits confidence_score> <max_rank>
+       <edge_count> <bits supplement_score> <bits learning_score>
+       <bits early_commit_confidence_score>
 # decode + 早提交证据（--early-commit 1）
 evidence <hex proposal> <bits proposal_share> nit= mit= nlc= trunc= prefixes= raws=
 prefix <hex text> <raw_length> <bits share> <bits base_share> <bits boundary_share> <closed> <chars>
@@ -125,260 +177,21 @@ python3 tools/checks/verify_golden_shas.py
 python3 tools/checks/verify_golden_shas.py --reference _external/tiger-sentense-rime
 
 # 基准（ngram，真实模型 + 本地抽样金样）
-cargo run --release -q --example ngram_bench -- <model.bin> <transcript.tsv>
-lua tools/probes/bench_ngram.lua --reference "$REF" --model <model.bin> --transcript <transcript.tsv>
+cargo run --release -q -p hux-scheme-tiger --example ngram_bench -- <model.bin> <transcript.tsv>
+lua tools/probes/bench_ngram.lua --reference "$REF" --model <model.bin> \
+  --transcript <transcript.tsv>
 ```
 
 ## Lua 版本
 
-一般作业用 CI 系统 Lua，`golden-lua-latest` 用 Arch 容器当前 Lua，生成器摘要 JSON 记录实际版本； \
-重新生成后用 `tools/checks/verify_golden_shas.py` 确认产物与「来源与校验和」的表一致。
-
-## 重新生成
-
-> **先决条件（实测踩坑）**： \
-> 夹具类生成器（`gen_ngram_/lexicon_/decode_/learning_/lexical_golden.lua`）通过 \
-> `package.path = <reference>/lua/?.lua` 读参照仓库**工作区**、**不认 pin**， \
-> 故命令块第一件事就是检出主干 pin，否则会静默读到更靠后的核心版本、产出与目标 pin 无关的差异。 \
-> 参照检出**只读**（发行版打包目录 / 只读挂载）时在仓库之外另放可写克隆（两 pin 都取）：
->
-> ```sh
-> git clone https://github.com/lvyww/tiger-sentense-rime "$HOME/ref/tiger-sentense-rime"  # 或 cp -r 已有检出
-> RW="$HOME/ref/tiger-sentense-rime"
-> git -C "$RW" fetch origin abad411750f79cfca750985fa266689b5d9b865f
-> git -C "$RW" fetch origin 92a0b54b53114e7e5aa6a1ff48efa95db0e21f9c
-> ```
->
-> **不要用 `--depth 1` / `--shallow`**：浅克隆会让「分支 pin + \
-> 主干pin本地合并」被判为**无关历史**（`fatal: refusing to merge unrelated histories`）， \
-> 也让 `git show <pin>:` 失败（CI 的 `golden` 作业另用 `git init` + \
-> `git fetch --depth 1 origin <sha>` + `checkout --detach FETCH_HEAD` 逐个 pin 取，不合并， \
-> 故可用浅克隆）。 \
-> 探针脚本（`gen_key_sequence_golden.sh` / `gen_sound_to_char_shape_golden.sh`）用`git show PIN:`或 \
-> `git worktree add --detach PIN` 自建临时工作区，pin 精确、**不需要**上面的 checkout； \
-> 后者另有护栏：HEAD 不是 `PIN`或工作区不干净时**显式失败**。 \
-> `gen_key_golden.sh` 只依赖系统 librime 与 pin 版 `key_table.cc`，与参照检出无关。
-
-```sh
-# 参照仓库：https://github.com/lvyww/tiger-sentense-rime
-# 命令均在仓库根目录执行；外部检出统一放 external/（已 gitignore）。
-# `set -e`：中途失败即停，避免把不完整 TSV 压进入库金样。
-set -euo pipefail
-git clone https://github.com/lvyww/tiger-sentense-rime _external/tiger-sentense-rime
-REF=_external/tiger-sentense-rime
-
-# ① 检出主干 pin（**必须**：以下 5 段夹具类生成器读参照工作区，不认 pin）
-git -C "$REF" checkout --detach abad411750f79cfca750985fa266689b5d9b865f
-# ② 生成前自检：HEAD 必须是该 pin（检出失败/被切走即停）
-test "$(git -C "$REF" rev-parse HEAD)" = abad411750f79cfca750985fa266689b5d9b865f
-
-# ③ ngram fixture（入库）
-lua tools/generators/gen_ngram_golden.lua --reference "$REF" \
-  --model goldens/ngram_fixture.bin --out /tmp/ngram_fixture.tsv --mode fixture
-gzip -9 -n -c /tmp/ngram_fixture.tsv > goldens/ngram_fixture.tsv.gz
-
-# ngram 真实模型抽样（本地）
-lua tools/generators/gen_ngram_golden.lua --reference "$REF" \
-  --model ~/.local/share/fcitx5/rime/models/sentence-ngram-mobile.bin \
-  --out goldens/local/ngram_sample.tsv --mode sample
-gzip -9 -n -c goldens/local/ngram_sample.tsv > goldens/local/ngram_sample.tsv.gz
-
-# lexicon（入库）
-lua tools/generators/gen_lexicon_golden.lua --reference "$REF" \
-  --data "goldens/lexicon" --out /tmp/lexicon.tsv --mode present
-lua tools/generators/gen_lexicon_golden.lua --reference "$REF" \
-  --data /tmp/no-such-dir --out /tmp/lexicon_missing.tsv --mode missing
-lua tools/generators/gen_lexicon_golden.lua --reference "$REF" \
-  --data "goldens/lexicon_variants" --out /tmp/lexicon_variants.tsv --mode present
-lua tools/generators/gen_lexicon_golden.lua --reference "$REF" \
-  --data "goldens/lexicon_codes_only" --out /tmp/lexicon_codes_only.tsv --mode present
-gzip -9 -n -c /tmp/lexicon.tsv > goldens/lexicon.tsv.gz
-gzip -9 -n -c /tmp/lexicon_missing.tsv > goldens/lexicon_missing.tsv.gz
-gzip -9 -n -c /tmp/lexicon_variants.tsv > goldens/lexicon_variants.tsv.gz
-gzip -9 -n -c /tmp/lexicon_codes_only.tsv > goldens/lexicon_codes_only.tsv.gz
-
-# decode（入库；模型版对 fixture 抽样）
-lua tools/generators/gen_decode_golden.lua --reference "$REF" \
-  --data "goldens/lexicon" --out /tmp/decode.tsv
-lua tools/generators/gen_decode_golden.lua --reference "$REF" \
-  --data "goldens/lexicon" --model "goldens/ngram_fixture.bin" \
-  --lexical "data/tiger_sentence.lexical.bin" \
-  --out /tmp/decode_model.tsv --every 7
-lua tools/generators/gen_decode_golden.lua --reference "$REF" \
-  --data "goldens/lexicon" --model "goldens/ngram_fixture.bin" \
-  --lexical "data/tiger_sentence.lexical.bin" \
-  --out /tmp/decode_rank_first.tsv --every 7 --duplicate 0
-lua tools/generators/gen_decode_golden.lua --reference "$REF" \
-  --data "goldens/lexicon" --out /tmp/decode_evidence.tsv --early-commit 1 --required 1
-lua tools/generators/gen_decode_golden.lua --reference "$REF" \
-  --data "goldens/lexicon" --model "goldens/ngram_fixture.bin" \
-  --lexical "data/tiger_sentence.lexical.bin" \
-  --out /tmp/decode_evidence_model.tsv --every 7 --early-commit 1 --required 1
-gzip -9 -n -c /tmp/decode.tsv > goldens/decode.tsv.gz
-gzip -9 -n -c /tmp/decode_model.tsv > goldens/decode_model.tsv.gz
-gzip -9 -n -c /tmp/decode_rank_first.tsv > goldens/decode_rank_first.tsv.gz
-gzip -9 -n -c /tmp/decode_evidence.tsv > goldens/decode_evidence.tsv.gz
-gzip -9 -n -c /tmp/decode_evidence_model.tsv > goldens/decode_evidence_model.tsv.gz
-
-# decode + 学习（入库；`--learning 1` 的学习索引由真实候选纠错事件 + 一条成对融合偏好构成）
-lua tools/generators/gen_decode_golden.lua --reference "$REF" \
-  --data "goldens/lexicon" --out /tmp/decode_learning.tsv --learning 1
-lua tools/generators/gen_decode_golden.lua --reference "$REF" \
-  --data "goldens/lexicon" --model "goldens/ngram_fixture.bin" \
-  --lexical "data/tiger_sentence.lexical.bin" \
-  --out /tmp/decode_learning_model.tsv --every 7 --learning 1
-gzip -9 -n -c /tmp/decode_learning.tsv > goldens/decode_learning.tsv.gz
-gzip -9 -n -c /tmp/decode_learning_model.tsv > goldens/decode_learning_model.tsv.gz
-
-# decode + 学习 + 早提交证据（入库；两个开关本来就可在生成器里并用，此处补齐**组合覆盖**）
-lua tools/generators/gen_decode_golden.lua --reference "$REF" \
-  --data "goldens/lexicon" --out /tmp/decode_learning_evidence.tsv \
-  --early-commit 1 --required 1 --learning 1
-gzip -9 -n -c /tmp/decode_learning_evidence.tsv > goldens/decode_learning_evidence.tsv.gz
-
-# learning（入库；生成器对 corpora/chains/diffcases 按名排序迭代，输出与 Lua 进程哈希序无关）
-lua tools/generators/gen_learning_golden.lua --reference "$REF" --out /tmp/learning.tsv
-gzip -9 -n -c /tmp/learning.tsv > goldens/learning.tsv.gz
-
-# key（入库；只需要系统 librime；pin 版 key_table.cc 单文件下载即可，无需参照检出）
-mkdir -p external/librime/src/rime
-curl -fsSL -o external/librime/src/rime/key_table.cc \
-  https://raw.githubusercontent.com/rime/librime/33e78140250125871856cdc5b42ddc6a5fcd3cd4/src/rime/key_table.cc
-bash tools/generators/gen_key_golden.sh external/librime    # 脚本校验文件 sha 与 key_table.rs 头部一致
-
-# key_sequence（入库；需要系统 librime + librime-lua；脚本自建 `PIN=abad411` 隔离工作区，
-# 与上面的检出状态无关——不必先 checkout）
-bash tools/generators/gen_key_sequence_golden.sh
-# 探索新用例时可用 CASES 指向临时用例文件（输出默认仍写入入库文件，建议显式给输出路径）：
-# CASES=/tmp/explore.txt bash tools/generators/gen_key_sequence_golden.sh /tmp/explore.tsv.gz
-
-# key_sequence_tab（入库；Tab 锁路径：夹具 `tab_learning: true` ⇒ 参照学习库就绪；
-#   与 key_sequence 同一探针/pin，脚本自建隔离工作区，不需要上面的 checkout）
-bash tools/generators/gen_key_sequence_tab_golden.sh
-
-# sound_to_char_shape（入库；同上；夹具索引由生成器顺带重建）
-#   默认 PIN = 反查分支尖端 92a0b54（已含主干 pin，故不再做本地合并；PIN 可覆盖）；
-#   同样自建隔离工作区，不需要上面的 checkout
-bash tools/generators/gen_sound_to_char_shape_golden.sh
-
-# lexical（入库；需要参照的词先验模块与 data/ 位图；**要主线 pin 的工作区**；CI 已接入）
-lua tools/generators/gen_lexical_golden.lua --reference "$REF" --model data/tiger_sentence.lexical.bin --out /tmp/lexical.tsv
-gzip -9 -n -c /tmp/lexical.tsv > goldens/lexical.tsv.gz
-```
-
-## 来源与校验和
-
-- **主干 pin**：[`lvyww/tiger-sentense-rime`](https://github.com/lvyww/tiger-sentense-rime) @
-  `abad411750f79cfca750985fa266689b5d9b865f`（main 尖端，`fix(rime): preserve punctuation learning and default to full-m5`）。
-  **由 Lua 核心生成的 16 份夹具 / decode / learning / lexical 金样，以及两份键序列探针金样
-  （`key_sequence.tsv.gz`、`key_sequence_tab.tsv.gz`），都取自该 pin。**
-- **反查分支 pin**：[`lvyww/tiger-sentense-rime`](https://github.com/lvyww/tiger-sentense-rime) @
-  `92a0b54b53114e7e5aa6a1ff48efa95db0e21f9c`（`feat/reverse-lookup` 尖端：`4ff37c4` 数字选择器提交反查候选、
-  `92a0b54` 撇号音节分隔）。该 pin 是**主干 pin 的后代**（`abad411` 在其祖先链上），因此音反查探针金样
-  `sound_to_char_shape.tsv.gz` 单独取自它，**不再需要「分支 + 主干本地合并」**：
-  `tools/generators/gen_sound_to_char_shape_golden.sh` 已简化为单 `PIN` + 护栏
-  （HEAD 必须等于 `PIN` 且工作区干净，否则显式失败）。
-- **键名表**：librime `src/rime/key_table.cc`（sha256 `2f7c6a8b4f2aa474d700a87bd4bd1baa48a2655cd6ce4d2ba05b768f284d9d78`，固定提交
-  `33e78140250125871856cdc5b42ddc6a5fcd3cd4`）；
-  `key_table.rs` 由 `tools/generators/gen_key_table.py` 生成（CI 单文件下载源码后重生成比对）；`key.tsv.gz` 由系统 librime 1.17.0 探针生成，**CI 不重生成**
-  （其内部头部记录本行的 pin 与 sha256，由 `tools/checks/verify_golden_shas.py` 核对）。
-- **键序列 / 音反查 / Tab 锁**：
-  - 三份金样由 `tools/probes/rime_sequence_probe.cpp` 驱动**真 librime + \
-    librime-lua**与对应pin版 Lua 核心生成（探针头部记录参照提交与源文件 sha256），**CI 不重生成**；
-  - 夹具入库并与 Rust 重放共用， \
-    音反查夹具索引由`tools/generators/gen_pinyin_index.py`生成（CI重生成比对）。 \
-    音反查金样的撇号用例依赖上游 librime \
-    的delimiter修复（[rime/librime#1233](https://github.com/rime/librime/pull/1233)；
-  - `92a0b54` 的「按 `speller/delimiter` 切分音节」），本机 librime 1.17.0 未含该修复 ⇒ \
-    输入撇号后反查段**无候选**（金样如实记录）；本仓已实现该切分（撇号透明跳过、强制断音； \
-    预编辑里原样保留撇号、输入当场可见，段首/段尾同样保留）， \
-    但这份金样登不出差异——夹具索引只有 14 个音节、无 `xi`/`an` ⇒ 三例在两边同样无候选 \
-    （见 [`../docs/upstream-deviations.md`](../docs/upstream-deviations.md) ③）。真实索引 \
-    （`data/tiger_sentence.pinyin.bin.gz`， \
-    sha256 `18a0931a…`）由同一生成器产出，本地复验： \
-    `python3 tools/generators/gen_pinyin_index.py --source _external/tiger-sentense-rime/PY_c.dict.yaml --out /tmp/pinyin.bin.gz && cmp /tmp/pinyin.bin.gz data/tiger_sentence.pinyin.bin.gz` \
-    （参照检出须含 `898579f` 的 `PY_c.dict.yaml`）。
-- **词先验**：`lexical.tsv.gz` 由 `tools/generators/gen_lexical_golden.lua`以参照main（词先验模块自 \
-  `35a10b9` 起）与入库位图生成（CC BY 4.0，署名见 [`../docs/resources.md`](../docs/resources.md)）； \
-  **已在 CI 中再生成比对**。
-- 参照仓库文件（生成时；`lua/`、`tools/` 均为参照仓库路径；两 pin 相同的文件只列一行）：
-
-| 文件 | 来源 pin | sha256 |
-|---|---|---|
-| `lua/tiger_sentence.lua`（主干金样） | 主干 `abad411` | `b77a747597a140e6fec315d8bc78344b8d8d3bdc007132bc7c53a9c6a3f22dd3` |
-| `lua/tiger_sentence.lua`（音反查金样） | 反查 `92a0b54` | `f33cee28f78a612d77570297a6949732f46eeb3c4011b7fe760f43c3b3120b89` |
-| `lua/tiger_sentence_learning.lua` | 两 pin 相同 | `0f685ae57fb4e70662492b7a3e56b91b5e8e9592cc64d881db181c9bf7acd9c6` |
-| `lua/tiger_sentence_ngram.lua` | 两 pin 相同 | `fd7b2337d5215f51ffea092c76f07951a8e2172087e823d8a4b1641f11d8bf4e` |
-| `lua/tiger_sentence_cache.lua` | 两 pin 相同 | `8ebd209588fb62d0bf888e752b95d8588ecbcdef2af40f8b009865fc3c41da7c` |
-| `lua/tiger_sentence_lexical.lua` | 两 pin 相同 | `d49f45f0ee0033fd2466269d967b4784f508da220ec62215806e227ea590fe8d` |
-| `tools/model_fixture.lua` | 主干 `abad411` | `ed5c771ee29835c20b46476635809ed37d70ad0c79d14df0ae13233f5da7d45a` |
-
-- 数据夹具（`lexicon/`，取自参照仓库同名文件）：
-
-| 文件 | sha256 |
-|---|---|
-| `tiger_sentence.codes.txt` | `1d3e9b0ce0e4a603be3f220c71acecad846f020e87a52723ecb3814f6b53ac0e` |
-| `tiger_sentence.char_ranks.txt` | `bd64e4bf333b2096a9a61fd5ece868e37912057bd1a812d75b2d5ccb4c994dcf` |
-| `tiger_sentence.full_code_whitelist.txt` | `05d257457898146262f7dbf264103c70a8cf2ee92d188b770ad13232b293f566` |
-| `tiger_sentence.supplement.txt` | `f229832bc92f89d87e4b1d29984aec53e627cedb23dda5074ad03cbcabdf0900`（**本地改动**：仅注释中方案名「虎整句」→「虎句」，与上游 pin 的 `538f7d60…` 不同；见 `../data/README.md`） |
-| `key_sequence/symbols.yaml` | `9b45c4a2f179d42585d5cc1439bfbcb5a585520f0de3ce83232180990e5cc9b1` |
-| `key_sequence_tab/symbols.yaml`（与上同一文件） | `9b45c4a2f179d42585d5cc1439bfbcb5a585520f0de3ce83232180990e5cc9b1` |
-| `key_sequence_tab/tiger_sentence.custom.yaml`（夹具条件：`tab_learning: true`） | `c610834a73205b5d584ad752c31b557df9547225e8924a9eb1fccc99cbd42ca7` |
-| `sound_to_char_shape/symbols.yaml`（与上同一文件） | `9b45c4a2f179d42585d5cc1439bfbcb5a585520f0de3ce83232180990e5cc9b1` |
-| `sound_to_char_shape/PY_c.dict.yaml`（夹具） | `96e8b34adebf5ea478a1cbce2c9ee8f333c264690abfffadd2d31642a30360ee` |
-| `sound_to_char_shape/tiger_sentence.codes.txt`（夹具） | `4e2b7596db232e12ad997613155e067354652288270b55852d3fd2f16ab18709` |
-| `sound_to_char_shape/tiger_sentence.pinyin.bin`（生成物） | `29e16c6aa40654ca829197996584912efc9f76f61bcd9370c1341999b69f3e4d` |
-
-- `lexicon_variants/` 与 `lexicon_codes_only/` 为人工构造的解析边界数据（无上游来源）。
-
-- 随包**追加码表**（只在 `data/`；源不入库， \
-  由 `tools/generators/merge_huma_codes.py`从虎码官方版单字表生成）：
-
-| 文件 | sha256 |
-|---|---|
-| `data/tiger_sentence.codes.huma.txt` | `896f1aa2a302e33b6ec9beb8c516994c46e6a83fe6bd10b8cf9179c8d4a065a7` |
-
-- 已入库金样 sha256：
-
-| 文件 | sha256 |
-|---|---|
-| `ngram_fixture.bin` | `b50a12fc5292fabbd4841fd61dd7f85cfa6ae9987d1f74aa752287aa6f86862f` |
-| `ngram_fixture.tsv.gz` | `905dfac57fafd2a4eb55d18cc0d23b9ac5b363aecee55cc610f755bd8ccfb9ee` |
-| `lexicon.tsv.gz` | `28b410dc42a5a17bfb93138843139d3946a6decc3d3ea5d867f70740f5242135` |
-| `lexicon_missing.tsv.gz` | `f5b8256deeb41b4403ca26074deec659807c4313ffe5cf727987b78be15c7a26` |
-| `lexicon_variants.tsv.gz` | `05923b1433f00bf2e9fbb6270e6b28e1f4d1cca6a93507c74dc80b48fde69ef5` |
-| `lexicon_codes_only.tsv.gz` | `3cd72cca880754ecd3744a26ecc5b70d8b5575ab268654937326bb4925b3805e` |
-| `decode.tsv.gz` | `79c6316038d9b18feb42214e8fef20853d9f3a1ae963b792064367d9ef72757d` |
-| `decode_model.tsv.gz` | `a81bc37713b293deaab17ee4a8c51dfe2c244ff1e8729f7bb21514f98b895dc2` |
-| `decode_rank_first.tsv.gz` | `4359b9276805e99433e9787ac35abf37ae3eab7d11aa49bce2549dedb1799fc6` |
-| `decode_evidence.tsv.gz` | `bd857dade791a040d6a0d4ffc9a6e302524cd6fd7095f2aea967193ec280d7af` |
-| `decode_evidence_model.tsv.gz` | `fb45281a2c1eae7e3d9910e346adcbfb9c6af60a452636ce7347bd6c2d8987d5` |
-| `learning.tsv.gz` | `d70c69b29a37761bcadd87dd2d3bd3a9679eaaadf658827036cdb1c104186d4d` |
-| `decode_learning.tsv.gz` | `1e46d3fbb4788e36b92d92ac931b343ad2d7f394e9611e1a04f36bf034f90cdd` |
-| `decode_learning_model.tsv.gz` | `13797b96097bcc133f862528350f4765d2c021f88c9f8e7ad56d5e6e02de881c` |
-| `decode_learning_evidence.tsv.gz` | `86dec38d94f05e57de281e254262a40aef86176965d739afee6eb6b644464398` |
-| `key.tsv.gz` | `7fae4983ab69e36ebd2e5cac267df81e9bc325731deaefcaa22873aeca8660c0` |
-| `key_sequence.tsv.gz` | `8ce095cf98bae0bbfbd561e6b1e3aa7f1961af6e8e3c3b62b692a7e89e325aa1` |
-| `key_sequence_tab.tsv.gz` | `3c89618d0fb067bb0ce5562646a62924576c0610226aed3fa70689b6549da9bc` |
-| `sound_to_char_shape.tsv.gz` | `e9d48698bf73807a37933b7c2324afbc27fffe7b0492f0dd2787116ec06a7545` |
-| `lexical.tsv.gz` | `5b559b2504e21c69b4f702678a96d2947abfe7d7c26adcd2b25c3d4de761e0c3` |
-
-- **内部头部（四份探针金样各带一份，供无人值守核对）**：开头 \
-  `#`注释行形如`# reference: <仓库> @ <40 位 pin>` + \
-  `# <来源文件> sha256: <64 位>`（`key.tsv.gz`的来源是librime `key_table.cc`， \
-  另两份是 `lua/tiger_sentence.lua`，音反查另有`PY_c.dict.yaml`）， \
-  必须与「来源与校验和」的表一致——换 pin 后只改表不改头部即被`tools/checks/verify_golden_shas.py` \
-  拦下（**CI两个作业各跑一次**：`rust` 校验表与头部，`golden` 另用 `--reference` 校验参照检出的 \
-  `lua/*`、`tools/*` 溯源）。
-
-CI 以同一参照提交重生成全部 fixture 金样并与入库内容比对（见 `.github/workflows/ci.yml`）。 \
-四份探针金样（`key` / `key_sequence` / `key_sequence_tab` / \
-`sound_to_char_shape`）依赖具体 librime/librime-lua 版本，**CI 不重生成**， \
-改按上表校验 sha256——内联`sha256sum -c` 的三条与上面的校验器**互为独立来源**，两者都须通过。
+- 一般作业用 CI 系统 Lua；`golden-lua-latest` 用 Arch 容器当前 Lua；生成器摘要 JSON 记录实际版本
+- 重新生成后用 `tools/checks/verify_golden_shas.py` 校验产物
+- 产物 sha256 须与 [`PROVENANCE.md`](PROVENANCE.md) 的对照表一致
 
 ## 规则
 
-- **金样不得因本仓有意的行为差异而重生成**：金样记录的是**上游参照行为**， \
-  偏离只能在差分测试里连同**本仓逐步期望值**登记进 `DEVIATIONS`，金样字节保持原样； \
-  完整政策（可证伪断言、 \
-  代价与回归做法）见 [`../docs/upstream-deviations.md`](../docs/upstream-deviations.md)。
+- **金样不得因本仓有意的行为差异而重生成**：金样记录的是**上游参照行为**
+  - 偏离只能在差分测试里连同**本仓逐步期望值**登记进 `DEVIATIONS`
+  - 金样字节保持原样
+- 完整政策（可证伪断言、代价与回归做法）见 ①：
+  - [`../docs/upstream-deviations.md`](../docs/upstream-deviations.md)

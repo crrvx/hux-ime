@@ -27,11 +27,7 @@
 #include <fcitx-utils/log.h>
 #include <fcitx-utils/trackableobject.h>
 
-#include <sys/wait.h>
-#include <unistd.h>
-
 #include <algorithm>
-#include <cerrno>
 #include <filesystem>
 #include <functional>
 #include <iterator>
@@ -41,6 +37,7 @@
 #include <vector>
 
 #include "hux_abi.h"
+#include "platform.h"
 
 namespace {
 
@@ -1185,7 +1182,8 @@ private:
     /// 首项点击：打开「所加载模型所在目录」（模型路径经 `hux_engine_model_path` 取）。
     ///
     /// 目录不存在就先建出来——没有模型时它正是「模型该放的地方」，把用户送到那儿才知道往
-    /// 哪里放。拉起文件管理器见 [`launchFileManager`]；任一步失败只记日志，不影响其它功能。
+    /// 哪里放。拉起文件管理器见 `hux::platform::openDirectory`（实现随落点走）；任一步失败
+    /// 只记日志，不影响其它功能。
     void openModelDirectory(fcitx::InputContext * /*unused*/) {
         const char *path = hux_engine_model_path(engine_);
         if (path == nullptr) {
@@ -1212,45 +1210,9 @@ private:
         // 先记意图再拉起：exec 发生在孙进程里，父进程看不到它的失败（缺 xdg-open / 无图形会话
         // 时用户侧就是「点了没反应」），日志里至少留下路径可手工打开。
         FCITX_INFO() << "hux: 打开模型目录 " << directory.string();
-        if (!launchFileManager(directory.string())) {
+        if (!hux::platform::openDirectory(directory.string())) {
             FCITX_WARN() << "hux: 拉起文件管理器失败 " << directory.string();
         }
-    }
-
-    /// 拉起文件管理器打开 `directory`：**双 fork + `execlp`**（先 `xdg-open`，exec 失败再
-    /// `gio open`）。
-    ///
-    /// 为什么不是 `std::system`：它经 `/bin/sh -c` 解释整串，目录名里的空格 / 元字符会变成
-    /// 命令注入（模型路径来自环境变量与配置，不是可信输入）；`execlp` 逐个参数传，不经 shell。
-    /// 为什么双 fork：文件管理器可能活很久，父进程不能等它——中间进程 fork 完立刻 `_exit`，
-    /// 孙进程被 init 收尸，故**没有任何僵尸**；中间进程本身必须收一下（它才是父进程的孩子），
-    /// 而它 fork 后立即退出，这个 wait 不会有可感阻塞。
-    ///
-    /// 返回 `false` = 连 fork 都没成功（调用方只记日志）。
-    static bool launchFileManager(const std::string &directory) {
-        const pid_t child = fork();
-        if (child < 0) {
-            return false;
-        }
-        if (child == 0) {
-            const pid_t grandchild = fork();
-            if (grandchild < 0) {
-                _exit(1);
-            }
-            if (grandchild > 0) {
-                _exit(0); // 中间进程：孙进程已脱离父进程，这里立刻退出
-            }
-            execlp("xdg-open", "xdg-open", directory.c_str(),
-                   static_cast<char *>(nullptr));
-            execlp("gio", "gio", "open", directory.c_str(),
-                   static_cast<char *>(nullptr));
-            _exit(1);
-        }
-        // 只等中间进程（毫秒级；不去等孙进程里的文件管理器）。
-        int status = 0;
-        while (waitpid(child, &status, 0) < 0 && errno == EINTR) {
-        }
-        return true;
     }
 
     /// 重新部署：重读配置 → 引擎重走构造期读取 → 对齐共享开关 → 清面板 → 刷新状态菜单与日志。
@@ -1392,19 +1354,20 @@ private:
         options.digit_select = behavior.digitSelect.value() ? 1 : 0;
         switch (behavior.candidateLayout.value()) {
         case HuxCandidateLayout::Horizontal:
-            options.candidate_layout = 1;
+            options.candidate_layout = HUX_CANDIDATE_LAYOUT_HORIZONTAL;
             break;
         case HuxCandidateLayout::Vertical:
-            options.candidate_layout = 2;
+            options.candidate_layout = HUX_CANDIDATE_LAYOUT_VERTICAL;
             break;
         default:
-            options.candidate_layout = 0;
+            options.candidate_layout = HUX_CANDIDATE_LAYOUT_FOLLOW_GLOBAL;
             break;
         }
         const auto preeditMode = behavior.preeditMode.value();
-        options.preedit_mode = preeditMode == HuxPreeditMode::RawInput   ? 1
-                               : preeditMode == HuxPreeditMode::Hidden ? 2
-                                                                       : 0;
+        options.preedit_mode =
+            preeditMode == HuxPreeditMode::RawInput   ? HUX_PREEDIT_MODE_RAW_INPUT
+            : preeditMode == HuxPreeditMode::Hidden   ? HUX_PREEDIT_MODE_HIDDEN
+                                                      : HUX_PREEDIT_MODE_CANDIDATE_CODE;
         options.page_cycle = behavior.pageCycle.value() ? 1 : 0;
         options.min_retained_input_length =
             behavior.minRetainedInputLength.value();
@@ -1688,7 +1651,7 @@ public:
 
 // C 布局守卫（与 Rust `crates/hux-ffi/src/lib.rs` 的 `c_layout_matches_header` 对应）：
 // 本壳逐字段填充 `hux_options`、Rust 侧逐字段读取，字段顺序/宽度漂移在两侧都能编译通过，
-// 故在此钉住尺寸与关键偏移——改 `hux_abi.h` 时必须同步三处。
+// 故在此钉住尺寸、关键偏移与枚举取值——改 `hux_abi.h` 时必须同步三处。
 static_assert(sizeof(hux_key_list) == 4 + 2 * HUX_MAX_KEYS * 4,
               "hux_key_list 布局与 Rust 契约不一致");
 static_assert(sizeof(hux_options) == 15 * 4 + 4 * sizeof(hux_key_list),
@@ -1699,5 +1662,23 @@ static_assert(offsetof(hux_options, min_retained_input_length) == 12 * 4 + 4 * s
               "hux_options 末尾字段偏移与 Rust 契约不一致");
 static_assert(offsetof(hux_options, full_charset) == 13 * 4 + 4 * sizeof(hux_key_list),
               "hux_options 字集字段偏移与 Rust 契约不一致");
+// 枚举取值守卫：填充 `candidate_layout` / `preedit_mode` 时不再写裸数字，
+// 故这里钉住「C++ 枚举名 ↔ ABI 宏 ↔ Rust 具名常量」三者同值（Rust 侧见 abi.rs 同名常量）。
+static_assert(static_cast<int>(HuxCandidateLayout::FollowGlobal) ==
+                      HUX_CANDIDATE_LAYOUT_FOLLOW_GLOBAL &&
+                  static_cast<int>(HuxCandidateLayout::Horizontal) ==
+                      HUX_CANDIDATE_LAYOUT_HORIZONTAL &&
+                  static_cast<int>(HuxCandidateLayout::Vertical) ==
+                      HUX_CANDIDATE_LAYOUT_VERTICAL &&
+                  HUX_CANDIDATE_LAYOUT_COUNT == 3,
+              "candidate_layout 取值与 Rust 契约不一致");
+static_assert(static_cast<int>(HuxPreeditMode::CandidateCode) ==
+                      HUX_PREEDIT_MODE_CANDIDATE_CODE &&
+                  static_cast<int>(HuxPreeditMode::RawInput) ==
+                      HUX_PREEDIT_MODE_RAW_INPUT &&
+                  static_cast<int>(HuxPreeditMode::Hidden) ==
+                      HUX_PREEDIT_MODE_HIDDEN &&
+                  HUX_PREEDIT_MODE_COUNT == 3,
+              "preedit_mode 取值与 Rust 契约不一致");
 
 FCITX_ADDON_FACTORY(HuxFactory);
