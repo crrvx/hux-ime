@@ -11,8 +11,9 @@ use hux_test_support::repo_path;
 /// 「虎虚」首项（模型入口）守卫（源码级）：
 ///   ① 文案 = 引擎给的那段原文（**不自带**「模型：」，否则与首项前缀叠成「虎虚：模型：…」）；
 ///   ② 首项**可点**：打开「所加载模型所在目录」，且仍带 `hux` 图标、仍登记在 `statusActions_`；
-///   ③ 打开目录 = `hux_engine_model_path` → `parent_path` → `create_directories` → 双 fork
-///      `execlp`（先 `xdg-open`、再 `gio open`），**不得**用 `std::system`（路径会经 shell 解释）；
+///   ③ 打开目录 = `hux_engine_model_path` → `parent_path` → `create_directories` → 落点的
+///      `hux::platform::openDirectory`（桌面双 fork `execlp`：先 `xdg-open`、再 `gio open`），
+///      **不得**用 `std::system`（路径会经 shell 解释）；
 ///   ④ ABI 入口在头文件里声明、在 `abi.rs` 里导出（CI 另有 `nm -D` ↔ 头文件的动态比对）。
 #[test]
 fn model_entry_opens_the_model_directory() {
@@ -67,23 +68,25 @@ fn model_entry_is_clickable(source: &Source) {
     assert!(flat.contains(r#""hux");"#), "首项构造必须传入 hux 图标名");
 }
 
-/// ③ 打开目录：路径 → 父目录 → 建目录 → 拉起文件管理器（双 fork + `execlp`）。
+/// ③ 打开目录：路径 → 父目录 → 建目录 → 交给落点的 `hux::platform::openDirectory`。
 fn model_directory_launch(source: &Source) {
     let flat = source.flat();
-    // ③ 打开目录：路径 → 父目录 → 建目录 → 拉起文件管理器。
+    // ③ 打开目录：路径 → 父目录 → 建目录；拉起动作外包给落点（共用层不含平台实现）。
     let open = source.function("void openModelDirectory(");
     for fragment in [
         "const char *path = hux_engine_model_path(engine_);",
         "std::filesystem::path(path).parent_path()",
         "std::filesystem::create_directories(directory, error)",
-        "launchFileManager(directory.string())",
+        "hux::platform::openDirectory(directory.string())",
     ] {
         assert!(
             open.contains(fragment),
             "打开模型目录缺少 {fragment}：{open}"
         );
     }
-    let launch = source.function("static bool launchFileManager(");
+    // 平台侧：桌面双 fork + `execlp`（先 `xdg-open`、再 `gio open`），Android 没有对应物。
+    let linux = Source::read_at("platform/linux/shell/open_directory.cpp");
+    let launch = linux.function("bool openDirectory(");
     for fragment in [
         "const pid_t child = fork();",
         "const pid_t grandchild = fork();",
@@ -96,6 +99,13 @@ fn model_directory_launch(source: &Source) {
             "拉起文件管理器缺少 {fragment}：{launch}"
         );
     }
+    let android = Source::read_at("platform/android/shell/open_directory.cpp");
+    assert!(
+        android
+            .function("bool openDirectory(")
+            .contains("return false;"),
+        "Android 落点的 openDirectory 必须恒回 false（模型目录由宿主 UI 管）"
+    );
     // 注释里会**提到** `std::system`（说明为何不用），故只按「调用形态」判定（带参数括号）。
     for forbidden in [
         "std::system(",
@@ -104,10 +114,12 @@ fn model_directory_launch(source: &Source) {
         "execl(",
         "execlp(\"/bin/sh\"",
     ] {
-        assert!(
-            !flat.contains(forbidden),
-            "不得用 {forbidden} 拉进程（路径经 shell 解释 = 注入面）"
-        );
+        for text in [flat, launch.as_str()] {
+            assert!(
+                !text.contains(forbidden),
+                "不得用 {forbidden} 拉进程（路径经 shell 解释 = 注入面）"
+            );
+        }
     }
 }
 

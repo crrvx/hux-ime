@@ -22,7 +22,7 @@
   - 活规则见 [`design.md`](design.md)
   - 有意偏离上游见 [`upstream-deviations.md`](upstream-deviations.md)
 
-## 1. `[待办]`（8 条）
+## 1. `[待办]`（9 条）
 
 | 编号 | 一句话问题 | 状态 | 归宿（提交 / 批次 · 不修理由 · 待办成本） |
 |---|---|---|---|
@@ -34,6 +34,7 @@
 | T1.3 | pin/URL 常量硬编码 4+ 处且两套取 pin 机制（`git show` vs <br>`worktree add`） | [待办] | T2.2 / T2.4 已随第 11 批完成；pin/URL 收敛牵动 <br>`ci.yml` 与 4 个生成器，单独一批 |
 | `2+3 批残留` | 测试取夹具路径的写法不统一：内联 `join("../../..")` 剩 5 处（<br>`key_sequence_differential.rs` 4 处 +`key_sequence_differential/dump.rs` 1 处）<br>，而共享助手 `hux_test_support::repo_path` 已是单点实现 | [待办] | 第 13 <br>批已收掉其余三项：可见性 26 项收紧、`model_status::format_label` 转私有、<br>`scheme_config_with_runtime` 不再从 `crate::engine` 根再导出；<br>`Engine` 字段另见 §2。余项属测试整理，收益仅为一致性 |
 | `5 批未做部分` | 第 11 批按风险与文件域切开、留给后续批的项 ——方案·数据：D7 <br>`ReverseLookup`、D10 `trait RankKey`、D11 `StateView`、D12 `expand_range`、D13 <br>`has_complete_candidate`、D16 `LexicalModel` 6 个 pub 字段（须先改集成测试契约）<br>、B10 的 decode 侧选重字节表、B20（10 参 `translate`） | [待办] | D7/D10–D13 <br>触热路径排序与证据分配，须逐项带金样差分验证；D16 受测试契约阻塞；<br>B10/B20 属低成本项，可随任一结构批顺带。**低成本项已随第 13 批收口**：<br>`scheme.rs` 内联测试 635 行迁出、4 条 `paging_action` 用例迁入 `key_binder`、<br>「无时间衰减」括注与新旧语义叙事清理；`punct_shape_comment` 经评估不搬<br>（见 §2） |
+| `18 批·android cfg` | 平台专有部分外包后，android 侧的代码路径从未编译过：落点 crate 的<br>`*_from_env()` 包装、`paths.rs` 里 android 的 `use` 分支 | [待办] | 第 18 批登记：本机无 `aarch64-linux-android` 目标<br>（`rustup target add` 报只读文件系统），CI 亦无交叉 target 步骤 ⇒ 需加一步<br>`cargo check -p hux-platform-android --target aarch64-linux-android`，<br>或在 Android 真机验收时顺带验证 |
 
 - **M8 补记**：
   - **① action 钉 commit sha 仍待办**：离线无法验证 GitHub 侧可用性， \

@@ -31,14 +31,23 @@ endif()
 # 包配置没给这个变量时上传空值，落点照旧退回 GNUInstallDirs 的 libdir。
 set(FCITX_INSTALL_ADDONDIR "${FCITX_INSTALL_ADDONDIR}" PARENT_SCOPE)
 
-# 平台侧只补这两项，其余全在共用层：
+# 平台侧只补这几项，其余全在共用层：
+#   · HUX_PLATFORM_SOURCES：落点专有的 C++ 源（实现 `shell/platform.h` 的宿主能力——桌面上的
+#     `fork`/`execlp` 是平台事实）。落点必须给：空着就是没接上，下面直接报错。
 #   · HUX_CARGO_TARGET：cargo 的目标三元组；空 = 宿主（桌面），Android 落点传
 #     `aarch64-linux-android`（staticlib 免链接器配置，见 platform/android/README.md）。
 #   · HUX_ADDON_LIBS：addon 链接的系统库；桌面 `-ldl -lpthread -lm`，Android `-llog -ldl -lm -lunwind`。
 #     写 `-l` 形式：经变量传进来的裸库名 CMake 不会补 `-l`（只有字面量才会），会变成让
 #     链接器去找名为 `pthread` 的文件。
+set(HUX_PLATFORM_SOURCES "" CACHE STRING "落点专有的 C++ 源（落点必须设置，见 shell/platform.h）")
 set(HUX_CARGO_TARGET "" CACHE STRING "cargo --target 的目标三元组（空 = 宿主）")
 set(HUX_ADDON_LIBS "-ldl -lpthread -lm" CACHE STRING "addon 链接的系统库（带 -l 前缀；平台侧决定）")
+
+if(NOT HUX_PLATFORM_SOURCES)
+    message(FATAL_ERROR
+        "落点没有设置 HUX_PLATFORM_SOURCES：平台专有的 C++ 源随落点走"
+        "（见 platform/linux/CMakeLists.txt 与 platform/android/CMakeLists.txt）")
+endif()
 
 # Rust 静态库（逻辑层；cargo 自身增量，故每次构建都调用）。
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -66,7 +75,7 @@ add_custom_target(hux-rust ALL
     COMMENT "cargo build -p hux-platform-fcitx5 (${HUX_CARGO_LABEL})"
     VERBATIM)
 
-add_library(hux SHARED shell/hux.cpp)
+add_library(hux SHARED shell/hux.cpp ${HUX_PLATFORM_SOURCES})
 add_dependencies(hux hux-rust)
 target_include_directories(hux PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/shell"

@@ -94,6 +94,15 @@ jobs:
             echo "::error::hux-cfg / hux-ffi 只允许依赖 hux-core（及外部 crate）"
             exit 1
           fi
+          # 平台落点的数据目录 crate 必须是**叶子**：Android 侧在 fork 的插件工程里单独构建，
+          # 一旦依赖工作区内部 crate，那边就得把整棵树搬过去（数据目录规则只用标准库）。
+          for leaf in hux-platform-linux hux-platform-android; do
+            if cargo tree --locked -p "$leaf" --edges normal --prefix none \
+                | grep -E '^hux-' | grep -qv "^${leaf} v"; then
+              echo "::error::$leaf 不得依赖任何内部 crate（落点只碰标准库）"
+              exit 1
+            fi
+          done
           # core 不得引用已迁出的方案模块（剥离注释后匹配）
           if ! python3 tools/checks/rust_source_grep.py --root crates/hux-core/src \
               --pattern 'crate::(decode|lexicon|lexical|ngram|interaction|sound_to_char_shape|char_to_sound_shape)\b' \

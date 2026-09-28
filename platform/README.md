@@ -17,9 +17,9 @@
 | macOS | 未建目录（暂缓） | — | fcitx5-macos |
 | iOS | 未建目录（暂缓） | — | fcitx5-ios |
 
-- **共用关系**：`platform/fcitx5/` 是共享适配层，Linux 桌面与 Android 都用它， \
-  差别只在数据目录来源与 `__ANDROID__` 分支
-- `linux/` 与 `android/` 是两个落点各自的接线与文档
+- **共用关系**：`platform/fcitx5/` 是共享适配层（装配 + C++ 壳），桌面与 Android 都用它 \
+  平台专有的事在落点：目录根规则、打开目录、编译装配
+- `linux/` 与 `android/` 是两个落点各自的接线、平台实现与文档
 - Windows / macOS / iOS **暂缓且不建占位目录**——一句「预留目录」不承载信息； \
   恢复实现时按 [`../docs/design.md`](../docs/design.md) §5 的要求补册
 

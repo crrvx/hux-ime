@@ -10,6 +10,11 @@ project(hux-platform-linux VERSION 0.1.0 LANGUAGES CXX)
 
 set(HUX_WORKSPACE "${CMAKE_CURRENT_SOURCE_DIR}/../..")
 set(HUX_FCITX5_DIR "${HUX_WORKSPACE}/platform/fcitx5")
+
+# 平台专有的 C++ 源（共用层 `shell/platform.h` 的桌面实现：`fork`/`execlp` 交给文件管理器）。
+set(HUX_PLATFORM_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/shell/open_directory.cpp"
+    CACHE STRING "落点专有的 C++ 源（桌面：打开目录）")
+
 add_subdirectory("${HUX_FCITX5_DIR}" fcitx5)
 
 # 插件安装目录：优先跟随 fcitx5 自身的 addon 目录（Fcitx5Utils 提供；Fedora 为 lib64/fcitx5），

@@ -43,13 +43,13 @@ crates/                       # 平台无关的 Rust 库
     shuangpin/  quanpin/      # 计划：拼音族骨架（接口预留）
   hux-test-support/           # 测试助手（金样路径 / transcript 编解码 / 临时目录）
 platform/                     # 平台适配
-  fcitx5/                     # 共用适配：Rust 组装（Engine / UI 快照 / 存储 / Paths）+ C++ 壳
-  linux/                      # Linux 落点：安装规则（CMake）与 install.sh / uninstall.sh
-  android/                    # Android 落点：构建接线（对接 fcitx5-android fork 的 plugin/hux）
+  fcitx5/                     # 共用适配：Rust 组装（Engine / UI 快照 / 存储 / 目录拼接）+ C++ 壳
+  linux/                      # Linux 落点：XDG 目录根规则、打开目录、安装规则（CMake）、脚本
+  android/                    # Android 落点：宿主注入的目录根规则、打开目录占位、fork 构建接线
   windows/  macos/  ios/      # 计划：未建目录（平台总览见 platform/README.md）
 ```
 
-- 两个落点都基于 `platform/fcitx5`：同一份 addon，差异只在数据目录来源与 `__ANDROID__` 分支
+- 两个落点都基于 `platform/fcitx5`：同一份 addon，差异只在目录根规则、打开目录与装配变量
 - 平台层分工：共用适配 = `fcitx5/`，落点 = `linux/` 与 `android/`；文件级模块与参照映射见 \
   [`reference.md`](reference.md) §1
 - **现状**：`crates/hux-cfg`、`crates/hux-ffi`、`crates/hux-scheme/tiger`、`platform/fcitx5`、\

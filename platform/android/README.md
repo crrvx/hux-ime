@@ -42,8 +42,11 @@
 
 - **装配层直接复用** `platform/fcitx5/` 的 C++ 薄壳 + Rust 组装：addon 契约（选项角色、 \
   按键与提交语义、反查）不变
-- 两端差异只在数据目录来源与 `__ANDROID__` 分支：
-  - 本仓只改一处——平台层的数据目录查找支持 **`XDG_DATA_DIRS`**，落点 `fcitx5/src/paths.rs`
+- 两端差异只在落点实现（共用层只按平台选落点，不含平台规则）：
+  - 数据目录**根**规则在本落点 `src/lib.rs`：只认宿主注入的 `XDG_DATA_HOME` / `XDG_DATA_DIRS`， \
+    无 `$HOME` 回退、无 `/usr/share` 缺省（桌面见 [`../linux/README.md`](../linux/README.md)）
+  - 打开目录：本落点 `shell/open_directory.cpp` 恒回 `false`（模型目录由宿主 UI 管）
+  - 装配变量：`HUX_PLATFORM_SOURCES` / `HUX_CARGO_TARGET` / `HUX_ADDON_LIBS`
   - 内核仍不读环境变量，桌面行为不变；顺序见 \
     [`../../docs/reference.md`](../../docs/reference.md) §2
 - `__ANDROID__` 下的差异（配置 schema、状态区子菜单）、`install.md` 的 Android 安装 / 模型、 \
@@ -62,10 +65,8 @@
   - 图标文案与 `plugin_resources_keep.xml`
 - 原生构建 `src/main/cpp/CMakeLists.txt`：
   - `find_package(fcitx5 CONFIG)` 与 `find_package(Fcitx5Core MODULE)`
-  - 按 `ANDROID_ABI=arm64-v8a → aarch64-linux-android` 调 \
-    `cargo build --target … --release`（staticlib，免链接器配置）
-  - 构建 `add_library(hux SHARED <hux-ime>/platform/fcitx5/shell/hux.cpp)`，链接 \
-    `libhux_platform_fcitx5.a` 与 `Fcitx5::Core`，按需链接 `log dl m unwind`
+  - `add_subdirectory(<hux-ime>/platform/android …)`：目标、`cargo --target`、随包数据与 \
+    安装布局都在本仓落点（`platform/android/CMakeLists.txt`，含 arm64-v8a 唯一 ABI 的检查）
 - 安装目标三处：
   - `install(TARGETS hux LIBRARY DESTINATION /usr/lib/fcitx5 COMPONENT config)`
   - `install(FILES conf/* … COMPONENT config)`

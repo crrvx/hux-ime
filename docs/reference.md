@@ -23,7 +23,10 @@
 
 ## 2. 数据与目录
 
-- 目录解析在平台层：`platform/fcitx5/src/paths.rs`（内核不读环境变量）
+- 目录解析在平台层（内核不读环境变量）：
+  - 根规则在落点（XDG）：`platform/linux/src/lib.rs`
+  - 根规则在落点（宿主注入）：`platform/android/src/lib.rs`
+  - 拼接 `fcitx5/hux`、顺序与 `HUX_DATA_DIRS`：`platform/fcitx5/src/paths.rs`
 - 只读目录查找顺序：
   - `HUX_DATA_DIRS`（覆盖，冒号分隔）
   - `$XDG_DATA_HOME/fcitx5/hux`，缺省 `~/.local/share/fcitx5/hux`

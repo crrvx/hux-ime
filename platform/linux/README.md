@@ -41,7 +41,10 @@
 
 - 查找顺序：`HUX_DATA_DIRS` → `XDG_DATA_HOME` → `XDG_DATA_DIRS` → `/usr/share` \
   两个覆盖变量见 [`../../docs/reference.md`](../../docs/reference.md) §2
-- 实现在 `fcitx5/src/paths.rs`；内核**不读环境变量**，环境变量只在本层解析
+- 根规则（XDG）在本落点 `src/lib.rs`；子目录与排序在 `fcitx5/src/paths.rs` \
+  内核**不读环境变量**，环境变量只在平台层解析
+- 「打开模型目录」也在本落点：`shell/open_directory.cpp` 用 `fork` + `xdg-open` \
+  （失败退 `gio open`）交给文件管理器；共用层只声明 `fcitx5/shell/platform.h`
 - n-gram 模型**不随包**：从上游 release 获取后，放置位置：
   - 用户级 `~/.local/share/fcitx5/hux/models/`
   - 系统级 `/usr/share/fcitx5/hux/models/`

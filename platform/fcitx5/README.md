@@ -5,7 +5,7 @@
 
 - C++ 薄壳（`shell/`）只做 fcitx5 接口适配：按键 → 本层、提交 / preedit / 候选 ← 本层回调
 - Rust 组装（`src/`）是**装配根**：构造方案并驱动它
-- 桌面与 Android **共用本层**，两端只在数据目录来源与 `__ANDROID__` 分支上不同
+- 桌面与 Android **共用本层**，平台专有的部分在落点（目录根规则、打开目录、装配变量）
 - 两个落点各有一册：[`../linux/README.md`](../linux/README.md) 与 \
   [`../android/README.md`](../android/README.md)
 

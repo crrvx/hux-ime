@@ -26,8 +26,10 @@ if(DEFINED ANDROID_ABI AND NOT ANDROID_ABI STREQUAL "" AND NOT ANDROID_ABI STREQ
     message(FATAL_ERROR "本插件只出 arm64-v8a（当前 ANDROID_ABI=${ANDROID_ABI}）")
 endif()
 
-# 平台侧只补两项（共用层的缺省是桌面）：cargo 的目标三元组、要链的系统库。
+# 平台侧只补这几项（共用层的缺省是桌面）：平台专有的 C++ 源、cargo 的目标三元组、要链的系统库。
 # `staticlib` 免链接器配置，故交叉编译只需 rustup 目标，无需额外 linker/AR 设置。
+set(HUX_PLATFORM_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/shell/open_directory.cpp"
+    CACHE STRING "落点专有的 C++ 源（Android：打开目录没有对应物，只回 false）")
 set(HUX_CARGO_TARGET "aarch64-linux-android" CACHE STRING "cargo --target 的目标三元组")
 set(HUX_ADDON_LIBS "-llog -ldl -lm -lunwind" CACHE STRING "addon 链接的系统库（带 -l 前缀；平台侧决定）")
 

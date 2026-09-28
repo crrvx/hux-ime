@@ -10,6 +10,8 @@ members = [
     "crates/hux-ffi",
     "crates/hux-scheme/tiger",
     "platform/fcitx5",
+    "platform/linux",
+    "platform/android",
 ]
 
 [workspace.package]
